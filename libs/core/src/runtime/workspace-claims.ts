@@ -301,7 +301,10 @@ export async function acquireAutocodeRuntimeFileWriteLock(
         throw error;
       }
 
-      if (isAutocodeRuntimeFileWriteLockHeldByThisProcess(attempt.lockDir)) {
+      if (
+        isAutocodeRuntimeFileWriteLockHeldByThisProcess(attempt.lockDir) &&
+        isAutocodeRuntimeFileWriteLockHeldBySameOwner(attempt.lockDir, attempt.ownerId)
+      ) {
         throw new Error(formatAutocodeRuntimeFileWriteLockReentrant(attempt.filePath));
       }
 
@@ -651,6 +654,11 @@ function isAutocodeRuntimeFileWriteLockHeldByThisProcess(lockDir: string): boole
   }
   const metadata = readAutocodeRuntimeFileWriteLockMetadata(lockDir);
   return metadata?.processId === process.pid;
+}
+
+function isAutocodeRuntimeFileWriteLockHeldBySameOwner(lockDir: string, ownerId: string): boolean {
+  const metadata = readAutocodeRuntimeFileWriteLockMetadata(lockDir);
+  return !metadata || metadata.ownerId === ownerId;
 }
 
 function isNodeFileExistsError(error: unknown): boolean {

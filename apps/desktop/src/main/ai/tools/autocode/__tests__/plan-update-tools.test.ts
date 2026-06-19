@@ -67,6 +67,112 @@ describe('Autocode plan update tools', () => {
     ]);
   });
 
+  it('rejects completed runnable subtasks without startup verification evidence', async () => {
+    await saveAutocodeImplementationPlan(specDir, {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Implementation',
+          subtasks: [
+            {
+              id: 'ui-start',
+              title: 'Browser game startup',
+              description: 'Implement browser game page with canvas controls.',
+              status: 'pending',
+              files_to_modify: ['src/index.html', 'src/game.js'],
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await updateSubtaskStatusTool.config.execute(
+      {
+        subtask_id: 'ui-start',
+        status: 'completed',
+        completion_summary: [
+          '| Item | Details |',
+          '| --- | --- |',
+          '| What changed | Updated `src/index.html` and `src/game.js`. |',
+          '| Verification | Ran `node --check src/game.js` and static tests. |',
+          '| Review notes | No residual syntax risks. |',
+        ].join('\n'),
+      },
+      context,
+    );
+    const planState = await loadAutocodeImplementationPlan(specDir);
+
+    expect(result).toContain('Cannot mark subtask');
+    expect(result).toContain('runtime-readiness');
+    expect(planState?.phases?.[0].subtasks?.[0].status).toBe('pending');
+  });
+
+  it('allows completed runnable subtasks with passing startup verification evidence', async () => {
+    await saveAutocodeImplementationPlan(specDir, {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Implementation',
+          subtasks: [
+            {
+              id: 'ui-start',
+              title: 'Browser game startup',
+              description: 'Implement browser game page with canvas controls.',
+              status: 'pending',
+              files_to_modify: ['src/index.html', 'src/game.js'],
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await updateSubtaskStatusTool.config.execute(
+      {
+        subtask_id: 'ui-start',
+        status: 'completed',
+        completion_summary: [
+          '| Item | Details |',
+          '| --- | --- |',
+          '| What changed | Updated `src/index.html` and `src/game.js` startup path. |',
+          '| Verification | Opened the page in Chrome with a browser smoke test; canvas rendered and no console errors were observed. |',
+          '| Review notes | No residual startup risks. |',
+        ].join('\n'),
+      },
+      context,
+    );
+    const planState = await loadAutocodeImplementationPlan(specDir);
+
+    expect(result).toContain("Successfully updated subtask 'ui-start' to status 'completed'");
+    expect(planState?.phases?.[0].subtasks?.[0].status).toBe('completed');
+  });
+
+  it('rejects cross-subtask status updates from a scoped coding session', async () => {
+    await saveAutocodeImplementationPlan(specDir, {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Implementation',
+          subtasks: [
+            { id: 'subtask-1', title: 'First', status: 'in_progress' },
+            { id: 'subtask-2', title: 'Second', status: 'pending' },
+          ],
+        },
+      ],
+    });
+
+    const result = await updateSubtaskStatusTool.config.execute(
+      { subtask_id: 'subtask-2', status: 'completed' },
+      { ...context, currentSubtaskId: 'subtask-1' },
+    );
+    const planState = await loadAutocodeImplementationPlan(specDir);
+
+    expect(result).toContain("scoped to subtask 'subtask-1'");
+    expect(planState?.phases?.[0].subtasks?.map((subtask) => subtask.status)).toEqual([
+      'in_progress',
+      'pending',
+    ]);
+  });
+
   it('updates QA status through the locked plan updater without clobbering the whole file', async () => {
     await saveAutocodeImplementationPlan(specDir, {
       feature: 'Test feature',
@@ -105,6 +211,54 @@ describe('Autocode plan update tools', () => {
     expect(planState?.phases?.[0].subtasks?.[0].status).toBe('completed');
     expect(qaSignoff?.qa_session).toBe(2);
     expect(qaSignoff?.status).toBe('rejected');
+  });
+
+  it('serializes concurrent QA status updates through the plan updater', async () => {
+    await saveAutocodeImplementationPlan(specDir, {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Implementation',
+          subtasks: [
+            { id: 'subtask-1', title: 'First', status: 'completed' },
+          ],
+        },
+      ],
+      qa_signoff: {
+        status: 'pending',
+        qa_session: 1,
+        issues_found: [],
+        tests_passed: {},
+        timestamp: '2024-01-01T00:00:00.000Z',
+        ready_for_qa_revalidation: false,
+      },
+    });
+
+    const results = await Promise.all([
+      updateQaStatusTool.config.execute(
+        {
+          status: 'rejected',
+          issues: '[{"description":"First review issue"}]',
+        },
+        context,
+      ),
+      updateQaStatusTool.config.execute(
+        {
+          status: 'rejected',
+          issues: '[{"description":"Second review issue"}]',
+          tests_passed: '{"unit":"fail"}',
+        },
+        context,
+      ),
+    ]);
+    const planState = await loadAutocodeImplementationPlan(specDir);
+    const qaSignoff = planState?.qa_signoff as { qa_session?: number } | undefined;
+    const sessions = results
+      .map((result) => Number(String(result).match(/session (\d+)/)?.[1]))
+      .sort((left, right) => left - right);
+
+    expect(sessions).toEqual([2, 3]);
+    expect(qaSignoff?.qa_session).toBe(3);
   });
 
   it('returns compact build progress for large plans', async () => {

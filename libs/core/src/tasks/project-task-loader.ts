@@ -683,6 +683,20 @@ function mergeMissingAutocodeProjectTaskFields(
     merged = { ...merged, subtasks: fallback.subtasks };
   }
 
+  const worktreeTask = preferred.location === 'worktree'
+    ? preferred
+    : fallback.location === 'worktree'
+      ? fallback
+      : undefined;
+  if (worktreeTask) {
+    merged = {
+      ...merged,
+      location: 'worktree',
+      projectRoot: worktreeTask.projectRoot,
+      specsPath: worktreeTask.specsPath,
+    };
+  }
+
   return merged;
 }
 

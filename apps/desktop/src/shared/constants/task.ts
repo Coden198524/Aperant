@@ -263,3 +263,10 @@ export const JSON_ERROR_PREFIX = '__JSON_ERROR__:';
  * Used in project-store.ts when loading tasks with malformed implementation_plan.md.
  */
 export const JSON_ERROR_TITLE_SUFFIX = '__JSON_ERROR_SUFFIX__';
+
+/**
+ * Synthetic task id sent over TASK_STATUS_CHANGE to ask the renderer to reload
+ * tasks from disk. Used when task filesystem topology changes without a normal
+ * status transition, for example after creating an isolated task worktree.
+ */
+export const TASK_REFRESH_SENTINEL = '__tasks_refresh__';

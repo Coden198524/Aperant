@@ -327,7 +327,10 @@ export function buildAutocodeTaskExecutionMessages(
 
   const humanInputPath = join(input.specDir, 'HUMAN_INPUT.md');
   const humanInputContent = readText(humanInputPath);
-  if (humanInputContent !== null) {
+  const hasHumanReviewInput = humanInputContent !== null && humanInputContent.trim().length > 0;
+  const hasChangeRequestAudit = hasChangeRequestAuditTrail(input.specDir);
+  const hasSameTaskReviewFeedback = hasHumanReviewInput || hasChangeRequestAudit;
+  if (hasHumanReviewInput) {
     parts.push('## Human Review Input (HUMAN_INPUT.md)');
     parts.push('');
     parts.push('Compact excerpt; read HUMAN_INPUT.md directly only if exact omitted feedback is required.');
@@ -370,15 +373,25 @@ export function buildAutocodeTaskExecutionMessages(
     parts.push('```');
     parts.push('');
     if (input.forcePlanning) {
-      parts.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Address Human Review Input and overwrite the plan with an updated Autocode Markdown checklist. For Standard tasks, update spec.md and tasks.md before regenerating runtime work; use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan. Revise task lists incrementally: preserve completed work that remains valid, reset affected work to pending with needs_revision notes, add new work, and mark obsolete checklist items explicitly. Do not code in this planning pass.`);
-      parts.push('For same-task iterations, follow the Standard Iteration Protocol in HUMAN_INPUT.md or the latest change_requests.jsonl entry: update the required flow documents first, refresh verification metadata, and leave the task ready for the next coding/test/commit pass.');
+      parts.push(hasSameTaskReviewFeedback
+        ? `Treat the previous ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as runtime-state context only. For Standard tasks, address the latest Human Review Input by updating spec.md, requirements.md, and tasks.md; do not edit ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md.`
+        : `Treat the previous ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as runtime-state context only. For Standard tasks, repair spec.md, requirements.md, and tasks.md only as needed to satisfy planning validation; do not edit ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md.`);
+      parts.push('Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan. Keep one canonical checklist item per behavior/file/requirement boundary; do not append a second task for work already represented in tasks.md.');
+      if (hasSameTaskReviewFeedback) {
+        parts.push('If existing work needs revision for the latest human change request, edit that checklist item in place, reset it to pending, and put any needs_revision marker only in a detail note or metadata line. Never prefix task titles or work package titles with needs_revision, obsolete, or other state labels.');
+        parts.push('Add pending tasks only for genuinely new requirements or verification gaps, and remove or compact obsolete executable checklist items after recording the change request.');
+      } else {
+        parts.push('No HUMAN_INPUT.md or non-empty change_requests.jsonl was found. Treat this as an internal planning artifact repair, not a human RequestChanges iteration.');
+        parts.push('Regenerate invalid or broad tasks as ordinary pending checklist items. Do not add revision-state markers, obsolete markers, or state-label prefixes to task titles or work package titles.');
+      }
+      parts.push('For same-task iterations, follow the Standard Iteration Protocol in HUMAN_INPUT.md or the latest change_requests.jsonl entry: update the required Standard artifacts first, refresh verification metadata, and leave the task ready for the next coding/test/commit pass. Do not code in this planning pass.');
     } else {
       parts.push(`Resume pending or in-progress runtime work items. Leave completed work items alone. Mark each finished work item completed in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`);
       parts.push('If the latest change request includes an iteration contract, run the requested validation and keep the result commit-ready using the normal task commit flow when commits are enabled.');
     }
   } else {
     parts.push(input.forcePlanning
-      ? `Create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and runtime work items, addressing Human Review Input if present. For Standard tasks, update spec.md and tasks.md first using the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan. Follow the Standard Iteration Protocol when present. Do not code in this planning pass.`
+      ? `Address Human Review Input if present. For Standard tasks, update spec.md, requirements.md, and tasks.md using the Autocode Standard flow; do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md. Keep one canonical checklist item per behavior/file/requirement boundary, follow the Standard Iteration Protocol when present, and do not code in this planning pass.`
       : `No implementation plan exists yet. Start by updating spec.md and tasks.md using Standard planning, then create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and runtime work items before implementing each item.`);
   }
 
@@ -560,6 +573,11 @@ function appendChangeRequestAuditTrail(parts: string[], specDir: string): void {
   }));
   parts.push('```');
   parts.push('');
+}
+
+function hasChangeRequestAuditTrail(specDir: string): boolean {
+  const jsonl = readText(join(specDir, 'change_requests.jsonl'));
+  return jsonl !== null && jsonl.split(/\r?\n/).some((line) => line.trim().length > 0);
 }
 
 function appendLatestDirectFeedback(parts: string[], specDir: string): void {

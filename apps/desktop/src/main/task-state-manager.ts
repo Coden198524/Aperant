@@ -474,6 +474,7 @@ export class TaskStateManager {
             phase: executionPhase,
             phaseProgress: 0,
             overallProgress: 0,
+            ...(executionPhase === 'planning' ? { allowPhaseRegression: true } : {}),
           },
           projectId
         );

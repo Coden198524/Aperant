@@ -88,6 +88,9 @@ describe('session-efficiency', () => {
     expect(message).toContain('do not reread the whole file');
     expect(message).toContain('do not read it back unless verification fails');
     expect(message).toContain('avoid python/node one-liners with non-ASCII quoting');
+    expect(message).toContain('actual launch/open/use-path smoke check');
+    expect(message).toContain('failed or unavailable startup/use-path check blocks completion');
+    expect(message).toContain('Do not call update_subtask_status with status completed for user-facing or runnable work');
     expect(message).toContain('immediately call update_subtask_status');
     expect(message).toContain('before writing any final summary');
     expect(message).toContain('provide only a compact review matrix');

@@ -458,6 +458,7 @@ function buildAutocodeStandardPlanningEvidenceContract(
     '- In tasks.md, each executable task should cite a source path, project pattern, requirement ID, or standards reference in its guidance or metadata.',
     '- tasks.md should cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of silently dropping them.',
     '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
+    '- For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, include runtime-readiness verification: start/open the artifact, exercise the primary path, and check startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures.',
     '- If evidence is missing after targeted inspection, write an open question or assumption and plan a validation task; never fill the gap with a confident guess.',
   ].join('\n');
 }
@@ -554,11 +555,11 @@ export function buildAutocodeAgentKickoffMessage(
 
   if (mmoRole) {
     if (input.agentType === 'mmo_system_designer') {
-      baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md with concrete checklist phases and tasks. Do not write implementation_plan.md; the runtime derives it as work packages. Cover every requirement/scenario/acceptance criterion, include evidence, verification, dependencies, and done signals, and cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks when affected. Project root: ${promptProjectDir}`;
+      baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md with concrete checklist phases and tasks. Do not write implementation_plan.md; the runtime derives it as work packages. Cover every requirement/scenario/acceptance criterion, include evidence, verification, dependencies, and done signals, and cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks when affected. For runnable/user-facing deliverables, include runtime-readiness verification that starts/opens the artifact, exercises the primary path, and checks startup, console, load, blank-screen, crash/hang, or non-zero-exit failures. Project root: ${promptProjectDir}`;
     } else if (input.agentType === 'mmo_qa_reviewer') {
-      baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.md first, map changed behavior to MMO domains, then run one focused project-appropriate verification when available. Verify server authority, sync/protocol, persistence/data/config, performance, security/anti-cheat, tools/content, liveops/release, and changed contracts when relevant. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line plus Scope Reviewed, MMO Domain Matrix, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
+      baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.md first, map changed behavior to MMO domains, then run one focused project-appropriate verification when available. For runnable/user-facing deliverables, approval requires actual launch/open/use-path smoke verification with no startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures; reject static-only verification. Verify server authority, sync/protocol, persistence/data/config, performance, security/anti-cheat, tools/content, liveops/release, and changed contracts when relevant. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line plus Scope Reviewed, MMO Domain Matrix, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
     } else if (input.agentType === 'mmo_qa_fixer') {
-      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/qa_report.md, fix the reported issues in ${promptProjectDir}, preserve MMO authority/trust/protocol/save/config/tooling/release contracts unless the issue requires a contract change, and update ${promptSpecDir}/implementation_plan.md to show fixes have been applied. Do not edit the QA verdict.`;
+      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/qa_report.md, fix the reported issues in ${promptProjectDir}, preserve MMO authority/trust/protocol/save/config/tooling/release contracts unless the issue requires a contract change, rerun the runtime-readiness smoke path when QA found startup/playability issues, and update ${promptSpecDir}/implementation_plan.md to show fixes have been applied. Do not edit the QA verdict.`;
     } else if (input.subtaskId) {
       baseMessage = [
         mmoRole,
@@ -580,7 +581,7 @@ export function buildAutocodeAgentKickoffMessage(
           `Read the Standard task spec at ${promptSpecDir}/spec.md.`,
           'Use the Autocode Standard workflow.',
           `First update ${promptSpecDir}/spec.md with Standard sections when missing or stale: Proposal/Goal, Requirements, Design Decisions, Acceptance Criteria, Risks/Open Questions.`,
-          `Then create ${promptSpecDir}/tasks.md as a concrete Autocode Markdown checklist with executable tasks, dependencies, requirement/scenario coverage, evidence, done signals, and verification notes.`,
+          `Then create ${promptSpecDir}/tasks.md as a concrete Autocode Markdown checklist with executable tasks, dependencies, requirement/scenario coverage, evidence, done signals, and verification notes. For runnable/user-facing deliverables, include runtime-readiness verification that starts/opens the artifact, exercises the primary path, and checks startup, console, load, blank-screen, crash/hang, or non-zero-exit failures.`,
           `Do not write ${promptSpecDir}/implementation_plan.md; the runtime derives it as work packages from tasks.md.`,
           `Project root: ${promptProjectDir}`,
         ].join(' ');
@@ -592,13 +593,13 @@ export function buildAutocodeAgentKickoffMessage(
           : `Read ${promptSpecDir}/implementation_plan.md and implement the next pending subtask. Project root: ${promptProjectDir}. After completing the subtask, mark its checkbox as [x] and add a _Completion_ note in implementation_plan.md.`;
         break;
       case 'direct_task':
-        baseMessage = `Complete this task directly. Project: ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request; do not read task metadata, requirements, plans, previous specs, broad listings, or candidate-file probes unless ambiguous. For simple docs, write the obvious target directly and verify once. End with a short markdown review table.`;
+        baseMessage = `Complete this task directly. Project: ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request; do not read task metadata, requirements, plans, previous specs, broad listings, or candidate-file probes unless ambiguous. For simple docs, write the obvious target directly and verify once. For runnable/user-facing deliverables, run an actual launch/open/use-path smoke check and fix startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures before completion. End with a short markdown review table.`;
         break;
       case 'qa_reviewer':
-        baseMessage = `Review the implementation in ${promptProjectDir} with the smallest deterministic check. First inspect ${promptSpecDir}/implementation_plan.md checkboxes, completion notes, file hints, and ${promptSpecDir}/tasks.md Evidence metadata when present. If all subtasks are completed, run one project-appropriate verification command when available; otherwise use one manual file-existence/static check. Verify changed behavior against Evidence-bound requirements, completion notes, changed files, and changed contracts before approving. Contracts include APIs, schemas, IPC/protocols, config/env behavior, data formats, persistence, side effects, and error behavior. Read source only when the check fails or the plan/evidence lacks enough completion evidence, and then read only the changed or hinted files with line ranges. Do not read the full spec, README, or the same source file unless needed for a specific failed check. Do not use broad recursive searches; if a search tool is unavailable, use at most one narrow shell fallback. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line plus Scope Reviewed, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
+        baseMessage = `Review the implementation in ${promptProjectDir} with the smallest deterministic check. First inspect ${promptSpecDir}/implementation_plan.md checkboxes, completion notes, file hints, and ${promptSpecDir}/tasks.md Evidence metadata when present. If all subtasks are completed, run one project-appropriate verification command when available; otherwise use one manual file-existence/static check. For runnable/user-facing deliverables, approval requires actual launch/open/use-path smoke verification with no startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures; reject static-only verification. Verify changed behavior against Evidence-bound requirements, completion notes, changed files, and changed contracts before approving. Contracts include APIs, schemas, IPC/protocols, config/env behavior, data formats, persistence, side effects, and error behavior. Read source only when the check fails or the plan/evidence lacks enough completion evidence, and then read only the changed or hinted files with line ranges. Do not read the full spec, README, or the same source file unless needed for a specific failed check. Do not use broad recursive searches; if a search tool is unavailable, use at most one narrow shell fallback. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line plus Scope Reviewed, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
         break;
       case 'qa_fixer':
-        baseMessage = `Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix all issues in ${promptProjectDir}, preserve public APIs/schemas/IPC/config/data/error contracts unless QA requires a contract change, and run the targeted re-verification. After fixing, update ${promptSpecDir}/implementation_plan.md to indicate fixes have been applied. Do not edit the QA verdict.`;
+        baseMessage = `Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix all issues in ${promptProjectDir}, preserve public APIs/schemas/IPC/config/data/error contracts unless QA requires a contract change, and run the targeted re-verification. If QA found a runnable/startup failure, rerun the exact launch/open/use-path smoke check and verify there are no startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures. After fixing, update ${promptSpecDir}/implementation_plan.md to indicate fixes have been applied. Do not edit the QA verdict.`;
         break;
       default:
         baseMessage = `Complete the task described in your system prompt. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
@@ -616,16 +617,21 @@ export function buildAutocodeAgentKickoffMessage(
       kickoffMessage += [
         '',
         '## PLAN REVIEW REGENERATION',
-        `Read ${promptSpecDir}/HUMAN_INPUT.md and address the reviewer feedback.`,
-        `If ${promptSpecDir}/change_requests.jsonl exists, use the latest entry as the active same-task iteration contract and keep the audit trail intact.`,
+        `If ${promptSpecDir}/HUMAN_INPUT.md exists, read it and address the reviewer feedback.`,
+        `If ${promptSpecDir}/change_requests.jsonl exists and is non-empty, use the latest entry as the active same-task iteration contract and keep the audit trail intact.`,
+        'If neither human review file exists, treat this as an internal planning artifact repair, not a RequestChanges iteration.',
         `For Standard tasks, update ${promptSpecDir}/spec.md and ${promptSpecDir}/requirements.md when requirements, acceptance criteria, risks, constraints, or design decisions changed; then rewrite ${promptSpecDir}/tasks.md directly.`,
         `Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan.`,
         `Do not edit ${promptSpecDir}/implementation_plan.md directly; the runtime derives it from the updated Standard artifacts.`,
         'Revise documents incrementally: only edit affected requirement IDs, design notes, risks, acceptance criteria, and task checklist items. Do not rewrite unaffected sections.',
-        'Revise task lists incrementally: preserve completed work that remains valid, reset affected work to pending with needs_revision notes, add new pending subtasks, and mark obsolete upstream checklist items explicitly.',
+        'Revise task lists incrementally: keep one canonical checklist item per behavior/file/requirement boundary. Do not append a second task for work already represented in the checklist.',
+        'Only for a real human change request, if existing work needs revision, edit that item in place, reset it to pending, and put any revision-state marker only in a detail note or metadata line. Never prefix task titles or work package titles with state labels.',
+        'For internal planning repairs, regenerate invalid or broad tasks as ordinary pending checklist items without revision-state markers. Add pending tasks only for genuinely new requirements or verification gaps.',
+        'After recording the change request in spec.md/requirements.md/change_requests.jsonl, remove or compact obsolete executable checklist items instead of leaving duplicate active work.',
         'Every new or revised requirement/design/task must carry Evidence; if evidence is missing, add an assumption/open question or validation task instead of guessing.',
         'Every new or revised task must map to the affected requirement/scenario or acceptance criterion, include a done signal, and stay small enough for one focused coding session.',
         'Add focused verification metadata for every new or revised task so the next coding pass can test and keep the iteration commit-ready.',
+        'If feedback says the product cannot start, open, run, or play, add or revise a runtime-readiness task instead of treating static checks as sufficient.',
         'This is a planning-only retry: do not implement code and do not mark subtasks completed.',
       ].join('\n');
     }
@@ -658,13 +664,13 @@ export function buildAutocodeFallbackPrompt(input: BuildAutocodeFallbackPromptIn
       shared.push('', buildAutocodeMmoSpecialistList(), '', 'Use this roster as a coverage checklist for focused MMO review; work directly with the tools available in this session.');
     }
     if (input.agentType === 'mmo_system_designer') {
-      shared.push('', 'Create tasks.md as an Autocode Markdown checklist with executable tasks. Do not write implementation_plan.md. Use [ ] for pending tasks and concise metadata bullets for files, dependencies, requirements, evidence, done signals, and verification. Cover every affected requirement/scenario or call it blocked/out of scope.');
+      shared.push('', 'Create tasks.md as an Autocode Markdown checklist with executable tasks. Do not write implementation_plan.md. Use [ ] for pending tasks and concise metadata bullets for files, dependencies, requirements, evidence, done signals, and verification. Cover every affected requirement/scenario or call it blocked/out of scope. For runnable/user-facing deliverables, include runtime-readiness verification that starts/opens the artifact and checks startup, console, load, blank-screen, crash/hang, or non-zero-exit failures.');
     }
     if (input.agentType === 'mmo_qa_reviewer') {
-      shared.push('', `Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED", MMO Domain Matrix, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`);
+      shared.push('', `Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED", MMO Domain Matrix, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks. For runnable/user-facing deliverables, reject static-only verification and require actual launch/open/use-path smoke evidence.`);
     }
     if (input.agentType === 'mmo_qa_fixer') {
-      shared.push('', `Read ${promptSpecDir}/qa_report.md and fix the issues. Preserve authority/trust/protocol/save/config/tooling/release contracts and update implementation_plan.md after fixes; do not edit the QA verdict.`);
+      shared.push('', `Read ${promptSpecDir}/qa_report.md and fix the issues. Preserve authority/trust/protocol/save/config/tooling/release contracts, rerun runtime-readiness smoke when QA found startup/playability issues, and update implementation_plan.md after fixes; do not edit the QA verdict.`);
     }
     return shared.join('\n');
   }
@@ -674,17 +680,17 @@ export function buildAutocodeFallbackPrompt(input: BuildAutocodeFallbackPromptIn
       return [
         `Read ${promptSpecDir}/spec.md and use the Autocode Standard workflow.`,
         `Update ${promptSpecDir}/spec.md with Proposal/Goal, Requirements, Design Decisions, Acceptance Criteria, and Risks/Open Questions when needed.`,
-        `Create ${promptSpecDir}/tasks.md as an Autocode Markdown checklist with requirement/scenario coverage, evidence, done signals, dependencies, and verification. Do not write implementation_plan.md; the runtime derives it as work packages.`,
+        `Create ${promptSpecDir}/tasks.md as an Autocode Markdown checklist with requirement/scenario coverage, evidence, done signals, dependencies, and verification. For runnable/user-facing deliverables, include runtime-readiness verification that starts/opens the artifact and checks startup, console, load, blank-screen, crash/hang, or non-zero-exit failures. Do not write implementation_plan.md; the runtime derives it as work packages.`,
         'Status markers: [ ] pending, [/] in progress, [x] completed, [-] blocked, [!] failed. Localize user-facing planning text when an app language is set.',
       ].join(' ');
     case 'coder':
-      return `Implement the current pending subtask from ${promptSpecDir}/implementation_plan.md in ${promptProjectDir}. Mark it [x] and add a _Completion_ note when done.`;
+      return `Implement the current pending subtask from ${promptSpecDir}/implementation_plan.md in ${promptProjectDir}. For runnable/user-facing deliverables, run actual launch/open/use-path smoke verification before completion. Mark it [x] and add a _Completion_ note when done.`;
     case 'direct_task':
-      return `Complete the user's task in one concise coding session for ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request as source. Avoid staged spec/plan/QA/subagents, prior specs, broad listings, candidate-file probes, and repeated validations. For simple docs, write the obvious target directly. End with a markdown table: What changed, Verification, Review notes.`;
+      return `Complete the user's task in one concise coding session for ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request as source. Avoid staged spec/plan/QA/subagents, prior specs, broad listings, candidate-file probes, and repeated validations. For simple docs, write the obvious target directly. For runnable/user-facing deliverables, run actual launch/open/use-path smoke verification and fix startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures before completion. End with a markdown table: What changed, Verification, Review notes.`;
     case 'qa_reviewer':
-      return `Review with minimal verification: inspect ${promptSpecDir}/implementation_plan.md, run one targeted check if available, and read only changed or hinted files when evidence is insufficient or a check fails. Verify acceptance evidence and changed contracts, then write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED", Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
+      return `Review with minimal verification: inspect ${promptSpecDir}/implementation_plan.md, run one targeted check if available, and read only changed or hinted files when evidence is insufficient or a check fails. For runnable/user-facing deliverables, require actual launch/open/use-path smoke evidence and reject static-only verification. Verify acceptance evidence and changed contracts, then write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED", Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
     case 'qa_fixer':
-      return `Read ${promptSpecDir}/qa_report.md, fix reported issues in ${promptProjectDir}, preserve public contracts unless QA requires a change, run re-verification, and update ${promptSpecDir}/implementation_plan.md to show fixes were applied.`;
+      return `Read ${promptSpecDir}/qa_report.md, fix reported issues in ${promptProjectDir}, preserve public contracts unless QA requires a change, run re-verification including runtime-readiness smoke when QA found startup/playability issues, and update ${promptSpecDir}/implementation_plan.md to show fixes were applied.`;
     default:
       return `Complete the task in ${promptSpecDir}/spec.md for ${promptProjectDir}.`;
   }

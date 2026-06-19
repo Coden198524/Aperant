@@ -246,6 +246,29 @@ describe('runAgentSession', () => {
     expect(result.usage.estimated).toBe(true);
   });
 
+  it('does not count final assistant text as prompt when estimating usage', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult(
+        [
+          { type: 'text-delta', id: 'text-1', delta: 'ijklmnop' },
+        ],
+        { text: 'ijklmnop', totalUsage: null },
+      ),
+    );
+
+    const result = await runAgentSession(createMockConfig({
+      systemPrompt: 'abcd',
+      initialMessages: [{ role: 'user', content: 'efgh' }],
+    }));
+
+    expect(result.usage).toMatchObject({
+      promptTokens: 2,
+      completionTokens: 2,
+      totalTokens: 4,
+      estimated: true,
+    });
+  });
+
   it('injects context-window warning once when prompt usage approaches the limit', async () => {
     let warningPrompt: { system?: string } | undefined;
     let repeatedPrompt: { system?: string } | undefined;

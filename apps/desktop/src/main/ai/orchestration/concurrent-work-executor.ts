@@ -65,6 +65,7 @@ export interface ConcurrentWorkExecutorConfig {
   onWorkItemStart?: (item: WorkItemInfo, attempt: number) => number | undefined;
   runWorkItemSession: (item: WorkItemInfo, attempt: number, sessionNumber?: number) => Promise<SessionResult>;
   onWorkItemSessionComplete?: (item: WorkItemInfo, result: SessionResult) => void;
+  onWorkItemQualityFailure?: (item: WorkItemInfo, result: SessionResult, attempt: number, issues: string[]) => void;
   onGroupComplete?: (items: WorkItemInfo[], result: WorkItemResult) => void;
   onLog?: (message: string) => void;
   qualityConfig?: import('./quality-integration').QualityConfig;
@@ -194,6 +195,20 @@ export async function executeConcurrentWorkItems(
     const pendingItems = getPendingWorkItems(plan)
       .filter((item) => !terminalFailedWorkItemIds.has(item.id));
     if (pendingItems.length === 0) {
+      const terminalIncompleteItems = getTerminalIncompleteWorkItems(plan);
+      const unreportedTerminalIncompleteItems = terminalIncompleteItems
+        .filter((item) => !terminalFailedWorkItemIds.has(item.id));
+      if (unreportedTerminalIncompleteItems.length > 0) {
+        const terminalSummary = summarizeTerminalIncompleteWorkItems(terminalIncompleteItems);
+        log(`[ConcurrentWorkExecutor] No runnable work items remain; terminal incomplete work items: ${terminalSummary}`);
+        return {
+          success: false,
+          totalCompleted,
+          totalFailed: totalFailed + unreportedTerminalIncompleteItems.length,
+          totalBlocked: totalBlocked + unreportedTerminalIncompleteItems.filter((item) => item.status === 'blocked').length,
+          error: `No runnable work items remain; terminal incomplete work items: ${terminalSummary}. Reset failed or blocked work items before retrying.`,
+        };
+      }
       log('[ConcurrentWorkExecutor] No more pending work items');
       break;
     }
@@ -460,6 +475,9 @@ async function executeWorkItemWithRetries(
     const effectiveSessionResult = qualityResult.passed
       ? sessionResult
       : createQualityFailureSessionResult(qualityResult.issues, sessionResult);
+    if (!qualityResult.passed) {
+      config.onWorkItemQualityFailure?.(item, effectiveSessionResult, attemptNumber, qualityResult.issues);
+    }
     lastResult = effectiveSessionResult;
 
     if (effectiveSessionResult.outcome === 'cancelled') {
@@ -500,6 +518,14 @@ async function executeWorkItemWithRetries(
 
     if (attempt < config.maxRetries) {
       log(`[ConcurrentWorkExecutor] Retrying ${item.id} after outcome ${effectiveSessionResult.outcome}`);
+      try {
+        await planWriter(() => markWorkItemsInProgress(config, [item.id], runtime));
+        await runtime.sourceSync.flush();
+      } catch (error) {
+        log(
+          `[ConcurrentWorkExecutor] Failed to mark ${item.id} in_progress before retry: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 
@@ -1129,6 +1155,7 @@ async function markWorkItemsInProgress(
         if (activeIds.has(subtask.id) && subtask.status !== 'in_progress') {
           subtask.status = 'in_progress';
           subtask.started_at = subtask.started_at || now;
+          subtask.completed_at = undefined;
           subtask.updated_at = now;
           updated = true;
         }
@@ -1294,6 +1321,26 @@ function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
   }
 
   return items;
+}
+
+function getTerminalIncompleteWorkItems(plan: ImplementationPlan): Array<{ id: string; status: string }> {
+  const items: Array<{ id: string; status: string }> = [];
+  for (const phase of plan.phases) {
+    for (const subtask of phase.subtasks) {
+      if (subtask.status === 'failed' || subtask.status === 'blocked') {
+        items.push({ id: subtask.id, status: subtask.status });
+      }
+    }
+  }
+  return items;
+}
+
+function summarizeTerminalIncompleteWorkItems(items: Array<{ id: string; status: string }>): string {
+  const visible = items.slice(0, 12).map((item) => `${item.id} (${item.status})`);
+  const remaining = items.length - visible.length;
+  return remaining > 0
+    ? `${visible.join(', ')}, and ${remaining} more`
+    : visible.join(', ');
 }
 
 function hasInProgressWorkItems(plan: ImplementationPlan): boolean {

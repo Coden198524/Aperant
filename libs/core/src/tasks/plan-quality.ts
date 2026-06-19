@@ -46,7 +46,7 @@ export const AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS: AutocodePlanQualityLimits = 
   context: { maxLines: 220, maxChars: 18_000 },
   spec: { maxLines: 150, maxChars: 16_000 },
   requirements: { maxLines: 160, maxChars: 14_000 },
-  tasks: { maxLines: 450, maxChars: 32_000 },
+  tasks: { maxLines: 900, maxChars: 64_000 },
 };
 
 const EMPTY_EVIDENCE_TOKENS = new Set([
@@ -69,14 +69,162 @@ const GENERIC_TASK_TITLE_PATTERN =
 const GENERIC_TASK_DESCRIPTION_PATTERN =
   /^(?:update|modify|implement|add|create|fix|refactor|test)\s+(?:the\s+)?(?:code|logic|feature|functionality|implementation|files?|tests?|changes?)\.?$/i;
 
+const TASK_TITLE_STATE_LABEL_PATTERN =
+  /^\s*(?:[\[(]\s*(?:needs[_\s-]*revision|revision[_\s-]*required|obsolete|superseded|deprecated)\s*[\])]\s*(?:[-:]\s*)?|(?:needs[_\s-]*revision|revision[_\s-]*required|obsolete|superseded|deprecated)\s*[-:]\s*)/iu;
+
 const READ_ONLY_VALIDATION_TASK_PATTERN =
   /\b(?:validate|verify|verification|manual qa|qa|smoke|test|typecheck|lint|build)\b/i;
+
+const LOCALIZED_TASK_DONE_SIGNAL_PATTERN = /完成条件|完成标准|验收标准|验收条件|成功标准/u;
 
 const TASK_DONE_SIGNAL_PATTERN =
   /\b(?:done when|complete when|finished when|ready when|completion criteria|acceptance criteria|success criteria|success criterion)\b|完成条件|完成标准|验收标准|验收条件|成功标准/iu;
 
 const PROJECT_SPECIFIC_TASK_ANCHOR_PATTERN =
   /[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+|\b(?:package|tsconfig|vite|vitest|webpack|rollup|biome|eslint|cargo|go|pyproject)\.[A-Za-z0-9.]+|\b[A-Z][A-Za-z0-9]*(?:Service|Manager|Controller|Adapter|Provider|Store|Repository|Bridge|Machine|Orchestrator|Runner|Renderer|Handler|Client|Config|Panel|Dialog|View|Model|Schema)\b|\buse[A-Z][A-Za-z0-9]+\b|\b[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\b/;
+
+const TASK_GRANULARITY_ACTION_TERMS = [
+  'implement',
+  'add',
+  'create',
+  'update',
+  'modify',
+  'wire',
+  'integrate',
+  'render',
+  'persist',
+  'migrate',
+  'remove',
+  'refactor',
+  'handle',
+  'support',
+  'expose',
+  'bind',
+  'configure',
+  'generate',
+  'validate',
+  'verify',
+  'test',
+  'build',
+  '实现',
+  '创建',
+  '新增',
+  '添加',
+  '更新',
+  '修改',
+  '接入',
+  '绑定',
+  '绘制',
+  '渲染',
+  '构建',
+  '验证',
+  '测试',
+  '支持',
+  '处理',
+  '保存',
+  '读取',
+  '生成',
+  '配置',
+  '清除',
+  '消除',
+  '旋转',
+  '移动',
+  '软降',
+  '硬降',
+  '锁定',
+  '下落',
+  '持久化',
+  '重开',
+  '暂停',
+  '判定',
+];
+
+const TASK_GRANULARITY_BOUNDARY_TERMS = [
+  'ui',
+  'view',
+  'state',
+  'store',
+  'ipc',
+  'api',
+  'service',
+  'domain',
+  'persistence',
+  'worker',
+  'background',
+  'build',
+  'tooling',
+  'test',
+  'docs',
+  'renderer',
+  'input',
+  'storage',
+  'scoring',
+  'layout',
+  'rendering',
+  'gameplay',
+  '状态',
+  '存储',
+  '渲染',
+  '输入',
+  '布局',
+  '测试',
+  '构建',
+  '持久化',
+  '计分',
+  '等级',
+  '控制',
+  '界面',
+  '规则',
+];
+
+const COMPLEX_PLAN_SIGNAL_TERMS = [
+  'cross-module',
+  'public contract',
+  'contract',
+  'persistence',
+  'storage',
+  'localStorage',
+  'database',
+  'migration',
+  'refactor',
+  'concurrency',
+  'security',
+  'worker',
+  'background',
+  'ipc',
+  'api',
+  'runtime',
+  'browser',
+  'canvas',
+  'render',
+  'rendering',
+  'input',
+  'keyboard',
+  'touch',
+  'responsive',
+  'game',
+  'gameplay',
+  'state machine',
+  'launch',
+  'startup',
+  'HTTP',
+  'file:',
+];
+
+const ARCHITECTURE_REFERENCE_HEADING_PATTERN =
+  /^#{2,4}\s+(Architecture|Design\s+Patterns?|Architecture\s+(?:And|&)\s+Design\s+Pattern(?:s)?(?:\s+References?)?|Architecture\s+References?|Design\s+Pattern\s+References?|架构|设计模式)\b/im;
+
+const ARCHITECTURE_REFERENCE_CONTENT_PATTERN =
+  /\b(?:source|project|docs?|memory|Project Memory|Memory Context|workflow recipe|pattern|decision|module insight|general guidance|engineering experience|official|standard|src\/|tests\/)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+|通用工程经验|项目|记忆|源码|参考|模式|架构/iu;
+
+const ARCHITECTURE_BOUNDARY_PATTERN =
+  /\b(?:boundary|layer|module|component|service|adapter|core|domain|state|ui|view|renderer|rendering|input|browser|canvas|persistence|storage|api|ipc|worker|test|contract|model|store|repository|rules?|loop|hud)\b|架构|边界|分层|模块|组件|核心|领域|状态|渲染|输入|浏览器|持久|存储|接口|契约|规则|主循环|界面|测试/u;
+
+const ARCHITECTURE_PATTERN_STRATEGY_PATTERN =
+  /\b(?:pattern|strategy|architecture|separation|separate|decoupl|adapter|facade|repository|state machine|finite state|fsm|reducer|pure function|dependency injection|inject|ports?|event|command|pipeline|orchestrator|service|contract|interface|single responsibility|deterministic|idempotent)\b|模式|策略|分离|解耦|适配器|状态机|纯函数|注入|事件|命令|管道|确定性|幂等|职责/u;
+
+const TASK_ARCHITECTURE_GUIDANCE_MARKER_PATTERN =
+  /\b(?:architecture|architecture\/pattern|design pattern|pattern guidance|boundary\/pattern)\s*:|架构\s*[:：]|设计模式\s*[:：]/iu;
 
 const PLAN_ARTIFACT_FILE_NAMES = new Set([
   AUTOCODE_TASK_ARTIFACTS.specFile.toLowerCase(),
@@ -118,6 +266,10 @@ export function validateAutocodeStandardPlanArtifacts(
     errors.push(...validateMarkdownSize(AUTOCODE_TASK_ARTIFACTS.tasks, input.tasksMarkdown, limits.tasks));
     if (input.requireTaskEvidence) {
       errors.push(...validateTasksEvidence(input.tasksMarkdown));
+      errors.push(...validateComplexPlanArchitectureReferences({
+        specMarkdown: input.specMarkdown ?? undefined,
+        tasksMarkdown: input.tasksMarkdown,
+      }));
     }
   } else if (input.requireTaskEvidence) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} is missing.`);
@@ -149,13 +301,205 @@ export function buildAutocodePlanQualityRetryPrompt(errors: string[]): string {
     'Repair only the affected artifacts with the Write/Edit tools.',
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.specFile} as a compact decision index, not a full analysis dump.`,
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.requirements} focused on requirements, acceptance criteria, constraints, evidence sources, standards, and assumptions.`,
-    `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} concise and make every executable subtask traceable to requirements, evidence, done criteria, and verification.`,
+    `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} detailed but compact: split broad work into OpenSpec-grade leaf tasks while keeping each task guidance short.`,
+    '- A leaf task should cover one independently reviewable behavior or contract and one focused verification path.',
+    '- Split tasks that cover more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files.',
+    '- If split tasks touch the same file, use _Depends on: ..._ to serialize the writes instead of merging independent behavior.',
     '- Replace generic task text with concrete behavior, affected project boundary, likely files/APIs, and the existing pattern to follow.',
+    '- For complex or high-risk plans only, include a detailed but compact Architecture And Design Pattern References section in spec.md or tasks.md: 4-8 bullets covering affected boundaries/layers, recommended pattern or strategy, source/docs/Project Memory reference or labeled general guidance, and which task IDs/boundaries should apply it.',
+    '- For complex or high-risk plans, each non-read-only executable task must include one short _Architecture: boundary; pattern/strategy; source/reference_ line so implementation agents can apply the guidance directly.',
+    '- Never prefix executable task titles with revision, obsolete, or other state labels. Do not introduce revision/history markers unless real human Request Changes context already requires them.',
     '- Every executable task must include _Requirements: ..._, _Evidence: ..._, a done signal such as _Done when: ..._, and _Verification: ..._.',
     '- Preserve requirement IDs and unaffected design/task content during Request Changes iterations.',
     '- Use Evidence references instead of copying source code or long research notes.',
     '- If evidence is missing, add an assumption/open question or validation task instead of inventing implementation work.',
   ].join('\n');
+}
+
+export function isAutocodePlanTaskGranularityError(error: string): boolean {
+  return /\btasks\.md task \S+ is too broad;/.test(error);
+}
+
+export function hasOnlyAutocodePlanTaskGranularityErrors(errors: string[]): boolean {
+  return errors.length > 0 && errors.every(isAutocodePlanTaskGranularityError);
+}
+
+function validateComplexPlanArchitectureReferences(input: {
+  specMarkdown?: string;
+  tasksMarkdown: string;
+}): string[] {
+  if (!isComplexStandardPlan(input.tasksMarkdown, input.specMarkdown)) {
+    return [];
+  }
+  const sections = [
+    ...getArchitectureReferenceSections(input.tasksMarkdown),
+    ...getArchitectureReferenceSections(input.specMarkdown ?? ''),
+  ];
+  if (sections.length === 0) {
+    return [
+      `${AUTOCODE_TASK_ARTIFACTS.tasks} describes a complex or high-risk plan but ${AUTOCODE_TASK_ARTIFACTS.specFile}/${AUTOCODE_TASK_ARTIFACTS.tasks} has no visible Architecture And Design Pattern References section; add a compact 4-8 bullet section for complex tasks only, citing project source/docs/Project Memory or labeled general engineering guidance.`,
+    ];
+  }
+  return [
+    ...validateArchitectureReferenceSectionDetail(sections.join('\n\n')),
+    ...validateComplexTaskArchitectureGuidance(input.tasksMarkdown),
+  ];
+}
+
+function isComplexStandardPlan(tasksMarkdown: string, specMarkdown?: string): boolean {
+  let plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>;
+  try {
+    plan = parseAutocodeImplementationPlanMarkdown(tasksMarkdown);
+  } catch {
+    return false;
+  }
+
+  const subtasks = getPlanSubtasks(plan);
+  if (subtasks.length >= 8) {
+    return true;
+  }
+
+  const writeIntentFiles = uniqueStringArray(subtasks.flatMap((subtask) => [
+    ...stringArrayField(subtask.files),
+    ...stringArrayField(subtask.files_to_create),
+    ...stringArrayField(subtask.files_to_modify),
+  ])).filter((item) => !EMPTY_EVIDENCE_TOKENS.has(item.toLowerCase()));
+  if (writeIntentFiles.length >= 6 && getPlanWriteBoundaryCount(writeIntentFiles) >= 3) {
+    return true;
+  }
+
+  const planText = `${singleLine(plan.feature)}\n${tasksMarkdown}\n${specMarkdown ?? ''}`;
+  const signalCount = countTermSignals(planText, COMPLEX_PLAN_SIGNAL_TERMS);
+  return signalCount >= 4 && (subtasks.length >= 3 || writeIntentFiles.length >= 4);
+}
+
+function getPlanWriteBoundaryCount(files: string[]): number {
+  const boundaries = new Set<string>();
+  for (const file of files) {
+    const normalized = file.replace(/\\/g, '/').toLowerCase();
+    if (normalized.includes('/test') || normalized.startsWith('test')) {
+      boundaries.add('tests');
+    } else if (normalized.endsWith('.html')) {
+      boundaries.add('html');
+    } else if (normalized.endsWith('.css') || normalized.endsWith('.scss')) {
+      boundaries.add('styles');
+    } else if (/\b(?:storage|persistence|db)\b/.test(normalized)) {
+      boundaries.add('persistence');
+    } else if (/\b(?:game|canvas|render|renderer|ui|app)\b/.test(normalized)) {
+      boundaries.add('runtime-ui');
+    } else if (/\b(?:core|domain|model|state)\b/.test(normalized)) {
+      boundaries.add('domain');
+    } else {
+      boundaries.add(normalized.split('/').slice(0, 2).join('/') || normalized);
+    }
+  }
+  return boundaries.size;
+}
+
+function getArchitectureReferenceSections(markdown: string): string[] {
+  return findArchitectureReferenceHeadings(markdown)
+    .map((heading) => getMarkdownSection(markdown, heading))
+    .filter((section) => section.length > 0 && ARCHITECTURE_REFERENCE_CONTENT_PATTERN.test(section));
+}
+
+function validateArchitectureReferenceSectionDetail(section: string): string[] {
+  const errors: string[] = [];
+  const bullets = section
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^[-*]\s+\S/.test(line));
+  const detailedBullets = bullets.filter(hasDetailedArchitectureReferenceBullet);
+  const taskApplicationSignals = countTaskApplicationSignals(section);
+
+  if (bullets.length < 4) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} Architecture And Design Pattern References is too thin; include 4-8 bullets covering boundaries/layers, pattern or strategy, source/reference, and task application.`);
+  }
+  if (detailedBullets.length < 3) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} Architecture And Design Pattern References needs at least three actionable bullets that each name a boundary/layer, a pattern or strategy, and a project/source/general reference.`);
+  }
+  if (taskApplicationSignals < 2) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} Architecture And Design Pattern References must say where the guidance applies, such as affected task IDs, phases, work packages, or implementation boundaries.`);
+  }
+
+  return errors;
+}
+
+function hasDetailedArchitectureReferenceBullet(line: string): boolean {
+  return line.length >= 48 &&
+    ARCHITECTURE_BOUNDARY_PATTERN.test(line) &&
+    ARCHITECTURE_PATTERN_STRATEGY_PATTERN.test(line) &&
+    ARCHITECTURE_REFERENCE_CONTENT_PATTERN.test(line);
+}
+
+function countTaskApplicationSignals(text: string): number {
+  const signals = new Set<string>();
+  for (const match of text.matchAll(/\b\d+\.\d+\b/g)) {
+    signals.add(match[0]);
+  }
+  if (/\b(?:task|subtask|work package|phase|apply|applies|follow in|use in|implementation boundary|executable)\b/i.test(text)) {
+    signals.add('english-application');
+  }
+  if (/任务|子任务|工作包|阶段|应用|适用|执行|落地|边界/u.test(text)) {
+    signals.add('localized-application');
+  }
+  return signals.size;
+}
+
+function validateComplexTaskArchitectureGuidance(tasksMarkdown: string): string[] {
+  let plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>;
+  try {
+    plan = parseAutocodeImplementationPlanMarkdown(tasksMarkdown);
+  } catch {
+    return [];
+  }
+
+  const tasksNeedingGuidance = getPlanSubtasks(plan).filter((subtask) => {
+    const record = subtask as Record<string, unknown>;
+    return !isReadOnlyValidationTask(record, singleLine(record.title), singleLine(record.description));
+  });
+  if (tasksNeedingGuidance.length === 0) {
+    return [];
+  }
+
+  const missing = tasksNeedingGuidance
+    .filter((subtask) => !hasTaskArchitectureGuidance(subtask as Record<string, unknown>))
+    .map((subtask) => singleLine((subtask as Record<string, unknown>).id) || 'unknown');
+
+  if (missing.length === 0) {
+    return [];
+  }
+
+  const preview = missing.slice(0, 8).join(', ');
+  return [
+    `${AUTOCODE_TASK_ARTIFACTS.tasks} complex task(s) missing _Architecture: ..._ guidance (${preview}${missing.length > 8 ? ', ...' : ''}); each non-read-only executable task must name boundary, pattern/strategy, and source/reference or labeled general guidance.`,
+  ];
+}
+
+function hasTaskArchitectureGuidance(subtask: Record<string, unknown>): boolean {
+  const text = [
+    stringifyTaskValue(subtask.title),
+    stringifyTaskValue(subtask.description),
+    stringifyTaskValue(subtask.evidence),
+    ...stringArrayField(subtask.pattern_files),
+  ].join('\n');
+  if (!TASK_ARCHITECTURE_GUIDANCE_MARKER_PATTERN.test(text)) {
+    return false;
+  }
+  return ARCHITECTURE_BOUNDARY_PATTERN.test(text) &&
+    ARCHITECTURE_PATTERN_STRATEGY_PATTERN.test(text) &&
+    ARCHITECTURE_REFERENCE_CONTENT_PATTERN.test(text);
+}
+
+function findArchitectureReferenceHeadings(markdown: string): string[] {
+  const headings: string[] = [];
+  for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    const match = ARCHITECTURE_REFERENCE_HEADING_PATTERN.exec(line);
+    if (match) {
+      headings.push(match[1].trim());
+    }
+  }
+  return headings;
 }
 
 export function normalizeAutocodeContextEvidenceSources(value: unknown): AutocodeContextEvidenceSource[] {
@@ -281,6 +625,10 @@ function validateTasksEvidence(tasksMarkdown: string): string[] {
   for (const subtask of subtasks) {
     const record = subtask as Record<string, unknown>;
     const id = singleLine(record.id) || 'unknown';
+    const title = singleLine(record.title);
+    if (hasTaskTitleStateLabel(title)) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} has a state label in its title; move needs_revision/obsolete markers to a detail note or metadata line and keep the executable title behavior-focused.`);
+    }
     if (!hasMeaningfulTaskRequirements(record)) {
       errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} missing _Requirements: ..._ metadata; cite requirement, scenario, acceptance criterion, or success criterion IDs.`);
     }
@@ -294,6 +642,7 @@ function validateTasksEvidence(tasksMarkdown: string): string[] {
     }
   }
   errors.push(...validateTaskProjectSpecificity(plan));
+  errors.push(...validateTaskGranularity(plan));
   return errors;
 }
 
@@ -328,6 +677,90 @@ function validateTaskProjectSpecificity(plan: ReturnType<typeof parseAutocodeImp
   }
 
   return errors;
+}
+
+function validateTaskGranularity(plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>): string[] {
+  const errors: string[] = [];
+
+  for (const subtask of getPlanSubtasks(plan)) {
+    const record = subtask as Record<string, unknown>;
+    const id = singleLine(record.id) || 'unknown';
+    const title = singleLine(record.title);
+    const description = singleLine(record.description);
+
+    if (isReadOnlyValidationTask(record, title, description)) {
+      continue;
+    }
+
+    const metrics = analyzeTaskGranularity(record, title, description);
+    if (!isTaskTooBroad(metrics)) {
+      continue;
+    }
+
+    errors.push(
+      `${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} is too broad; split it into OpenSpec-grade leaf tasks by behavior, requirement/acceptance scenario, file or contract boundary, and verification path (${describeTaskGranularityMetrics(metrics)}).`,
+    );
+  }
+
+  return errors;
+}
+
+interface TaskGranularityMetrics {
+  behaviorSignals: number;
+  boundarySignals: number;
+  requirementReferences: number;
+  writeIntentFiles: number;
+  listSeparators: number;
+  descriptionChars: number;
+}
+
+function analyzeTaskGranularity(
+  subtask: Record<string, unknown>,
+  title: string,
+  description: string,
+): TaskGranularityMetrics {
+  const taskText = `${title}\n${description}`;
+  return {
+    behaviorSignals: countTermSignals(taskText, TASK_GRANULARITY_ACTION_TERMS),
+    boundarySignals: countTermSignals(taskText, TASK_GRANULARITY_BOUNDARY_TERMS),
+    requirementReferences: estimateTaskRequirementReferenceCount(subtask),
+    writeIntentFiles: countTaskWriteIntentFiles(subtask),
+    listSeparators: countTaskListSeparators(taskText),
+    descriptionChars: description.length,
+  };
+}
+
+function isTaskTooBroad(metrics: TaskGranularityMetrics): boolean {
+  if (metrics.behaviorSignals >= 8) {
+    return true;
+  }
+  if (metrics.requirementReferences >= 4 && metrics.behaviorSignals >= 4) {
+    return true;
+  }
+  if (metrics.writeIntentFiles >= 5 && metrics.requirementReferences >= 3) {
+    return true;
+  }
+  if (metrics.descriptionChars >= 360 && metrics.listSeparators >= 6) {
+    return true;
+  }
+
+  let score = 0;
+  if (metrics.behaviorSignals >= 6) score += 2;
+  else if (metrics.behaviorSignals >= 4) score += 1;
+  if (metrics.requirementReferences >= 4) score += 2;
+  if (metrics.writeIntentFiles >= 5) score += 2;
+  else if (metrics.writeIntentFiles >= 4) score += 1;
+  if (metrics.listSeparators >= 8) score += 1;
+  if (metrics.boundarySignals >= 4) score += 1;
+  return score >= 3;
+}
+
+function describeTaskGranularityMetrics(metrics: TaskGranularityMetrics): string {
+  return [
+    `${metrics.behaviorSignals} behavior signal(s)`,
+    `${metrics.requirementReferences} requirement/acceptance reference(s)`,
+    `${metrics.writeIntentFiles} write-intent file(s)`,
+  ].join(', ');
 }
 
 function getPlanSubtasks(plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>): Record<string, unknown>[] {
@@ -377,7 +810,7 @@ function hasTaskDoneSignal(subtask: Record<string, unknown>): boolean {
     stringifyTaskValue(subtask.completion_summary),
     stringifyTaskValue(subtask.notes),
   ].join(' ');
-  return TASK_DONE_SIGNAL_PATTERN.test(taskText);
+  return TASK_DONE_SIGNAL_PATTERN.test(taskText) || LOCALIZED_TASK_DONE_SIGNAL_PATTERN.test(taskText);
 }
 
 function isReadOnlyValidationTask(
@@ -422,6 +855,10 @@ function isGenericTaskTitle(title: string): boolean {
   return GENERIC_TASK_TITLE_PATTERN.test(normalizeTaskQualityText(title));
 }
 
+function hasTaskTitleStateLabel(title: string): boolean {
+  return TASK_TITLE_STATE_LABEL_PATTERN.test(title);
+}
+
 function isGenericTaskDescription(title: string, description: string): boolean {
   const normalizedDescription = normalizeTaskQualityText(description);
   if (!normalizedDescription || normalizedDescription === normalizeTaskQualityText(title)) {
@@ -449,6 +886,76 @@ function isProjectSpecificFileAnchor(value: string): boolean {
   }
   const fileName = normalized.split('/').pop() ?? normalized;
   return !PLAN_ARTIFACT_FILE_NAMES.has(fileName);
+}
+
+function countTermSignals(text: string, terms: string[]): number {
+  return terms.filter((term) => containsTaskTerm(text, term)).length;
+}
+
+function containsTaskTerm(text: string, term: string): boolean {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (/^[A-Za-z0-9_-]+$/u.test(term)) {
+    return new RegExp(`\\b${escaped}\\b`, 'iu').test(text);
+  }
+  return text.includes(term);
+}
+
+function estimateTaskRequirementReferenceCount(subtask: Record<string, unknown>): number {
+  const requirements = stringArrayField(subtask.requirements);
+  if (requirements.length === 0) {
+    return 0;
+  }
+
+  const text = requirements.join(', ');
+  const rangePattern = /\b(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\b/g;
+  let count = 0;
+  for (const match of text.matchAll(rangePattern)) {
+    count += estimateNumericRangeSize(match[1], match[2]);
+  }
+  const textWithoutRanges = text.replace(rangePattern, ' ');
+  const individualReferences = textWithoutRanges.match(/\b\d+(?:\.\d+)?\b/g) ?? [];
+  count += individualReferences.length;
+  if (/\b(?:all|every)\b|全部|所有/u.test(text)) {
+    count += 4;
+  }
+  return Math.max(count, requirements.length);
+}
+
+function estimateNumericRangeSize(startValue: string, endValue: string): number {
+  const start = Number(startValue.split('.')[0]);
+  const end = Number(endValue.split('.')[0]);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return 2;
+  }
+  return Math.min(12, end - start + 1);
+}
+
+function countTaskWriteIntentFiles(subtask: Record<string, unknown>): number {
+  return uniqueStringArray([
+    ...stringArrayField(subtask.files),
+    ...stringArrayField(subtask.files_to_create),
+    ...stringArrayField(subtask.files_to_modify),
+  ].filter((item) => !EMPTY_EVIDENCE_TOKENS.has(item.toLowerCase()))).length;
+}
+
+function countTaskListSeparators(text: string): number {
+  const separators = text.match(/[、，,;；]/gu) ?? [];
+  const conjunctions = text.match(/\b(?:and|plus)\b|以及|并且|同时/uig) ?? [];
+  return separators.length + conjunctions.length;
+}
+
+function uniqueStringArray(values: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const normalized = value.toLowerCase();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    unique.push(value);
+  }
+  return unique;
 }
 
 function stripPlanArtifactMentions(value: string): string {

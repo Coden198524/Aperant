@@ -255,10 +255,12 @@ export function TaskFiles({ task }: TaskFilesProps) {
 
   // Reset state when task.specsPath changes
   useEffect(() => {
+    setFiles([]);
     setSelectedFile(null);
     setFileContent(null);
     setContentError(null);
-  }, []);
+    setFilesError(null);
+  }, [task.id, task.specsPath]);
 
   // Load files on mount and when specsPath changes
   useEffect(() => {

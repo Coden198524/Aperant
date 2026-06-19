@@ -38,6 +38,8 @@ import {
   isAutocodeWriteToolPlanOutputFailure,
   summarizeAutocodeCodingAttemptFailure,
   stringifyAutocodeContextMarkdown,
+  parseAutocodeImplementationPlanMarkdown,
+  stringifyAutocodeImplementationPlanMarkdown,
   validateAutocodeStandardPlanArtifacts,
   validateAutocodePlanningSchedulingMetadata,
   getAutocodeQaReportStatus,
@@ -71,6 +73,17 @@ const AUTO_CONTINUE_DELAY_MS = 500;
 const PRE_QA_RETURN_ISSUE_LIMIT = 6;
 const PRE_QA_RETURN_ISSUE_MAX_CHARS = 240;
 const PRE_QA_RETURN_REASON_MAX_CHARS = 1_800;
+const TRACEABLE_PLANNING_EVIDENCE_PATTERN =
+  /\b(spec\.md|requirements\.md|context\.md|research\.md|agents\.md|readme|official|standard|docs?|source|project)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/i;
+
+function hasOnlyAutocodePlanTaskGranularityErrors(errors: readonly string[]): boolean {
+  return errors.length > 0 && errors.every((error) => /\btasks\.md task \S+ is too broad;/.test(error));
+}
+
+function hasTraceablePlanningEvidence(value: unknown): boolean {
+  const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  return text.length >= 6 && TRACEABLE_PLANNING_EVIDENCE_PATTERN.test(text);
+}
 
 function hasExecutableSubtasks(plan: ImplementationPlan | null): boolean {
   return plan?.phases?.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0) ?? false;
@@ -87,6 +100,10 @@ function validatePlanningSchedulingMetadata(
 }
 
 function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
+  if (subtask.status === 'failed' || subtask.status === 'blocked') {
+    return false;
+  }
+
   if (subtask.status === 'completed') {
     return true;
   }
@@ -626,6 +643,7 @@ export class BuildOrchestrator extends EventEmitter {
         language: this.config.language,
         sourcePath: AUTOCODE_TASK_ARTIFACTS.tasks,
         requireTaskEvidence: true,
+        includeCompletedTasks: false,
       });
       await saveImplementationPlanToFiles(this.config.specDir, plan as never);
       this.emitTyped('log', translateLogMessage('Generated runtime work packages from tasks.md', this.config.language));
@@ -704,6 +722,249 @@ export class BuildOrchestrator extends EventEmitter {
     }
   }
 
+  private async validateStandardPlanArtifactQualityWithRepair(): Promise<string[]> {
+    let errors = await this.validateStandardPlanArtifactQuality();
+    if (errors.length === 0) {
+      return errors;
+    }
+
+    const repaired = await this.repairStandardPlanEvidenceArtifacts(errors);
+    if (!repaired) {
+      return errors;
+    }
+
+    errors = await this.validateStandardPlanArtifactQuality();
+    this.emitTyped(
+      'log',
+      errors.length > 0
+        ? `Repaired Standard planning evidence metadata; remaining quality issues: ${errors.join(', ')}`
+        : 'Repaired Standard planning evidence metadata',
+    );
+    return errors;
+  }
+
+  private async repairStandardPlanEvidenceArtifacts(errors: readonly string[]): Promise<boolean> {
+    let repaired = false;
+
+    const shouldRepairSpec = errors.some((error) =>
+      error === `${AUTOCODE_TASK_ARTIFACTS.specFile} missing "## Evidence" section.` ||
+      error === `${AUTOCODE_TASK_ARTIFACTS.specFile} Requirements section must cite Evidence for requirements or acceptance criteria.` ||
+      error === `${AUTOCODE_TASK_ARTIFACTS.specFile} Design Notes must cite Evidence or move unverified claims to Assumptions/Open Questions.`
+    );
+    if (shouldRepairSpec) {
+      repaired = await this.ensureMarkdownEvidenceSection(
+        AUTOCODE_TASK_ARTIFACTS.specFile,
+        'Evidence',
+        [
+          '- User task description, requirements.md, and tasks.md define the Standard planning scope.',
+          '- Generated Standard artifacts provide the requirement and verification trace for this task.',
+        ],
+      ) || repaired;
+    }
+
+    const shouldRepairRequirements = errors.some((error) =>
+      error === `${AUTOCODE_TASK_ARTIFACTS.requirements} missing non-empty "Evidence Sources" section.`
+    );
+    if (shouldRepairRequirements) {
+      repaired = await this.ensureMarkdownEvidenceSection(
+        AUTOCODE_TASK_ARTIFACTS.requirements,
+        'Evidence Sources',
+        [
+          '- User task description.',
+          '- spec.md planning requirements and acceptance criteria.',
+        ],
+      ) || repaired;
+    }
+
+    const shouldRepairTasks = errors.some((error) =>
+      /\btasks\.md task \S+ missing _Evidence: \.\.\._ metadata\./.test(error) ||
+      /\btasks\.md task \S+ has vague _Evidence_;/.test(error) ||
+      /\bAutocode task \S+ missing traceable _Evidence: \.\.\._ metadata\b/.test(error)
+    );
+    if (shouldRepairTasks) {
+      repaired = await this.ensureTasksTraceableEvidenceMetadata() || repaired;
+    }
+
+    return repaired;
+  }
+
+  private async ensureMarkdownEvidenceSection(
+    fileName: string,
+    heading: string,
+    evidenceLines: string[],
+  ): Promise<boolean> {
+    const filePath = join(this.config.specDir, fileName);
+    let markdown: string;
+    try {
+      markdown = await readFile(filePath, 'utf-8');
+    } catch {
+      return false;
+    }
+
+    const normalized = markdown.replace(/\r\n/g, '\n');
+    const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const headingPattern = new RegExp(`(^\\s*##\\s+${escapedHeading}\\b[^\\n]*\\n)`, 'im');
+    const headingMatch = headingPattern.exec(normalized);
+    const evidenceBlock = `${evidenceLines.join('\n')}\n`;
+    let next: string;
+
+    if (!headingMatch) {
+      next = `${normalized.trimEnd()}\n\n## ${heading}\n\n${evidenceBlock}`;
+    } else {
+      const sectionStart = headingMatch.index + headingMatch[0].length;
+      const rest = normalized.slice(sectionStart);
+      const nextHeadingMatch = /^\s*##\s+\S.*$/im.exec(rest);
+      const sectionEnd = nextHeadingMatch ? sectionStart + nextHeadingMatch.index : normalized.length;
+      const section = normalized.slice(sectionStart, sectionEnd);
+      if (/(?:^|\n)\s*(?:[-*]|\d+\.)\s+\S/.test(section)) {
+        return false;
+      }
+      next = `${normalized.slice(0, sectionStart).trimEnd()}\n\n${evidenceBlock}${normalized.slice(sectionEnd).replace(/^\n+/, '\n')}`;
+    }
+
+    if (next === normalized) {
+      return false;
+    }
+    await writeFile(filePath, next, 'utf-8');
+    return true;
+  }
+
+  private async ensureTasksTraceableEvidenceMetadata(): Promise<boolean> {
+    const filePath = join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks);
+    let markdown: string;
+    try {
+      markdown = await readFile(filePath, 'utf-8');
+    } catch {
+      return false;
+    }
+
+    let parsedTasks: unknown;
+    try {
+      parsedTasks = parseAutocodeImplementationPlanMarkdown(markdown);
+    } catch {
+      return false;
+    }
+
+    const plan = asRecord(parsedTasks);
+    const phases = Array.isArray(plan?.phases) ? plan.phases : [];
+    let changed = false;
+    for (const phase of phases) {
+      const phaseRecord = asRecord(phase);
+      const subtasks = Array.isArray(phaseRecord?.subtasks)
+        ? phaseRecord.subtasks
+        : Array.isArray(phaseRecord?.chunks)
+          ? phaseRecord.chunks
+          : [];
+      for (const subtask of subtasks) {
+        const subtaskRecord = asRecord(subtask);
+        if (!subtaskRecord || hasTraceablePlanningEvidence(subtaskRecord.evidence)) {
+          continue;
+        }
+        const id = stringFrom(subtaskRecord.id ?? subtaskRecord.subtask_id);
+        const existingEvidence = stringFrom(subtaskRecord.evidence);
+        const fallbackEvidence = [
+          existingEvidence,
+          'spec.md Requirements',
+          'requirements.md Evidence Sources',
+          id ? `${AUTOCODE_TASK_ARTIFACTS.tasks} ${id}` : AUTOCODE_TASK_ARTIFACTS.tasks,
+        ].filter(Boolean).join('; ');
+        subtaskRecord.evidence = fallbackEvidence;
+        changed = true;
+      }
+    }
+
+    if (!changed || !plan) {
+      return false;
+    }
+
+    await writeFile(filePath, stringifyAutocodeImplementationPlanMarkdown(plan as never), 'utf-8');
+    return true;
+  }
+
+  private async tryCompletePlanningFromExistingStandardArtifacts(
+    errorMessage: string,
+    allowGranularityWarnings: boolean,
+  ): Promise<{ success: boolean; error?: string }> {
+    const artifactQualityErrors = await this.validateStandardPlanArtifactQualityWithRepair();
+    if (artifactQualityErrors.length > 0) {
+      if (allowGranularityWarnings && hasOnlyAutocodePlanTaskGranularityErrors(artifactQualityErrors)) {
+        this.emitTyped(
+          'log',
+          `Planner session failed (${errorMessage}); existing Standard artifacts only have task granularity warnings, continuing with the generated plan.`,
+        );
+      } else {
+        return {
+          success: false,
+          error: `Existing Standard planning artifacts are not ready after planner session failed: ${artifactQualityErrors.join(', ')}`,
+        };
+      }
+    }
+
+    const derivedPlan = await this.deriveRuntimePlanFromStandardTasks();
+    if (!derivedPlan.success) {
+      return {
+        success: false,
+        error: `${AUTOCODE_TASK_ARTIFACTS.tasks} is missing or invalid: ${derivedPlan.error}`,
+      };
+    }
+
+    const finalizedPlan = await this.finalizeDerivedRuntimePlan();
+    if (!finalizedPlan.success) {
+      return {
+        success: false,
+        error: `Existing Standard runtime plan validation failed: ${finalizedPlan.errors.join(', ')}`,
+      };
+    }
+
+    if (artifactQualityErrors.length === 0) {
+      this.emitTyped('log', `Planner session failed (${errorMessage}); continued with existing valid Standard artifacts.`);
+    }
+    return { success: true };
+  }
+
+  private async finalizeDerivedRuntimePlan(): Promise<{ success: true } | { success: false; errors: string[] }> {
+    const hydratedPlan = await loadImplementationPlanFromFiles(this.config.specDir);
+    const parsedPlan = hydratedPlan ? ImplementationPlanSchema.safeParse(hydratedPlan) : null;
+    const validation = parsedPlan?.success
+      ? { valid: true as const, data: parsedPlan.data, errors: [] as string[] }
+      : {
+          valid: false as const,
+          errors: parsedPlan
+            ? parsedPlan.error.issues.map((issue) => issue.message)
+            : [`File not found or unreadable: ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}`],
+        };
+    if (validation.valid) {
+      await saveImplementationPlanToFiles(this.config.specDir, validation.data as never);
+    }
+    const normalizedPlan = validation.valid ? validation.data as ImplementationPlan : null;
+    const languageErrors = validation.valid && normalizedPlan
+      ? validateImplementationPlanLanguage(normalizedPlan as never, this.config.language)
+      : [];
+    const executionErrors = validation.valid && !hasExecutableSubtasks(normalizedPlan)
+      ? ['Implementation plan has no executable subtasks.']
+      : [];
+    const schedulingErrors = validation.valid
+      ? validatePlanningSchedulingMetadata(normalizedPlan, this.config)
+      : [];
+    const validationErrors = validation.valid
+      ? [
+          ...executionErrors,
+          ...schedulingErrors,
+          ...languageErrors,
+        ]
+      : [...validation.errors, ...languageErrors];
+
+    if (!validation.valid || validationErrors.length > 0) {
+      return { success: false, errors: validationErrors };
+    }
+
+    if (this.config.sourceSpecDir && this.config.syncSpecToSource) {
+      await this.config.syncSpecToSource(this.config.specDir, this.config.sourceSpecDir);
+    }
+    this.markPhaseCompleted('planning');
+    return { success: true };
+  }
+
   /**
    * Run the planning phase: invoke planner agent to create upstream tasks.md,
    * then derive implementation_plan.md runtime work packages.
@@ -756,6 +1017,16 @@ export class BuildOrchestrator extends EventEmitter {
 
       if (result.outcome === 'error') {
         const errorMessage = result.error?.message ?? 'Planning session failed';
+        const canUseExistingArtifacts = attempt > 0 || validationFailures > 0;
+        const existingArtifactResult = canUseExistingArtifacts
+          ? await this.tryCompletePlanningFromExistingStandardArtifacts(
+            errorMessage,
+            true,
+          )
+          : null;
+        if (existingArtifactResult?.success) {
+          return { success: true };
+        }
         if (
           attempt < maxPlanningRetries &&
           (isAutocodeWriteToolPlanOutputFailure(errorMessage) ||
@@ -765,7 +1036,12 @@ export class BuildOrchestrator extends EventEmitter {
           this.emitTyped('log', 'Planning failed while writing tasks.md; retrying with Markdown guidance...');
           continue;
         }
-        return { success: false, error: errorMessage };
+        return {
+          success: false,
+          error: existingArtifactResult?.error
+            ? `${errorMessage}; ${existingArtifactResult.error}`
+            : errorMessage,
+        };
       }
 
       // If the provider returned structured output via constrained decoding,
@@ -782,8 +1058,54 @@ export class BuildOrchestrator extends EventEmitter {
         }
       }
 
+      const artifactQualityErrors = await this.validateStandardPlanArtifactQualityWithRepair();
+      if (artifactQualityErrors.length > 0) {
+        validationFailures++;
+        this.emitTyped('log', `Standard plan artifact quality failed (attempt ${validationFailures}): ${artifactQualityErrors.join(', ')}`);
+        if (validationFailures >= maxPlanningRetries) {
+          if (hasOnlyAutocodePlanTaskGranularityErrors(artifactQualityErrors)) {
+            this.emitTyped(
+              'log',
+              `Standard plan artifact quality still has task granularity warnings after ${validationFailures} attempts; continuing with the generated plan.`,
+            );
+          } else {
+            return {
+              success: false,
+              error: `Standard plan artifact quality failed after ${validationFailures} attempts: ${artifactQualityErrors.join(', ')}`,
+            };
+          }
+        } else {
+          planningRetryContext = buildAutocodePlanQualityRetryPrompt(artifactQualityErrors);
+          continue;
+        }
+      }
+
       const derivedPlan = await this.deriveRuntimePlanFromStandardTasks();
       if (!derivedPlan.success) {
+        const repairedTasksEvidence = await this.repairStandardPlanEvidenceArtifacts([
+          derivedPlan.error ?? '',
+        ]);
+        if (repairedTasksEvidence) {
+          const repairedDerivedPlan = await this.deriveRuntimePlanFromStandardTasks();
+          if (repairedDerivedPlan.success) {
+            const finalizedPlan = await this.finalizeDerivedRuntimePlan();
+            if (finalizedPlan.success) {
+              return { success: true };
+            }
+            const validationErrors = finalizedPlan.errors;
+            validationFailures++;
+            this.emitTyped('log', `Plan validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}. Retrying with Markdown plan guidance...`);
+            if (validationFailures >= maxPlanningRetries) {
+              return {
+                success: false,
+                error: `Implementation plan validation failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
+              };
+            }
+            planningRetryContext = buildAutocodePlanningStructuredOutputValidationRetryPrompt(validationErrors);
+            this.emitTyped('log', `Falling back to full re-plan (attempt ${validationFailures + 1})...`);
+            continue;
+          }
+        }
         const validationErrors = [`${AUTOCODE_TASK_ARTIFACTS.tasks} is missing or invalid: ${derivedPlan.error}`];
         validationFailures++;
         this.emitTyped('log', `Standard planning validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}`);
@@ -797,62 +1119,14 @@ export class BuildOrchestrator extends EventEmitter {
         continue;
       }
 
-      const artifactQualityErrors = await this.validateStandardPlanArtifactQuality();
-      if (artifactQualityErrors.length > 0) {
-        validationFailures++;
-        this.emitTyped('log', `Standard plan artifact quality failed (attempt ${validationFailures}): ${artifactQualityErrors.join(', ')}`);
-        if (validationFailures >= maxPlanningRetries) {
-          return {
-            success: false,
-            error: `Standard plan artifact quality failed after ${validationFailures} attempts: ${artifactQualityErrors.join(', ')}`,
-          };
-        }
-        planningRetryContext = buildAutocodePlanQualityRetryPrompt(artifactQualityErrors);
-        continue;
-      }
-
       // Validate + normalize the implementation plan using Zod schema.
       // Zod coercion handles LLM field name variations (title→description,
       // subtask_id→id, status normalization, etc.) and writes back canonical data.
-      const hydratedPlan = await loadImplementationPlanFromFiles(this.config.specDir);
-      const parsedPlan = hydratedPlan ? ImplementationPlanSchema.safeParse(hydratedPlan) : null;
-      const validation = parsedPlan?.success
-        ? { valid: true as const, data: parsedPlan.data, errors: [] as string[] }
-        : {
-            valid: false as const,
-            errors: parsedPlan
-              ? parsedPlan.error.issues.map((issue) => issue.message)
-              : [`File not found or unreadable: ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}`],
-          };
-      if (validation.valid) {
-        await saveImplementationPlanToFiles(this.config.specDir, validation.data as never);
-      }
-      const normalizedPlan = validation.valid ? validation.data as ImplementationPlan : null;
-      const languageErrors = validation.valid && normalizedPlan
-        ? validateImplementationPlanLanguage(normalizedPlan as never, this.config.language)
-        : [];
-      const executionErrors = validation.valid && !hasExecutableSubtasks(normalizedPlan)
-        ? ['Implementation plan has no executable subtasks.']
-        : [];
-      const schedulingErrors = validation.valid
-        ? validatePlanningSchedulingMetadata(normalizedPlan, this.config)
-        : [];
-      const validationErrors = validation.valid
-        ? [
-            ...executionErrors,
-            ...schedulingErrors,
-            ...languageErrors,
-          ]
-        : [...validation.errors, ...languageErrors];
-
-      if (validation.valid && validationErrors.length === 0) {
-        // Sync to source if in worktree mode
-        if (this.config.sourceSpecDir && this.config.syncSpecToSource) {
-          await this.config.syncSpecToSource(this.config.specDir, this.config.sourceSpecDir);
-        }
-        this.markPhaseCompleted('planning');
+      const finalizedPlan = await this.finalizeDerivedRuntimePlan();
+      if (finalizedPlan.success) {
         return { success: true };
       }
+      const validationErrors = finalizedPlan.errors;
 
       // Plan is invalid. Default to a full planner retry so complex plans can
       // be rewritten with smaller phase files instead of another large schema output.
@@ -987,6 +1261,9 @@ export class BuildOrchestrator extends EventEmitter {
         },
         onWorkItemSessionComplete: (_workItem, result) => {
           this.emitTyped('session-complete', result, 'coding');
+        },
+        onWorkItemQualityFailure: (workItem, result, attempt) => {
+          this.recordCodingAttemptResult(workItemToSubtaskInfo(workItem), result, attempt);
         },
         onGroupComplete: (items, result) => {
           this.emitTyped('log', `Work group completed: ${result.completed.length}/${items.length} item(s) succeeded`);

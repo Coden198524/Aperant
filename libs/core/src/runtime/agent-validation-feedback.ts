@@ -158,7 +158,7 @@ export function scanAutocodeSecurityIssuesInContent(file: string, content: strin
     }
   }
 
-  if (/\$\{.*\}/.test(content) && /SELECT|INSERT|UPDATE|DELETE/i.test(content)) {
+  if (hasInterpolatedSqlTemplate(content)) {
     issues.push(`${file}: Potential SQL injection vulnerability (string interpolation in SQL)`);
   }
 
@@ -171,6 +171,29 @@ export function scanAutocodeSecurityIssuesInContent(file: string, content: strin
   }
 
   return issues;
+}
+
+function hasInterpolatedSqlTemplate(content: string): boolean {
+  const templatePattern = /`(?:\\.|[^`\\])*`/gs;
+  for (const match of content.matchAll(templatePattern)) {
+    const template = match[0];
+    if (!template.includes('${')) {
+      continue;
+    }
+    if (/\bselect\b[\s\S]*\bfrom\b/i.test(template)) {
+      return true;
+    }
+    if (/\binsert\s+into\b/i.test(template)) {
+      return true;
+    }
+    if (/\bupdate\s+[`"[\]\w.]+\s+set\b/i.test(template)) {
+      return true;
+    }
+    if (/\bdelete\s+from\b/i.test(template)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function checkAutocodePatternComplianceContent(

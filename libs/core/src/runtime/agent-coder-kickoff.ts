@@ -290,7 +290,10 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
     lines.push('- Preserve public APIs, schemas, IPC/protocol contracts, config/env semantics, migrations, and data formats unless the work item explicitly requires a contract change; update affected call sites and tests when a contract changes.');
     lines.push('- Do not satisfy the task with placeholder code, TODO implementations, no-op handlers, fake data, disabled validation, broad type escapes, swallowed errors, dead branches, or unrelated abstractions.');
     lines.push('- For bug fixes or behavior changes, add or update the closest regression test when an adjacent test pattern exists; if no practical test is available, state the exact verification limitation.');
+    lines.push('- For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, verification must include an actual launch/open/use-path smoke check. Static syntax, unit, lint, typecheck, or file-existence checks alone do not prove the artifact is runnable.');
+    lines.push('- Treat browser console errors, CORS/resource-load failures, blank screens, crash/hang, startup failures, or CLI non-zero exits as product verification failures. Fix them before marking the work item completed.');
     lines.push('- Completion summary must name concrete changed files/contracts, verification run or limitation, and residual risks or edge cases.');
+    lines.push('- For user-facing or runnable work, the completion summary must name the actual launch/open/browser/CLI smoke check and whether runtime, console, load, or startup errors were observed.');
   }
   lines.push(`- Focus on this one ${workLabel} until it is done.`);
   lines.push('- Do not re-plan completed work or scan unrelated directories unless the listed files force you to.');
@@ -309,9 +312,10 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
   lines.push('- Never use Bash here-documents such as `python - <<EOF` on Windows. Avoid Python -c or Node -e checks containing non-ASCII text.');
   lines.push('- On Node 24+, never mix CommonJS `require(...)` with top-level `await` in `node -e`, stdin, or eval scripts. Use an async IIFE around CommonJS code, or use ESM `import` with `node --input-type=module`.');
   lines.push('- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the task explicitly changes state-machine code.');
-  lines.push('- If verification fails because of shell quoting, encoding, or path syntax rather than product code, do not keep rewriting commands. Record the limitation and continue if the file/output exists.');
+  lines.push('- If verification fails because of shell quoting, encoding, or path syntax rather than product code, do not keep rewriting commands. Record the limitation and continue if the file/output exists. For user-facing or runnable work, a failed or unavailable startup/use-path check blocks completion even if files exist.');
   lines.push('- Keep failed verification output compact; include only the first 3-5 relevant error lines needed to fix the issue.');
   lines.push('- When verification passes, immediately call update_subtask_status for this subtask before writing any final summary.');
+  lines.push('- Do not call update_subtask_status with status completed for user-facing or runnable work until the actual launch/open/browser/CLI smoke check passes.');
   lines.push('- Do not write a long final response before the status update. After the update succeeds, provide only a compact review matrix.');
 
   return lines.join('\n');

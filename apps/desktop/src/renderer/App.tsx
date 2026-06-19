@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Download, RefreshCw, AlertCircle, FileText } from 'lucide-react';
 import { debugLog } from '../shared/utils/debug-logger';
@@ -76,6 +76,8 @@ import { ViewStateProvider } from './contexts/ViewStateContext';
 
 // Version constant for version-specific warnings (e.g., reauthentication notices)
 const VERSION_WARNING_275 = '2.7.5';
+const PROJECT_SWITCH_TASK_REFRESH_DELAY_MS = 75;
+const PROJECT_SWITCH_TERMINAL_RESTORE_DELAY_MS = 200;
 
 // Wrapper component for ProjectTabBar
 interface ProjectTabBarWithContextProps {
@@ -135,24 +137,37 @@ export function App() {
   const tasks = useTaskStore((state) => state.tasks);
   const settings = useSettingsStore((state) => state.settings);
   const settingsLoading = useSettingsStore((state) => state.isLoading);
+  const graphInitializedProjectIdsRef = useRef(new Set<string>());
+  const graphInitializingProjectIdsRef = useRef(new Set<string>());
 
   // Wrapper for opening project tabs with graph initialization
-  const openProjectTabWithGraph = async (projectId: string) => {
-    // Open the tab first
+  const openProjectTabWithGraph = useCallback((projectId: string) => {
     openProjectTab(projectId);
 
-    // Initialize graph database if code graph is enabled
-    if (settings.enableCodeGraph) {
-      try {
-        const result = await window.electronAPI.initializeGraphDatabase(projectId);
+    if (
+      !settings.enableCodeGraph ||
+      graphInitializedProjectIdsRef.current.has(projectId) ||
+      graphInitializingProjectIdsRef.current.has(projectId)
+    ) {
+      return;
+    }
+
+    graphInitializingProjectIdsRef.current.add(projectId);
+    void window.electronAPI.initializeGraphDatabase(projectId)
+      .then((result) => {
         if (!result.success) {
           console.warn('[App] Failed to initialize graph database:', result.error);
+          return;
         }
-      } catch (error) {
+        graphInitializedProjectIdsRef.current.add(projectId);
+      })
+      .catch((error) => {
         console.warn('[App] Error initializing graph database:', error);
-      }
-    }
-  };
+      })
+      .finally(() => {
+        graphInitializingProjectIdsRef.current.delete(projectId);
+      });
+  }, [openProjectTab, settings.enableCodeGraph]);
 
   // API Profile state
   const profiles = useSettingsStore((state) => state.profiles);
@@ -245,7 +260,7 @@ export function App() {
 
   // Restore tab state and open tabs for loaded projects
   useEffect(() => {
-    console.warn('[App] Tab restore useEffect triggered:', {
+    debugLog('[App] Tab restore useEffect triggered:', {
       projectsCount: projects.length,
       openProjectIds,
       activeProjectId,
@@ -260,38 +275,38 @@ export function App() {
       if (openProjectIds.length === 0) {
         // No tabs persisted at all, open the first available project
         const projectToOpen = activeProjectId || selectedProjectId || projects[0].id;
-        console.warn('[App] No tabs persisted, opening project:', projectToOpen);
+        debugLog('[App] No tabs persisted, opening project:', projectToOpen);
         // Verify the project exists before opening
         if (projects.some(p => p.id === projectToOpen)) {
           openProjectTabWithGraph(projectToOpen);
           setActiveProject(projectToOpen);
         } else {
           // Fallback to first project if stored IDs are invalid
-          console.warn('[App] Project not found, falling back to first project:', projects[0].id);
+          debugLog('[App] Project not found, falling back to first project:', projects[0].id);
           openProjectTabWithGraph(projects[0].id);
           setActiveProject(projects[0].id);
         }
         return;
       }
-      console.warn('[App] Tabs already persisted, checking active project');
+      debugLog('[App] Tabs already persisted, checking active project');
       // If there's an active project but no tabs open for it, open a tab
       // Note: Use openProjectIds instead of projectTabs to avoid re-render loop
       // (projectTabs creates a new array on every render)
       if (activeProjectId && !openProjectIds.includes(activeProjectId)) {
-        console.warn('[App] Active project has no tab, opening:', activeProjectId);
+        debugLog('[App] Active project has no tab, opening:', activeProjectId);
         openProjectTabWithGraph(activeProjectId);
       }
       // If there's a selected project but no active project, make it active
       else if (selectedProjectId && !activeProjectId) {
-        console.warn('[App] No active project, using selected:', selectedProjectId);
+        debugLog('[App] No active project, using selected:', selectedProjectId);
         setActiveProject(selectedProjectId);
         openProjectTabWithGraph(selectedProjectId);
       } else {
-        console.warn('[App] Tab state is valid, no action needed');
+        debugLog('[App] Tab state is valid, no action needed');
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- projectTabs is intentionally omitted to avoid infinite re-render (computed array creates new reference each render)
-  }, [projects, activeProjectId, selectedProjectId, openProjectIds, openProjectTab, setActiveProject, projectTabs.length, projectTabs.map]);
+  }, [projects, activeProjectId, selectedProjectId, openProjectIds, setActiveProject, openProjectTabWithGraph, projectTabs.length]);
 
   // Track if settings have been loaded at least once
   const [settingsHaveLoaded, setSettingsHaveLoaded] = useState(false);
@@ -479,20 +494,36 @@ export function App() {
   useEffect(() => {
     const currentProjectId = activeProjectId || selectedProjectId;
     if (currentProjectId) {
-      loadTasks(currentProjectId);
+      void loadTasks(currentProjectId, {
+        preferCache: true,
+        backgroundRefresh: true,
+        deferRemoteMs: PROJECT_SWITCH_TASK_REFRESH_DELAY_MS,
+      });
       setSelectedTask(null); // Clear selection on project change
     } else {
-      useTaskStore.getState().clearTasks();
+      const taskStore = useTaskStore.getState();
+      taskStore.clearTasks();
+      taskStore.setLoading(false);
     }
 
     // Handle terminals on project change - DON'T destroy, just restore if needed
     // Terminals are now filtered by projectPath in TerminalGrid, so each project
     // sees only its own terminals. PTY processes stay alive across project switches.
+    let terminalRestoreTimer: number | undefined;
     if (selectedProject?.path) {
-      restoreTerminalSessions(selectedProject.path).catch((err) => {
-        console.error('[App] Failed to restore sessions:', err);
-      });
+      const projectPath = selectedProject.path;
+      terminalRestoreTimer = window.setTimeout(() => {
+        restoreTerminalSessions(projectPath).catch((err) => {
+          console.error('[App] Failed to restore sessions:', err);
+        });
+      }, PROJECT_SWITCH_TERMINAL_RESTORE_DELAY_MS);
     }
+
+    return () => {
+      if (terminalRestoreTimer) {
+        window.clearTimeout(terminalRestoreTimer);
+      }
+    };
   }, [activeProjectId, selectedProjectId, selectedProject?.path]);
 
   // Apply theme on load
@@ -553,11 +584,13 @@ export function App() {
     const logsChanged =
       JSON.stringify(selectedTask.logs || []) !==
       JSON.stringify(updatedTask.logs || []);
+    const locationChanged = selectedTask.location !== updatedTask.location;
+    const specsPathChanged = selectedTask.specsPath !== updatedTask.specsPath;
 
     const hasChanged =
       subtasksChanged || statusChanged || titleChanged || descriptionChanged ||
       metadataChanged || executionProgressChanged || qaReportChanged ||
-      reviewReasonChanged || logsChanged;
+      reviewReasonChanged || logsChanged || locationChanged || specsPathChanged;
 
     debugLog('[App] Task comparison', {
       hasChanged,
@@ -571,6 +604,8 @@ export function App() {
         qaReport: qaReportChanged,
         reviewReason: reviewReasonChanged,
         logs: logsChanged,
+        location: locationChanged,
+        specsPath: specsPathChanged,
       },
     });
 
@@ -585,6 +620,8 @@ export function App() {
       if (qaReportChanged) reasons.push('QAReport');
       if (reviewReasonChanged) reasons.push('ReviewReason');
       if (logsChanged) reasons.push('Logs');
+      if (locationChanged) reasons.push('Location');
+      if (specsPathChanged) reasons.push('SpecsPath');
 
       debugLog('[App] Updating selectedTask', {
         taskId: updatedTask.id,

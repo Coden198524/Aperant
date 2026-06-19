@@ -66,6 +66,18 @@ If required:
 
 If required but impossible, reject and explain the missing startup or verification path.
 
+## Runtime Readiness
+
+Required when the implementation produces a user-facing app, browser page, game, interactive tool, launcher, or CLI deliverable.
+
+If required:
+
+1. Start or open the artifact using the project-appropriate path.
+2. Exercise the primary user-visible or command path.
+3. Check browser/app console output, resource loading, startup logs, exit code, and obvious blank-screen or hung states.
+
+Reject `Status: PASSED` when runtime readiness is missing, skipped, impossible, or failed. Static syntax, unit, lint, typecheck, or file-existence checks alone are not enough for runnable deliverables.
+
 ## Evidence Rules
 
 - Read the changed code before reporting a bug.

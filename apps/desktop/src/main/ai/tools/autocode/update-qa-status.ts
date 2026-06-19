@@ -24,8 +24,7 @@ import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
 import { safeParseJson } from '../../../utils/json-repair';
 import {
-  loadImplementationPlanFromFiles,
-  saveImplementationPlanToFiles,
+  updateImplementationPlanInFiles,
 } from '../../schema/plan-shards';
 
 // ---------------------------------------------------------------------------
@@ -71,6 +70,7 @@ export const updateQaStatusTool = Tool.define({
       'Update the QA sign-off status in implementation_plan.md. Use this after completing a QA review to record the outcome.',
     permission: ToolPermission.Auto,
     executionOptions: DEFAULT_EXECUTION_OPTIONS,
+    writePathInputKeys: [],
   },
   inputSchema,
   execute: async (input, context) => {
@@ -101,17 +101,18 @@ export const updateQaStatusTool = Tool.define({
       }
     }
 
-    const plan = await loadImplementationPlanFromFiles(context.specDir) as ImplementationPlan | null;
+    let qaSession = 0;
+    const plan = await updateImplementationPlanInFiles(context.specDir, (currentPlan) => {
+      qaSession = applyAutocodePlanQaSignoff(currentPlan as ImplementationPlan, {
+        status,
+        issues,
+        testsPassed,
+      });
+      return currentPlan;
+    }) as ImplementationPlan | null;
     if (!plan) {
       return 'Error: implementation_plan.md could not be parsed';
     }
-
-    const qaSession = applyAutocodePlanQaSignoff(plan, {
-      status,
-      issues,
-      testsPassed,
-    });
-    await saveImplementationPlanToFiles(context.specDir, plan);
 
     return `Updated QA status to '${status}' (session ${qaSession})`;
   },

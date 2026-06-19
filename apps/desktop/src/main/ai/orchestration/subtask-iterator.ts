@@ -26,6 +26,7 @@ import {
   hasAutocodeDeclaredFileMetadata,
   hasAutocodeSubtaskCompletionEvidence,
   toAutocodeStringArray,
+  validateAutocodeRuntimeReadinessSummary,
 } from '@autocode/core';
 import {
   writeAuthPauseFile,
@@ -509,7 +510,7 @@ export async function iterateSubtasks(
     }
 
     const subtaskCompletedInPlan = await isSubtaskCompleted(config.specDir, subtask.id);
-    if (result.outcome === 'completed' || subtaskCompletedInPlan) {
+    if (subtaskCompletedInPlan) {
       await finalizeAcceptedSubtask(config, subtask, subtaskInfo, result, attemptCounts, changedFilesForQuality);
     }
 
@@ -803,6 +804,7 @@ async function ensureSubtaskMarkedCompleted(
     if (!plan) return; // JSON corrupt beyond repair
     let updated = false;
     const completionSummary = result ? summarizeSessionCompletion(result) : undefined;
+    const now = new Date().toISOString();
 
     for (const phase of plan.phases) {
       for (const subtask of phase.subtasks) {
@@ -813,11 +815,34 @@ async function ensureSubtaskMarkedCompleted(
           updated = true;
         }
 
+        if (subtask.id === subtaskId && subtask.status !== 'completed') {
+          const runtimeReadinessIssues = validateAutocodeRuntimeReadinessSummary(
+            {
+              description: [
+                subtask.title,
+                subtask.description,
+              ].filter(Boolean).join('\n'),
+              filesToCreate: toAutocodeStringArray(subtask.files_to_create),
+              filesToModify: toAutocodeStringArray(subtask.files_to_modify),
+            },
+            completionSummary ?? '',
+          );
+          if (runtimeReadinessIssues.length > 0) {
+            subtask.status = subtask.status === 'pending' ? 'in_progress' : subtask.status;
+            subtask.notes = [
+              `Completion blocked by runtime-readiness gate: ${runtimeReadinessIssues.slice(0, 3).join('; ')}`,
+              subtask.notes,
+            ].filter((value): value is string => Boolean(value && value.trim())).join('\n\n');
+            subtask.updated_at = now;
+            updated = true;
+            continue;
+          }
+        }
+
         // Mark this specific subtask as completed if it isn't already
         if (subtask.id === subtaskId && subtask.status !== 'completed') {
           subtask.status = 'completed';
-          (subtask as PlanSubtask & { completed_at?: string }).completed_at =
-            new Date().toISOString();
+          (subtask as PlanSubtask & { completed_at?: string }).completed_at = now;
           updated = true;
         }
 
@@ -1005,7 +1030,9 @@ async function markSubtaskFailed(
           updated = true;
         }
         if (!subtask.notes || !subtask.notes.includes(reason)) {
-          subtask.notes = summary;
+          subtask.notes = [summary, subtask.notes]
+            .filter((value): value is string => Boolean(value && value.trim()))
+            .join('\n\n');
           updated = true;
         }
         subtask.updated_at = now;

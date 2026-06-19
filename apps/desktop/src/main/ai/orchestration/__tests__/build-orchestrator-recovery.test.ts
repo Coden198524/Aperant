@@ -293,6 +293,110 @@ function makeTasks(statuses: string[], withSchedulingMetadata = true): string {
   return lines.join('\n');
 }
 
+function makeBroadTasks(): string {
+  return [
+    '# Tasks',
+    '',
+    'Feature: Test task',
+    'Workflow: feature',
+    'Status: pending',
+    '',
+    '- [ ] 1. Broad implementation',
+    '',
+    '  - [ ] 1.1 Build complete browser game loop',
+    '    - Create src/game.js to implement board state, piece spawning, random generation, automatic falling, left/right movement, rotation, soft drop, hard drop, collision detection, locking, line clearing, scoring, levels, pause, restart, and game-over transitions.',
+    '    - _Files to modify: src/game.js_',
+    '    - _Depends on: none_',
+    '    - _Requirements: R1, R2, R3, R4, AC1, AC2_',
+    '    - _Evidence: spec.md browser game requirements_',
+    '    - _Done when: the browser game loop supports movement, scoring, pause, restart, and game over._',
+    '    - _Verification: Run focused gameplay check_',
+    '',
+  ].join('\n');
+}
+
+function makeVagueEvidenceTasks(): string {
+  return [
+    '# Tasks',
+    '',
+    'Feature: Test task',
+    'Workflow: feature',
+    'Status: pending',
+    '',
+    '- [ ] 1. Static page',
+    '',
+    '  - [ ] 1.1 Create browser entry files',
+    '    - Create index.html, styles.css, and script.js entry files for the browser game shell.',
+    '    - _Files to modify: index.html, styles.css, script.js_',
+    '    - _Depends on: none_',
+    '    - _Requirements: R1, AC1_',
+    '    - _Evidence: user request_',
+    '    - _Done when: the browser opens the page shell without missing-resource errors._',
+    '    - _Verification: Open index.html manually_',
+    '',
+  ].join('\n');
+}
+
+function makePhaseHeadingDependencyTasks(): string {
+  return [
+    '# Tasks',
+    '',
+    'Feature: Test task',
+    'Workflow: feature',
+    'Status: pending',
+    '',
+    '- [ ] 1. Static app shell',
+    '',
+    '  - [ ] 1.1 Create semantic HTML shell',
+    '    - Add the primary page structure.',
+    '    - _Files to modify: index.html_',
+    '    - _Depends on: 1_',
+    '    - _Requirements: R1, AC1_',
+    '    - _Evidence: spec.md R1; requirements.md Evidence Sources_',
+    '    - _Done when: index.html contains the expected page shell._',
+    '    - _Verification: inspect index.html_',
+    '',
+    '  - [ ] 1.2 Add responsive layout',
+    '    - Add CSS after the shell exists.',
+    '    - _Files to modify: styles.css_',
+    '    - _Depends on: 1_',
+    '    - _Requirements: R2, AC2_',
+    '    - _Evidence: spec.md R2; requirements.md Evidence Sources_',
+    '    - _Done when: styles.css renders the shell readably._',
+    '    - _Verification: inspect styles.css_',
+    '',
+    '- [ ] 2. Game rules',
+    '',
+    '  - [ ] 2.1 Implement board state',
+    '    - Add board state after shell work finishes.',
+    '    - _Files to modify: src/game.js_',
+    '    - _Depends on: 1_',
+    '    - _Requirements: R3, AC3_',
+    '    - _Evidence: spec.md R3; requirements.md Evidence Sources_',
+    '    - _Done when: src/game.js can represent a board._',
+    '    - _Verification: inspect board state_',
+    '',
+    '  - [ ] 2.2 Wire keyboard input',
+    '    - Add keyboard input after board state exists.',
+    '    - _Files to modify: src/game.js_',
+    '    - _Depends on: 2.1_',
+    '    - _Requirements: R4, AC4_',
+    '    - _Evidence: spec.md R4; requirements.md Evidence Sources_',
+    '    - _Done when: keyboard input changes game state._',
+    '    - _Verification: test keyboard controls_',
+    '',
+    '- [ ] 3. End-to-end verification',
+    '  - Validate the browser flow.',
+    '  - _Files to modify: none_',
+    '  - _Depends on: 2_',
+    '  - _Requirements: AC1, AC2, AC3, AC4_',
+    '  - _Evidence: spec.md Acceptance Criteria; requirements.md Evidence Sources_',
+    '  - _Done when: the complete browser flow is verified._',
+    '  - _Verification: run the browser smoke test_',
+    '',
+  ].join('\n');
+}
+
 function makePlanWithSchedulingMetadata(statuses: string[]): string {
   return makePlan(statuses, true);
 }
@@ -966,6 +1070,295 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(outcome.success).toBe(true);
     expect(outcome.finalPhase).toBe('planning');
     expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(2);
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+  });
+
+  it('continues from repaired Standard artifacts when planner retry times out with only granularity warnings', async () => {
+    let plannerRuns = 0;
+    const files = new Map<string, string>([
+      [
+        '/spec/spec.md',
+        [
+          '# Test task',
+          '',
+          '## Requirements',
+          '',
+          '- R1: Build a browser game with movement, scoring, pause, restart, and game-over behavior.',
+          '',
+        ].join('\n'),
+      ],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/tasks.md', makeBroadTasks()],
+      ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
+    ]);
+
+    const normalizePath = (path: string) => path.replace(/\\/g, '/');
+    mockReadFile.mockImplementation((path: string) => {
+      const normalizedPath = normalizePath(path);
+      if (files.has(normalizedPath)) {
+        return Promise.resolve(files.get(normalizedPath));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation(async (path: string, content: unknown) => {
+      files.set(normalizePath(path), String(content));
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        plannerRuns++;
+        if (plannerRuns > 1) {
+          return {
+            ...makeSessionResult('error'),
+            error: new Error('Stream inactivity timeout - no data received from provider for 120s'),
+          };
+        }
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.success).toBe(true);
+    expect(outcome.finalPhase).toBe('planning');
+    expect(plannerRuns).toBe(2);
+    expect(files.get('/spec/spec.md')).toContain('## Evidence');
+    expect(files.get('/spec/implementation_plan.md')).toContain('Build complete browser game loop');
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+  });
+
+  it('continues a new task into coding when planner retry times out after generating usable Standard artifacts', async () => {
+    let plannerRuns = 0;
+    let reviewerRuns = 0;
+    const files = new Map<string, string>([
+      [
+        '/spec/spec.md',
+        [
+          '# Test task',
+          '',
+          '## Requirements',
+          '',
+          '- R1: Build a browser game with movement, scoring, pause, restart, and game-over behavior.',
+          '',
+        ].join('\n'),
+      ],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/tasks.md', makeBroadTasks()],
+      ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
+    ]);
+    const normalizePath = (path: string) => path.replace(/\\/g, '/');
+
+    mockReadFile.mockImplementation((path: string) => {
+      const normalizedPath = normalizePath(path);
+      if (files.has(normalizedPath)) {
+        return Promise.resolve(files.get(normalizedPath));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation(async (path: string, content: unknown) => {
+      files.set(normalizePath(path), String(content));
+    });
+    mockIterateSubtasks.mockImplementation(async () => {
+      const plan = JSON.parse(files.get('/spec/implementation_plan.md') ?? '{"phases":[]}') as {
+        phases?: Array<{ subtasks?: Array<{ status?: string }> }>;
+      };
+      for (const phase of plan.phases ?? []) {
+        for (const subtask of phase.subtasks ?? []) {
+          subtask.status = 'completed';
+        }
+      }
+      files.set('/spec/implementation_plan.md', JSON.stringify(plan));
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        plannerRuns++;
+        if (plannerRuns > 1) {
+          return {
+            ...makeSessionResult('error'),
+            error: new Error('Stream inactivity timeout - no data received from provider for 120s'),
+          };
+        }
+      }
+      if (config.agentType === 'qa_reviewer') {
+        reviewerRuns++;
+        files.set('/spec/qa_report.md', makePassedQAReport());
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.success).toBe(true);
+    expect(outcome.finalPhase).toBe('complete');
+    expect(plannerRuns).toBe(2);
+    expect(reviewerRuns).toBe(1);
+    expect(files.get('/spec/spec.md')).toContain('## Evidence');
+    expect(files.get('/spec/implementation_plan.md')).toContain('"status":"completed"');
+    expect(mockIterateSubtasks).toHaveBeenCalled();
+  });
+
+  it('repairs vague tasks.md evidence before deriving runtime work packages for a new task', async () => {
+    let reviewerRuns = 0;
+    const files = new Map<string, string>([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/tasks.md', makeVagueEvidenceTasks()],
+      ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
+    ]);
+    const normalizePath = (path: string) => path.replace(/\\/g, '/');
+
+    mockReadFile.mockImplementation((path: string) => {
+      const normalizedPath = normalizePath(path);
+      if (files.has(normalizedPath)) {
+        return Promise.resolve(files.get(normalizedPath));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation(async (path: string, content: unknown) => {
+      files.set(normalizePath(path), String(content));
+    });
+    mockIterateSubtasks.mockImplementation(async () => {
+      const plan = JSON.parse(files.get('/spec/implementation_plan.md') ?? '{"phases":[]}') as {
+        phases?: Array<{ subtasks?: Array<{ status?: string }> }>;
+      };
+      for (const phase of plan.phases ?? []) {
+        for (const subtask of phase.subtasks ?? []) {
+          subtask.status = 'completed';
+        }
+      }
+      files.set('/spec/implementation_plan.md', JSON.stringify(plan));
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'qa_reviewer') {
+        reviewerRuns++;
+        files.set('/spec/qa_report.md', makePassedQAReport());
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.success).toBe(true);
+    expect(outcome.finalPhase).toBe('complete');
+    expect(reviewerRuns).toBe(1);
+    expect(files.get('/spec/tasks.md')).toContain('spec.md Requirements');
+    expect(files.get('/spec/tasks.md')).toContain('requirements.md Evidence Sources');
+    expect(files.get('/spec/implementation_plan.md')).toContain('"status":"completed"');
+    expect(mockIterateSubtasks).toHaveBeenCalled();
+  });
+
+  it('derives runtime work packages when tasks.md dependencies reference phase headings', async () => {
+    let reviewerRuns = 0;
+    const files = new Map<string, string>([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/tasks.md', makePhaseHeadingDependencyTasks()],
+      ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
+    ]);
+    const normalizePath = (path: string) => path.replace(/\\/g, '/');
+
+    mockReadFile.mockImplementation((path: string) => {
+      const normalizedPath = normalizePath(path);
+      if (files.has(normalizedPath)) {
+        return Promise.resolve(files.get(normalizedPath));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation(async (path: string, content: unknown) => {
+      files.set(normalizePath(path), String(content));
+    });
+    mockIterateSubtasks.mockImplementation(async () => {
+      const plan = JSON.parse(files.get('/spec/implementation_plan.md') ?? '{"phases":[]}') as {
+        phases?: Array<{ subtasks?: Array<{ status?: string }> }>;
+      };
+      for (const phase of plan.phases ?? []) {
+        for (const subtask of phase.subtasks ?? []) {
+          subtask.status = 'completed';
+        }
+      }
+      files.set('/spec/implementation_plan.md', JSON.stringify(plan));
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'qa_reviewer') {
+        reviewerRuns++;
+        files.set('/spec/qa_report.md', makePassedQAReport());
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+    const implementationPlan = JSON.parse(files.get('/spec/implementation_plan.md') ?? '{"phases":[]}') as {
+      phases?: Array<{ subtasks?: Array<{ upstream_task_ids?: string[] }> }>;
+    };
+    const upstreamTaskIds = implementationPlan.phases
+      ?.flatMap((phase) => phase.subtasks ?? [])
+      .flatMap((subtask) => subtask.upstream_task_ids ?? []) ?? [];
+
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.success).toBe(true);
+    expect(outcome.finalPhase).toBe('complete');
+    expect(reviewerRuns).toBe(1);
+    expect(upstreamTaskIds).toEqual(expect.arrayContaining(['1.1', '1.2', '2.1', '2.2', '3']));
+    expect(files.get('/spec/implementation_plan.md')).toContain('"status":"completed"');
+    expect(mockIterateSubtasks).toHaveBeenCalled();
+  });
+
+  it('does not replace the runtime plan when Standard quality fails during replanning', async () => {
+    let plannerRuns = 0;
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('tasks.md')) {
+        return Promise.resolve(makeTasks(['pending'], false));
+      }
+      if (path.endsWith('implementation_plan.md')) {
+        return Promise.resolve(makePlanWithSchedulingMetadata(['completed']));
+      }
+      return readStandardArtifactOrReject(path);
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        plannerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(false);
+    expect(plannerRuns).toBeGreaterThan(0);
+    expect(mockWriteFile.mock.calls.some(([path]) =>
+      String(path).endsWith('/implementation_plan.md')
+    )).toBe(false);
     expect(mockIterateSubtasks).not.toHaveBeenCalled();
   });
 

@@ -629,14 +629,26 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
 // Track in-progress restore operations to prevent race conditions
 const restoringProjects = new Set<string>();
+const restoredProjectTimestamps = new Map<string, number>();
+const TERMINAL_RESTORE_THROTTLE_MS = 30_000;
 
 /**
  * Restore terminal sessions for a project from persisted storage
  */
-export async function restoreTerminalSessions(projectPath: string): Promise<void> {
+export async function restoreTerminalSessions(projectPath: string, options?: { force?: boolean }): Promise<void> {
   // Validate input
   if (!projectPath || typeof projectPath !== 'string') {
     debugLog('[TerminalStore] Invalid projectPath, skipping restore');
+    return;
+  }
+
+  const lastRestoreAt = restoredProjectTimestamps.get(projectPath);
+  if (
+    !options?.force &&
+    lastRestoreAt &&
+    Date.now() - lastRestoreAt < TERMINAL_RESTORE_THROTTLE_MS
+  ) {
+    debugLog('[TerminalStore] Recent terminal restore exists for this project, skipping');
     return;
   }
 
@@ -715,6 +727,7 @@ export async function restoreTerminalSessions(projectPath: string): Promise<void
   } catch (error) {
     debugError('[TerminalStore] Error restoring sessions:', error);
   } finally {
+    restoredProjectTimestamps.set(projectPath, Date.now());
     restoringProjects.delete(projectPath);
   }
 }

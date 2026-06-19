@@ -5,11 +5,11 @@ import { useRoadmapStore } from '../stores/roadmap-store';
 import { useRateLimitStore } from '../stores/rate-limit-store';
 import { useAuthFailureStore } from '../stores/auth-failure-store';
 import { useProjectStore } from '../stores/project-store';
+import { TASK_REFRESH_SENTINEL } from '../../shared/constants';
 import type { ImplementationPlan, TaskStatus, RoadmapGenerationStatus, Roadmap, ExecutionProgress, RateLimitInfo, SDKRateLimitInfo, AuthFailureInfo, TokenUsage } from '../../shared/types';
 
 /** Maximum log entries to buffer in the batch queue between flushes (OOM prevention) */
 const MAX_BATCH_QUEUE_LOGS = 100;
-const TASK_REFRESH_SENTINEL = '__tasks_refresh__';
 const TASK_REFRESH_COOLDOWN_MS = 1500;
 
 /**
@@ -230,6 +230,7 @@ export function useIpcListeners(): void {
         // Filter by project to prevent multi-project interference (issue #723)
         if (!isTaskForCurrentProject(projectId)) return;
         // Errors are not batched - show immediately
+        updateTaskStatus(taskId, 'error', 'errors', projectId);
         setError(`Task ${taskId}: ${error}`);
         appendLog(taskId, `[ERROR] ${error}`, projectId);
       }

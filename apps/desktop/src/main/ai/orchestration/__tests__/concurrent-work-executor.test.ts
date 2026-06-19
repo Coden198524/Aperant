@@ -11,6 +11,7 @@ const mockLoadImplementationPlanFromFiles = vi.fn();
 const mockSaveImplementationPlanToFiles = vi.fn();
 const mockUpdateImplementationPlanInFiles = vi.fn();
 const mockLearnFromSession = vi.fn();
+const mockValidateSubtaskQuality = vi.fn();
 
 vi.mock('../../schema/plan-shards', () => ({
   loadImplementationPlanFromFiles: (...args: unknown[]) => mockLoadImplementationPlanFromFiles(...args),
@@ -20,6 +21,7 @@ vi.mock('../../schema/plan-shards', () => ({
 
 vi.mock('../quality-integration', () => ({
   learnFromSession: (...args: unknown[]) => mockLearnFromSession(...args),
+  validateSubtaskQuality: (...args: unknown[]) => mockValidateSubtaskQuality(...args),
 }));
 
 function makeSessionResult(outcome: SessionResult['outcome'] = 'completed', durationMs = 1000): SessionResult {
@@ -143,6 +145,7 @@ describe('executeConcurrentWorkItems', () => {
     mockSaveImplementationPlanToFiles.mockReset();
     mockUpdateImplementationPlanInFiles.mockReset();
     mockLearnFromSession.mockReset();
+    mockValidateSubtaskQuality.mockReset();
   });
 
   it('runs independent work items concurrently and marks them completed', async () => {
@@ -163,6 +166,35 @@ describe('executeConcurrentWorkItems', () => {
     expect(result.totalCompleted).toBe(3);
     expect(maxActive).toBe(2);
     expect(getPlanState().phases[0].subtasks.every((subtask) => subtask.status === 'completed')).toBe(true);
+  });
+
+  it('reports quality gate failures for retry recovery hints', async () => {
+    setupPlanState(['src/game/loot.ts']);
+    const onWorkItemQualityFailure = vi.fn();
+    mockValidateSubtaskQuality.mockResolvedValue({
+      passed: false,
+      issues: ['test: expected maxResourceBonus to be 15 but received 0'],
+    });
+
+    await executeConcurrentWorkItems(createConfig({
+      maxRetries: 0,
+      workers: 1,
+      qualityConfig: { enableIncrementalValidation: true },
+      onWorkItemQualityFailure,
+    }));
+
+    expect(onWorkItemQualityFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'work-1' }),
+      expect.objectContaining({
+        outcome: 'error',
+        error: expect.objectContaining({
+          code: 'quality_validation_failed',
+          message: expect.stringContaining('expected maxResourceBonus'),
+        }),
+      }),
+      1,
+      ['test: expected maxResourceBonus to be 15 but received 0'],
+    );
   });
 
   it('stores compact completion summaries for completed concurrent work items', async () => {
@@ -442,6 +474,38 @@ describe('executeConcurrentWorkItems', () => {
     expect(logs.some((message) => message.includes('Not retrying work-1'))).toBe(true);
   });
 
+  it('returns a tool-completed work item to in_progress before retrying', async () => {
+    const { getPlanState } = setupPlanState(['a.ts']);
+    const statusAtRetryStart: string[] = [];
+    let runs = 0;
+    const runWorkItemSession = vi.fn().mockImplementation(async () => {
+      runs++;
+      if (runs === 1) {
+        await mockUpdateImplementationPlanInFiles('/spec', (plan: ReturnType<typeof createPlan>) => {
+          plan.phases[0].subtasks[0].status = 'completed';
+          (plan.phases[0].subtasks[0] as { completed_at?: string }).completed_at = '2026-01-01T00:00:00.000Z';
+          return plan;
+        });
+        return {
+          ...makeSessionResult('error'),
+          error: { message: 'retryable failure' },
+        };
+      }
+      statusAtRetryStart.push(getPlanState().phases[0].subtasks[0].status);
+      return makeSessionResult();
+    });
+
+    const result = await executeConcurrentWorkItems(createConfig({
+      maxRetries: 1,
+      workers: 1,
+      runWorkItemSession,
+    }));
+
+    expect(result.success).toBe(true);
+    expect(statusAtRetryStart).toEqual(['in_progress']);
+    expect(getPlanState().phases[0].subtasks[0].status).toBe('completed');
+  });
+
   it('records failed work item memory even when failure status persistence fails', async () => {
     setupPlanState(['a.ts']);
     let updateCalls = 0;
@@ -673,6 +737,28 @@ describe('executeConcurrentWorkItems', () => {
     expect((getPlanState('/spec')?.phases[0].subtasks[1] as { notes?: string }).notes).toContain(
       'work-1 (failed)',
     );
+  });
+
+  it('does not report success when a resumed plan only has failed or blocked work items', async () => {
+    const plan = createPlan(['a.ts', 'b.ts']);
+    plan.phases[0].subtasks[0].status = 'failed';
+    plan.phases[0].subtasks[1].status = 'blocked';
+    const { getPlanState } = setupPlanStates({ '/spec': plan });
+    const runWorkItemSession = vi.fn().mockResolvedValue(makeSessionResult());
+
+    const result = await executeConcurrentWorkItems(createConfig({ workers: 2, runWorkItemSession }));
+
+    expect(result.success).toBe(false);
+    expect(result.totalFailed).toBe(2);
+    expect(result.totalBlocked).toBe(1);
+    expect(result.error).toContain('terminal incomplete work items');
+    expect(result.error).toContain('work-1 (failed)');
+    expect(result.error).toContain('work-2 (blocked)');
+    expect(runWorkItemSession).not.toHaveBeenCalled();
+    expect(getPlanState('/spec')?.phases[0].subtasks.map((subtask) => subtask.status)).toEqual([
+      'failed',
+      'blocked',
+    ]);
   });
 
   it('reports dependency cycles before starting sessions', async () => {

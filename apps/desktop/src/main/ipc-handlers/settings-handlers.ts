@@ -15,7 +15,7 @@ import type {
   IPCResult
 } from '../../shared/types';
 import { AgentManager } from '../agent';
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow, OpenDialogOptions } from 'electron';
 import { setUpdateChannel, setUpdateChannelWithDowngradeCheck } from '../app-updater';
 import { getSettingsPath, readSettingsFile, writeSettingsFile } from '../settings-utils';
 import { resetMemoryService } from './context/memory-service-factory';
@@ -28,6 +28,19 @@ import { loadProfilesFile } from '../utils/profile-manager';
 import { loadProfileStore } from '../claude-profile/profile-storage';
 
 const settingsPath = getSettingsPath();
+
+const SELECT_DIRECTORY_DIALOG_OPTIONS: OpenDialogOptions = {
+  properties: ['openDirectory', 'createDirectory'],
+  title: 'Select Project Directory'
+};
+
+async function showSelectDirectoryDialog(mainWindow: BrowserWindow | null) {
+  if (!mainWindow || mainWindow.isDestroyed() || process.platform === 'win32') {
+    return dialog.showOpenDialog(SELECT_DIRECTORY_DIALOG_OPTIONS);
+  }
+
+  return dialog.showOpenDialog(mainWindow, SELECT_DIRECTORY_DIALOG_OPTIONS);
+}
 
 const MEMORY_SETTING_KEYS: Array<keyof AppSettings> = [
   'memoryEnabled',
@@ -664,12 +677,7 @@ export function registerSettingsHandlers(
     IPC_CHANNELS.DIALOG_SELECT_DIRECTORY,
     async (): Promise<string | null> => {
       const mainWindow = getMainWindow();
-      if (!mainWindow) return null;
-
-      const result = await dialog.showOpenDialog(mainWindow, {
-        properties: ['openDirectory'],
-        title: 'Select Project Directory'
-      });
+      const result = await showSelectDirectoryDialog(mainWindow);
 
       if (result.canceled || result.filePaths.length === 0) {
         return null;

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { AutocodeRuntimeWorkspaceClaimManager } from './workspace-claims.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  acquireAutocodeRuntimeFileWriteLock,
+  AutocodeRuntimeWorkspaceClaimManager,
+  releaseAutocodeRuntimeFileWriteLock,
+} from './workspace-claims.js';
 
 describe('AutocodeRuntimeWorkspaceClaimManager', () => {
   it('does not release matching task ids from other projects', () => {
@@ -29,5 +36,71 @@ describe('AutocodeRuntimeWorkspaceClaimManager', () => {
     expect(manager.listClaims()).toMatchObject([
       { taskId: '001-project-docs', projectId: 'project-b' },
     ]);
+  });
+});
+
+describe('Autocode runtime file write locks', () => {
+  it('waits for a same-process async lock held by a different owner', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-file-lock-'));
+    const filePath = join(projectRoot, 'implementation_plan.md');
+    const firstLock = await acquireAutocodeRuntimeFileWriteLock({
+      projectRoot,
+      filePath,
+      ownerId: 'first-owner',
+      timeoutMs: 100,
+      retryMs: 1,
+    });
+
+    try {
+      const waitingLockPromise = acquireAutocodeRuntimeFileWriteLock({
+        projectRoot,
+        filePath,
+        ownerId: 'second-owner',
+        timeoutMs: 100,
+        retryMs: 1,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      releaseAutocodeRuntimeFileWriteLock(firstLock);
+
+      const secondLock = await waitingLockPromise;
+      try {
+        expect(secondLock.ownerId).toBe('second-owner');
+      } finally {
+        releaseAutocodeRuntimeFileWriteLock(secondLock);
+      }
+    } finally {
+      releaseAutocodeRuntimeFileWriteLock(firstLock);
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a same-owner async nested write lock immediately', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-file-lock-'));
+    const filePath = join(projectRoot, 'implementation_plan.md');
+    const firstLock = await acquireAutocodeRuntimeFileWriteLock({
+      projectRoot,
+      filePath,
+      ownerId: 'same-owner',
+      timeoutMs: 100,
+      retryMs: 1,
+    });
+
+    try {
+      const startedAt = Date.now();
+      await expect(
+        acquireAutocodeRuntimeFileWriteLock({
+          projectRoot,
+          filePath,
+          ownerId: 'same-owner',
+          timeoutMs: 100,
+          retryMs: 10,
+        }),
+      ).rejects.toThrow(/already held by this process/);
+      expect(Date.now() - startedAt).toBeLessThan(50);
+    } finally {
+      releaseAutocodeRuntimeFileWriteLock(firstLock);
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 });

@@ -47,4 +47,12 @@ describe('buildAggressiveCoderPrompt', () => {
     expect(prompt).toContain('Touched files/contracts');
     expect(prompt).toContain('Review notes/risks');
   });
+
+  it('requires runtime readiness before completing runnable work', () => {
+    const prompt = buildAggressiveCoderPrompt();
+
+    expect(prompt).toContain('actual launch/open/use-path smoke check');
+    expect(prompt).toContain('Static syntax, unit, lint, typecheck, or file-existence checks alone do not prove');
+    expect(prompt).toContain('Do not call update_subtask_status with status completed for user-facing or runnable work');
+  });
 });

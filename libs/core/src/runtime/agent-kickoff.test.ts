@@ -208,12 +208,32 @@ describe('buildAutocodeSpecKickoffMessage', () => {
     expect(qaReviewer).toContain('Changed Files And Contracts');
     expect(qaReviewer).toContain('Acceptance Matrix');
     expect(qaReviewer).toContain('APIs, schemas, IPC/protocols');
+    expect(qaReviewer).toContain('actual launch/open/use-path smoke verification');
+    expect(qaReviewer).toContain('reject static-only verification');
     expect(qaFixer).toContain('Do not edit the QA verdict');
     expect(qaFixer).toContain('public APIs/schemas/IPC/config/data/error contracts');
+    expect(qaFixer).toContain('rerun the exact launch/open/use-path smoke check');
     expect(mmoReviewer).toContain('MMO Domain Matrix');
     expect(mmoReviewer).toContain('server authority');
     expect(mmoReviewer).toContain('sync/protocol');
     expect(mmoReviewer).toContain('liveops/release');
+    expect(mmoReviewer).toContain('reject static-only verification');
+  });
+
+  it('keeps Request Changes replanning on Standard artifacts instead of runtime plan edits', () => {
+    const message = buildAutocodeAgentKickoffMessage({
+      agentType: 'planner',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+      forcePlanning: true,
+    });
+
+    expect(message).toContain('PLAN REVIEW REGENERATION');
+    expect(message).toContain('Do not edit E:/Work/App/.autocode/specs/001-task/implementation_plan.md directly');
+    expect(message).toContain('keep one canonical checklist item');
+    expect(message).toContain('Do not append a second task');
+    expect(message).toContain('cannot start, open, run, or play');
+    expect(message).not.toContain('preserve completed work that remains valid');
   });
 
   it('compacts oversized task descriptions in agentic orchestrator kickoff', () => {

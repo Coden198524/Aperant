@@ -40,8 +40,30 @@ export async function buildPlannerMemoryContext(
         })
       : Promise.resolve([] as Memory[]);
 
-    const [calibrations, deadEnds, causalDeps, outcomes, recipes] =
+    const architectureSearch =
+      task || modules.length > 0
+        ? memoryService.search({
+            types: ['pattern', 'decision', 'module_insight'],
+            ...(task ? { query: task } : {}),
+            ...(modules.length > 0 ? { relatedModules: modules } : {}),
+            limit: 4,
+            sort: 'relevance',
+            projectId,
+            promptContextOnly: true,
+            recordAccess: false,
+          })
+        : emptySearch;
+
+    const [
+      architectureRefs,
+      calibrations,
+      deadEnds,
+      causalDeps,
+      outcomes,
+      recipes,
+    ] =
       await Promise.all([
+        architectureSearch,
         modules.length > 0
           ? memoryService.search({
               types: ['task_calibration'],
@@ -87,6 +109,7 @@ export async function buildPlannerMemoryContext(
       ]);
 
     const selectedSections = selectPlannerSections({
+      architectureRefs,
       calibrations,
       deadEnds,
       causalDeps,
@@ -107,6 +130,7 @@ export async function buildPlannerMemoryContext(
 }
 
 interface PlannerSections {
+  architectureRefs: Memory[];
   calibrations: Memory[];
   deadEnds: Memory[];
   causalDeps: Memory[];
@@ -118,6 +142,13 @@ function selectPlannerSections(sections: PlannerSections): PlannerSections {
   const seenFingerprints = new Set<string>();
   const seenContents: string[] = [];
   return {
+    architectureRefs: selectMemoryContextItems(sections.architectureRefs, {
+      maxItems: 2,
+      minConfidence: 0.6,
+      seenContents,
+      seenFingerprints,
+      getContent: formatArchitectureMemoryContent,
+    }),
     recipes: selectMemoryContextItems(sections.recipes, {
       maxItems: 1,
       minConfidence: 0.55,
@@ -166,7 +197,26 @@ function formatPlannerSections(
 ): FormattedPlannerContext {
   const parts: string[] = [];
   const memoryItems: VisibleMemoryItem[] = [];
-  const { recipes, calibrations, deadEnds, causalDeps, outcomes } = sections;
+  const {
+    architectureRefs,
+    recipes,
+    calibrations,
+    deadEnds,
+    causalDeps,
+    outcomes,
+  } = sections;
+
+  if (architectureRefs.length > 0) {
+    const items = architectureRefs.map((memory) =>
+      formatArchitectureMemoryLine(memory),
+    );
+    parts.push(
+      `ARCHITECTURE AND DESIGN PATTERN REFERENCES - Similar task patterns to reuse:\n${items
+        .map((item) => item.renderedLine)
+        .join('\n')}`,
+    );
+    memoryItems.push(...items);
+  }
 
   if (recipes.length > 0) {
     const items = recipes.map((memory) => formatMemoryLine(memory));
@@ -251,6 +301,30 @@ function formatMemoryLine(memory: Memory): VisibleMemoryItem {
     memory,
     renderedLine: `- ${formatMemoryContent(memory)}`,
   };
+}
+
+function formatArchitectureMemoryLine(memory: Memory): VisibleMemoryItem {
+  const sourceType = memory.type.replace(/_/g, ' ');
+  const files = formatRelatedFilesSuffix(memory);
+  return {
+    memory,
+    renderedLine: `- [${sourceType}] ${formatArchitectureMemoryContent(memory)}${files}`,
+  };
+}
+
+function formatArchitectureMemoryContent(memory: Memory): string {
+  return truncateText(
+    stripLowValueMemoryLines(memory.content),
+    MAX_PLANNER_MEMORY_ITEM_CHARS,
+    MAX_PLANNER_MEMORY_ITEM_TOKENS,
+  );
+}
+
+function formatRelatedFilesSuffix(memory: Memory): string {
+  const files = [...new Set(memory.relatedFiles.filter(Boolean))]
+    .slice(0, 2)
+    .map((file) => truncateText(file, 80, 24));
+  return files.length > 0 ? ` Files: ${files.join(', ')}.` : '';
 }
 
 function formatMemoryContent(memory: Memory): string {

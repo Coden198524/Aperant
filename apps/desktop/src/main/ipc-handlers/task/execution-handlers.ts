@@ -412,7 +412,9 @@ function buildChangeRequestIterationPlan(
     flowDocuments.add('implementation_plan.md');
     requiredActions.add('Keep this as the same Standard task iteration; do not create a new task for the follow-up requirement.');
     requiredActions.add('Update changed flow documents before starting the coding pass.');
-    requiredActions.add('Preserve completed work that still satisfies the updated requirement, and reset only affected work to pending with needs_revision notes.');
+    requiredActions.add('Keep one canonical tasks.md checklist item per behavior/file/requirement boundary; edit represented work in place instead of appending duplicate active tasks.');
+    requiredActions.add('Preserve completed work that still satisfies the updated requirement, and reset only affected work to pending with needs_revision markers only in detail notes or metadata lines, never in titles.');
+    requiredActions.add('During planning, do not edit implementation_plan.md directly; validated tasks.md is the source for derived runtime work packages.');
     requiredActions.add('Add or adjust verification metadata for every new or revised task.');
     validation.add('Run the smallest reliable targeted validation for the affected area.');
     validation.add('Record validation results in the implementation plan completion note or QA report.');
@@ -478,7 +480,7 @@ function buildIterationProtocolSection(changeRequest?: ChangeRequestRecord): str
   return (
     `## Standard Iteration Protocol\n\n` +
     `- Mode: ${changeRequest.iteration.mode}\n` +
-    `- Flow documents to update: ${changeRequest.iteration.flowDocuments.join(', ')}\n` +
+    `- Flow/runtime documents involved: ${changeRequest.iteration.flowDocuments.join(', ')}\n` +
     `- Validation: ${changeRequest.iteration.validation.join('; ')}\n` +
     `- Commit policy: ${changeRequest.iteration.commitPolicy}\n\n` +
     `### Required Actions\n\n` +
@@ -537,10 +539,11 @@ function buildHumanInputContent(
       `- For Standard tasks, update spec.md with changed requirements, design decisions, acceptance criteria, risks, and open questions.\n` +
       `- Then update tasks.md with concrete pending subtasks that implement this feedback and keep dependencies/verification current.\n` +
       `- Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan.\n` +
+      `- Do not edit implementation_plan.md directly in this planning pass; the runtime derives it from validated tasks.md after planning succeeds.\n` +
       `- Edit incrementally: only touch affected requirement IDs, design notes, risks, acceptance criteria, and task checklist items. Keep unaffected sections stable.\n` +
       `- Every new or revised requirement/design/task must keep or add Evidence. If evidence is missing, record an assumption/open question or add a validation task instead of guessing.\n` +
-      `- Revise task lists incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.\n` +
-      `- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback, preserving useful completed work where still valid.\n` +
+      `- Revise task lists incrementally: keep one canonical checklist item per behavior/file/requirement boundary, edit represented work in place, reset affected work to pending, and put any needs_revision marker only in a detail note or metadata line.\n` +
+      `- Remove or compact obsolete executable checklist items after recording the change request so duplicate active work is not carried into the next coding pass; never prefix task titles or work package titles with needs_revision, obsolete, or other state labels.\n` +
       `- Update verification metadata for revised tasks, and ensure the next coding/QA pass runs the relevant tests before the task is committed.\n` +
       `- Keep this iteration commit-ready: the final coding pass should use the normal task commit flow after validation succeeds.\n` +
       `- Do not implement code in this planning pass.\n`
@@ -560,7 +563,7 @@ function buildHumanInputContent(
     `- Fix the reported implementation issues.\n` +
     `- Re-run the relevant build/test/validation steps.\n` +
     `- Keep this iteration commit-ready: after validation passes, use the normal task commit flow when commits are enabled.\n` +
-    `- Update implementation_plan.md as you make progress and record any affected subtask as needs_revision in its description or completion note.\n`
+    `- Update implementation_plan.md as you make progress and record any affected subtask as needs_revision only in its description or completion note, never in the title.\n`
   );
 }
 
@@ -947,6 +950,7 @@ export function registerTaskExecutionHandlers(
   agentManager: AgentManager,
   getMainWindow: () => BrowserWindow | null
 ): void {
+  taskStateManager.configure(getMainWindow);
   const runtimeAdapter = createDesktopAgentRuntimeAdapter(agentManager);
   const isRuntimeRunning = (taskId: string, projectId?: string): boolean =>
     runtimeAdapter.isRuntimeRunning?.(taskId, projectId) ?? false;

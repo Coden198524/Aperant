@@ -1159,7 +1159,7 @@ function buildWebChangeRequestIterationPlan(
     documents.add('implementation_plan.md');
     actions.add('Keep this as the same Standard task iteration; do not create a new task for the follow-up requirement.');
     actions.add('Update changed flow documents before starting the coding pass.');
-    actions.add('Preserve completed work that still satisfies the updated requirement, and reset only affected work to pending with needs_revision notes.');
+    actions.add('Preserve completed work that still satisfies the updated requirement, and reset only affected work to pending with needs_revision markers only in detail notes or metadata lines, never in titles.');
     actions.add('Add or adjust verification metadata for every new or revised task.');
     validation.add('Run the smallest reliable targeted validation for the affected area.');
     validation.add('Record validation results in the implementation plan completion note or QA report.');
@@ -1258,7 +1258,7 @@ function buildWebHumanInputContent(
     '- First update requirements/design/task artifacts so they reflect this change request before any coding pass.',
     '- For Standard tasks, update spec.md with changed requirements, design decisions, acceptance criteria, risks, and open questions.',
     '- Then update tasks.md with new pending subtasks that implement this feedback. Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan.',
-    '- Revise task lists incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.',
+    '- Revise task lists incrementally: keep completed work that remains valid, reset affected work to pending, and put any needs_revision marker only in a detail note or metadata line. Add new pending subtasks for new requirements, and record obsolete upstream checklist history without prefixing executable task titles.',
     '- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback.',
     '- Update verification metadata for revised tasks, and ensure the next coding/QA pass runs the relevant tests before the task is committed.',
     '- Keep this iteration commit-ready: the final coding pass should use the normal task commit flow after validation succeeds.',
@@ -1270,7 +1270,7 @@ function buildWebHumanInputContent(
     '- Fix the reported implementation issues.',
     '- Re-run the relevant build/test/validation steps.',
     '- Keep this iteration commit-ready: after validation passes, use the normal task commit flow when commits are enabled.',
-    '- Update implementation_plan.md as you make progress and record affected subtasks as needs_revision where appropriate.',
+    '- Update implementation_plan.md as you make progress and record affected subtasks as needs_revision only in descriptions or completion notes, never in titles.',
   ];
 
   return [

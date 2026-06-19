@@ -152,6 +152,44 @@ describe('Task Store', () => {
         })
       );
     });
+
+    it('should preserve active local execution state when a stale refresh returns backlog', () => {
+      useTaskStore.setState({
+        tasks: [
+          createTestTask({
+            id: 'task-1',
+            specId: '001-task',
+            projectId: 'project-1',
+            status: 'in_progress',
+            updatedAt: new Date('2026-06-18T10:00:00.000Z'),
+            executionProgress: {
+              phase: 'planning',
+              phaseProgress: 0,
+              overallProgress: 0,
+            },
+          }),
+        ],
+      });
+
+      useTaskStore.getState().setTasks([
+        createTestTask({
+          id: 'task-1',
+          specId: '001-task',
+          projectId: 'project-1',
+          status: 'backlog',
+          updatedAt: new Date('2026-06-18T09:59:00.000Z'),
+          executionProgress: {
+            phase: 'idle',
+            phaseProgress: 0,
+            overallProgress: 0,
+          },
+        }),
+      ]);
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.status).toBe('in_progress');
+      expect(task.executionProgress?.phase).toBe('planning');
+    });
   });
 
   describe('addTask', () => {
@@ -393,6 +431,23 @@ describe('Task Store', () => {
       expect(useTaskStore.getState().tasks[0].status).toBe('in_progress');
     });
 
+    it('should promote backlog task to in_progress when active plan update arrives first', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1', status: 'backlog' })]
+      });
+
+      const plan = createTestPlan({
+        status: 'in_progress',
+        xstateState: 'planning'
+      });
+
+      useTaskStore.getState().updateTaskFromPlan('task-1', plan);
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.status).toBe('in_progress');
+      expect(task.executionProgress?.phase).toBe('planning');
+    });
+
     it('should NOT modify status from plan (XState is source of truth)', () => {
       useTaskStore.setState({
         tasks: [createTestTask({ id: 'task-1', status: 'ai_review' })]
@@ -454,6 +509,46 @@ describe('Task Store', () => {
 
       expect(useTaskStore.getState().tasks[0].executionProgress?.phase).toBe('coding');
       expect(useTaskStore.getState().tasks[0].executionProgress?.currentSubtask).toBe('Subtask 2');
+    });
+
+    it('should keep RequestChanges replanning in planning despite stale coding subtasks', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'in_progress',
+          executionProgress: {
+            phase: 'coding',
+            phaseProgress: 65,
+            overallProgress: 55,
+            currentSubtask: 'Old active subtask',
+          }
+        })]
+      });
+
+      const plan = createTestPlan({
+        status: 'in_progress',
+        xstateState: 'planning',
+        executionPhase: 'planning',
+        phases: [
+          {
+            phase: 1,
+            name: 'Previous implementation subtasks',
+            type: 'implementation',
+            subtasks: [
+              { id: 'c1', title: 'Old completed subtask', description: 'Already completed before feedback', status: 'completed' },
+              { id: 'c2', title: 'Old active subtask', description: 'Was active before RequestChanges', status: 'in_progress' }
+            ]
+          }
+        ]
+      } as Partial<ImplementationPlan> & { executionPhase: string });
+
+      useTaskStore.getState().updateTaskFromPlan('task-1', plan);
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.status).toBe('in_progress');
+      expect(task.executionProgress?.phase).toBe('planning');
+      expect(task.executionProgress?.phaseProgress).toBe(0);
+      expect(task.executionProgress?.currentSubtask).toBeUndefined();
     });
 
     it('should skip update when plan is invalid', () => {
@@ -553,6 +648,36 @@ describe('Task Store', () => {
       useTaskStore.getState().updateTaskTokenUsage('task-1', createTokenUsage({ stepsExecuted: 2 }));
 
       expect(useTaskStore.getState().tasks[0].tokenUsage?.stepsExecuted).toBe(5);
+    });
+
+    it('should replace estimated usage with provider-reported usage even when lower', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          tokenUsage: createTokenUsage({
+            promptTokens: 1200,
+            completionTokens: 300,
+            totalTokens: 1500,
+            stepsExecuted: 2,
+            estimated: true,
+          }),
+        })]
+      });
+
+      useTaskStore.getState().updateTaskTokenUsage('task-1', createTokenUsage({
+        promptTokens: 320,
+        completionTokens: 90,
+        totalTokens: 410,
+        stepsExecuted: 2,
+      }));
+
+      expect(useTaskStore.getState().tasks[0].tokenUsage).toMatchObject({
+        promptTokens: 320,
+        completionTokens: 90,
+        totalTokens: 410,
+        stepsExecuted: 2,
+      });
+      expect(useTaskStore.getState().tasks[0].tokenUsage?.estimated).toBeUndefined();
     });
   });
 
@@ -821,6 +946,33 @@ describe('Task Store', () => {
       expect(startTask).toHaveBeenCalledWith('task-b', { projectId: 'project-b' });
     });
 
+    it('optimistically moves a newly started backlog task into planning', async () => {
+      const startTask = vi.fn();
+      vi.stubGlobal('window', {
+        electronAPI: {
+          startTask,
+        },
+      });
+      useTaskStore.setState({
+        tasks: [
+          createTestTask({
+            id: 'task-1',
+            specId: '001-task',
+            projectId: 'project-1',
+            status: 'backlog',
+          }),
+        ],
+      });
+
+      const result = await startTaskOrQueue('task-1', 'project-1');
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(result).toEqual({ action: 'started', success: true });
+      expect(task.status).toBe('in_progress');
+      expect(task.executionProgress?.phase).toBe('planning');
+      expect(startTask).toHaveBeenCalledWith('task-1', { projectId: 'project-1' });
+    });
+
     it('ignores stale loadTasks results from a project that is no longer visible', async () => {
       let resolveProjectA: (value: { success: true; data: Task[] }) => void = () => {};
       let resolveProjectB: (value: { success: true; data: Task[] }) => void = () => {};
@@ -870,6 +1022,92 @@ describe('Task Store', () => {
 
       expect(useTaskStore.getState().tasks).toEqual(projectBTasks);
     });
+
+    it('serves cached project tasks immediately and refreshes in the background', async () => {
+      let resolveRefresh: (value: { success: true; data: Task[] }) => void = () => {};
+      const cachedTasks = [
+        createTestTask({ id: 'task-cached', specId: '001-cache', projectId: 'project-cache', title: 'Cached task' }),
+      ];
+      const freshTasks = [
+        createTestTask({ id: 'task-fresh', specId: '001-cache', projectId: 'project-cache', title: 'Fresh task' }),
+      ];
+      const getTasks = vi.fn()
+        .mockResolvedValueOnce({ success: true, data: cachedTasks })
+        .mockImplementationOnce(() =>
+          new Promise<{ success: true; data: Task[] }>((resolve) => {
+            resolveRefresh = resolve;
+          })
+        );
+
+      vi.stubGlobal('window', {
+        electronAPI: {
+          getTasks,
+        },
+      });
+      useProjectStore.setState({
+        projects: [createTestProject('project-cache')],
+        activeProjectId: 'project-cache',
+        selectedProjectId: 'project-cache',
+      });
+
+      await loadTasks('project-cache');
+      expect(useTaskStore.getState().tasks).toEqual(cachedTasks);
+
+      const refreshLoad = loadTasks('project-cache', {
+        preferCache: true,
+        backgroundRefresh: true,
+      });
+
+      expect(useTaskStore.getState().tasks).toEqual(cachedTasks);
+      expect(useTaskStore.getState().isLoading).toBe(false);
+      expect(getTasks).toHaveBeenCalledTimes(2);
+
+      resolveRefresh({ success: true, data: freshTasks });
+      await refreshLoad;
+
+      expect(useTaskStore.getState().tasks).toEqual(freshTasks);
+    });
+
+    it('keeps an active local task when a refresh result is missing it during startup', async () => {
+      const activeTask = createTestTask({
+        id: 'task-active',
+        specId: '001-active',
+        projectId: 'project-1',
+        status: 'in_progress',
+        executionProgress: {
+          phase: 'planning',
+          phaseProgress: 0,
+          overallProgress: 0,
+        },
+      });
+      const loadedTask = createTestTask({
+        id: 'task-loaded',
+        specId: '001-loaded',
+        projectId: 'project-1',
+        status: 'backlog',
+      });
+
+      vi.stubGlobal('window', {
+        electronAPI: {
+          getTasks: vi.fn().mockResolvedValue({ success: true, data: [loadedTask] }),
+        },
+      });
+      useProjectStore.setState({
+        projects: [createTestProject('project-1')],
+        activeProjectId: 'project-1',
+        selectedProjectId: 'project-1',
+      });
+      useTaskStore.setState({ tasks: [activeTask] });
+
+      await loadTasks('project-1');
+
+      expect(useTaskStore.getState().tasks.map((task) => task.id)).toEqual([
+        'task-loaded',
+        'task-active',
+      ]);
+      expect(useTaskStore.getState().tasks[1].status).toBe('in_progress');
+      expect(useTaskStore.getState().tasks[1].executionProgress?.phase).toBe('planning');
+    });
   });
 
   describe('execution phase regression protection', () => {
@@ -893,6 +1131,31 @@ describe('Task Store', () => {
       });
 
       expect(useTaskStore.getState().tasks[0].executionProgress?.phase).toBe('coding');
+    });
+
+    it('should allow authoritative planning restart update after coding', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'in_progress',
+          executionProgress: {
+            phase: 'coding',
+            phaseProgress: 40,
+            overallProgress: 35,
+          }
+        })]
+      });
+
+      useTaskStore.getState().updateExecutionProgress('task-1', {
+        phase: 'planning',
+        phaseProgress: 0,
+        overallProgress: 0,
+        allowPhaseRegression: true,
+      });
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.executionProgress?.phase).toBe('planning');
+      expect(task.executionProgress).not.toHaveProperty('allowPhaseRegression');
     });
 
     it('should allow qa_fixing to qa_review transition without sequence number', () => {

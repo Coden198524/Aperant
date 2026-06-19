@@ -39,6 +39,7 @@ vi.mock('../../../claude-profile-manager', () => ({
 
 vi.mock('../../../task-state-manager', () => ({
   taskStateManager: {
+    configure: vi.fn(),
     prepareForRestart: vi.fn(),
     getCurrentState: vi.fn(() => null),
     handleUiEvent: vi.fn(),
@@ -164,6 +165,12 @@ describe('registerTaskExecutionHandlers', () => {
     });
     const worktreePaths = await import('../../../worktree-paths');
     (worktreePaths.findTaskWorktree as Mock).mockImplementation(() => null);
+  });
+
+  it('configures the task state manager for status broadcasts from task execution handlers', async () => {
+    const { taskStateManager } = await import('../../../task-state-manager');
+
+    expect(taskStateManager.configure).toHaveBeenCalledWith(expect.any(Function));
   });
 
   it('scopes TASK_START lookups and task errors by requested projectId', async () => {
@@ -370,7 +377,17 @@ describe('registerTaskExecutionHandlers', () => {
     );
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('Flow documents to update: HUMAN_INPUT.md, change_requests.jsonl, spec.md, requirements.md, tasks.md, implementation_plan.md, qa_report.md'),
+      expect.stringContaining('Flow/runtime documents involved: HUMAN_INPUT.md, change_requests.jsonl, spec.md, requirements.md, tasks.md, implementation_plan.md, qa_report.md'),
+      'utf-8'
+    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('Do not edit implementation_plan.md directly'),
+      'utf-8'
+    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('keep one canonical checklist item'),
       'utf-8'
     );
     expect(fs.appendFileSync).toHaveBeenCalledWith(

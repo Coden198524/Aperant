@@ -63,6 +63,10 @@ export function getAutocodeSubtaskId(subtask: AutocodePlanSubtask): string | und
 }
 
 export function hasAutocodeSubtaskCompletionEvidence(subtask: AutocodePlanSubtask): boolean {
+  if (subtask.status === 'failed' || subtask.status === 'blocked') {
+    return false;
+  }
+
   if (subtask.status === 'completed') {
     return true;
   }

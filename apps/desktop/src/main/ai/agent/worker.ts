@@ -458,6 +458,7 @@ function buildToolContext(session: SerializableSessionConfig, securityProfile: S
     abortSignal: abortController.signal,
     fileCache,
     workflowMode: session.workflowMode,
+    currentSubtaskId: session.subtaskId,
     toolUsageState,
     fileWriteLock: {
       enabled: true,
@@ -750,9 +751,11 @@ function buildPlanReviewRegenerationDirective(session: SerializableSessionConfig
     `Read ${promptSpecDir}/HUMAN_INPUT.md and treat it as required reviewer feedback.`,
     `If ${promptSpecDir}/change_requests.jsonl exists, use its latest entry as the active same-task iteration contract.`,
     `Update ${promptSpecDir}/spec.md, ${promptSpecDir}/requirements.md, and ${promptSpecDir}/tasks.md where the feedback changes requirements, acceptance criteria, design decisions, task scope, or verification.`,
-    `Regenerate ${promptSpecDir}/implementation_plan.md from the updated Autocode Standard tasks.`,
+    `Do not edit ${promptSpecDir}/implementation_plan.md directly; the runtime derives it from validated tasks.md after the Standard artifacts are updated.`,
     `Do not make ${promptSpecDir}/implementation_plan.md the only changed planning artifact when the feedback changes requirements, design, user behavior, or task scope.`,
     'Only edit affected requirement IDs, design notes, risks, acceptance criteria, and task checklist items. Keep unaffected sections stable.',
+    'Keep one canonical tasks.md checklist item per behavior/file/requirement boundary. If represented work needs revision, edit that item in place, reset it to pending, and put any needs_revision marker only in a detail note or metadata line instead of appending a duplicate task.',
+    'Add pending tasks only for genuinely new requirements or verification gaps, and remove or compact obsolete executable checklist items after recording the change request. Never prefix task titles or work package titles with needs_revision, obsolete, or other state labels.',
     'Every new or revised requirement/design/task must carry Evidence; if evidence is missing, add an assumption/open question or validation task instead of guessing.',
     'Add or update focused verification commands for every new or revised task so the next coding pass can test and commit through the normal task flow.',
     'Keep this as a planning-only run: do not implement code, do not run coding subtasks, and do not mark subtasks completed.',
@@ -1029,7 +1032,7 @@ async function runSingleSession(
     onEvent: (event: StreamEvent) => {
       // Write stream events to task_logs.jsonl for UI log display
       if (logWriter) {
-        logWriter.processEvent(event, phase);
+        logWriter.processEvent(event, phase, subtaskId);
       }
       // Also relay to main thread for real-time progress updates
       postMessage({
@@ -1666,7 +1669,7 @@ async function runDefaultSession(
         }
         // Write stream events to task_logs.jsonl for UI log display
         if (logWriter) {
-          logWriter.processEvent(event, defaultPhase);
+          logWriter.processEvent(event, defaultPhase, session.subtaskId);
         }
         postMessage({
           type: 'stream-event',
@@ -2369,7 +2372,7 @@ async function runAgenticSpecOrchestrator(
       tools,
       onEvent: (event: StreamEvent) => {
         if (logWriter) {
-          logWriter.processEvent(event, 'spec');
+          logWriter.processEvent(event, 'spec', session.subtaskId);
         }
         postMessage({
           type: 'stream-event',

@@ -99,6 +99,7 @@ vi.mock('../app-updater', () => ({
 }));
 
 import { IPC_CHANNELS } from '../../shared/constants';
+import { dialog } from 'electron';
 
 describe('SETTINGS_CLAUDE_CODE_GET_ONBOARDING_STATUS handler', () => {
   let onboardingStatusHandler: IpcHandler;
@@ -282,5 +283,54 @@ describe('SETTINGS_CLAUDE_CODE_GET_ONBOARDING_STATUS handler', () => {
       existsSyncMock.mockImplementation(originalExistsSync);
       readFileSyncMock.mockImplementation(originalReadFileSync);
     });
+  });
+});
+
+describe('DIALOG_SELECT_DIRECTORY handler', () => {
+  let selectDirectoryHandler: IpcHandler;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    registeredHandlers.clear();
+    mockFiles.clear();
+    vi.resetModules();
+
+    const { registerSettingsHandlers } = await import('../ipc-handlers/settings-handlers');
+    const mockAgentManager = {};
+    const mockGetMainWindow = vi.fn(() => null);
+    registerSettingsHandlers(mockAgentManager as never, mockGetMainWindow);
+
+    const handler = registeredHandlers.get(IPC_CHANNELS.DIALOG_SELECT_DIRECTORY);
+    if (!handler) {
+      throw new Error('DIALOG_SELECT_DIRECTORY handler not registered');
+    }
+    selectDirectoryHandler = handler;
+  });
+
+  test('should allow creating folders in the native directory picker', async () => {
+    const selectedPath = 'E:\\Work\\New Project Folder';
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+      canceled: false,
+      filePaths: [selectedPath],
+    });
+
+    const result = await selectDirectoryHandler({});
+
+    expect(result).toBe(selectedPath);
+    expect(dialog.showOpenDialog).toHaveBeenCalledWith(expect.objectContaining({
+      properties: expect.arrayContaining(['openDirectory', 'createDirectory']),
+      title: 'Select Project Directory',
+    }));
+  });
+
+  test('should return null when directory selection is cancelled', async () => {
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+      canceled: true,
+      filePaths: [],
+    });
+
+    const result = await selectDirectoryHandler({});
+
+    expect(result).toBeNull();
   });
 });

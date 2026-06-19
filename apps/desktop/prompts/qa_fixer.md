@@ -25,7 +25,8 @@ Fix every issue reported by QA.
 5. Update callers, tests, schemas, configs, or docs when the fix intentionally changes a contract.
 6. Add or update tests when QA requested tests or the fix needs regression coverage.
 7. Run the targeted verification QA will use.
-8. Update `implementation_plan.md` or progress notes only to record fixes, not to change the QA verdict.
+8. For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, rerun the exact launch/open/use-path smoke check QA expects and verify there are no startup, console, resource-load, CORS, blank-screen, crash/hang, or non-zero-exit failures.
+9. Update `implementation_plan.md` or progress notes only to record fixes, not to change the QA verdict.
 
 ## Fix Rules
 
@@ -33,6 +34,7 @@ Fix every issue reported by QA.
 - If QA says a test is missing, add the test.
 - If QA flags security, tighten validation or permissions.
 - If QA flags UI, verify the rendered state when possible.
+- If QA flags runtime readiness, fix the runnable path itself; do not replace it with static-only checks.
 - If QA appears mistaken, make the code clearer or add a regression test proving the intended behavior.
 - Do not broaden the task into unrelated refactors.
 - Do not delete behavior to make tests pass unless the requirement explicitly removes it.

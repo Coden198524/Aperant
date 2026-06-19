@@ -12,10 +12,11 @@
  * - Fixes are easier when the code is still in working memory
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, type ExecFileOptions } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { getAugmentedEnvAsync } from '../../env-utils';
 import {
   checkAutocodePatternComplianceContent,
   detectAutocodeLintCommandFromPackageJson,
@@ -36,7 +37,7 @@ export const INCREMENTAL_VALIDATION_OUTPUT_MAX_CHARS = 6_000;
 // =============================================================================
 
 export interface IncrementalValidationResult {
-  /** Whether all checks passed */
+  /** Whether all blocking checks passed */
   passed: boolean;
   /** List of failures */
   failures: ValidationFailure[];
@@ -72,6 +73,10 @@ export interface ValidationCheck {
   durationMs: number;
   /** Output (if failed) */
   output?: string;
+  /** Whether the validation command itself failed to launch */
+  infrastructureFailure?: boolean;
+  /** Whether the failed check is advisory and should not block work completion */
+  nonBlockingFailure?: boolean;
 }
 
 export interface SubtaskValidationConfig {
@@ -91,6 +96,7 @@ interface CommandSpec {
   command: string;
   args: string[];
   acceptsFileArgs: boolean;
+  blocking?: boolean;
 }
 
 // =============================================================================
@@ -114,14 +120,24 @@ export async function runIncrementalValidation(
   const syntaxCheck = await checkSyntax(config);
   checks.push(syntaxCheck);
   if (!syntaxCheck.passed) {
-    failures.push(...parseAutocodeSyntaxErrors(syntaxCheck.output || ''));
+    if (syntaxCheck.infrastructureFailure) {
+      failures.push(createInfrastructureFailure('syntax', syntaxCheck.output));
+    } else {
+      failures.push(...parseAutocodeSyntaxErrors(syntaxCheck.output || ''));
+    }
   }
 
   // 2. Type check (if TypeScript/typed language)
   const typeCheck = await checkTypes(config);
   checks.push(typeCheck);
   if (!typeCheck.passed) {
-    failures.push(...parseAutocodeTypeErrors(typeCheck.output || ''));
+    if (typeCheck.infrastructureFailure) {
+      failures.push(createInfrastructureFailure('type', typeCheck.output));
+    } else if (typeCheck.nonBlockingFailure) {
+      failures.push(createNonBlockingValidationFailure('type', typeCheck.output));
+    } else {
+      failures.push(...parseAutocodeTypeErrors(typeCheck.output || ''));
+    }
   }
 
   // 3. Security check (hardcoded secrets, SQL injection patterns)
@@ -151,14 +167,16 @@ export async function runIncrementalValidation(
   if (!testCheck.passed) {
     failures.push({
       type: 'test',
-      severity: 'error',
+      severity: testCheck.infrastructureFailure ? 'warning' : 'error',
       message: testCheck.output || 'Related unit tests failing',
-      suggestion: 'Fix failing tests or update test expectations if behavior changed intentionally',
+      suggestion: testCheck.infrastructureFailure
+        ? 'Check that local validation tools are installed and available in PATH; this infrastructure issue does not block completed work.'
+        : 'Fix failing tests or update test expectations if behavior changed intentionally',
     });
   }
 
   return {
-    passed: failures.length === 0,
+    passed: failures.every((failure) => failure.severity !== 'error'),
     failures,
     durationMs: Date.now() - startTime,
     checks,
@@ -191,7 +209,7 @@ async function checkSyntax(config: SubtaskValidationConfig): Promise<ValidationC
     const args = lintCommand.acceptsFileArgs
       ? [...lintCommand.args, ...config.filesModified]
       : lintCommand.args;
-    await execFileAsync(lintCommand.command, args, {
+    await execValidationCommand(lintCommand.command, args, {
       cwd: config.projectDir,
       timeout: 10000,
       maxBuffer: 5 * 1024 * 1024,
@@ -204,12 +222,14 @@ async function checkSyntax(config: SubtaskValidationConfig): Promise<ValidationC
       durationMs: Date.now() - startTime,
     };
   } catch (error: any) {
+    const output = compactValidationOutput(error.stdout || error.stderr || error.message);
     return {
       name: 'syntax',
       type: 'syntax',
       passed: false,
       durationMs: Date.now() - startTime,
-      output: compactValidationOutput(error.stdout || error.stderr || error.message),
+      output,
+      infrastructureFailure: isValidationCommandStartupError(error, output),
     };
   }
 }
@@ -219,6 +239,7 @@ async function checkSyntax(config: SubtaskValidationConfig): Promise<ValidationC
  */
 async function checkTypes(config: SubtaskValidationConfig): Promise<ValidationCheck> {
   const startTime = Date.now();
+  let typecheckIsBlocking = true;
 
   try {
     // Check if project uses TypeScript
@@ -244,7 +265,8 @@ async function checkTypes(config: SubtaskValidationConfig): Promise<ValidationCh
     }
 
     const typeCommand = await detectTypecheckCommand(config.projectDir);
-    await execFileAsync(typeCommand.command, typeCommand.args, {
+    typecheckIsBlocking = typeCommand.blocking !== false;
+    await execValidationCommand(typeCommand.command, typeCommand.args, {
       cwd: config.projectDir,
       timeout: 20000,
       maxBuffer: 5 * 1024 * 1024,
@@ -257,12 +279,15 @@ async function checkTypes(config: SubtaskValidationConfig): Promise<ValidationCh
       durationMs: Date.now() - startTime,
     };
   } catch (error: any) {
+    const output = compactValidationOutput(error.stdout || error.stderr || error.message);
     return {
       name: 'types',
       type: 'type',
       passed: false,
       durationMs: Date.now() - startTime,
-      output: compactValidationOutput(error.stdout || error.stderr || error.message),
+      output,
+      infrastructureFailure: isValidationCommandStartupError(error, output),
+      nonBlockingFailure: !typecheckIsBlocking,
     };
   }
 }
@@ -380,23 +405,18 @@ async function checkRelatedTests(config: SubtaskValidationConfig): Promise<Valid
 
   try {
     // Find test files related to modified files
-    const testFiles: string[] = [];
-    for (const file of config.filesModified) {
-      // Common test file patterns
-      const testPatterns = [
-        file.replace(/\.(ts|js|tsx|jsx)$/, '.test.$1'),
-        file.replace(/\.(ts|js|tsx|jsx)$/, '.spec.$1'),
-        file.replace(/src\//, 'src/__tests__/'),
-      ];
+    const testFiles = new Set<string>();
+    for (const file of new Set(config.filesModified)) {
+      const testPatterns = getRelatedTestFileCandidates(file);
 
       for (const pattern of testPatterns) {
         if (await fileExists(join(config.projectDir, pattern))) {
-          testFiles.push(pattern);
+          testFiles.add(pattern);
         }
       }
     }
 
-    if (testFiles.length === 0) {
+    if (testFiles.size === 0) {
       return {
         name: 'tests',
         type: 'test',
@@ -419,7 +439,7 @@ async function checkRelatedTests(config: SubtaskValidationConfig): Promise<Valid
     const args = testCommand.acceptsFileArgs
       ? [...testCommand.args, ...testFiles]
       : testCommand.args;
-    await execFileAsync(testCommand.command, args, {
+    await execValidationCommand(testCommand.command, args, {
       cwd: config.projectDir,
       timeout: 30000,
       maxBuffer: 5 * 1024 * 1024,
@@ -432,12 +452,14 @@ async function checkRelatedTests(config: SubtaskValidationConfig): Promise<Valid
       durationMs: Date.now() - startTime,
     };
   } catch (error: any) {
+    const output = compactValidationOutput(error.stdout || error.stderr || error.message);
     return {
       name: 'tests',
       type: 'test',
       passed: false,
       durationMs: Date.now() - startTime,
-      output: compactValidationOutput(error.stdout || error.stderr || error.message),
+      output,
+      infrastructureFailure: isValidationCommandStartupError(error, output),
     };
   }
 }
@@ -464,12 +486,16 @@ async function detectTypecheckCommand(projectDir: string): Promise<CommandSpec> 
   try {
     const content = await readFile(packageJsonPath, 'utf-8');
     const packageJson = JSON.parse(content);
+    const detected = detectAutocodeTypecheckCommandFromPackageJson(packageJson);
 
-    return detectAutocodeTypecheckCommandFromPackageJson(packageJson);
+    return {
+      ...detected,
+      blocking: hasPackageJsonScript(packageJson, 'typecheck'),
+    };
   } catch {
     // Ignore
   }
-  return { command: 'npx', args: ['tsc', '--noEmit'], acceptsFileArgs: false };
+  return { command: 'npx', args: ['tsc', '--noEmit'], acceptsFileArgs: false, blocking: false };
 }
 
 async function detectTestCommand(projectDir: string): Promise<CommandSpec | null> {
@@ -483,6 +509,158 @@ async function detectTestCommand(projectDir: string): Promise<CommandSpec | null
     // Ignore
   }
   return null;
+}
+
+interface ValidationExecOptions {
+  cwd: string;
+  timeout: number;
+  maxBuffer: number;
+}
+
+const WINDOWS_PACKAGE_MANAGER_COMMANDS = new Set(['npm', 'npx', 'pnpm', 'pnpx', 'yarn']);
+const TESTABLE_SOURCE_FILE_PATTERN = /\.(?:[cm]?[jt]sx?|vue|svelte)$/i;
+const TEST_FILE_PATTERN = /(?:^|[\\/]).+\.(?:test|spec)\.(?:[cm]?[jt]sx?|vue|svelte)$/i;
+
+async function execValidationCommand(
+  command: string,
+  args: string[],
+  options: ValidationExecOptions,
+): Promise<void> {
+  const executable = getValidationCommandForPlatform(command);
+  await execFileAsync(executable, args, await getValidationExecOptions(executable, options));
+}
+
+async function getValidationExecOptions(
+  command: string,
+  options: ValidationExecOptions,
+): Promise<ExecFileOptions> {
+  return {
+    ...options,
+    env: await getAugmentedEnvAsync(),
+    windowsHide: true,
+    shell: shouldUseShellForValidationCommand(command),
+  };
+}
+
+export function getValidationCommandForPlatform(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== 'win32') {
+    return command;
+  }
+
+  const trimmed = stripWrappingQuotes(command.trim());
+  if (!WINDOWS_PACKAGE_MANAGER_COMMANDS.has(getValidationCommandBase(trimmed))) {
+    return command;
+  }
+
+  if (/\.(cmd|bat|exe)$/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `${trimmed}.cmd`;
+}
+
+export function shouldUseShellForValidationCommand(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform !== 'win32') {
+    return false;
+  }
+
+  const trimmed = stripWrappingQuotes(command.trim());
+  return /\.(cmd|bat)$/i.test(trimmed) ||
+    WINDOWS_PACKAGE_MANAGER_COMMANDS.has(getValidationCommandBase(trimmed));
+}
+
+function stripWrappingQuotes(value: string): string {
+  return value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+}
+
+function getValidationCommandBase(command: string): string {
+  const name = command.split(/[\\/]/).pop() ?? command;
+  return name.replace(/\.(cmd|bat|exe)$/i, '').toLowerCase();
+}
+
+function isValidationCommandStartupError(error: unknown, output?: string): boolean {
+  const record = error as { code?: unknown; message?: unknown };
+  const code = typeof record.code === 'string' ? record.code.toUpperCase() : '';
+  if (code === 'ENOENT' || code === 'EACCES') {
+    return true;
+  }
+
+  const message = typeof record.message === 'string' ? record.message : '';
+  const text = `${message}\n${output ?? ''}`;
+  const commandPattern = [...WINDOWS_PACKAGE_MANAGER_COMMANDS]
+    .map((command) => `${command}(?:\\.cmd)?`)
+    .join('|');
+  return new RegExp(`\\bspawn\\s+(?:${commandPattern})\\s+ENOENT\\b`, 'i').test(text) ||
+    new RegExp(`(?:${commandPattern}).*not recognized as (?:an internal|a cmdlet|the name of)`, 'i').test(text) ||
+    new RegExp(`(?:${commandPattern}): command not found`, 'i').test(text);
+}
+
+function getRelatedTestFileCandidates(file: string): string[] {
+  if (!TESTABLE_SOURCE_FILE_PATTERN.test(file) || /\.d\.ts$/i.test(file)) {
+    return [];
+  }
+
+  if (TEST_FILE_PATTERN.test(file)) {
+    return [file];
+  }
+
+  const candidates = [
+    file.replace(/\.(?:[cm]?[jt]sx?|vue|svelte)$/i, (extension) => `.test${extension}`),
+    file.replace(/\.(?:[cm]?[jt]sx?|vue|svelte)$/i, (extension) => `.spec${extension}`),
+  ];
+
+  if (/(^|[\\/])src[\\/]/.test(file)) {
+    candidates.push(file.replace(/(^|[\\/])src[\\/]/, '$1src/__tests__/'));
+    candidates.push(
+      file
+        .replace(/(^|[\\/])src[\\/]/, '$1src/__tests__/')
+        .replace(/\.(?:[cm]?[jt]sx?|vue|svelte)$/i, (extension) => `.test${extension}`),
+    );
+    candidates.push(
+      file
+        .replace(/(^|[\\/])src[\\/]/, '$1src/__tests__/')
+        .replace(/\.(?:[cm]?[jt]sx?|vue|svelte)$/i, (extension) => `.spec${extension}`),
+    );
+  }
+
+  return [...new Set(candidates)];
+}
+
+function createInfrastructureFailure(
+  type: ValidationFailure['type'],
+  output: string | undefined,
+): ValidationFailure {
+  return {
+    type,
+    severity: 'warning',
+    message: output || 'Validation command could not be started',
+    suggestion: 'Check that local validation tools are installed and available in PATH; this infrastructure issue does not block completed work.',
+  };
+}
+
+function createNonBlockingValidationFailure(
+  type: ValidationFailure['type'],
+  output: string | undefined,
+): ValidationFailure {
+  return {
+    type,
+    severity: 'warning',
+    message: output || 'Advisory validation check failed',
+    suggestion: 'Review this advisory validation output when the project declares the corresponding check; it does not block this work package.',
+  };
+}
+
+function hasPackageJsonScript(packageJson: Record<string, unknown>, scriptName: string): boolean {
+  const scripts = packageJson.scripts && typeof packageJson.scripts === 'object'
+    ? packageJson.scripts as Record<string, unknown>
+    : {};
+  return typeof scripts[scriptName] === 'string' && scripts[scriptName].trim().length > 0;
 }
 
 async function fileExists(path: string): Promise<boolean> {

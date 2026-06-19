@@ -78,7 +78,9 @@ const DEFAULT_CONFIG: Required<Omit<QualityConfig, 'memoryService' | 'projectId'
 };
 
 export const QUALITY_SESSION_SUMMARY_MAX_CHARS = 6_000;
-export const QUALITY_ISSUE_MAX_CHARS = 360;
+// Keep single validation failures large enough to preserve actionable test
+// assertion details while still bounding retry prompt growth.
+export const QUALITY_ISSUE_MAX_CHARS = 1_600;
 
 // =============================================================================
 // Main Integration Functions

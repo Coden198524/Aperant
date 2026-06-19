@@ -71,7 +71,7 @@ const MARKER_TO_STATUS: Record<string, AutocodePlanMarkdownStatus> = {
 };
 
 const PLAN_ITEM_PATTERN = /^(\s*)-\s+\[([ xX/!\-])\]\s+([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(?:\.)?\s+(.+?)\s*$/;
-const PLAN_FIELD_PATTERN = /^\s*-\s+_([^:]+):\s*(.*?)_\s*$/;
+const PLAN_FIELD_PATTERN = /^\s*-\s+(?:[_*`]+)?\s*([^:：*_`]+?)\s*(?:[_*`]+)?\s*[:：]\s*(?:[_*`]+)?\s*(.*?)\s*(?:[_*`]+)?\s*$/u;
 const PLAN_DETAIL_PATTERN = /^\s*-\s+(.*)$/;
 const PLAN_MACHINE_META_PATTERN = /^<!--\s*autocode-plan-meta:\s*(\{.*\})\s*-->\s*$/;
 const planUpdateQueues = new Map<string, Promise<void>>();
@@ -603,6 +603,7 @@ function applySubtaskMachineMetadata(plan: MutableAutocodePlan): void {
         'pattern_files',
         'depends_on',
         'requirements',
+        'evidence',
         'verification',
         'service',
       ]) {
@@ -615,41 +616,84 @@ function applySubtaskMachineMetadata(plan: MutableAutocodePlan): void {
 }
 
 function applyPlanItemField(item: ParsedPlanItem, rawKey: string, rawValue: string): void {
-  const key = rawKey.trim().toLowerCase();
+  const key = normalizePlanFieldKey(rawKey);
   const value = rawValue.trim();
   switch (key) {
     case 'files':
+    case 'files to create/modify':
+    case 'files to create or modify':
+    case 'files to update':
+    case 'files to change':
+    case 'file write intent':
+    case 'write intent':
+    case '文件':
+    case '相关文件':
+    case '涉及文件':
+    case '文件写入意图':
       item.hasFilesField = true;
       item.files = splitPlanList(value);
       break;
     case 'files to create':
+    case 'files to add':
+    case '创建文件':
+    case '新增文件':
+    case '待创建文件':
       item.hasFilesToCreateField = true;
       item.filesToCreate = splitPlanList(value);
       break;
     case 'files to modify':
+    case 'files to update/modify':
+    case 'files to create/update':
+    case 'files to create or update':
+    case '修改文件':
+    case '待修改文件':
+    case '更新文件':
       item.hasFilesToModifyField = true;
       item.filesToModify = splitPlanList(value);
       break;
     case 'pattern files':
     case 'patterns from':
+    case 'source pattern':
+    case 'source patterns':
+    case '参考文件':
+    case '参考模式':
       item.hasPatternFilesField = true;
       item.patternFiles = splitPlanList(value);
       break;
     case 'depends on':
+    case 'dependency':
+    case 'dependencies':
+    case '依赖':
+    case '前置依赖':
       item.hasDependsOnField = true;
       item.dependsOn = splitPlanList(value);
       break;
     case 'requirements':
+    case 'requirement':
+    case 'requirements coverage':
+    case 'acceptance criteria':
+    case 'success criteria':
+    case '需求':
+    case '需求覆盖':
+    case '验收标准':
+    case '成功标准':
       item.hasRequirementsField = true;
       item.requirements = splitPlanList(value);
       break;
     case 'evidence':
     case 'source evidence':
     case 'evidence sources':
+    case '证据':
+    case '证据来源':
+    case '依据':
       item.hasEvidenceField = true;
       item.evidence = value;
       break;
     case 'verification':
+    case 'verify':
+    case 'validation':
+    case '验证':
+    case '验证方式':
       item.hasVerificationField = true;
       item.verification = value;
       break;
@@ -678,6 +722,14 @@ function applyPlanItemField(item: ParsedPlanItem, rawKey: string, rawValue: stri
         item.details.push(`${rawKey}: ${value}`);
       }
   }
+}
+
+function normalizePlanFieldKey(rawKey: string): string {
+  return rawKey
+    .trim()
+    .replace(/^[`*_]+|[`*_]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
 }
 
 function buildPlanPhases(items: ParsedPlanItem[]): MutableAutocodePlanPhase[] {

@@ -355,6 +355,30 @@ export function validateAutocodeCodingSummary(
   if (!hasReviewNotes) {
     issues.push('code-quality: completion summary should include review notes, residual risks, edge cases, or contract/boundary impact');
   }
+  issues.push(...validateAutocodeRuntimeReadinessSummary(subtask, trimmed));
+
+  return issues;
+}
+
+export function validateAutocodeRuntimeReadinessSummary(
+  subtask: AutocodeQualitySubtask,
+  summary: string,
+): string[] {
+  if (isAutocodeDocumentationSubtask(subtask) || !requiresAutocodeRuntimeReadiness(subtask)) {
+    return [];
+  }
+
+  const issues: string[] = [];
+  const normalized = normalizeAutocodeRuntimeText(summary);
+
+  if (hasAutocodeBlockingRuntimeFailureSignal(normalized)) {
+    issues.push('runtime-readiness: completion summary contains a failed runnable verification; fix the runtime/startup issue before marking the work completed');
+  }
+  if (!hasAutocodeRuntimeVerificationEvidence(normalized)) {
+    issues.push('runtime-readiness: user-facing or runnable work needs an actual launch/open/browser/CLI smoke check, not only static syntax, unit, lint, or type checks');
+  } else if (hasAutocodeRuntimeVerificationLimitation(normalized)) {
+    issues.push('runtime-readiness: runnable verification is recorded as unavailable, skipped, or limited; keep the work open or blocked until a real startup/use-path check passes');
+  }
 
   return issues;
 }
@@ -507,7 +531,30 @@ export function validateAutocodeQaReportQuality(
   if (options.isGameMmo) {
     issues.push(...validateAutocodeGameMmoQaReportQuality(content, filePath));
   }
+  issues.push(...validateAutocodeQaRuntimeReadiness(content, filePath, status));
 
+  return issues;
+}
+
+function validateAutocodeQaRuntimeReadiness(
+  content: string,
+  filePath: string,
+  status: AutocodeQaReportStatus,
+): string[] {
+  if (status !== 'passed' || !requiresAutocodeRuntimeReadinessFromText(content)) {
+    return [];
+  }
+
+  const issues: string[] = [];
+  const normalized = normalizeAutocodeRuntimeText(content);
+  if (hasAutocodeBlockingRuntimeFailureSignal(normalized)) {
+    issues.push(`qa-quality: ${filePath} is passed but contains failed runtime/startup evidence; reject until the runnable path is fixed and re-verified`);
+  }
+  if (!hasAutocodeRuntimeVerificationEvidence(normalized)) {
+    issues.push(`qa-quality: ${filePath} passed a user-facing or runnable change without launch/open/browser/CLI smoke verification evidence`);
+  } else if (hasAutocodeRuntimeVerificationLimitation(normalized)) {
+    issues.push(`qa-quality: ${filePath} passed despite unavailable, skipped, or limited runnable verification`);
+  }
   return issues;
 }
 
@@ -650,6 +697,48 @@ function isAutocodeCodingSubtask(subtask: AutocodeQualitySubtask): boolean {
   ].join(' ').toLowerCase();
   return /\b(implement|fix|add|update|modify|create|wire|integrate|refactor|bug|feature|component|service|handler|schema|migration|test)\b/.test(text) ||
     /\u5b9e\u73b0|\u4fee\u590d|\u65b0\u589e|\u66f4\u65b0|\u4fee\u6539|\u91cd\u6784|\u63a5\u5165|\u96c6\u6210|\u7ec4\u4ef6|\u670d\u52a1|\u6d4b\u8bd5/.test(text);
+}
+
+function requiresAutocodeRuntimeReadiness(subtask: AutocodeQualitySubtask): boolean {
+  return requiresAutocodeRuntimeReadinessFromText([
+    subtask.description,
+    ...(subtask.filesToCreate ?? []),
+    ...(subtask.filesToModify ?? []),
+  ].join(' '));
+}
+
+function requiresAutocodeRuntimeReadinessFromText(value: string): boolean {
+  const text = value.toLowerCase().replace(/\\/g, '/');
+  return /\.(?:html?|css|tsx|jsx|vue|svelte)\b/i.test(text) ||
+    /(?:^|\/)(?:renderer|ui|views?|pages?|routes?|components?|public|static|assets|web|frontend)\//i.test(text) ||
+    /(?:^|\/)src\/(?:index|app|main|game)\.(?:[cm]?[jt]sx?|html?)\b/i.test(text) ||
+    /\b(user[-\s]?facing|browser|web\s?page|webapp|web\s?app|page|screen|view|renderer|frontend|ui|app|application|game|playable|interactive|canvas|button|form|cli|command[-\s]?line|tool|launcher|startup|start screen|open path|launch path|smoke test|e2e|end[-\s]?to[-\s]?end)\b/i.test(text) ||
+    /\u7528\u6237\u754c\u9762|\u754c\u9762|\u6d4f\u89c8\u5668|\u7f51\u9875|\u9875\u9762|\u524d\u7aef|\u6e32\u67d3|\u6e38\u620f|\u53ef\u73a9|\u53ef\u7528|\u4ea4\u4e92|\u753b\u5e03|\u6309\u94ae|\u547d\u4ee4\u884c|\u5de5\u5177|\u542f\u52a8|\u6253\u5f00|\u7aef\u5230\u7aef|\u5192\u70df/.test(text);
+}
+
+function normalizeAutocodeRuntimeText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\b(no|without|zero|0)\s+(?:blocking\s+)?(?:runtime\s+)?(?:errors?|failures?|console errors?|page errors?)\b/g, ' ')
+    .replace(/\b(no|without|zero|0)\s+(?:tests?\s+)?(?:failed|failing|failures?)\b/g, ' ')
+    .replace(/\b(no|without|zero|0)\s+(?:resource\s+)?(?:load failures?|loading failures?)\b/g, ' ')
+    .replace(/\u65e0(?:\u963b\u585e)?(?:\u8fd0\u884c\u65f6|\u63a7\u5236\u53f0|\u9875\u9762)?(?:\u9519\u8bef|\u5931\u8d25)/g, ' ')
+    .replace(/\u6ca1\u6709(?:\u8fd0\u884c\u65f6|\u63a7\u5236\u53f0|\u9875\u9762)?(?:\u9519\u8bef|\u5931\u8d25)/g, ' ');
+}
+
+function hasAutocodeRuntimeVerificationEvidence(text: string): boolean {
+  return /\b(playwright|cypress|selenium|e2e|end[-\s]?to[-\s]?end|headless|cdp|dev server|localhost|https?:\/\/|file:\/\/|page\.goto|browser smoke|chrome smoke|edge smoke|electron smoke|runtime smoke|startup smoke|opened? (?:the )?(?:app|page|browser|screen)|launched? (?:the )?(?:app|page|browser)|started? (?:the )?(?:app|page|browser|server|cli)|manual(?:ly)? (?:opened|launched|started|checked)|cli smoke|command smoke|ran (?:the )?cli|executed (?:the )?(?:cli|command))\b/i.test(text) ||
+    /\u6253\u5f00(?:\u5e94\u7528|\u9875\u9762|\u6d4f\u89c8\u5668)?|\u542f\u52a8(?:\u5e94\u7528|\u9875\u9762|\u6d4f\u89c8\u5668|\u670d\u52a1|\u547d\u4ee4\u884c)?|\u6d4f\u89c8\u5668\u5192\u70df|\u542f\u52a8\u5192\u70df|\u8fd0\u884c\u5192\u70df|\u53ef\u73a9|\u53ef\u7528|\u771f\u5b9e\u8fd0\u884c|\u7aef\u5230\u7aef|\u5192\u70df/.test(text);
+}
+
+function hasAutocodeRuntimeVerificationLimitation(text: string): boolean {
+  return /\b(not run|not verified|unverified|skipped|unable|could not|cannot|can't|limitation|blocked by environment|missing dependency|tool unavailable)\b/i.test(text) ||
+    /\u672a\u8fd0\u884c|\u672a\u9a8c\u8bc1|\u8df3\u8fc7|\u65e0\u6cd5|\u4e0d\u80fd|\u9650\u5236|\u73af\u5883\u963b\u585e|\u7f3a\u5c11\u4f9d\u8d56|\u5de5\u5177\u4e0d\u53ef\u7528/.test(text);
+}
+
+function hasAutocodeBlockingRuntimeFailureSignal(text: string): boolean {
+  return /\b(assertionerror|uncaught|unhandled|exception|failed to load resource|cors policy|blocked by cors|net::err_failed|pageerror|page error|console error|runtime error|blank screen|white screen|exit code:?\s*[1-9]|exit\s+[1-9]|tests?\s+failed|fail(?:ed|ing)\b|cannot find module|cannot find package|could not start|cannot start|can't start|unable to start|crash(?:ed)?|hang(?:s|ing)?|timeout|timed out)\b/i.test(text) ||
+    /\u65e0\u6cd5\u542f\u52a8|\u65e0\u6cd5\u8fd0\u884c|\u4e0d\u80fd\u8fd0\u884c|\u6253\u4e0d\u5f00|\u767d\u5c4f|\u7a7a\u767d|\u5d29\u6e83|\u5361\u6b7b|\u8d85\u65f6|\u62a5\u9519|\u9519\u8bef|\u5931\u8d25|\u672a\u901a\u8fc7/.test(text);
 }
 
 function isAutocodeGameMmoRiskRelevantSubtask(subtask: AutocodeQualitySubtask): boolean {

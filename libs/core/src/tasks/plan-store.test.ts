@@ -85,6 +85,60 @@ describe('implementation plan markdown', () => {
     expect(rewritten).toContain('## Description\n\n# 增强记忆筛选和待审处理反馈\n\n为记忆视图增加分组数量');
   });
 
+  it('parses combined create/modify file metadata as write intent', () => {
+    const parsed = parseAutocodeImplementationPlanMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Create game shell',
+      '    - Build the initial browser shell.',
+      '    - _Files to create/modify: package.json, index.html, src/main.js_',
+      '    - _Depends on: none_',
+      '',
+    ].join('\n'));
+
+    expect(parsed.phases[0].subtasks[0].files_to_modify).toEqual([
+      'package.json',
+      'index.html',
+      'src/main.js',
+    ]);
+  });
+
+  it('parses localized and full-width task metadata fields', () => {
+    const parsed = parseAutocodeImplementationPlanMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Create browser game shell',
+      '    - Build a focused static game entry point.',
+      '    - 文件写入意图：index.html, src/main.js',
+      '    - 依赖：none',
+      '    - 需求覆盖：R1, AC1',
+      '    - 证据：spec.md Requirements R1; requirements.md Evidence Sources',
+      '    - 验证：Open index.html in a browser',
+      '',
+      '  - [ ] 1.2 Wire keyboard controls',
+      '    - Connect keyboard actions to game commands.',
+      '    - **Files to modify:** src/main.js',
+      '    - **Requirements:** R3; AC6',
+      '    - **Evidence:** spec.md Requirements R3; requirements.md Evidence Sources',
+      '',
+    ].join('\n'));
+
+    expect(parsed.phases[0].subtasks[0].files_to_modify).toEqual(['index.html', 'src/main.js']);
+    expect(parsed.phases[0].subtasks[0].depends_on).toEqual([]);
+    expect(parsed.phases[0].subtasks[0].requirements).toEqual(['R1', 'AC1']);
+    expect(parsed.phases[0].subtasks[0].evidence).toBe('spec.md Requirements R1; requirements.md Evidence Sources');
+    expect(parsed.phases[0].subtasks[0].verification).toEqual({
+      type: 'manual',
+      run: 'Open index.html in a browser',
+    });
+    expect(parsed.phases[0].subtasks[1].files_to_modify).toEqual(['src/main.js']);
+    expect(parsed.phases[0].subtasks[1].evidence).toBe('spec.md Requirements R3; requirements.md Evidence Sources');
+  });
+
   it('compacts stored completion summaries written through subtask updates', () => {
     const plan = {
       phases: [

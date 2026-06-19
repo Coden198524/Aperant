@@ -289,6 +289,70 @@ describe('createStreamHandler', () => {
   });
 
   // ===========================================================================
+  // Finish (AI SDK final usage snapshot)
+  // ===========================================================================
+
+  describe('finish', () => {
+    it('should not double-count final usage after finish-step usage', () => {
+      const handler = createStreamHandler(onEvent);
+
+      handler.processPart({
+        type: 'finish-step',
+        usage: { inputTokens: 100, outputTokens: 50 },
+      });
+      handler.processPart({
+        type: 'finish',
+        usage: { inputTokens: 100, outputTokens: 50 },
+      });
+
+      expect(handler.getSummary().usage).toEqual({
+        promptTokens: 100,
+        completionTokens: 50,
+        totalTokens: 150,
+      });
+    });
+
+    it('should use final usage as a total snapshot when step usage is missing', () => {
+      const handler = createStreamHandler(onEvent);
+
+      handler.processPart({ type: 'finish-step' });
+      handler.processPart({
+        type: 'finish',
+        usage: { inputTokens: 120, outputTokens: 30 },
+      });
+
+      expect(handler.getSummary().usage).toEqual({
+        promptTokens: 120,
+        completionTokens: 30,
+        totalTokens: 150,
+      });
+    });
+
+    it('should let final usage snapshot correct cumulative step overcounts', () => {
+      const handler = createStreamHandler(onEvent);
+
+      handler.processPart({
+        type: 'finish-step',
+        usage: { inputTokens: 100, outputTokens: 20 },
+      });
+      handler.processPart({
+        type: 'finish-step',
+        usage: { inputTokens: 180, outputTokens: 30 },
+      });
+      handler.processPart({
+        type: 'finish',
+        usage: { inputTokens: 180, outputTokens: 30 },
+      });
+
+      expect(handler.getSummary().usage).toEqual({
+        promptTokens: 180,
+        completionTokens: 30,
+        totalTokens: 210,
+      });
+    });
+  });
+
+  // ===========================================================================
   // Error (AI SDK v6: type='error', field='error')
   // ===========================================================================
 

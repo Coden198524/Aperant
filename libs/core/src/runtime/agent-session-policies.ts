@@ -381,6 +381,9 @@ function readNumberField(source: Record<string, unknown>, names: string[]): numb
 }
 
 function estimateTokensFromChars(chars: number): number {
+  if (chars <= 0) {
+    return 0;
+  }
   return Math.max(1, Math.ceil(chars / AUTOCODE_TOKEN_ESTIMATE_CHARS_PER_TOKEN));
 }
 
@@ -391,4 +394,3 @@ function safeJsonLength(value: unknown): number {
     return String(value ?? '').length;
   }
 }
-

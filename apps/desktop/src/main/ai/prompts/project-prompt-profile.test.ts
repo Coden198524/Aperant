@@ -104,6 +104,7 @@ describe('project prompt profile', () => {
     expect(coderOverride?.content).toContain('touched files/contracts, verification, and review notes/risks');
     expect(coderOverride?.content).toContain('read the current narrow context');
     expect(coderOverride?.content).toContain('legacy or non-UTF-8 files as encoding-sensitive');
+    expect(coderOverride?.content).toContain('do not mark the subtask completed until the actual launch/open/browser/CLI smoke check passes');
     expect(coderOverride?.content).toContain('TOOL CALL JSON SAFETY');
     expect(coderOverride?.content).toContain('forward slashes');
     expect(coderOverride?.content).toContain('both keys');
@@ -117,11 +118,19 @@ describe('project prompt profile', () => {
     expect(plannerOverride?.content).toContain('Do not cap tasks.md by phase or task count');
     expect(plannerOverride?.content).toContain('preserve all required work items');
     expect(plannerOverride?.content).toContain('Cover every requirement, scenario, acceptance criterion');
+    expect(plannerOverride?.content).toContain('OPENSPEC-GRADE TASK DECOMPOSITION');
+    expect(plannerOverride?.content).toContain('at least as granular as OpenSpec tasks');
+    expect(plannerOverride?.content).toContain('more than three distinct behaviors');
+    expect(plannerOverride?.content).toContain('runtime-readiness leaf task');
+    expect(plannerOverride?.content).toContain('Shared files are not a reason to make broad tasks');
     expect(plannerOverride?.content).toContain('small enough for one focused coding session');
     expect(plannerOverride?.content).toContain('REQUEST CHANGES ITERATION');
     expect(plannerOverride?.content).toContain('active same-task contract');
+    expect(plannerOverride?.content).toContain('Apply this section only when runtime context provides valid human review feedback');
+    expect(plannerOverride?.content).toContain('ordinary validation repair');
     expect(plannerOverride?.content).toContain('updated artifact chain');
-    expect(plannerOverride?.content).toContain('needs_revision');
+    expect(plannerOverride?.content).toContain('revision-state marker');
+    expect(plannerOverride?.content).not.toContain('needs_revision');
     expect(plannerOverride?.content).toContain('do not split tasks.md into phase files');
     expect(plannerOverride?.content).toContain('Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`');
     expect(plannerOverride?.content).toContain('PARALLEL EXECUTION PLANNING');
@@ -131,20 +140,35 @@ describe('project prompt profile', () => {
     expect(plannerOverride?.content).toContain('one `_Evidence: ..._` line');
     expect(plannerOverride?.content).toContain('ARCHITECTURE GROUNDING');
     expect(plannerOverride?.content).toContain('affected project boundary');
+    expect(plannerOverride?.content).toContain('Do not force named architecture or design pattern guidance');
+    expect(plannerOverride?.content).toContain('For complex or high-risk tasks');
+    expect(plannerOverride?.content).toContain('Architecture And Design Pattern References');
+    expect(plannerOverride?.content).toContain('Use 4-8 bullets');
+    expect(plannerOverride?.content).toContain('Each architecture reference bullet must include four parts');
+    expect(plannerOverride?.content).toContain('_Architecture: boundary; pattern/strategy; source/reference_');
+    expect(plannerOverride?.content).toContain('general engineering experience');
+    expect(plannerOverride?.content).toContain('pattern, decision, or module insight entries for similar tasks');
+    expect(plannerOverride?.content).toContain('architecture and design pattern references');
+    expect(plannerOverride?.content).toContain('no new design pattern required');
     expect(plannerOverride?.content).toContain('Avoid generic titles such as "implement feature"');
     expect(plannerOverride?.content).toContain('Do not add standalone research, design, architecture review');
-    expect(loadProjectPromptOverride(projectDir, 'spec_quick')?.content).toContain('_Done when:');
+    const specQuickOverride = loadProjectPromptOverride(projectDir, 'spec_quick')?.content;
+    expect(specQuickOverride).toContain('OPENSPEC-GRADE TASK DECOMPOSITION');
+    expect(specQuickOverride).toContain('_Done when:');
+    expect(specQuickOverride).toContain('Static syntax, unit, lint, typecheck, build, or file-existence checks alone are not enough');
 
     const qaReviewerOverride = loadProjectPromptOverride(projectDir, 'qa_reviewer');
     expect(qaReviewerOverride?.content).toContain('completion notes against actual changed files and changed contracts');
     expect(qaReviewerOverride?.content).toContain('public APIs, schemas, IPC/protocols');
     expect(qaReviewerOverride?.content).toContain('Acceptance Matrix');
     expect(qaReviewerOverride?.content).toContain('impacted requirement/contract');
+    expect(qaReviewerOverride?.content).toContain('reject `Status: PASSED` when runtime readiness is missing');
 
     const qaFixerOverride = loadProjectPromptOverride(projectDir, 'qa_fixer');
     expect(qaFixerOverride?.content).toContain('caller/callee expectations');
     expect(qaFixerOverride?.content).toContain('Preserve public APIs, schemas, IPC/protocols');
     expect(qaFixerOverride?.content).toContain('placeholder code');
+    expect(qaFixerOverride?.content).toContain('rerun the exact runtime-readiness smoke path');
   });
 
   it('builds an adaptation section for bundled prompts', () => {

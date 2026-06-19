@@ -57,6 +57,10 @@ Run the smallest reliable check for the subtask:
 - build
 - smoke/manual check
 
+For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, verification must include an actual launch/open/use-path smoke check. Static syntax, unit, lint, typecheck, or file-existence checks alone do not prove the artifact is runnable.
+
+Treat browser console errors, CORS/resource-load failures, blank screens, crash/hang, startup failures, or CLI non-zero exits as product verification failures. Fix them before marking the subtask completed. If a real startup/use-path check cannot be run, mark the subtask blocked or failed instead of completed.
+
 If a check is unavailable, record the reason and the next best check. Do not run many equivalent commands.
 
 For Request Changes iterations, prefer the verification command named by the revised task or latest change request. The task should be ready for the normal commit flow after validation passes.
@@ -72,6 +76,7 @@ After successful implementation:
 - Update only the current subtask in `implementation_plan.md`.
 - Mark it `[x]`.
 - Add a short completion note with what changed, touched files/contracts, verification, and review notes/risks.
+- For user-facing or runnable work, the completion note must name the actual launch/open/browser/CLI smoke check and whether runtime, console, load, or startup errors were observed.
 - Do not rewrite unrelated phases or statuses.
 
 If blocked:

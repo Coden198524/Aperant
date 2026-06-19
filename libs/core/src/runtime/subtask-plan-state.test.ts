@@ -3,10 +3,29 @@ import { describe, expect, it } from 'vitest';
 import {
   AUTOCODE_SESSION_RESULT_SUMMARY_MAX_CHARS,
   extractAutocodeCompletionSummaryTable,
+  hasAutocodeSubtaskCompletionEvidence,
   summarizeAutocodeSessionResult,
 } from './subtask-plan-state.js';
 
 describe('Autocode subtask plan state summaries', () => {
+  it('does not treat failed or blocked subtasks as complete from stale summaries', () => {
+    expect(hasAutocodeSubtaskCompletionEvidence({
+      status: 'failed',
+      completed_at: '2026-06-18T05:38:28.046Z',
+      completion_summary: '| Item | Details |\n| Failure | failed |',
+    })).toBe(false);
+
+    expect(hasAutocodeSubtaskCompletionEvidence({
+      status: 'blocked',
+      completion_summary: 'Blocked by a failed dependency.',
+    })).toBe(false);
+
+    expect(hasAutocodeSubtaskCompletionEvidence({
+      status: 'pending',
+      completion_summary: '| Item | Details |\n| What changed | completed but status write was stale |',
+    })).toBe(true);
+  });
+
   it('limits plain assistant completion summaries before they enter runtime state', () => {
     const content = [
       'Summary start',

@@ -280,7 +280,7 @@ export class WorkerBridge extends EventEmitter {
           historicalTokenUsage: this.historicalTokenUsage,
           incomingUsage: message.data,
         });
-        this.lastTokenUsage = this.mergeIncomingTokenUsage(message.data);
+        this.lastTokenUsage = this.mergeIncomingTokenUsage(message.data, { authoritativeSnapshot: true });
         debugLog('[worker-bridge] After merge:', this.lastTokenUsage);
         this.emitTyped('task-token-usage', message.taskId, this.lastTokenUsage, message.projectId);
         break;
@@ -556,10 +556,11 @@ export class WorkerBridge extends EventEmitter {
     const exitCode = result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window' ? 0 : 1;
 
     // Merge stepsExecuted into usage for frontend display
+    const shouldAttachResultSteps = shouldUseResultStepsForTokenUsage(result.usage);
     const usageWithSteps: TokenUsage = this.mergeIncomingTokenUsage({
       ...result.usage,
-      stepsExecuted: result.stepsExecuted,
-    });
+      ...(shouldAttachResultSteps ? { stepsExecuted: result.stepsExecuted } : {}),
+    }, { authoritativeSnapshot: true });
     this.lastTokenUsage = usageWithSteps;
 
     this.emitTyped('task-token-usage', taskId, usageWithSteps, projectId);
@@ -689,9 +690,14 @@ export class WorkerBridge extends EventEmitter {
     this.memoryObserver = null;
   }
 
-  private mergeIncomingTokenUsage(incoming: TokenUsage): TokenUsage {
+  private mergeIncomingTokenUsage(
+    incoming: TokenUsage,
+    options: { authoritativeSnapshot?: boolean } = {},
+  ): TokenUsage {
     if (!incoming.sessionId) {
-      return maxTokenUsage(this.lastTokenUsage, incoming);
+      return options.authoritativeSnapshot
+        ? authoritativeTokenUsageSnapshot(this.lastTokenUsage, incoming)
+        : maxTokenUsage(this.lastTokenUsage, incoming);
     }
 
     if (this.activeTokenUsageSessionId !== incoming.sessionId) {
@@ -703,7 +709,9 @@ export class WorkerBridge extends EventEmitter {
     }
 
     const cumulativeForSession = addTokenUsage(this.tokenUsageSessionBaseline, incoming);
-    return maxTokenUsage(this.lastTokenUsage, cumulativeForSession);
+    return options.authoritativeSnapshot
+      ? authoritativeTokenUsageSnapshot(this.lastTokenUsage, cumulativeForSession)
+      : maxTokenUsage(this.lastTokenUsage, cumulativeForSession);
   }
 }
 
@@ -1261,6 +1269,20 @@ function maxTokenUsage(
   incoming: TokenUsage,
 ): TokenUsage {
   if (!previous) return incoming;
+  const replaceEstimatedWithReported = previous.estimated === true && incoming.estimated !== true;
+  if (replaceEstimatedWithReported) {
+    return {
+      promptTokens: incoming.promptTokens,
+      completionTokens: incoming.completionTokens,
+      totalTokens: incoming.totalTokens,
+      thinkingTokens: incoming.thinkingTokens,
+      cacheReadTokens: incoming.cacheReadTokens,
+      cacheCreationTokens: incoming.cacheCreationTokens,
+      stepsExecuted: Math.max(previous.stepsExecuted ?? 0, incoming.stepsExecuted ?? 0) || undefined,
+      sessionId: incoming.sessionId ?? previous.sessionId,
+    };
+  }
+
   const preferIncomingTokens = !incoming.estimated || previous.estimated === true;
 
   return {
@@ -1281,4 +1303,42 @@ function maxTokenUsage(
     estimated: previous.estimated === true && incoming.estimated === true ? true : undefined,
     sessionId: incoming.sessionId ?? previous.sessionId,
   };
+}
+
+function authoritativeTokenUsageSnapshot(
+  previous: TokenUsage | null,
+  incoming: TokenUsage,
+): TokenUsage {
+  if (!previous) return incoming;
+  if (!hasPositiveTokenUsage(incoming)) {
+    return maxTokenUsage(previous, incoming);
+  }
+  if (incoming.estimated === true && previous.estimated !== true) {
+    return maxTokenUsage(previous, incoming);
+  }
+
+  return {
+    promptTokens: incoming.promptTokens,
+    completionTokens: incoming.completionTokens,
+    totalTokens: incoming.totalTokens,
+    thinkingTokens: incoming.thinkingTokens,
+    cacheReadTokens: incoming.cacheReadTokens,
+    cacheCreationTokens: incoming.cacheCreationTokens,
+    stepsExecuted: incoming.stepsExecuted ?? previous.stepsExecuted,
+    estimated: incoming.estimated === true ? true : undefined,
+    sessionId: incoming.sessionId ?? previous.sessionId,
+  };
+}
+
+function shouldUseResultStepsForTokenUsage(usage: TokenUsage): boolean {
+  return hasPositiveTokenUsage(usage) || Boolean(usage.sessionId);
+}
+
+function hasPositiveTokenUsage(usage: TokenUsage): boolean {
+  return (usage.promptTokens ?? 0) > 0 ||
+    (usage.completionTokens ?? 0) > 0 ||
+    (usage.totalTokens ?? 0) > 0 ||
+    (usage.thinkingTokens ?? 0) > 0 ||
+    (usage.cacheReadTokens ?? 0) > 0 ||
+    (usage.cacheCreationTokens ?? 0) > 0;
 }

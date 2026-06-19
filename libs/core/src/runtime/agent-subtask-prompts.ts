@@ -515,7 +515,7 @@ function appendAutocodeSubtaskInstructions(
     `2. **Read the files to modify** (if any) to understand current implementation\n` +
     `3. **Identify the local implementation contract**: inputs/outputs, lifecycle, side effects, errors, config/schema/API boundaries, and caller/callee expectations\n` +
     `4. **Implement the subtask** following local patterns without placeholder code, no-op handlers, broad type escapes, or unrelated abstractions\n` +
-    `5. **Run verification** and fix any issues. For behavior changes, add or update the closest regression test when an adjacent test pattern exists\n` +
+    `5. **Run verification** and fix any issues. For behavior changes, add or update the closest regression test when an adjacent test pattern exists. For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, include an actual launch/open/use-path smoke check; static syntax, unit, lint, typecheck, or file-existence checks alone are not enough\n` +
     `6. **Do not commit or push** unless this task explicitly requires it\n` +
     `7. **Update the plan** - set this subtask's status to "completed" in implementation_plan.md and add a structured completion_summary for human review. Use this compact Markdown review matrix exactly:\n` +
     `   \`| Item | Details |\n| --- | --- |\n| What changed | ... |\n| Verification | ... |\n| Review notes | ... |\`\n` +
@@ -528,6 +528,7 @@ function appendAutocodeSubtaskInstructions(
     `- [ ] Error handling in place\n` +
     `- [ ] Adjacent tests or regression coverage updated when the change affects behavior\n` +
     `- [ ] Verification passes\n` +
+    `- [ ] User-facing or runnable deliverables were actually launched/opened/exercised and had no startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures\n` +
     `- [ ] Completion summary names changed files/contracts, verification, and residual risks or edge cases\n\n` +
     `## Boundaries\n\n` +
     `- Focus on this subtask; do not modify unrelated code\n` +

@@ -168,6 +168,32 @@ describe('buildPlannerMemoryContext', () => {
     expect(result).toContain('spec 023');
   });
 
+  it('includes architecture and design pattern references from similar task memories', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('pattern')) {
+        return [
+          {
+            ...makeMemory(
+              'pattern-1',
+              'Route auth callbacks through the preload adapter and keep token persistence in the main-process service.',
+              'pattern',
+            ),
+            relatedFiles: ['src/preload/auth.ts', 'src/main/auth-service.ts'],
+          },
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildPlannerMemoryContext('Add auth callback', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('ARCHITECTURE AND DESIGN PATTERN REFERENCES');
+    expect(result).toContain('[pattern]');
+    expect(result).toContain('preload adapter');
+    expect(result).toContain('src/preload/auth.ts');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('pattern-1');
+  });
+
   it('deduplicates near-duplicate planner memories across sections', async () => {
     vi.mocked(memoryService.searchWorkflowRecipe).mockResolvedValueOnce([
       makeMemory(
@@ -429,14 +455,21 @@ describe('buildPlannerMemoryContext', () => {
     });
   });
 
-  it('skips module-scoped planner searches when modules normalize empty', async () => {
+  it('uses task-description architecture lookup when module filters normalize empty', async () => {
     vi.mocked(memoryService.searchWorkflowRecipe).mockResolvedValueOnce([
       makeMemory('recipe', 'Use the short validation path.', 'workflow_recipe'),
     ]);
 
     const result = await buildPlannerMemoryContext(' Add auth ', [' ', '\n'], memoryService, 'proj-1');
 
-    expect(memoryService.search).not.toHaveBeenCalled();
+    expect(memoryService.search).toHaveBeenCalledTimes(1);
+    expect(memoryService.search).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['pattern', 'decision', 'module_insight'],
+      query: 'Add auth',
+      projectId: 'proj-1',
+      recordAccess: false,
+    }));
+    expect(vi.mocked(memoryService.search).mock.calls[0]?.[0]).not.toHaveProperty('relatedModules');
     expect(memoryService.searchWorkflowRecipe).toHaveBeenCalledWith('Add auth', {
       limit: 1,
       projectId: 'proj-1',
@@ -445,7 +478,7 @@ describe('buildPlannerMemoryContext', () => {
     expect(result).toContain('WORKFLOW RECIPES');
   });
 
-  it('runs all 5 queries in parallel', async () => {
+  it('runs all 6 planner memory queries in parallel', async () => {
     const callOrder: string[] = [];
     vi.mocked(memoryService.search).mockImplementation(async (filters) => {
       callOrder.push(JSON.stringify(filters.types));
@@ -458,8 +491,8 @@ describe('buildPlannerMemoryContext', () => {
 
     await buildPlannerMemoryContext('task', ['mod'], memoryService, 'proj-1');
 
-    // All 5 queries should have been called
-    expect(memoryService.search).toHaveBeenCalledTimes(4);
+    // Five typed searches plus the workflow recipe lookup should have been called.
+    expect(memoryService.search).toHaveBeenCalledTimes(5);
     expect(memoryService.searchWorkflowRecipe).toHaveBeenCalledTimes(1);
   });
 

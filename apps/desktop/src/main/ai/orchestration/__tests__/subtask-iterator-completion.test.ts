@@ -106,6 +106,56 @@ describe('iterateSubtasks completion gating', () => {
     expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
   });
 
+  it('does not auto-complete runnable work without startup verification evidence', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            {
+              id: 'ui-start',
+              title: 'Browser game startup',
+              description: 'Implement browser game page with canvas controls.',
+              status: 'pending',
+              files_to_modify: ['src/index.html', 'src/game.js'],
+            },
+          ],
+        },
+      ],
+    };
+    await savePlan(specDir, plan);
+
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      runSubtaskSession: async () => ({
+        ...makeResult('completed'),
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              '| Item | Details |',
+              '| --- | --- |',
+              '| What changed | Updated `src/index.html` and `src/game.js`. |',
+              '| Verification | Ran `node --check src/game.js` and static tests. |',
+              '| Review notes | No residual syntax risks. |',
+            ].join('\n'),
+          },
+        ],
+      }),
+    });
+
+    const updatedPlan = await loadPlan<{
+      phases: Array<{ subtasks: Array<{ status: string; notes?: string }> }>;
+    }>(specDir);
+
+    expect(result.completedSubtasks).toBe(0);
+    expect(updatedPlan.phases[0].subtasks[0].status).not.toBe('completed');
+    expect(updatedPlan.phases[0].subtasks[0].notes).toContain('runtime-readiness gate');
+  });
+
   it('records active session duration across a rate-limit pause without counting wait time', async () => {
     const plan = {
       phases: [

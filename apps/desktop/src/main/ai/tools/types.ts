@@ -62,6 +62,8 @@ export interface ToolContext extends CoreToolPolicyContext {
   fileCache?: FileContentCache;
   /** Current task workflow mode, used for mode-specific tool behavior */
   workflowMode?: TaskWorkflowMode;
+  /** Current coding subtask/work package for session-scoped status updates */
+  currentSubtaskId?: string;
   /** Session-scoped accounting used to prevent wasteful repeated read/search tool loops */
   toolUsageState?: CoreToolUsageState;
   /** Optional per-session overrides for generic tool usage limits */

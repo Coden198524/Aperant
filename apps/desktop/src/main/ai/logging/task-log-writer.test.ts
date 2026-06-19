@@ -173,6 +173,61 @@ describe('TaskLogWriter', () => {
     ]);
   });
 
+  it('keeps explicit concurrent event subtask ownership independent of currentSubtask', () => {
+    const writer = createWriter();
+    writer.startPhase('coding', 'Starting implementation');
+
+    writer.setSubtask('work-1');
+    writer.processEvent(
+      { type: 'text-delta', text: 'alpha output' },
+      'coding',
+      'work-1',
+    );
+    writer.setSubtask('work-2');
+    writer.processEvent(
+      {
+        type: 'tool-call',
+        toolCallId: 'tool-work-1',
+        toolName: 'Read',
+        args: { file_path: 'src/a.ts' },
+      },
+      'coding',
+      'work-1',
+    );
+    writer.processEvent(
+      {
+        type: 'tool-result',
+        toolCallId: 'tool-work-1',
+        toolName: 'Read',
+        result: 'ok',
+        isError: false,
+        durationMs: 1,
+      },
+      'coding',
+      'work-1',
+    );
+    writer.processEvent(
+      { type: 'text-delta', text: 'beta output' },
+      'coding',
+      'work-2',
+    );
+    writer.processEvent(
+      {
+        type: 'step-finish',
+        stepNumber: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      },
+      'coding',
+      'work-2',
+    );
+
+    const entries = writer.getData().phases.coding.entries;
+
+    expect(entries.find((entry) => entry.content === 'alpha output')?.subtask_id).toBe('work-1');
+    expect(entries.find((entry) => entry.tool_call_id === 'tool-work-1')?.subtask_id).toBe('work-1');
+    expect(entries.find((entry) => entry.content === 'beta output')?.subtask_id).toBe('work-2');
+  });
+
   it('marks a pending phase active when writing lifecycle text', () => {
     const writer = createWriter();
 

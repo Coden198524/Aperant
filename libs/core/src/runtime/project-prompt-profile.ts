@@ -232,11 +232,36 @@ Plan for safe concurrency. The runtime schedules work from dependency metadata a
 - File metadata is write intent, not general context. Only list files the subtask is expected to create or modify.
 - Use \`_Files to modify: none_\` for read-only validation, manual QA, or investigation subtasks.
 - Do not list broad directories, globs, or every related file unless the subtask really writes them.
-- If two subtasks must modify the same file, either merge them or add a real dependency between them.
+- If two subtasks modify the same file, prefer separate subtasks with real \`_Depends on: ..._\`; merge only when the work cannot be independently described, reviewed, or verified.
 - Keep integration and final verification late. Do not mark final verification as modifying all files unless it truly edits them.
 - Prefer independent early workstreams when they touch separate files, such as UI shell, core domain logic, data/model layer, tests, docs, or adapters.
+- Shared files are not a reason to make broad tasks; serialize independent behavior with dependencies when needed.
 - Do not invent parallelism for tightly coupled work; represent the coupling with dependencies.
 `;
+}
+
+function buildOpenSpecGradeTaskDecompositionGuidance(): string {
+  return `## OPENSPEC-GRADE TASK DECOMPOSITION
+
+Make \`tasks.md\` at least as granular as OpenSpec tasks while staying executable.
+
+- Treat each requirement, scenario, acceptance criterion, success criterion, public contract, user-visible behavior, migration step, error path, and verification scenario as a candidate leaf task.
+- A leaf task should normally cover one independently reviewable behavior or contract and one focused verification path.
+- Do not combine multiple gameplay rules, UI surfaces, IPC/API contracts, persistence behaviors, build/tooling changes, and tests in one executable task.
+- If a task would list more than three distinct behaviors, more than three requirement/acceptance references, or more than four write-intent files, split it and connect the pieces with \`_Depends on: ..._\`.
+- For games or interactive tools, split core domain model/rules, individual player actions, rendering loop, input mapping, scoring/progression, persistence, responsive controls, and end-to-end validation when applicable.
+- For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, include a runtime-readiness leaf task or verification that starts/opens the artifact, exercises the primary path, and checks startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures.
+- Prefer more leaf tasks with short guidance over fewer broad tasks with long prose.
+- Each acceptance criterion should have a dedicated implementation or validation task unless it is genuinely covered by a narrower prerequisite task.
+`;
+}
+
+function buildRuntimeReadinessPromptRules(): string {
+  return [
+    '- For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, verification must include actual launch/open/use-path smoke evidence.',
+    '- Static syntax, unit, lint, typecheck, build, or file-existence checks alone are not enough to approve a runnable deliverable.',
+    '- Treat browser console errors, CORS/resource-load failures, blank screens, crash/hang, startup failures, and CLI non-zero exits as blocking runtime-readiness failures.',
+  ].join('\n');
 }
 
 function buildArchitectureGroundingGuidance(): string {
@@ -245,8 +270,18 @@ function buildArchitectureGroundingGuidance(): string {
 Plan from the project's real architecture, not a generic delivery template.
 
 - First identify the affected project boundary: UI/view, state/store, IPC/API, service/domain, persistence, worker/background process, build/tooling, tests, or docs.
+- Do not force named architecture or design pattern guidance onto simple, single-boundary tasks. For these, follow the nearest existing boundary and keep guidance minimal.
+- For complex or high-risk tasks, include actionable architecture and design pattern guidance. Treat cross-module changes, new public contracts, persistence, cross-process/thread work, migrations, refactors, concurrency, security, runtime deliverables, or broad UI/state changes as complex unless evidence says otherwise.
+- For complex or high-risk tasks, add a detailed but compact \`## Architecture And Design Pattern References\` section to \`spec.md\` or \`tasks.md\` so the guidance is visible before implementation. Use 4-8 bullets, not vague one-liners.
+- Each architecture reference bullet must include four parts: affected boundary/layer, recommended pattern or strategy, source/docs/Project Memory reference or clearly labeled general guidance, and where it applies (task IDs, work package, phase, or implementation boundary).
+- Use injected Memory Context or Project Memory first when it contains workflow recipes, pattern, decision, or module insight entries for similar tasks; treat these as architecture and design pattern references, then confirm them against current source/docs.
+- If similar-task references conflict with current project source, docs, or explicit requirements, current project evidence wins.
+- If no useful project source, docs, Memory Context, or Project Memory reference exists for a complex task, use general engineering experience to propose the lightest suitable architecture/design pattern guidance, label it as \`General guidance\`, and still name the boundary and task IDs it applies to.
 - Keep architecture analysis inside concise task guidance: ownership, call/data flow, public contracts, persistence shape, side effects, failure paths, and cross-process/thread boundaries when they matter.
-- Each executable task should name the concrete behavior and local module boundary or pattern it follows. Avoid generic titles such as "implement feature", "update code", "add tests", or "refactor structure".
+- Complex or high-risk executable tasks must include one short \`_Architecture: boundary; pattern/strategy; source/reference_\` line so implementation agents can apply the guidance directly.
+- Keep task architecture lines specific enough to follow directly, for example \`_Architecture: renderer IPC boundary; typed bridge adapter strategy; apps/desktop/src/preload existing bridge pattern_\`.
+- Simple tasks may omit design pattern notes; when relevant, say "no new design pattern required" and keep the nearest existing module boundary.
+- Avoid generic titles such as "implement feature", "update code", "add tests", or "refactor structure".
 - Do not add standalone research, design, architecture review, rollout, cleanup, or broad QA phases unless project evidence or task risk makes them necessary.
 - If the existing boundary or pattern is unclear, add one targeted discovery/validation task; do not turn guesses into implementation work.
 `;
@@ -289,8 +324,15 @@ ${buildProjectConventionSection(profile)}
 
 1. Read the task and the project documentation reference from the kickoff message.
 2. Inspect only the files needed to identify the change.
-3. Write a compact Standard \`spec.md\` with overview, scope, files, change details, and success criteria.
+3. Write a compact Standard \`spec.md\` with overview, scope, files, change details, success criteria, and a non-empty \`## Evidence\` section.
 4. Write \`tasks.md\` with the phases and tasks needed for the requested change; use a single phase only when that matches the real dependency structure.
+
+## SPEC EVIDENCE RULES
+
+- \`spec.md\` must include a non-empty \`## Evidence\` section.
+- Evidence must cite the user request, \`requirements.md\`, \`context.md\`, project source/docs, existing project patterns, or verified official/industry references.
+- If no extra project source evidence is needed for a simple scoped change, say so in \`## Evidence\` while still citing the user request or \`requirements.md\`.
+- Requirements, design notes, touched files, and success criteria must either cite Evidence directly or be covered by the global \`## Evidence\` section.
 
 ## TASK DETAIL RULES
 
@@ -300,6 +342,9 @@ ${buildProjectConventionSection(profile)}
 - Keep each task small enough for one focused coding session and give it a clear done signal in guidance or \`_Done when: ..._\`.
 - Keep each \`title\` under 120 characters and each \`description\` under 500 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
+${buildRuntimeReadinessPromptRules()}
+
+${buildOpenSpecGradeTaskDecompositionGuidance()}
 
 ${buildParallelExecutionPlanningGuidance()}
 
@@ -370,10 +415,13 @@ ${buildProjectConventionSection(profile)}
 
 ## REQUEST CHANGES ITERATION
 
+- Apply this section only when runtime context provides valid human review feedback in \`HUMAN_INPUT.md\` or a non-empty \`change_requests.jsonl\`. For a new task or ordinary validation repair, ignore this section and do not preserve historical task IDs or old task history.
 - Treat the latest \`HUMAN_INPUT.md\`/\`change_requests.jsonl\` entry as the active same-task contract, not a new task.
-- If feedback changes requirements, acceptance criteria, user-visible behavior, risks, constraints, or design decisions, update \`spec.md\` and \`requirements.md\` before rewriting \`tasks.md\`.
+- If feedback changes requirements, acceptance criteria, user-visible behavior, risks, constraints, or design decisions, update \`spec.md\` and \`requirements.md\` before rewriting \`tasks.md\`; preserve or add \`spec.md\` \`## Evidence\` and \`requirements.md\` \`## Evidence Sources\`.
 - Regenerate \`tasks.md\` from the updated artifact chain: \`requirements.md\` -> \`spec.md\`/\`context.md\` -> \`tasks.md\`.
-- Preserve completed or pending tasks that still satisfy the changed contract; reset affected tasks to pending with a \`needs_revision\` note, add new pending tasks for new requirements, and mark obsolete tasks as obsolete instead of silently deleting history.
+- Preserve completed or pending tasks that still satisfy the changed contract, but keep one canonical checklist item per behavior/file/requirement boundary.
+- Do not append a second task for work already represented in the checklist. If existing work needs revision for a real human change request, edit that item in place, reset it to pending, and put any revision-state marker only in a detail note or metadata line.
+- Add new pending tasks only for genuinely new requirements or newly discovered verification gaps. Remove or compact obsolete executable checklist items after the change request is recorded in \`spec.md\`, \`requirements.md\`, or \`change_requests.jsonl\`. Never prefix task titles or work package titles with revision, obsolete, or other state labels.
 - Re-run coverage after changes: every new or changed requirement/scenario/acceptance criterion must appear in \`_Requirements: ..._\` metadata or be explicitly blocked/out of scope.
 - Every new or revised task must include \`_Evidence: ..._\`, \`_Done when: ..._\`, and \`_Verification: ..._\` so the next coding pass can use the normal task commit flow.
 
@@ -388,6 +436,9 @@ ${getComplexPlanningGuidance(profile)}
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
 - Put verification on each task using the smallest relevant command or manual check.
 - For large plans, keep one concise checklist Markdown file; do not split tasks.md into phase files.
+${buildRuntimeReadinessPromptRules()}
+
+${buildOpenSpecGradeTaskDecompositionGuidance()}
 
 ${buildParallelExecutionPlanningGuidance()}
 
@@ -456,6 +507,8 @@ ${buildProjectCommands(profile)}
 - In legacy Windows game projects, assume files with Chinese comments or mojibake may be non-UTF-8; verify or preserve encoding before editing.
 - On Node 24+, do not mix \`require(...)\` with top-level \`await\` in \`node -e\`, stdin, or eval scripts. Use an async IIFE around CommonJS code, or use ESM \`import\` with \`node --input-type=module\`.
 - Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the subtask explicitly changes state-machine code.
+${buildRuntimeReadinessPromptRules()}
+- For user-facing or runnable work, do not mark the subtask completed until the actual launch/open/browser/CLI smoke check passes, and name that check in the completion summary.
 `;
 }
 
@@ -499,6 +552,8 @@ ${buildProjectCommands(profile)}
 - If failed, every finding needs title, severity, location, evidence, impacted requirement/contract, required fix, and re-verification.
 - If no automated command exists, document the manual verification performed or the reason it was skipped.
 - Match review depth to the project profile and task risk instead of applying heavyweight domain-specific requirements by default.
+${buildRuntimeReadinessPromptRules()}
+- For user-facing or runnable deliverables, reject \`Status: PASSED\` when runtime readiness is missing, skipped, impossible, or failed.
 `;
 }
 
@@ -534,6 +589,8 @@ ${buildProjectCommands(profile)}
 - Do not use placeholder code, TODO implementations, no-op handlers, fake data, disabled validation, broad type escapes, swallowed errors, or unrelated abstractions.
 - Keep the fix scoped and easy for the next QA pass to verify.
 - All new file names and paths must use ASCII characters.
+${buildRuntimeReadinessPromptRules()}
+- When QA found startup, open, playability, or CLI execution failures, rerun the exact runtime-readiness smoke path after the fix.
 `;
 }
 

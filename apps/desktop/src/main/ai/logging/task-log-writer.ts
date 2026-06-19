@@ -287,22 +287,23 @@ export class TaskLogWriter {
    * Process a stream event from the AI SDK session.
    * Routes to the appropriate log entry writer.
    */
-  processEvent(event: StreamEvent, phase?: Phase): void {
+  processEvent(event: StreamEvent, phase?: Phase, subtaskId?: string): void {
     const logPhase = phase ? toLogPhase(phase) : this.currentPhase;
+    const eventSubtask = subtaskId ?? this.currentSubtask;
 
     switch (event.type) {
       case 'text-delta':
-        this.accumulateText(event.text, logPhase);
+        this.accumulateText(event.text, logPhase, eventSubtask);
         break;
 
       case 'tool-call':
         // Flush pending text before the tool call entry
         this.flushPendingText();
-        this.writeToolStart(logPhase, event.toolName, this.extractToolInput(event.toolName, event.args), event.toolCallId);
+        this.writeToolStart(logPhase, event.toolName, this.extractToolInput(event.toolName, event.args), event.toolCallId, eventSubtask);
         break;
 
       case 'tool-result':
-        this.writeToolEnd(logPhase, event.toolName, event.isError, event.result, event.toolCallId);
+        this.writeToolEnd(logPhase, event.toolName, event.isError, event.result, event.toolCallId, eventSubtask);
         break;
 
       case 'step-finish':
@@ -390,13 +391,19 @@ export class TaskLogWriter {
     this.pendingRecords.push({ record_type: 'entry', entry: sanitizedEntry });
   }
 
-  private writeToolStart(phase: TaskLogPhase, toolName: string, toolInput?: string, toolCallId?: string): void {
+  private writeToolStart(
+    phase: TaskLogPhase,
+    toolName: string,
+    toolInput?: string,
+    toolCallId?: string,
+    subtaskId?: string,
+  ): void {
     const content = `[${toolName}] ${toolInput || ''}`.trim();
     this.addEntry(phase, 'tool_start', content, {
       tool_name: toolName,
       tool_input: toolInput,
       tool_call_id: toolCallId,
-    });
+    }, subtaskId);
     this.save();
   }
 
@@ -405,7 +412,8 @@ export class TaskLogWriter {
     toolName: string,
     isError: boolean,
     result: unknown,
-    toolCallId?: string
+    toolCallId?: string,
+    subtaskId?: string,
   ): void {
     const status = isError ? 'Error' : 'Done';
     const content = `[${toolName}] ${status}`;
@@ -416,7 +424,7 @@ export class TaskLogWriter {
       tool_name: toolName,
       tool_call_id: toolCallId,
       ...(detail ? { detail, collapsed: true } : {}),
-    });
+    }, subtaskId);
     this.save();
   }
 
@@ -428,14 +436,17 @@ export class TaskLogWriter {
    * Accumulate text deltas instead of writing one entry per delta.
    * Flushes happen on step-finish, tool-call, or phase changes.
    */
-  private accumulateText(text: string, phase: TaskLogPhase): void {
+  private accumulateText(text: string, phase: TaskLogPhase, subtaskId?: string): void {
     if (this.pendingTextPhase && this.pendingTextPhase !== phase) {
       // Phase changed mid-accumulation — flush what we have
       this.flushPendingText();
     }
+    if (this.pendingText && this.pendingTextSubtask !== subtaskId) {
+      this.flushPendingText();
+    }
     if (!this.pendingText) {
       this.pendingTextPhase = phase;
-      this.pendingTextSubtask = this.currentSubtask;
+      this.pendingTextSubtask = subtaskId;
     }
 
     this.pendingText += text;

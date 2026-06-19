@@ -883,6 +883,10 @@ async function executeStream(
     }
   }
 
+  // Keep fallback usage estimates scoped to the actual prompt. The assistant
+  // response is counted separately from streamed completion chars below.
+  const messagesForUsageEstimate = [...messages];
+
   // Add assistant response to messages
   if (responseText) {
     messages.push({ role: 'assistant', content: responseText });
@@ -913,7 +917,7 @@ async function executeStream(
   const normalizedTotalUsage = normalizeTokenUsage(totalUsage);
   const estimatedUsage = estimateTokenUsageFromSession({
     systemPrompt: config.systemPrompt,
-    messages,
+    messages: messagesForUsageEstimate,
     streamedCompletionChars,
     streamedContextChars,
   });

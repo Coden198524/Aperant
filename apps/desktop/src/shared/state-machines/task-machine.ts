@@ -99,6 +99,9 @@ export const taskMachine = createMachine(
       },
       coding: {
         on: {
+          // Request Changes can force a full re-plan even if the restored actor
+          // still believes the task is in coding.
+          PLANNING_STARTED: { target: 'planning', actions: 'clearReviewReason' },
           QA_STARTED: 'qa_review',
           // ALL_SUBTASKS_DONE means coder finished but QA hasn't started yet
           // Transition to qa_review - QA will emit QA_PASSED or QA_FAILED
@@ -116,6 +119,7 @@ export const taskMachine = createMachine(
       },
       qa_review: {
         on: {
+          PLANNING_STARTED: { target: 'planning', actions: 'clearReviewReason' },
           CODING_STARTED: { target: 'coding', actions: 'clearReviewReason' },
           QA_FAILED: 'qa_fixing',
           QA_PASSED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
@@ -128,6 +132,7 @@ export const taskMachine = createMachine(
       },
       qa_fixing: {
         on: {
+          PLANNING_STARTED: { target: 'planning', actions: 'clearReviewReason' },
           CODING_STARTED: { target: 'coding', actions: 'clearReviewReason' },
           QA_FIXING_COMPLETE: 'qa_review',
           QA_FAILED: { target: 'human_review', actions: 'setReviewReasonQaRejected' },

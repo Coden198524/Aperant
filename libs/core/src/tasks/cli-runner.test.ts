@@ -10,6 +10,7 @@ import {
   createAutocodeTaskRunPlan,
   resolveAutocodeTaskRunnerDependency,
 } from './cli-runner.js';
+import { loadAutocodeImplementationPlanSync } from './plan-store.js';
 import { createAutocodeTask, getAutocodeSpecDir } from './spec-store.js';
 
 describe('Autocode CLI runner prompt', () => {
@@ -86,6 +87,54 @@ describe('Autocode CLI runner prompt', () => {
     expect(readFileSync(plan.promptFilePath, 'utf8')).toBe(`${plan.prompt}\n`);
   });
 
+  it('does not inject revision-state wording for new planning tasks without review input', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-new-plan',
+      title: 'Create a new playable game',
+      description: 'Create a new browser game from the current project files.',
+      metadata: { developmentMode: 'standard' },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-new-plan',
+      cli: 'codex',
+      phase: 'planning',
+    });
+
+    expect(plan.prompt).toContain('not a RequestChanges iteration');
+    expect(plan.prompt).toContain('ordinary pending tasks');
+    expect(plan.prompt).not.toContain('needs_revision');
+    expect(plan.prompt).not.toContain('preserve prior change-request history');
+  });
+
+  it('injects revision-state wording only when planning has human review input', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-review-plan',
+      title: 'Revise a reviewed task',
+      description: 'Address the latest human plan review.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '001-review-plan' });
+    writeFileSync(join(specDir, 'HUMAN_INPUT.md'), 'RequestChanges: split the runtime task.\n', 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-review-plan',
+      cli: 'codex',
+      phase: 'planning',
+    });
+
+    expect(plan.prompt).toContain('same-task RequestChanges iteration');
+    expect(plan.prompt).toContain('needs_revision');
+  });
+
   it('writes zh-CN prompts as readable Chinese and includes Codex rules preflight', () => {
     createAutocodeTask({
       projectRoot,
@@ -143,6 +192,148 @@ describe('Autocode CLI runner prompt', () => {
       resolveModule: missingWorkspaceResolver,
       resourcesPath,
     })).toBe(join(coreTasksDir, 'plan-quality.js'));
+  });
+
+  it('validates Standard artifacts before deriving runtime work packages', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-order',
+      title: 'Replan safely',
+      description: 'Do not replace runtime plan before Standard validation passes.',
+      metadata: { developmentMode: 'standard' },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-standard-order',
+      cli: 'codex',
+      phase: 'planning',
+    });
+    const runner = readFileSync(plan.runnerFilePath, 'utf8');
+    const qualityIndex = runner.indexOf('const qualityError = await validateStandardPlanArtifactQuality();');
+    const deriveIndex = runner.indexOf('const derivedPlanError = await deriveRuntimePlanFromStandardTasksIfNeeded();');
+
+    expect(qualityIndex).toBeGreaterThanOrEqual(0);
+    expect(deriveIndex).toBeGreaterThan(qualityIndex);
+    expect(runner).toContain('includeCompletedTasks: false');
+    expect(runner).toContain('repairStandardPlanEvidenceScaffolding();');
+    expect(runner).toContain('hasOnlyStandardPlanRecoverableQualityErrors(planQuality, errors)');
+    expect(runner).toContain('spec.md must include a non-empty ## Evidence section');
+    expect(runner).toContain('validationRetryCount >= maxValidationRetries');
+  });
+
+  it('repairs missing Standard spec evidence before deriving runtime work packages', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-evidence-repair',
+      title: 'Repair planning evidence',
+      description: 'Continue planning when the CLI omitted spec evidence scaffolding.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-evidence-repair',
+    });
+
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      '## Requirements',
+      '- R1: Planning validation keeps a traceable Standard task list.',
+      '',
+      '## Evidence Sources',
+      '- User task description captured by Autocode.',
+      '',
+    ].join('\n');
+    const specMarkdown = [
+      '# Specification: Repair planning evidence',
+      '',
+      '## Overview',
+      'Keep Standard planning validation moving when generated specs omit evidence scaffolding.',
+      '',
+      '## Workflow Type',
+      '',
+      '**Type**: simple',
+      '',
+      '**Rationale**: The change is local to planning artifact validation.',
+      '',
+      '## Task Scope',
+      '',
+      '### This Task Will:',
+      '- [ ] Repair missing evidence scaffolding before validation.',
+      '',
+      '### Out of Scope:',
+      '- Runtime coding changes.',
+      '',
+      '## Files to Modify',
+      '- `src/evidence.ts` - evidence repair path',
+      '',
+      '## Change Details',
+      'Add Standard evidence scaffolding before artifact validation.',
+      '',
+      '## Requirements',
+      '1. Standard planning validation continues after Evidence scaffolding is repaired.',
+      '   - Acceptance: runtime work packages are derived from tasks.md.',
+      '',
+      '## Success Criteria',
+      '- [ ] implementation_plan.md is created from tasks.md.',
+      '',
+    ].join('\n');
+    const tasksMarkdown = [
+      '# Tasks',
+      '',
+      'Feature: Repair planning evidence',
+      'Workflow: simple',
+      'Status: pending',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Update evidence repair path',
+      '    - Update `src/evidence.ts` to add Standard evidence scaffolding before validation.',
+      '    - _Files to modify: src/evidence.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1_',
+      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '    - _Done when: validation repairs missing evidence and derives the runtime plan_',
+      '    - _Verification: npm test -- evidence.test.ts_',
+      '',
+    ].join('\n');
+    const fakeCliPath = join(projectRoot, 'write-standard-artifacts.cjs');
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      'const specDir = process.argv[2];',
+      'mkdirSync(specDir, { recursive: true });',
+      `writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'spec.md'), ${JSON.stringify(specMarkdown)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(tasksMarkdown)}, 'utf8');`,
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-standard-evidence-repair',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}" "${specDir.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const repairedSpec = readFileSync(join(specDir, 'spec.md'), 'utf8');
+    expect(repairedSpec).toContain('## Evidence');
+    expect(repairedSpec).toContain('requirements.md captures the user request');
+    const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
+    expect(implementationPlan?.phases?.[0]?.subtasks?.[0]?.title).toContain('Update evidence repair path');
   });
 
   it('folds repeated human feedback lines before generating run prompts', () => {
@@ -501,6 +692,55 @@ describe('Autocode CLI runner prompt', () => {
     expect(capturedPrompt).toContain('## Required Workflow');
   });
 
+  it('counts repeated Codex JSON usage snapshots as one implicit model turn', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-codex-usage',
+      title: 'Track Codex usage',
+      description: 'Avoid counting every usage snapshot as a separate model turn.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-codex-usage' });
+
+    writeFakeCodexJsonCommand(projectRoot, [
+      { type: 'usage', session_id: 'codex-session', usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 } },
+      { type: 'usage_update', session_id: 'codex-session', usage: { input_tokens: 180, output_tokens: 40, total_tokens: 220 } },
+    ]);
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-codex-usage',
+      cli: 'custom',
+      customCommand: 'codex --json',
+      phase: 'direct',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        GRAPHITI_ENABLED: 'false',
+        PATH: `${projectRoot}${delimiter}${process.env.PATH ?? ''}`,
+      },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const implementationPlan = loadAutocodeImplementationPlanSync(
+      join(specDir, 'implementation_plan.md'),
+    );
+
+    expect(implementationPlan?.tokenUsage).toEqual({
+      promptTokens: 180,
+      completionTokens: 40,
+      totalTokens: 220,
+      stepsExecuted: 1,
+      sessionId: 'codex-session',
+    });
+  });
+
   it('generates bounded artifact validation retry prompts', () => {
     createAutocodeTask({
       projectRoot,
@@ -556,6 +796,29 @@ function installFakeCodexCommand(projectRoot: string): void {
   writeFileSync(unixShimPath, [
     '#!/usr/bin/env node',
     "require('./codex-shim.cjs');",
+  ].join('\n'), 'utf8');
+  chmodSync(unixShimPath, 0o755);
+}
+
+function writeFakeCodexJsonCommand(projectRoot: string, events: unknown[]): void {
+  writeFileSync(join(projectRoot, 'codex-json-shim.cjs'), [
+    'const events = ' + JSON.stringify(events) + ';',
+    "for (const event of events) process.stdout.write(JSON.stringify(event) + '\\n');",
+  ].join('\n'), 'utf8');
+
+  if (process.platform === 'win32') {
+    writeFileSync(
+      join(projectRoot, 'codex.cmd'),
+      '@echo off\r\nnode "%~dp0codex-json-shim.cjs" %*\r\n',
+      'utf8',
+    );
+    return;
+  }
+
+  const unixShimPath = join(projectRoot, 'codex');
+  writeFileSync(unixShimPath, [
+    '#!/usr/bin/env node',
+    "require('./codex-json-shim.cjs');",
   ].join('\n'), 'utf8');
   chmodSync(unixShimPath, 0o755);
 }

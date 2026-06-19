@@ -408,13 +408,10 @@ export function createAutocodeStreamHandler(
 
     logDebug(options, '[StreamHandler] Found usage in finish event!', usage);
     const usageRecord = usage as Record<string, unknown>;
-    const promptTokens = readNumberField(usageRecord, ['prompt_tokens', 'inputTokens', 'promptTokens']) ?? 0;
-    const completionTokens = readNumberField(usageRecord, ['completion_tokens', 'outputTokens', 'completionTokens']) ?? 0;
-    if (promptTokens > 0 || completionTokens > 0) {
-      state.cumulativeUsage.promptTokens += promptTokens;
-      state.cumulativeUsage.completionTokens += completionTokens;
-      state.cumulativeUsage.totalTokens += promptTokens + completionTokens;
-      logDebug(options, '[StreamHandler] Updated cumulative usage from finish event:', state.cumulativeUsage);
+    const usageSnapshot = readTokenUsageRecord(usageRecord);
+    if (usageSnapshot) {
+      applyFinalUsageSnapshot(state.cumulativeUsage, usageSnapshot);
+      logDebug(options, '[StreamHandler] Reconciled cumulative usage from finish event:', state.cumulativeUsage);
     }
   }
 
@@ -545,6 +542,38 @@ function readNumberField(record: unknown, fieldNames: readonly string[]): number
     }
   }
   return undefined;
+}
+
+function readTokenUsageRecord(record: Record<string, unknown>): AutocodeTokenUsage | null {
+  const promptTokens = readNumberField(record, ['prompt_tokens', 'inputTokens', 'promptTokens', 'input_tokens']) ?? 0;
+  const completionTokens = readNumberField(record, ['completion_tokens', 'outputTokens', 'completionTokens', 'output_tokens']) ?? 0;
+  const explicitTotal = readNumberField(record, ['total_tokens', 'totalTokens']);
+  const totalTokens = explicitTotal ?? promptTokens + completionTokens;
+
+  if (promptTokens === 0 && completionTokens === 0 && totalTokens === 0) {
+    return null;
+  }
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+  };
+}
+
+function applyFinalUsageSnapshot(
+  cumulative: AutocodeTokenUsage,
+  snapshot: AutocodeTokenUsage,
+): void {
+  cumulative.promptTokens = snapshot.promptTokens > 0
+    ? snapshot.promptTokens
+    : cumulative.promptTokens;
+  cumulative.completionTokens = snapshot.completionTokens > 0
+    ? snapshot.completionTokens
+    : cumulative.completionTokens;
+  cumulative.totalTokens = snapshot.totalTokens > 0
+    ? snapshot.totalTokens
+    : cumulative.promptTokens + cumulative.completionTokens;
 }
 
 function logDebug(options: AutocodeStreamHandlerOptions, message?: unknown, ...optionalParams: unknown[]): void {

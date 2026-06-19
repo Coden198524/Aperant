@@ -125,6 +125,32 @@ describe('Autocode runtime agent messages', () => {
     );
   });
 
+  it('does not inject needs_revision instructions for force planning without human review input', () => {
+    writeFileSync(
+      join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
+      [
+        '# Implementation Plan',
+        '',
+        '- [ ] 1.1 Repair broad task split',
+        '  - Evidence: tasks.md validation feedback',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const [message] = buildAutocodeTaskExecutionMessages({
+      specDir,
+      specId: '001-task',
+      projectRoot: tempRoot,
+      forcePlanning: true,
+    });
+
+    expect(message.content).toContain('internal planning artifact repair');
+    expect(message.content).toContain('ordinary pending checklist items');
+    expect(message.content).not.toContain('needs_revision');
+    expect(message.content).not.toContain('latest Human Review Input');
+  });
+
   it('compacts oversized spec and implementation plan for QA initial messages', () => {
     writeLargeSpecAndPlan(specDir);
 
@@ -321,6 +347,9 @@ describe('Autocode runtime agent messages', () => {
     expect(message.content).toContain('LATEST_REQUIRED_FEEDBACK');
     expect(message.content).toContain('FINAL_CHANGE_REQUEST_TAIL_CONSTRAINT');
     expect(message.content).toContain('Flow documents: HUMAN_INPUT.md; change_requests.jsonl; tasks.md; implementation_plan.md');
+    expect(message.content).toContain('do not write implementation_plan.md directly');
+    expect(message.content).toContain('Keep one canonical checklist item');
+    expect(message.content).not.toContain('preserve completed work that remains valid, reset affected work to pending with needs_revision notes, add new work');
     expect(message.content).not.toContain('OLD_FEEDBACK_SHOULD_NOT_BE_IN_PROMPT');
   });
 

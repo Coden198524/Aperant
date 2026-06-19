@@ -48,6 +48,7 @@ export interface BuildAutocodeRuntimeWorkPackagePhasesInput {
   sourceName?: string;
   sourcePath?: string;
   requireTaskEvidence?: boolean;
+  includeCompletedTasks?: boolean;
   emptyTasksFallback?: MutableAutocodePlanSubtask;
 }
 
@@ -60,11 +61,14 @@ export interface BuildAutocodeRuntimeImplementationPlanFromTasksInput {
   sourceKind?: string;
   upstreamOwner?: string;
   requireTaskEvidence?: boolean;
+  includeCompletedTasks?: boolean;
 }
 
 const AUTOCODE_WORK_PACKAGE_MAX_TASKS = 5;
 const AUTOCODE_WORK_PACKAGE_TARGET_EFFORT = 10;
 const AUTOCODE_WORK_PACKAGE_MAX_ESTIMATED_EFFORT = 20;
+const AUTOCODE_RUNTIME_TASK_TITLE_STATE_TAG =
+  '(?:needs[_\\s-]*revision|revision[_\\s-]*required|obsolete|superseded|deprecated)';
 
 export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
   tasksMarkdown: string,
@@ -79,6 +83,7 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
     sourceName: 'Autocode',
     sourcePath,
     requireTaskEvidence: input.requireTaskEvidence,
+    includeCompletedTasks: input.includeCompletedTasks,
   });
 
   if (!hasRuntimeWorkPackages(phases)) {
@@ -91,7 +96,7 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
 
   return {
     ...parsedTasks,
-    feature: input.title || parsedTasks.feature || 'Autocode task',
+    feature: input.title || parsedTasks.feature || getAutocodeRuntimePlanFeatureFallback(input.language),
     description: input.description || parsedTasks.description || '',
     workflow_type: parsedTasks.workflow_type || 'feature',
     status: 'pending',
@@ -116,9 +121,15 @@ export function buildAutocodeRuntimeWorkPackagePhases(
   input: BuildAutocodeRuntimeWorkPackagePhasesInput,
 ): MutableAutocodePlanPhase[] {
   const flattenedTasks = flattenAutocodeRuntimeTasks(input.parsedPhases, input.language, input.sourceName);
+  const evidenceReadyTasks = input.requireTaskEvidence
+    ? normalizeAutocodeRuntimeTaskEvidenceMetadata(flattenedTasks, {
+        sourceName: input.sourceName || 'Autocode',
+        sourcePath: input.sourcePath || AUTOCODE_TASK_ARTIFACTS.tasks,
+      })
+    : flattenedTasks;
   if (input.requireTaskEvidence) {
     const evidenceErrors = validateAutocodeRuntimeTaskEvidenceMetadata(
-      flattenedTasks,
+      evidenceReadyTasks,
       `${input.sourceName || 'Autocode'} task`,
     );
     if (evidenceErrors.length > 0) {
@@ -126,10 +137,13 @@ export function buildAutocodeRuntimeWorkPackagePhases(
     }
   }
   const runtimeTasks = completeAutocodeRuntimeTaskDependencyGraph(
-    flattenedTasks,
+    evidenceReadyTasks,
   );
   assertAutocodeRuntimeTasksHaveValidDependencies(runtimeTasks, `${input.sourceName || 'Autocode'} task`);
-  if (runtimeTasks.length === 0) {
+  const executableTasks = input.includeCompletedTasks === false
+    ? omitCompletedAutocodeRuntimeTasks(runtimeTasks)
+    : runtimeTasks;
+  if (executableTasks.length === 0) {
     if (input.emptyTasksFallback) {
       return [
         {
@@ -142,7 +156,7 @@ export function buildAutocodeRuntimeWorkPackagePhases(
     return [];
   }
 
-  const workPackages = groupAutocodeRuntimeTasksIntoWorkPackages(runtimeTasks, input.language);
+  const workPackages = groupAutocodeRuntimeTasksIntoWorkPackages(executableTasks, input.language);
   return [
     {
       id: 'wp',
@@ -156,6 +170,27 @@ export function buildAutocodeRuntimeWorkPackagePhases(
       ),
     },
   ];
+}
+
+function omitCompletedAutocodeRuntimeTasks(tasks: AutocodeRuntimeTask[]): AutocodeRuntimeTask[] {
+  const completedTaskIds = new Set(
+    tasks
+      .filter((task) => task.status === 'completed')
+      .map((task) => task.id),
+  );
+  const remainingTaskIds = new Set(
+    tasks
+      .filter((task) => !completedTaskIds.has(task.id))
+      .map((task) => task.id),
+  );
+
+  return tasks
+    .filter((task) => !completedTaskIds.has(task.id))
+    .map((task) => ({
+      ...task,
+      status: 'pending',
+      dependsOn: task.dependsOn.filter((dependencyId) => remainingTaskIds.has(dependencyId)),
+    }));
 }
 
 export function flattenAutocodeRuntimeTasks(
@@ -179,14 +214,19 @@ export function flattenAutocodeRuntimeTasks(
       }
       const subtask = rawSubtask as Record<string, unknown>;
       const id = stringFrom(subtask.id ?? subtask.subtask_id) || `${phaseId}.${subtaskIndex + 1}`;
-      const title = stringFrom(subtask.title ?? subtask.description)
-        || (isChineseLanguage(language) ? `${sourceName} 任务 ${id}` : `${sourceName} task ${id}`);
+      const rawTitle = stringFrom(subtask.title ?? subtask.description);
+      const titleState = getAutocodeRuntimeTaskTitleState(rawTitle);
+      const fallbackTitle = isChineseLanguage(language) ? `${sourceName} 任务 ${id}` : `${sourceName} task ${id}`;
+      const title = sanitizeAutocodeRuntimeTaskTitle(
+        rawTitle,
+        fallbackTitle,
+      );
       const description = sanitizeAutocodeRuntimeTaskDescription(stringFrom(subtask.description) || title, title);
       tasks.push({
         id,
         title,
         description,
-        status: stringFrom(subtask.status) || 'pending',
+        status: titleState === 'obsolete' ? 'completed' : stringFrom(subtask.status) || 'pending',
         phaseId,
         phaseName,
         filesToCreate: toStringArray(subtask.files_to_create),
@@ -211,15 +251,43 @@ export function completeAutocodeRuntimeTaskDependencyGraph(tasks: AutocodeRuntim
   }
 
   const hasExplicitDependencyGraph = tasks.some((task) => task.dependsOn.length > 0);
-  return tasks.map((task, index) => {
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const tasksWithBaseDependencies = tasks.map((task, index) => {
+    let dependsOn: string[];
     if (task.dependsOn.length > 0) {
-      return { ...task, dependsOn: uniqueAutocodeRuntimeStrings(task.dependsOn) };
+      dependsOn = task.dependsOn;
+    } else {
+      dependsOn = inferAutocodeRuntimeTaskDependencies(task, index, tasks, hasExplicitDependencyGraph);
     }
+    return { ...task, dependsOn };
+  });
 
-    const inferred = inferAutocodeRuntimeTaskDependencies(task, index, tasks, hasExplicitDependencyGraph);
-    return inferred.length > 0
-      ? { ...task, dependsOn: inferred }
-      : { ...task, dependsOn: [] };
+  const tasksWithSamePhaseDependencies = tasksWithBaseDependencies.map((task, index) => ({
+    ...task,
+    dependsOn: normalizeAutocodeRuntimeTaskDependencies({
+      task,
+      taskIndex: index,
+      tasks: tasksWithBaseDependencies,
+      dependsOn: task.dependsOn,
+      taskIds,
+      phaseTerminalTaskIds: new Map(),
+    }),
+  }));
+
+  const phaseTerminalTaskIds = getAutocodeRuntimePhaseTerminalTaskIds(tasksWithSamePhaseDependencies, taskIds);
+
+  return tasksWithSamePhaseDependencies.map((task, index) => {
+    return {
+      ...task,
+      dependsOn: normalizeAutocodeRuntimeTaskDependencies({
+        task,
+        taskIndex: index,
+        tasks: tasksWithSamePhaseDependencies,
+        dependsOn: task.dependsOn,
+        taskIds,
+        phaseTerminalTaskIds,
+      }),
+    };
   });
 }
 
@@ -241,7 +309,8 @@ export function assertAutocodeRuntimeTasksHaveValidDependencies(
     return;
   }
 
-  const summary = describeAutocodeWorkDependencyBlockers(analysis.blocked);
+  const invalidBlocked = analysis.blocked.filter((blocked) => blocked.issues.length > 0);
+  const summary = describeAutocodeWorkDependencyBlockers(invalidBlocked);
   throw new Error(`${label} dependency graph is invalid: ${summary}`);
 }
 
@@ -252,6 +321,43 @@ export function validateAutocodeRuntimeTaskEvidenceMetadata(
   return tasks
     .filter((task) => !isTraceableAutocodeEvidence(task.evidence))
     .map((task) => `${label} ${task.id} missing traceable _Evidence: ..._ metadata`);
+}
+
+export function normalizeAutocodeRuntimeTaskEvidenceMetadata(
+  tasks: AutocodeRuntimeTask[],
+  input: {
+    sourceName?: string;
+    sourcePath?: string;
+  } = {},
+): AutocodeRuntimeTask[] {
+  return tasks.map((task) => {
+    if (isTraceableAutocodeEvidence(task.evidence)) {
+      return task;
+    }
+
+    return {
+      ...task,
+      evidence: buildAutocodeRuntimeTraceableTaskEvidence(task, input),
+    };
+  });
+}
+
+function buildAutocodeRuntimeTraceableTaskEvidence(
+  task: AutocodeRuntimeTask,
+  input: {
+    sourceName?: string;
+    sourcePath?: string;
+  },
+): string {
+  const sourcePath = input.sourcePath || AUTOCODE_TASK_ARTIFACTS.tasks;
+  const sourceName = input.sourceName || 'Autocode';
+  return uniqueAutocodeRuntimeStrings([
+    task.evidence || '',
+    'spec.md Requirements',
+    'requirements.md Evidence Sources',
+    `${sourcePath} task ${task.id}`,
+    `${sourceName} planning task ${task.id}`,
+  ]).join('; ');
 }
 
 export function groupAutocodeRuntimeTasksIntoWorkPackages(
@@ -327,9 +433,10 @@ export function buildAutocodeRuntimeWorkPackageTitle(
   language?: string,
 ): string {
   if (tasks.length === 1) {
-    return isChineseLanguage(language) ? `工作包：${tasks[0].title}` : `Work package: ${tasks[0].title}`;
+    const title = sanitizeAutocodeRuntimeTaskTitle(tasks[0].title);
+    return isChineseLanguage(language) ? `工作包：${title}` : `Work package: ${title}`;
   }
-  const first = tasks[0]?.title ?? (isChineseLanguage(language) ? '任务' : 'tasks');
+  const first = sanitizeAutocodeRuntimeTaskTitle(tasks[0]?.title, isChineseLanguage(language) ? '任务' : 'tasks');
   return isChineseLanguage(language)
     ? `工作包：${first}（另含 ${tasks.length - 1} 个相关任务）`
     : `Work package: ${first} (+${tasks.length - 1} related tasks)`;
@@ -349,9 +456,16 @@ export function sanitizeAutocodeRuntimeTaskDescription(description: string, fall
   const cleanedLines = description
     .replace(/\r\n/g, '\n')
     .split('\n')
-    .map((line) => stripDependencyMetadataPrefix(line).trim())
+    .map((line) => stripAutocodeRuntimeTaskTitleStatePrefix(stripDependencyMetadataPrefix(line)).trim())
     .filter(Boolean);
   return cleanedLines.join('\n') || fallbackTitle;
+}
+
+export function sanitizeAutocodeRuntimeTaskTitle(title: unknown, fallbackTitle = ''): string {
+  const rawTitle = singleLine(stringFrom(title));
+  const fallback = singleLine(fallbackTitle);
+  const cleaned = stripAutocodeRuntimeTaskTitleStatePrefix(rawTitle);
+  return cleaned || fallback || rawTitle;
 }
 
 export function uniqueAutocodeRuntimeStrings(values: string[]): string[] {
@@ -454,8 +568,8 @@ function buildRuntimeWorkPackageDescription(
       '',
       '包含任务：',
       ...workPackage.tasks.flatMap((task) => [
-        `- ${task.id} ${task.title}`,
-        `  ${singleLine(sanitizeAutocodeRuntimeTaskDescription(task.description, task.title))}`,
+        `- ${task.id} ${sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)}`,
+        `  ${singleLine(sanitizeAutocodeRuntimeTaskDescription(task.description, sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)))}`,
         ...(task.evidence ? [`  Evidence: ${singleLine(task.evidence)}`] : []),
         ...(task.dependsOn.length > 0 ? [`  依赖：${task.dependsOn.join(', ')}`] : []),
       ]),
@@ -472,8 +586,8 @@ function buildRuntimeWorkPackageDescription(
     '',
     'Included tasks:',
     ...workPackage.tasks.flatMap((task) => [
-      `- ${task.id} ${task.title}`,
-      `  ${singleLine(sanitizeAutocodeRuntimeTaskDescription(task.description, task.title))}`,
+      `- ${task.id} ${sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)}`,
+      `  ${singleLine(sanitizeAutocodeRuntimeTaskDescription(task.description, sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)))}`,
       ...(task.evidence ? [`  Evidence: ${singleLine(task.evidence)}`] : []),
       ...(task.dependsOn.length > 0 ? [`  Upstream prerequisites: ${task.dependsOn.join(', ')}`] : []),
     ]),
@@ -493,6 +607,87 @@ function buildWorkPackageVerification(workPackage: AutocodeRuntimeWorkPackage, l
     : isChineseLanguage(language)
       ? '运行此工作包最相关的最小验证，并记录结果。'
       : 'Run the smallest relevant validation for this work package and record the result.';
+}
+
+function normalizeAutocodeRuntimeTaskDependencies(input: {
+  task: AutocodeRuntimeTask;
+  taskIndex: number;
+  tasks: AutocodeRuntimeTask[];
+  dependsOn: string[];
+  taskIds: ReadonlySet<string>;
+  phaseTerminalTaskIds: ReadonlyMap<string, string[]>;
+}): string[] {
+  const normalized: string[] = [];
+
+  for (const dependencyId of input.dependsOn) {
+    if (!dependencyId) {
+      continue;
+    }
+
+    if (dependencyId === input.task.id) {
+      normalized.push(dependencyId);
+      continue;
+    }
+
+    if (input.taskIds.has(dependencyId)) {
+      normalized.push(dependencyId);
+      continue;
+    }
+
+    if (dependencyId === input.task.phaseId) {
+      const previousSamePhase = findPreviousAutocodeRuntimeTaskInPhase(input.task, input.taskIndex, input.tasks);
+      if (previousSamePhase) {
+        normalized.push(previousSamePhase.id);
+      }
+      continue;
+    }
+
+    const phaseTerminals = input.phaseTerminalTaskIds.get(dependencyId) ?? [];
+    if (phaseTerminals.length === 0) {
+      normalized.push(dependencyId);
+      continue;
+    }
+
+    normalized.push(...phaseTerminals.filter((taskId) => taskId !== input.task.id));
+  }
+
+  return uniqueAutocodeRuntimeStrings(normalized);
+}
+
+function getAutocodeRuntimePhaseTerminalTaskIds(
+  tasks: AutocodeRuntimeTask[],
+  taskIds: ReadonlySet<string>,
+): Map<string, string[]> {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const tasksByPhase = new Map<string, AutocodeRuntimeTask[]>();
+  for (const task of tasks) {
+    const phaseTasks = tasksByPhase.get(task.phaseId) ?? [];
+    phaseTasks.push(task);
+    tasksByPhase.set(task.phaseId, phaseTasks);
+  }
+
+  const terminalTaskIdsByPhase = new Map<string, string[]>();
+  for (const [phaseId, phaseTasks] of tasksByPhase) {
+    const dependencyIds = new Set<string>();
+    for (const task of phaseTasks) {
+      for (const dependencyId of task.dependsOn) {
+        if (!taskIds.has(dependencyId)) {
+          continue;
+        }
+        const dependency = taskById.get(dependencyId);
+        if (dependency?.phaseId === phaseId) {
+          dependencyIds.add(dependencyId);
+        }
+      }
+    }
+
+    const terminalIds = phaseTasks
+      .filter((task) => !dependencyIds.has(task.id))
+      .map((task) => task.id);
+    terminalTaskIdsByPhase.set(phaseId, terminalIds.length > 0 ? terminalIds : [phaseTasks[phaseTasks.length - 1].id]);
+  }
+
+  return terminalTaskIdsByPhase;
 }
 
 function inferAutocodeRuntimeTaskDependencies(
@@ -1027,8 +1222,58 @@ function stripDependencyMetadataPrefix(line: string): string {
   return line.replace(/^\s*(?:-\s+)?_(?:Depends on|依赖|依赖于前置任务|前置|先决条件)\s*[:：]\s*[^_]+?_\s*/iu, '');
 }
 
+function stripAutocodeRuntimeTaskTitleStatePrefix(value: string): string {
+  let cleaned = singleLine(value);
+  for (let index = 0; index < 5; index += 1) {
+    const withoutBracketedTag = cleaned.replace(
+      new RegExp(`^\\s*[\\[(]\\s*${AUTOCODE_RUNTIME_TASK_TITLE_STATE_TAG}\\s*[\\])]\\s*(?:[-:]\\s*)?`, 'iu'),
+      '',
+    );
+    const withoutPlainTag = withoutBracketedTag.replace(
+      new RegExp(`^\\s*${AUTOCODE_RUNTIME_TASK_TITLE_STATE_TAG}\\s*[-:]\\s*`, 'iu'),
+      '',
+    );
+    const next = withoutPlainTag.trim();
+    if (next === cleaned) {
+      break;
+    }
+    cleaned = next;
+  }
+  return cleaned;
+}
+
+function getAutocodeRuntimeTaskTitleState(value: string): 'obsolete' | 'needs_revision' | undefined {
+  const tag = getAutocodeRuntimeTaskTitleStateTag(value);
+  if (!tag) {
+    return undefined;
+  }
+  if (tag === 'obsolete' || tag === 'superseded' || tag === 'deprecated') {
+    return 'obsolete';
+  }
+  return 'needs_revision';
+}
+
+function getAutocodeRuntimeTaskTitleStateTag(value: string): string {
+  const cleaned = singleLine(value);
+  const bracketed = cleaned.match(
+    new RegExp(`^\\s*[\\[(]\\s*(${AUTOCODE_RUNTIME_TASK_TITLE_STATE_TAG})\\s*[\\])]`, 'iu'),
+  );
+  const plain = cleaned.match(
+    new RegExp(`^\\s*(${AUTOCODE_RUNTIME_TASK_TITLE_STATE_TAG})\\s*[-:]\\s*`, 'iu'),
+  );
+  return normalizeAutocodeRuntimeTaskTitleStateTag(bracketed?.[1] ?? plain?.[1] ?? '');
+}
+
+function normalizeAutocodeRuntimeTaskTitleStateTag(value: string): string {
+  return value.toLowerCase().replace(/[\s-]+/gu, '_');
+}
+
 function getRuntimeWorkPackagePhaseLabel(language?: string): string {
   return isChineseLanguage(language) ? '运行工作包' : 'Runtime work packages';
+}
+
+function getAutocodeRuntimePlanFeatureFallback(language?: string): string {
+  return isChineseLanguage(language) ? 'Autocode 任务' : 'Autocode task';
 }
 
 function toStringArray(value: unknown): string[] {

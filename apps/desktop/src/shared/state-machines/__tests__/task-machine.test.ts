@@ -127,6 +127,15 @@ describe('taskMachine', () => {
       expect(snapshot.context.reviewReason).toBeUndefined();
     });
 
+    it('should restart planning from stale coding state on Request Changes', () => {
+      const snapshot = runEvents([
+        { type: 'PLANNING_STARTED' },
+      ], 'coding');
+
+      expect(snapshot.value).toBe('planning');
+      expect(snapshot.context.reviewReason).toBeUndefined();
+    });
+
     it('should complete full flow with plan_review', () => {
       const events: TaskEvent[] = [
         { type: 'PLANNING_STARTED' },

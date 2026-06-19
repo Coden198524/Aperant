@@ -1142,6 +1142,93 @@ describe('WorkerBridge', () => {
         sessionId: 'new-session',
       }, 'proj-456');
     });
+
+    it('replaces an estimated session usage with lower provider-reported usage', () => {
+      const handler = vi.fn();
+      bridge.on('task-token-usage', handler);
+      bridge.spawn(createConfig());
+
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        data: {
+          type: 'usage-update',
+          usage: {
+            promptTokens: 1000,
+            completionTokens: 400,
+            totalTokens: 1400,
+            stepsExecuted: 2,
+            estimated: true,
+            sessionId: 'session-a',
+          },
+        } as never,
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      getWorker().emit('message', {
+        type: 'task-token-usage',
+        taskId: 'task-123',
+        data: {
+          promptTokens: 300,
+          completionTokens: 80,
+          totalTokens: 380,
+          stepsExecuted: 2,
+          sessionId: 'session-a',
+        },
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      expect(handler).toHaveBeenLastCalledWith('task-123', {
+        promptTokens: 300,
+        completionTokens: 80,
+        totalTokens: 380,
+        stepsExecuted: 2,
+        sessionId: 'session-a',
+      }, 'proj-456');
+    });
+
+    it('allows final provider usage to correct a higher realtime same-session snapshot', () => {
+      const handler = vi.fn();
+      bridge.on('task-token-usage', handler);
+      bridge.spawn(createConfig());
+
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        data: {
+          type: 'usage-update',
+          usage: {
+            promptTokens: 900,
+            completionTokens: 120,
+            totalTokens: 1020,
+            stepsExecuted: 4,
+            sessionId: 'session-a',
+          },
+        } as never,
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      getWorker().emit('message', {
+        type: 'task-token-usage',
+        taskId: 'task-123',
+        data: {
+          promptTokens: 420,
+          completionTokens: 80,
+          totalTokens: 500,
+          stepsExecuted: 2,
+          sessionId: 'session-a',
+        },
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      expect(handler).toHaveBeenLastCalledWith('task-123', {
+        promptTokens: 420,
+        completionTokens: 80,
+        totalTokens: 500,
+        stepsExecuted: 2,
+        sessionId: 'session-a',
+      }, 'proj-456');
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1239,7 +1326,7 @@ describe('WorkerBridge', () => {
         taskId: 'task-123',
         data: {
           type: 'usage-update',
-          usage: { promptTokens: 2462, completionTokens: 53, totalTokens: 2515 },
+          usage: { promptTokens: 2462, completionTokens: 53, totalTokens: 2515, stepsExecuted: 1 },
         },
         projectId: 'proj-456',
       } satisfies WorkerMessage);
@@ -1262,7 +1349,7 @@ describe('WorkerBridge', () => {
         promptTokens: 2462,
         completionTokens: 53,
         totalTokens: 2515,
-        stepsExecuted: 9,
+        stepsExecuted: 1,
       }, 'proj-456');
     });
   });

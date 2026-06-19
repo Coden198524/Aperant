@@ -1453,6 +1453,8 @@ export {
   type AutocodePlanQualityResult,
   type ValidateAutocodeStandardPlanArtifactsInput,
   buildAutocodePlanQualityRetryPrompt,
+  hasOnlyAutocodePlanTaskGranularityErrors,
+  isAutocodePlanTaskGranularityError,
   isMeaningfulAutocodeEvidence,
   isTraceableAutocodeEvidence,
   normalizeAutocodeContextEvidenceSource,

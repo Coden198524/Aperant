@@ -73,7 +73,7 @@ export class ProjectStore {
   private storePath: string;
   private data: StoreData;
   private tasksCache: Map<string, TasksCacheEntry> = new Map();
-  private readonly CACHE_TTL_MS = 3000; // 3 seconds TTL for task cache
+  private readonly CACHE_TTL_MS = 30_000; // 30 seconds TTL for task cache
 
   constructor() {
     if (!app) {
@@ -320,7 +320,7 @@ export class ProjectStore {
 
   /**
    * Get tasks for a project by scanning specs directory
-   * Implements caching with 3-second TTL to prevent excessive worktree scanning
+   * Implements caching with 30-second TTL to prevent excessive worktree scanning during project switches
    */
   getTasks(projectId: string): Task[] {
     // Check cache first

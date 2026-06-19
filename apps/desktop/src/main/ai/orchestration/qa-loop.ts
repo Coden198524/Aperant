@@ -30,7 +30,7 @@ import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
 import {
   loadAutocodeImplementationPlan,
-  saveAutocodeImplementationPlan,
+  updateAutocodeImplementationPlan,
   type Phase,
 } from '@autocode/core';
 import { QASignoffSchema, validateStructuredOutput } from '../schema';
@@ -533,34 +533,34 @@ export class QALoop extends EventEmitter {
 
     // Persist to implementation_plan.md
     try {
-      const plan = await loadAutocodeImplementationPlan(this.config.specDir) as {
-        qa_iteration_history?: QAIterationRecord[];
-        qa_signoff?: QASignoff;
-        qa_stats?: Record<string, unknown>;
-      } | null;
+      await updateAutocodeImplementationPlan(this.config.specDir, (currentPlan) => {
+        const plan = currentPlan as {
+          qa_iteration_history?: QAIterationRecord[];
+          qa_signoff?: QASignoff;
+          qa_stats?: Record<string, unknown>;
+        };
 
-      if (!plan) return;
-
-      if (!plan.qa_iteration_history) {
-        plan.qa_iteration_history = [];
-      }
-      plan.qa_iteration_history.push(compactQAIterationRecord(record));
-
-      if (plan.qa_signoff && typeof plan.qa_signoff === 'object' && !Array.isArray(plan.qa_signoff)) {
-        const qaSignoff = plan.qa_signoff as QASignoff;
-        if (Array.isArray(qaSignoff.issues_found)) {
-          qaSignoff.issues_found = compactQAIssuesForPlan(qaSignoff.issues_found);
+        if (!plan.qa_iteration_history) {
+          plan.qa_iteration_history = [];
         }
-      }
+        plan.qa_iteration_history.push(compactQAIterationRecord(record));
 
-      // Update summary stats
-      plan.qa_stats = {
-        total_iterations: plan.qa_iteration_history.length,
-        last_iteration: iteration,
-        last_status: status,
-      };
+        if (plan.qa_signoff && typeof plan.qa_signoff === 'object' && !Array.isArray(plan.qa_signoff)) {
+          const qaSignoff = plan.qa_signoff as QASignoff;
+          if (Array.isArray(qaSignoff.issues_found)) {
+            qaSignoff.issues_found = compactQAIssuesForPlan(qaSignoff.issues_found);
+          }
+        }
 
-      await saveAutocodeImplementationPlan(this.config.specDir, plan as never);
+        // Update summary stats
+        plan.qa_stats = {
+          total_iterations: plan.qa_iteration_history.length,
+          last_iteration: iteration,
+          last_status: status,
+        };
+
+        return currentPlan;
+      });
     } catch {
       // Non-fatal 鈥?iteration is still tracked in memory
     }

@@ -233,6 +233,7 @@ function buildTaskRunPrompt(input: {
     buildTaskChangeRequestReference(input.specDir, input.language),
   ].join('');
   const taskDescription = compactTaskRunTaskDescription(input.task.description || input.task.title);
+  const hasHumanReviewContext = hasTaskHumanReviewContext(input.specDir);
 
   if (input.phase === 'direct') {
     if (isChinese) {
@@ -333,16 +334,14 @@ function buildTaskRunPrompt(input: {
         '## 必须生成的内容',
         '',
         `- 按需阅读 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} 和 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements}。`,
-        `- 如果 ${input.specDir}/HUMAN_INPUT.md 存在，将它作为计划评审反馈处理。`,
-        `- 如果 ${input.specDir}/change_requests.jsonl 存在，将它作为迭代审计轨迹读取并保留此前的变更请求历史。使用最新条目的迭代契约作为当前同一任务的有效变更请求。`,
-        `- 当反馈改变需求、验收标准、用户可见行为或约束时，更新 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile}。`,
-        `- 当最新变更请求改变结构化需求或验收标准时，更新 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements}。`,
+        ...buildPlanningIterationContextLines({ hasHumanReviewContext, language: input.language, specDir: input.specDir }),
         `- 将 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} 写成上游 Autocode 任务列表。`,
         `- 不要编写 ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}；运行器会基于 ${AUTOCODE_TASK_ARTIFACTS.tasks} 推导运行时工作包。`,
         '- 所有新增或修订的需求、设计说明、任务、依赖和验证命令，都必须基于项目源码/文档、现有模式，或经过核实的官方/行业参考。',
         '- 如果缺少证据，请添加假设/开放问题或验证任务；不要基于猜测创建实现工作。',
         '- 保持任务可独立实现和验证。',
-        '- 增量修订任务列表：保留仍然有效的已完成工作，将受影响工作重置为待办并标注 needs_revision，为新需求添加新的待办子任务，将过时的上游清单项标记为 obsolete，不要删除历史。',
+        '- 将宽泛工作拆成接近 OpenSpec 的叶子任务：一个任务通常只覆盖一个可独立评审的行为/契约和一个聚焦验证路径。',
+        '- 单个任务如果覆盖超过三个行为、超过三个需求/验收引用，或超过四个写入意图文件，就必须拆分；同文件写入用 _Depends on_ 串行化，不要把独立行为合并成大任务。',
         '- 每个可执行任务都必须包含 _Depends on_、_Verification_ 和简短 _Evidence_ 说明。只有根任务可使用 _Depends on: none_。如果已知写入意图，也包含 _Files to create/modify_。',
         '- 保持本轮迭代可测试、可提交：每个新增或修订任务都需要聚焦的验证命令，并且下一轮编码在验证通过后应能使用正常任务提交流程。',
         '- 新任务复选框保持 [ ]。',
@@ -357,10 +356,7 @@ function buildTaskRunPrompt(input: {
       '## Required Output',
       '',
       `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} and ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if needed.`,
-      `- If ${input.specDir}/HUMAN_INPUT.md exists, address it as plan-review feedback.`,
-      `- If ${input.specDir}/change_requests.jsonl exists, read it as the iteration audit trail and preserve prior change-request history. Use the latest entry's iteration contract as the active same-task change request.`,
-      `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} when feedback changes requirements, acceptance criteria, user-visible behavior, or constraints.`,
-      `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} when the latest change request changes structured requirements or acceptance criteria.`,
+      ...buildPlanningIterationContextLines({ hasHumanReviewContext, language: input.language, specDir: input.specDir }),
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as the upstream Autocode task list.`,
       `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
       '- Ground every new or revised requirement, design note, task, dependency, and verification command in project source/docs, existing patterns, or verified official/industry references.',
@@ -368,7 +364,8 @@ function buildTaskRunPrompt(input: {
       '- Keep tasks independently implementable and verifiable.',
       '- Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of silently dropping them.',
       '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
-      '- Revise the task list incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.',
+      '- Split broad work into OpenSpec-grade leaf tasks: one independently reviewable behavior or contract plus one focused verification path.',
+      '- A task covering more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files is too broad; if split tasks touch the same file, use _Depends on_ instead of merging independent behavior.',
       '- Every executable task must include _Depends on_, _Requirements_, _Verification_, and a short _Evidence_ note. Use _Depends on: none_ only for root work. Include _Files to create/modify_ when write intent is known.',
       '- Keep the iteration testable and commit-ready: every new or revised task needs a focused verification command, and the next coding pass should be able to use the normal task commit flow after validation succeeds.',
       '- Set new task checkboxes to [ ].',
@@ -526,6 +523,63 @@ function buildTaskChangeRequestReference(specDir: string, language?: AutocodeAge
   } catch {
     return '';
   }
+}
+
+function hasTaskHumanReviewContext(specDir: string): boolean {
+  return hasNonEmptyTaskFile(join(specDir, 'HUMAN_INPUT.md')) ||
+    hasNonEmptyTaskFile(join(specDir, 'change_requests.jsonl'));
+}
+
+function hasNonEmptyTaskFile(filePath: string): boolean {
+  if (!existsSync(filePath)) {
+    return false;
+  }
+  try {
+    return readFileSync(filePath, 'utf8').trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function buildPlanningIterationContextLines(input: {
+  hasHumanReviewContext: boolean;
+  language?: AutocodeAgentLanguage;
+  specDir: string;
+}): string[] {
+  if (isTaskRunChineseLanguage(input.language)) {
+    if (!input.hasHumanReviewContext) {
+      return [
+        '- 本轮没有有效的 HUMAN_INPUT.md 或非空 change_requests.jsonl：按新任务或普通计划修复处理，不要把它当作 RequestChanges 迭代。',
+        '- 从当前 spec.md、requirements.md、context.md 和项目文件生成普通待办任务；不要保留历史任务编号，不要提及旧任务历史，不要添加 revision-state 或 obsolete 标记。',
+      ];
+    }
+    return [
+      `- 如果 ${input.specDir}/HUMAN_INPUT.md 存在，将它作为计划评审反馈处理。`,
+      `- 如果 ${input.specDir}/change_requests.jsonl 存在，将它作为迭代审计轨迹读取并保留此前的变更请求历史。使用最新条目的迭代契约作为当前同一任务的有效变更请求。`,
+      '- 仅因为存在有效的人审反馈，本轮才按同一任务的 RequestChanges 迭代处理。',
+      `- 当反馈改变需求、验收标准、用户可见行为或约束时，更新 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile}。`,
+      `- 当最新变更请求改变结构化需求或验收标准时，更新 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements}。`,
+      '- 如果既有工作确实需要按最新人审反馈修订，编辑原清单项并重置为待办；needs_revision 只能出现在详情说明或元数据行，不能写进任务标题。',
+      '- 只为真正新增的需求或验证缺口添加新待办任务；记录变更后，移除或压缩过时的可执行清单项，避免重复任务。',
+    ];
+  }
+
+  if (!input.hasHumanReviewContext) {
+    return [
+      '- No valid HUMAN_INPUT.md or non-empty change_requests.jsonl is present. Treat this as a new task or ordinary planning repair, not a RequestChanges iteration.',
+      '- Generate ordinary pending tasks from the current spec.md, requirements.md, context.md, and project files. Do not preserve historical task IDs, mention old task history, or add revision-state/obsolete markers.',
+    ];
+  }
+
+  return [
+    `- If ${input.specDir}/HUMAN_INPUT.md exists, address it as plan-review feedback.`,
+    `- If ${input.specDir}/change_requests.jsonl exists, read it as the iteration audit trail and preserve prior change-request history. Use the latest entry's iteration contract as the active same-task change request.`,
+    '- Only because valid human review feedback exists, treat this planning pass as a same-task RequestChanges iteration.',
+    `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} when feedback changes requirements, acceptance criteria, user-visible behavior, or constraints.`,
+    `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} when the latest change request changes structured requirements or acceptance criteria.`,
+    '- If existing work truly needs revision for the latest human feedback, edit that checklist item in place, reset it to pending, and put any needs_revision marker only in a detail note or metadata line, never in the task title.',
+    '- Add pending tasks only for genuinely new requirements or verification gaps. After recording the change request, remove or compact obsolete executable checklist items to avoid duplicate tasks.',
+  ];
 }
 
 function limitTaskRunPromptText(value: string, maxLength: number, suffix: string): string {
@@ -734,6 +788,7 @@ sanitizeCodexRulesFiles();
 
 let finalized = false;
 let tokenUsageEventCount = 0;
+let tokenUsageImplicitSessionCounted = false;
 let lastTokenUsageLogTotal = 0;
 let gb18030Decoder = undefined;
 const defaultAttemptState = createAttemptState('main');
@@ -837,7 +892,7 @@ async function initializeCliMemoryRuntime() {
   const lines = [
     '## Project Memory',
     '',
-    'Use these prior outcomes, gotchas, and decisions when relevant. Do not repeat failed approaches.',
+    'Use these prior outcomes, gotchas, decisions, architecture references, and design patterns when relevant. Confirm similar-task references against current source/docs, and do not repeat failed approaches.',
     '',
   ];
   let omitted = 0;
@@ -878,7 +933,14 @@ function formatCliMemoryPromptLine(memory) {
   const files = relatedFiles.length > 0
     ? ' Files: ' + relatedFiles.join(', ') + (sourceRelatedFiles.length > relatedFiles.length ? ', ...' : '') + '.'
     : '';
-  return '- [' + memory.type + '] ' + limitLogText(memoryContent, CLI_MEMORY_ITEM_MAX_CHARS) + files;
+  return '- [' + formatCliMemoryPromptType(memory.type) + '] ' + limitLogText(memoryContent, CLI_MEMORY_ITEM_MAX_CHARS) + files;
+}
+
+function formatCliMemoryPromptType(type) {
+  const value = String(type || 'memory');
+  return /^(?:pattern|decision|module_insight|workflow_recipe)$/.test(value)
+    ? 'architecture/reference:' + value
+    : value;
 }
 
 function stripCliLowValueMemoryText(content) {
@@ -3259,6 +3321,30 @@ function normalizeCodexTokenUsage(raw, sessionId) {
     promptTokens,
     completionTokens,
     totalTokens,
+    stepsExecuted: readOptionalNumber(
+      totalUsage.stepsExecuted ??
+      totalUsage.steps_executed ??
+      totalUsage.modelSteps ??
+      totalUsage.model_steps ??
+      totalUsage.turnCount ??
+      totalUsage.turn_count ??
+      totalUsage.turns ??
+      totalUsage.requestCount ??
+      totalUsage.request_count ??
+      totalUsage.modelRequests ??
+      totalUsage.model_requests ??
+      source.stepsExecuted ??
+      source.steps_executed ??
+      source.modelSteps ??
+      source.model_steps ??
+      source.turnCount ??
+      source.turn_count ??
+      source.turns ??
+      source.requestCount ??
+      source.request_count ??
+      source.modelRequests ??
+      source.model_requests,
+    ),
     thinkingTokens: readOptionalNumber(totalUsage.reasoning_output_tokens ?? totalUsage.reasoningOutputTokens ?? totalUsage.reasoningTokens ?? totalUsage.thinkingTokens),
     cacheReadTokens: readOptionalNumber(totalUsage.cached_input_tokens ?? totalUsage.cachedInputTokens ?? totalUsage.cache_read_tokens ?? totalUsage.cacheReadTokens),
     cacheCreationTokens: readOptionalNumber(totalUsage.cache_creation_input_tokens ?? totalUsage.cacheCreationInputTokens ?? totalUsage.cache_creation_tokens ?? totalUsage.cacheCreationTokens),
@@ -3365,35 +3451,34 @@ function readPlanMachineMetadata(content) {
 
 function getNextTokenUsageStepCount(previousUsage, usage) {
   const previousSteps = previousUsage?.stepsExecuted ?? 0;
-  if (shouldCountTokenUsageStep(previousUsage, usage)) {
-    tokenUsageEventCount = Math.max(tokenUsageEventCount + 1, previousSteps + 1);
-  } else {
-    tokenUsageEventCount = Math.max(tokenUsageEventCount, previousSteps);
+  if (usage.stepsExecuted) {
+    if (previousUsage && usage.sessionId && previousUsage.sessionId && usage.sessionId !== previousUsage.sessionId) {
+      tokenUsageEventCount = Math.max(tokenUsageEventCount, previousSteps + usage.stepsExecuted);
+      return tokenUsageEventCount || undefined;
+    }
+    if (previousUsage && !usage.sessionId && !tokenUsageImplicitSessionCounted) {
+      tokenUsageImplicitSessionCounted = true;
+      tokenUsageEventCount = Math.max(tokenUsageEventCount, previousSteps + usage.stepsExecuted);
+      return tokenUsageEventCount || undefined;
+    }
+    tokenUsageEventCount = Math.max(tokenUsageEventCount, previousSteps, usage.stepsExecuted);
+    return tokenUsageEventCount || undefined;
   }
-  return tokenUsageEventCount || undefined;
-}
-
-function shouldCountTokenUsageStep(previousUsage, usage) {
   if (!previousUsage) {
-    return true;
+    tokenUsageEventCount = Math.max(tokenUsageEventCount, 1);
+    return tokenUsageEventCount || undefined;
   }
-
   if (usage.sessionId && previousUsage.sessionId && usage.sessionId !== previousUsage.sessionId) {
-    return true;
+    tokenUsageEventCount = Math.max(tokenUsageEventCount + 1, previousSteps + 1);
+    return tokenUsageEventCount || undefined;
   }
-
-  return tokenUsageHasAdvanced(previousUsage, usage);
-}
-
-function tokenUsageHasAdvanced(previousUsage, usage) {
-  return [
-    'promptTokens',
-    'completionTokens',
-    'totalTokens',
-    'thinkingTokens',
-    'cacheReadTokens',
-    'cacheCreationTokens',
-  ].some((key) => (usage[key] ?? 0) > (previousUsage[key] ?? 0));
+  if (!usage.sessionId && !tokenUsageImplicitSessionCounted) {
+    tokenUsageImplicitSessionCounted = true;
+    tokenUsageEventCount = Math.max(tokenUsageEventCount + 1, previousSteps + 1);
+    return tokenUsageEventCount || undefined;
+  }
+  tokenUsageEventCount = Math.max(tokenUsageEventCount, previousSteps);
+  return tokenUsageEventCount || undefined;
 }
 
 function normalizePersistedTokenUsage(value) {
@@ -3417,6 +3502,13 @@ function normalizePersistedTokenUsage(value) {
 function mergeTokenUsage(previous, incoming) {
   if (!previous) {
     return dropUndefinedTokenUsage(incoming);
+  }
+  if (previous.estimated === true && incoming.estimated !== true) {
+    return dropUndefinedTokenUsage({
+      ...incoming,
+      stepsExecuted: Math.max(previous.stepsExecuted ?? 0, incoming.stepsExecuted ?? 0) || undefined,
+      sessionId: incoming.sessionId || previous.sessionId,
+    });
   }
   const preferIncomingTokens = incoming.estimated !== true || previous.estimated === true;
   return dropUndefinedTokenUsage({
@@ -3472,14 +3564,14 @@ function emitTokenUsage(usage) {
 }
 
 async function validateExpectedArtifacts() {
-  const derivedPlanError = await deriveRuntimePlanFromStandardTasksIfNeeded();
-  if (derivedPlanError) {
-    return derivedPlanError;
-  }
-
   const qualityError = await validateStandardPlanArtifactQuality();
   if (qualityError) {
     return qualityError;
+  }
+
+  const derivedPlanError = await deriveRuntimePlanFromStandardTasksIfNeeded();
+  if (derivedPlanError) {
+    return derivedPlanError;
   }
 
   if (phase === 'spec') {
@@ -3514,6 +3606,7 @@ async function validateStandardPlanArtifactQuality() {
     return undefined;
   }
   try {
+    repairStandardPlanEvidenceScaffolding();
     const moduleUrl = pathToFileURL(planQualityModulePath).href;
     const planQuality = await import(moduleUrl);
     const contextMarkdown = readOptionalArtifact(artifacts.context || 'context.md');
@@ -3530,10 +3623,97 @@ async function validateStandardPlanArtifactQuality() {
     if (!result || result.valid) {
       return undefined;
     }
-    return 'Standard plan artifact quality failed: ' + result.errors.slice(0, 8).join('; ');
+    const errors = Array.isArray(result.errors) ? result.errors : [];
+    if (
+      validationRetryCount >= maxValidationRetries &&
+      hasOnlyStandardPlanRecoverableQualityErrors(planQuality, errors)
+    ) {
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Standard plan artifact quality still has recoverable warnings after validation retries; continuing with the generated plan: ' +
+          errors.slice(0, 4).join('; '),
+      );
+      return undefined;
+    }
+    return 'Standard plan artifact quality failed: ' + errors.slice(0, 8).join('; ');
   } catch (error) {
     return 'Unable to validate Standard plan artifact quality: ' + (error instanceof Error ? error.message : String(error));
   }
+}
+
+function repairStandardPlanEvidenceScaffolding() {
+  const repaired = [];
+  if (ensureArtifactEvidenceSection(
+    artifacts.specFile,
+    'Evidence',
+    [
+      '- requirements.md captures the user request and planning constraints for this task.',
+      '- tasks.md maps the implementation work back to the generated Standard requirements.',
+    ],
+  )) {
+    repaired.push(artifacts.specFile);
+  }
+  if (phase === 'planning' && ensureArtifactEvidenceSection(
+    artifacts.requirements,
+    'Evidence Sources',
+    [
+      '- User task description captured by Autocode.',
+      '- spec.md planning scope and success criteria.',
+    ],
+  )) {
+    repaired.push(artifacts.requirements);
+  }
+  if (repaired.length > 0) {
+    appendTaskLogEntry(logPhase, 'info', 'Added missing Standard evidence scaffolding to: ' + repaired.join(', '));
+  }
+}
+
+function ensureArtifactEvidenceSection(fileName, heading, lines) {
+  if (!fileName) {
+    return false;
+  }
+  const filePath = join(specDir, fileName);
+  if (!existsSync(filePath)) {
+    return false;
+  }
+  const content = readFileSync(filePath, 'utf8');
+  const headingPattern = new RegExp('^##\\\\s+' + escapeRegExp(heading) + '\\\\b', 'im');
+  if (headingPattern.test(content)) {
+    return false;
+  }
+  const section = ['', '## ' + heading, '', ...lines, ''].join('\\n');
+  writeFileSync(filePath, content.replace(/\\s*$/u, '') + '\\n\\n' + section, 'utf8');
+  return true;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[|\\\\{}()[\\]^$+*?.]/g, '\\\\$&');
+}
+
+function hasOnlyStandardPlanRecoverableQualityErrors(planQuality, errors) {
+  if (!Array.isArray(errors) || errors.length === 0) {
+    return false;
+  }
+  return errors.every((error) =>
+    isStandardPlanTaskGranularityError(planQuality, error) ||
+    isStandardPlanEvidenceScaffoldError(error),
+  );
+}
+
+function isStandardPlanTaskGranularityError(planQuality, error) {
+  if (typeof planQuality.isAutocodePlanTaskGranularityError === 'function') {
+    return planQuality.isAutocodePlanTaskGranularityError(error) === true;
+  }
+  return /\\btasks\\.md task \\S+ is too broad;/.test(String(error || ''));
+}
+
+function isStandardPlanEvidenceScaffoldError(error) {
+  const text = String(error || '');
+  return text === artifacts.specFile + ' missing "## Evidence" section.' ||
+    text === artifacts.specFile + ' Requirements section must cite Evidence for requirements or acceptance criteria.' ||
+    text === artifacts.specFile + ' Design Notes must cite Evidence or move unverified claims to Assumptions/Open Questions.' ||
+    text === artifacts.requirements + ' missing non-empty "Evidence Sources" section.';
 }
 
 function readOptionalArtifact(fileName) {
@@ -3570,6 +3750,7 @@ async function deriveRuntimePlanFromStandardTasksIfNeeded() {
         language,
         sourcePath: artifacts.tasks || 'tasks.md',
         requireTaskEvidence: true,
+        includeCompletedTasks: false,
       },
     );
     const existingPlanMetadata = readExistingPlanMachineMetadata();
@@ -3662,6 +3843,9 @@ function compactArtifactValidationError(value) {
 function buildArtifactValidationRetryPrompt(validationError) {
   const standardTasksMode = phase === 'spec' || phase === 'planning';
   const compactValidationError = compactArtifactValidationError(validationError);
+  const rawValidationError = String(validationError || '');
+  const shouldRepairSpecArtifact = standardTasksMode && /\\bspec\\.md\\b/i.test(rawValidationError);
+  const shouldRepairRequirementsArtifact = standardTasksMode && /\\brequirements\\.md\\b/i.test(rawValidationError);
   const requiredOutputs = phase === 'spec'
     ? [
         \`- Write or repair \${specDir}/\${artifacts.specFile}.\`,
@@ -3670,6 +3854,12 @@ function buildArtifactValidationRetryPrompt(validationError) {
           : \`- Write or repair \${specDir}/\${artifacts.implementationPlan}.\`,
       ]
     : [
+        ...(shouldRepairSpecArtifact
+          ? [\`- Write or repair \${specDir}/\${artifacts.specFile}.\`]
+          : []),
+        ...(shouldRepairRequirementsArtifact
+          ? [\`- Write or repair \${specDir}/\${artifacts.requirements}.\`]
+          : []),
         standardTasksMode
           ? \`- Write or repair \${specDir}/\${artifacts.tasks || 'tasks.md'}.\`
           : \`- Write or repair \${specDir}/\${artifacts.implementationPlan}.\`,
@@ -3691,8 +3881,21 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '- A top-level phase alone is not enough.',
     '- Each task must include _Depends on_, _Evidence_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
     '- Evidence must cite spec.md, requirements.md, context.md, project source/docs, existing project patterns, or verified official/industry references.',
+    '- Use Project Memory workflow recipes, pattern, decision, or module insight entries as architecture/design pattern references for similar tasks when they match current source/docs.',
+    '- Do not force named architecture or design pattern guidance onto simple, single-boundary tasks.',
+    '- For complex or high-risk plans, add a detailed but compact ## Architecture And Design Pattern References section to spec.md or tasks.md: 4-8 bullets covering boundary/layer, pattern or strategy, source/docs/Project Memory reference or labeled general guidance, and applicable task IDs/boundaries.',
+    '- For complex or high-risk tasks, each executable task must include _Architecture: boundary; pattern/strategy; source/reference_ so implementation agents can apply the guidance directly.',
+    '- Do not introduce a named design pattern unless source evidence or similar-task memory shows it reduces concrete complexity.',
+    ...(standardTasksMode
+      ? [
+          '- spec.md must include a non-empty ## Evidence section whenever spec.md is written or repaired.',
+          '- requirements.md must include a non-empty ## Evidence Sources section whenever requirements.md is written or repaired.',
+        ]
+      : []),
     '- Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of dropping them.',
     '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
+    '- Split broad work into OpenSpec-grade leaf tasks; a task covering more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files is too broad.',
+    '- If split tasks touch the same file, use _Depends on_ to serialize writes instead of merging independent behavior.',
     '- Keep spec.md compact as a decision index; put detailed source evidence in context.md and cite it from tasks.md.',
     '- If this is a Request Changes retry, update only affected requirement/design/task sections and preserve unaffected content.',
     '- Use _Depends on: none_ only for root work. Use _Files to modify: none_ only for read-only validation.',
@@ -3722,6 +3925,7 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '',
     '  - [ ] 1.1 Implement the first concrete change',
     '    - Describe the implementation step.',
+    '    - For complex work, follow the existing boundary/pattern from src/example.ts or labeled general guidance; omit this for simple single-boundary work.',
     '    - _Files to modify: path/to/file.ts_',
     '    - _Depends on: none_',
     '    - _Requirements: 1.1_',

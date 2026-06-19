@@ -193,7 +193,7 @@ export function checkAutocodeSecurity(files: readonly AutocodeGeneratedFile[]): 
       }
     }
 
-    if (/\$\{.*\}/.test(file.content) && /SELECT|INSERT|UPDATE|DELETE/i.test(file.content)) {
+    if (hasInterpolatedSqlTemplate(file.content)) {
       issues.push(`${file.path}: Potential SQL injection (string interpolation in SQL)`);
       suggestions.push('Use parameterized queries or prepared statements');
       score -= 0.5;
@@ -227,6 +227,29 @@ export function checkAutocodeSecurity(files: readonly AutocodeGeneratedFile[]): 
     issues,
     suggestions,
   };
+}
+
+function hasInterpolatedSqlTemplate(content: string): boolean {
+  const templatePattern = /`(?:\\.|[^`\\])*`/gs;
+  for (const match of content.matchAll(templatePattern)) {
+    const template = match[0];
+    if (!template.includes('${')) {
+      continue;
+    }
+    if (/\bselect\b[\s\S]*\bfrom\b/i.test(template)) {
+      return true;
+    }
+    if (/\binsert\s+into\b/i.test(template)) {
+      return true;
+    }
+    if (/\bupdate\s+[`"[\]\w.]+\s+set\b/i.test(template)) {
+      return true;
+    }
+    if (/\bdelete\s+from\b/i.test(template)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function checkAutocodeTestCoverage(input: Pick<AutocodeSelfCritiqueInput, 'generatedFiles'>): AutocodeCritiqueCheck {

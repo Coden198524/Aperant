@@ -37,6 +37,7 @@ import { taskStateManager } from '../../task-state-manager';
 import { safeBreadcrumb } from '../../sentry';
 import { updatePlanFile } from './plan-file-utils';
 import { readSettingsFile } from '../../settings-utils';
+import { debugLog } from '../../../shared/utils/debug-logger';
 
 const TITLE_GENERATION_TIMEOUT_MS = 5000;
 const UNTITLED_TASK_FALLBACK = 'Untitled task';
@@ -315,7 +316,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
   ipcMain.handle(
     IPC_CHANNELS.TASK_LIST,
     async (_, projectId: string, options?: { forceRefresh?: boolean }): Promise<IPCResult<Task[]>> => {
-      console.warn('[IPC] TASK_LIST called with projectId:', projectId, 'options:', options);
+      debugLog('[IPC] TASK_LIST called with projectId:', projectId, 'options:', options);
 
       // If forceRefresh is requested, invalidate cache and clear XState actors
       // This ensures the refresh button always returns fresh data from disk
@@ -323,11 +324,11 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
       if (options?.forceRefresh) {
         projectStore.invalidateTasksCache(projectId);
         taskStateManager.clearAllTasks();
-        console.warn('[IPC] TASK_LIST cache and task state cleared for forceRefresh');
+        debugLog('[IPC] TASK_LIST cache and task state cleared for forceRefresh');
       }
 
       const tasks = projectStore.getTasks(projectId);
-      console.warn('[IPC] TASK_LIST returning', tasks.length, 'tasks');
+      debugLog('[IPC] TASK_LIST returning', tasks.length, 'tasks');
       return { success: true, data: tasks };
     }
   );

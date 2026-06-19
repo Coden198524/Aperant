@@ -7,6 +7,7 @@ import {
   validateAutocodeDocumentationMarkdown,
   validateAutocodeGameMmoDocumentationSupportContent,
   validateAutocodeQaReportQuality,
+  validateAutocodeRuntimeReadinessSummary,
 } from './agent-quality-integration.js';
 
 const genericFiller = 'Additional source reading notes connect the observed flow to implementation behavior and risks. '.repeat(20);
@@ -220,6 +221,54 @@ describe('agent documentation quality integration', () => {
     expect(strongIssues).toEqual([]);
   });
 
+  it('requires runnable user-facing work to include real startup verification', () => {
+    const subtask = {
+      description: 'Implement a browser game page with canvas controls.',
+      filesToCreate: ['src/index.html'],
+      filesToModify: ['src/game.js'],
+    };
+
+    expect(validateAutocodeRuntimeReadinessSummary(
+      subtask,
+      [
+        '| Item | Details |',
+        '| --- | --- |',
+        '| What changed | Updated `src/index.html` and `src/game.js`. |',
+        '| Verification | Ran `node --check src/game.js` and static unit tests. |',
+        '| Review notes | No residual syntax risks. |',
+      ].join('\n'),
+    ).join('\n')).toContain('actual launch/open/browser/CLI smoke check');
+
+    expect(validateAutocodeRuntimeReadinessSummary(
+      subtask,
+      [
+        '| Item | Details |',
+        '| --- | --- |',
+        '| What changed | Updated `src/index.html` and `src/game.js`. |',
+        '| Verification | Opened the page in Chrome with a browser smoke test; canvas rendered and no console errors were observed. |',
+        '| Review notes | No residual startup risks. |',
+      ].join('\n'),
+    )).toEqual([]);
+  });
+
+  it('rejects runnable completion summaries with browser runtime failures', () => {
+    const issues = validateAutocodeCodingSummary(
+      {
+        description: 'Fix browser game startup.',
+        filesToModify: ['src/index.html', 'src/game.js'],
+      },
+      [
+        '| Item | Details |',
+        '| --- | --- |',
+        '| What changed | Updated `src/index.html` and `src/game.js`. |',
+        '| Verification | Browser smoke failed: CORS policy blocked `file:///src/game.js`; Failed to load resource: net::ERR_FAILED. |',
+        '| Review notes | Startup remains blocked. |',
+      ].join('\n'),
+    );
+
+    expect(issues.join('\n')).toContain('failed runnable verification');
+  });
+
   it('skips coding summary checks for documentation-only subtasks', () => {
     expect(validateAutocodeCodingSummary(
       {
@@ -269,6 +318,65 @@ describe('agent documentation quality integration', () => {
     ].join('\n');
 
     expect(validateAutocodeQaReportQuality(report, 'qa_report.md')).toEqual([]);
+  });
+
+  it('requires passed QA reports for runnable changes to include startup evidence', () => {
+    const weakReport = [
+      '# QA Report',
+      '',
+      'Status: PASSED',
+      '',
+      '## Scope Reviewed',
+      '- Reviewed `src/index.html`, `src/game.js`, and `tests/static-smoke.test.mjs`.',
+      '',
+      '## Changed Files And Contracts',
+      '- Browser page entry and canvas rendering boundary were reviewed statically.',
+      '',
+      '## Acceptance Matrix',
+      '- Requirement: game page loads. Evidence: `src/index.html` and `src/game.js`. Result: passed.',
+      '',
+      '## Verification',
+      '- Ran `node --check src/game.js` and `node --test tests/static-smoke.test.mjs`.',
+      '',
+      '## Findings',
+      '- No blocking issues remain.',
+      '',
+      '## Residual Risks',
+      '- No residual risks.',
+      '',
+      genericFiller,
+    ].join('\n');
+
+    expect(validateAutocodeQaReportQuality(weakReport, 'qa_report.md').join('\n'))
+      .toContain('without launch/open/browser/CLI smoke verification evidence');
+
+    const strongReport = [
+      '# QA Report',
+      '',
+      'Status: PASSED',
+      '',
+      '## Scope Reviewed',
+      '- Reviewed `src/index.html`, `src/game.js`, and browser startup behavior.',
+      '',
+      '## Changed Files And Contracts',
+      '- Browser page entry, canvas rendering, and startup contract were reviewed.',
+      '',
+      '## Acceptance Matrix',
+      '- Requirement: game page loads. Evidence: `src/index.html` and `src/game.js`. Verification: browser smoke in Chrome. Result: passed.',
+      '',
+      '## Verification',
+      '- Opened the page in Chrome via browser smoke; canvas rendered and no console errors were observed.',
+      '',
+      '## Findings',
+      '- No blocking issues remain.',
+      '',
+      '## Residual Risks',
+      '- No residual risks.',
+      '',
+      genericFiller,
+    ].join('\n');
+
+    expect(validateAutocodeQaReportQuality(strongReport, 'qa_report.md')).toEqual([]);
   });
 
   it('requires failed QA reports to include actionable fix and re-verification fields', () => {

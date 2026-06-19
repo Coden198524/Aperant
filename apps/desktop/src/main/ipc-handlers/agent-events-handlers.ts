@@ -3,7 +3,7 @@ import { ipcMain } from "electron";
 import path from "path";
 import { existsSync } from "fs";
 import { AUTOCODE_TASK_ARTIFACTS, loadAutocodeImplementationPlanSync } from "@autocode/core";
-import { IPC_CHANNELS, getSpecsDir } from "../../shared/constants";
+import { IPC_CHANNELS, TASK_REFRESH_SENTINEL, getSpecsDir } from "../../shared/constants";
 import type {
   SDKRateLimitInfo,
   AuthFailureInfo,
@@ -93,6 +93,16 @@ export function registerAgenteventsHandlers(
       specId,
       chunk,
       projectId
+    );
+  });
+
+  agentManager.on("tasks-refresh", (_taskId: string, projectId?: string) => {
+    safeSendToRenderer(
+      getMainWindow,
+      IPC_CHANNELS.TASK_STATUS_CHANGE,
+      TASK_REFRESH_SENTINEL,
+      'backlog',
+      projectId,
     );
   });
 

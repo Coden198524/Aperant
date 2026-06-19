@@ -17,6 +17,7 @@ export interface MutableAutocodePlanSubtask extends Record<string, unknown> {
   status?: string;
   started_at?: string | null;
   completed_at?: string | null;
+  completion_summary?: string | null;
   duration_ms?: number | null;
 }
 
@@ -153,6 +154,14 @@ export function mergeAutocodeTokenUsage(
 
   const prevSteps = previous.stepsExecuted ?? 0;
   const incomingSteps = incoming.stepsExecuted ?? 0;
+  if (previous.estimated === true && incoming.estimated !== true) {
+    return {
+      ...incoming,
+      stepsExecuted: Math.max(prevSteps, incomingSteps) || undefined,
+      sessionId: incoming.sessionId,
+    };
+  }
+
   const preferIncomingTokens = !incoming.estimated || previous.estimated === true;
 
   return {
@@ -223,6 +232,7 @@ export function resetAutocodeStuckSubtasksInPlan(plan: MutableAutocodePlan): {
         subtask.status = 'pending';
         subtask.started_at = null;
         subtask.completed_at = null;
+        subtask.completion_summary = null;
         resetCount++;
       }
     }

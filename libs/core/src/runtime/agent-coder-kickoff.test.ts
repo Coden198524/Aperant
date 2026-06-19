@@ -99,5 +99,8 @@ describe('agent coder kickoff prompt compaction', () => {
     expect(message).toContain('placeholder code');
     expect(message).toContain('closest regression test');
     expect(message).toContain('Completion summary must name concrete changed files/contracts');
+    expect(message).toContain('actual launch/open/use-path smoke check');
+    expect(message).toContain('failed or unavailable startup/use-path check blocks completion');
+    expect(message).toContain('Do not call update_subtask_status with status completed for user-facing or runnable work');
   });
 });

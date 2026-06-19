@@ -15,6 +15,7 @@ import {
   AUTOCODE_TASK_ARTIFACTS,
   updateAutocodePlanSubtask,
   type MutableAutocodePlan,
+  validateAutocodeCodingSummary,
 } from '@autocode/core';
 
 import { Tool } from '../define';
@@ -59,13 +60,41 @@ export const updateSubtaskStatusTool = Tool.define({
   execute: async (input, context) => {
     const { subtask_id, status, notes, completion_summary } = input;
     const planFile = path.join(context.specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+    const currentSubtaskId = context.currentSubtaskId?.trim();
+
+    if (currentSubtaskId && subtask_id !== currentSubtaskId) {
+      return `Error: This coding session is scoped to subtask '${currentSubtaskId}' and cannot update subtask '${subtask_id}'.`;
+    }
 
     if (!fs.existsSync(planFile)) {
       return 'Error: implementation_plan.md not found';
     }
 
     let found = false;
+    let qualityError: string | null = null;
     const plan = await updateImplementationPlanInFiles(context.specDir, (currentPlan) => {
+      const targetSubtask = findAutocodePlanSubtask(currentPlan as MutableAutocodePlan, subtask_id);
+      if (status === 'completed') {
+        if (!targetSubtask) {
+          return false;
+        }
+        const qualityIssues = validateAutocodeCodingSummary(
+          {
+            description: [
+              targetSubtask.title,
+              targetSubtask.description,
+            ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0).join('\n'),
+            filesToCreate: toStringArray((targetSubtask as Record<string, unknown>).files_to_create),
+            filesToModify: toStringArray((targetSubtask as Record<string, unknown>).files_to_modify),
+          },
+          completion_summary || notes || '',
+        );
+        if (qualityIssues.length > 0) {
+          qualityError = `Error: Cannot mark subtask '${subtask_id}' completed until completion evidence passes quality gates: ${qualityIssues.slice(0, 3).join('; ')}`;
+          return false;
+        }
+      }
+
       found = updateAutocodePlanSubtask(currentPlan as MutableAutocodePlan, subtask_id, {
         status,
         notes,
@@ -73,6 +102,9 @@ export const updateSubtaskStatusTool = Tool.define({
       });
       return found ? currentPlan : false;
     }) as MutableAutocodePlan | null;
+    if (qualityError) {
+      return qualityError;
+    }
     if (!plan) {
       return 'Error: implementation_plan.md could not be parsed';
     }
@@ -83,3 +115,21 @@ export const updateSubtaskStatusTool = Tool.define({
     return `Successfully updated subtask '${subtask_id}' to status '${status}'`;
   },
 });
+
+function findAutocodePlanSubtask(plan: MutableAutocodePlan, subtaskId: string): Record<string, unknown> | null {
+  for (const phase of plan.phases ?? []) {
+    for (const subtask of phase.subtasks ?? []) {
+      const record = subtask as Record<string, unknown>;
+      if (record.id === subtaskId || record.subtask_id === subtaskId) {
+        return record;
+      }
+    }
+  }
+  return null;
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+}

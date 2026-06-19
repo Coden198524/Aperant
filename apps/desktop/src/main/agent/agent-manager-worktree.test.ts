@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 const createOrGetWorktreeMock = vi.fn();
 const spawnWorkerProcessMock = vi.fn();
 const spawnProcessMock = vi.fn();
+const invalidateTasksCacheMock = vi.fn();
 const createStartedAutocodeAgentRuntimeMock = vi.fn(() => ({
   request: {
     runner: {
@@ -110,6 +111,7 @@ vi.mock('../project-store', () => ({
         settings: {},
       },
     ]),
+    invalidateTasksCache: (...args: unknown[]) => invalidateTasksCacheMock(...args),
   },
 }));
 
@@ -174,6 +176,7 @@ describe('AgentManager worktree execution', () => {
     vi.clearAllMocks();
     writeFileSyncMock.mockReset();
     spawnProcessMock.mockReset();
+    invalidateTasksCacheMock.mockReset();
     createStartedAutocodeAgentRuntimeMock.mockClear();
     initializeClaudeProfileManagerMock.mockReset();
     initializeClaudeProfileManagerMock.mockResolvedValue({ hasValidAuth: () => true });
@@ -249,6 +252,8 @@ describe('AgentManager worktree execution', () => {
   it('auto-detects master as the worktree base branch when worktree isolation is explicitly enabled', async () => {
     const { AgentManager } = await import('./agent-manager');
     const manager = new AgentManager();
+    const refreshListener = vi.fn();
+    manager.on('tasks-refresh', refreshListener);
 
     await manager.startTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: true }, 'project-1');
 
@@ -265,6 +270,8 @@ describe('AgentManager worktree execution', () => {
     const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
     expect(executorConfig.session.projectDir).toBe('E:/repo/.autocode/worktrees/tasks/001-task');
     expect(executorConfig.session.toolContext.cwd).toBe('E:/repo/.autocode/worktrees/tasks/001-task');
+    expect(invalidateTasksCacheMock).toHaveBeenCalledWith('project-1');
+    expect(refreshListener).toHaveBeenCalledWith('001-task', 'project-1');
   });
 
   it('stops execution when explicitly requested worktree creation fails', async () => {

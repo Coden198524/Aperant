@@ -85,6 +85,64 @@ function getTaskActivityKey(taskId: string, projectId?: string): string {
  */
 const taskStatusChangeListeners = new Set<(taskId: string, oldStatus: TaskStatus | undefined, newStatus: TaskStatus, projectId?: string) => void>();
 const taskLoadSequencesByProject = new Map<string, number>();
+const taskCacheByProject = new Map<string, { tasks: Task[]; timestamp: number }>();
+const RENDERER_TASK_CACHE_TTL_MS = 30_000;
+
+export interface LoadTasksOptions {
+  forceRefresh?: boolean;
+  preferCache?: boolean;
+  backgroundRefresh?: boolean;
+  deferRemoteMs?: number;
+}
+
+function getCachedTasks(projectId: string): Task[] | null {
+  const cached = taskCacheByProject.get(projectId);
+  if (!cached) {
+    return null;
+  }
+
+  if (Date.now() - cached.timestamp > RENDERER_TASK_CACHE_TTL_MS) {
+    taskCacheByProject.delete(projectId);
+    return null;
+  }
+
+  return cached.tasks;
+}
+
+function cacheTasks(projectId: string, tasks: Task[]): void {
+  taskCacheByProject.set(projectId, {
+    tasks,
+    timestamp: Date.now(),
+  });
+}
+
+function invalidateTaskCache(projectId?: string): void {
+  if (projectId) {
+    taskCacheByProject.delete(projectId);
+    return;
+  }
+  taskCacheByProject.clear();
+}
+
+function cacheTaskGroups(tasks: Task[]): void {
+  const tasksByProject = new Map<string, Task[]>();
+  for (const task of tasks) {
+    if (!task.projectId) {
+      continue;
+    }
+    const projectTasks = tasksByProject.get(task.projectId) ?? [];
+    projectTasks.push(task);
+    tasksByProject.set(task.projectId, projectTasks);
+  }
+
+  for (const [projectId, projectTasks] of tasksByProject) {
+    cacheTasks(projectId, projectTasks);
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function getVisibleTaskProjectId(): string | null {
   const { activeProjectId, selectedProjectId } = useProjectStore.getState();
@@ -186,6 +244,13 @@ function mergeTokenUsageForTask(
 ): TokenUsage {
   if (!previous) {
     return incoming;
+  }
+
+  if (previous.estimated === true && incoming.estimated !== true) {
+    return {
+      ...incoming,
+      stepsExecuted: Math.max(previous.stepsExecuted ?? 0, incoming.stepsExecuted ?? 0) || undefined,
+    };
   }
 
   const preferIncomingTokens = !incoming.estimated || previous.estimated === true;
@@ -296,6 +361,174 @@ function promoteExecutionPhaseFromPlan(
   };
 }
 
+function isActivePlanStatus(plan: ImplementationPlan): boolean {
+  const statusValues = [
+    plan.status,
+    plan.planStatus,
+    (plan as ImplementationPlan & { executionPhase?: string }).executionPhase,
+    plan.xstateState,
+  ].filter((value): value is string => typeof value === 'string');
+
+  return statusValues.some((value) =>
+    value === 'in_progress' ||
+    value === 'planning' ||
+    value === 'coding' ||
+    value === 'qa_review' ||
+    value === 'qa_fixing'
+  );
+}
+
+function getActiveExecutionPhaseFromPlan(plan: ImplementationPlan): ExecutionPhase | undefined {
+  const phaseValues = [
+    (plan as ImplementationPlan & { executionPhase?: string }).executionPhase,
+    plan.xstateState,
+  ];
+
+  for (const value of phaseValues) {
+    if (
+      value === 'planning' ||
+      value === 'coding' ||
+      value === 'qa_review' ||
+      value === 'qa_fixing'
+    ) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function buildExecutionProgressForPlanPhase(
+  task: Task,
+  phase: ExecutionPhase,
+): ExecutionProgress {
+  return {
+    phase,
+    phaseProgress: task.executionProgress?.phase === phase ? task.executionProgress.phaseProgress : 0,
+    overallProgress: task.executionProgress?.overallProgress ?? 0,
+    currentSubtask: phase === 'coding' ? task.executionProgress?.currentSubtask : undefined,
+    message: task.executionProgress?.message,
+    startedAt: task.executionProgress?.startedAt,
+    sequenceNumber: task.executionProgress?.sequenceNumber,
+    completedPhases: task.executionProgress?.completedPhases,
+  };
+}
+
+function shouldPromoteTaskStatusFromPlan(task: Task, plan: ImplementationPlan): boolean {
+  return (task.status === 'backlog' || task.status === 'queue') && isActivePlanStatus(plan);
+}
+
+function taskTimestamp(value: unknown): number {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (typeof value === 'string' || typeof value === 'number') {
+    const timestamp = new Date(value).getTime();
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  }
+  return 0;
+}
+
+function isInactiveIncomingStatus(status: TaskStatus): boolean {
+  return status === 'backlog' || status === 'queue';
+}
+
+function hasActiveExecutionProgress(task: Task): boolean {
+  const phase = task.executionProgress?.phase;
+  return Boolean(phase && phase !== 'idle' && phase !== 'complete' && phase !== 'failed');
+}
+
+function isLocallyActiveTask(task: Task): boolean {
+  return task.status === 'in_progress' || task.status === 'ai_review' || hasActiveExecutionProgress(task);
+}
+
+function taskHasNonPendingSubtasks(task: Task): boolean {
+  return task.subtasks.some((subtask) => subtask.status !== 'pending');
+}
+
+function shouldPreserveLocalActiveTask(previousTask: Task | undefined, incomingTask: Task): previousTask is Task {
+  if (!previousTask || !isLocallyActiveTask(previousTask) || !isInactiveIncomingStatus(incomingTask.status)) {
+    return false;
+  }
+
+  const previousUpdatedAt = taskTimestamp(previousTask.updatedAt);
+  const incomingUpdatedAt = taskTimestamp(incomingTask.updatedAt);
+  const localHasRecentActivity =
+    hasRecentActivity(previousTask.id, previousTask.projectId) ||
+    hasRecentActivity(previousTask.specId, previousTask.projectId);
+
+  return localHasRecentActivity || previousUpdatedAt >= incomingUpdatedAt;
+}
+
+function mergeTaskWithLocalState(incomingTask: Task, previousTask?: Task): Task {
+  let mergedTask: Task = previousTask?.tokenUsage
+    ? {
+        ...incomingTask,
+        tokenUsage: incomingTask.tokenUsage
+          ? mergeTokenUsageForTask(previousTask.tokenUsage, incomingTask.tokenUsage)
+          : previousTask.tokenUsage
+      }
+    : incomingTask;
+
+  if (!shouldPreserveLocalActiveTask(previousTask, incomingTask)) {
+    return mergedTask;
+  }
+
+  const previousHasSubtaskActivity = taskHasNonPendingSubtasks(previousTask);
+  const incomingHasSubtaskActivity = taskHasNonPendingSubtasks(incomingTask);
+  const previousLogs = previousTask.logs ?? [];
+  const incomingLogs = incomingTask.logs ?? [];
+
+  mergedTask = {
+    ...mergedTask,
+    status: previousTask.status,
+    reviewReason: previousTask.reviewReason,
+    executionProgress: previousTask.executionProgress ?? mergedTask.executionProgress,
+    updatedAt: previousTask.updatedAt,
+    subtasks: previousHasSubtaskActivity && !incomingHasSubtaskActivity
+      ? previousTask.subtasks
+      : mergedTask.subtasks,
+    logs: previousLogs.length > incomingLogs.length
+      ? previousLogs
+      : mergedTask.logs,
+  };
+
+  debugWarn('[TaskStore.setTasks] Preserved active local task over stale inactive refresh:', {
+    taskId: incomingTask.id,
+    projectId: incomingTask.projectId,
+    incomingStatus: incomingTask.status,
+    preservedStatus: previousTask.status,
+    preservedPhase: previousTask.executionProgress?.phase,
+  });
+
+  return mergedTask;
+}
+
+function appendMissingActiveLocalTasks(incomingTasks: Task[], projectId: string, previousTasks: Task[]): Task[] {
+  const incomingIds = new Set<string>();
+  for (const task of incomingTasks) {
+    incomingIds.add(`${task.projectId}:${task.id}`);
+    incomingIds.add(`${task.projectId}:${task.specId}`);
+  }
+
+  const preservedTasks = previousTasks.filter((task) => {
+    if (task.projectId !== projectId || !isLocallyActiveTask(task)) {
+      return false;
+    }
+    return !incomingIds.has(`${task.projectId}:${task.id}`) &&
+      !incomingIds.has(`${task.projectId}:${task.specId}`);
+  });
+
+  if (preservedTasks.length > 0) {
+    debugWarn('[TaskStore.loadTasks] Preserved active local task(s) missing from refresh:', {
+      projectId,
+      taskIds: preservedTasks.map((task) => task.id),
+    });
+  }
+
+  return preservedTasks.length > 0 ? [...incomingTasks, ...preservedTasks] : incomingTasks;
+}
+
 // localStorage key prefix for task order persistence
 const TASK_ORDER_KEY_PREFIX = 'task-order-state';
 
@@ -363,17 +596,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         previousTaskMap.get(`${task.projectId}:${task.id}`) ??
         previousTaskMap.get(`${task.projectId}:${task.specId}`);
 
-      if (!previousTask?.tokenUsage) {
-        return task;
-      }
-
-      return {
-        ...task,
-        tokenUsage: task.tokenUsage
-          ? mergeTokenUsageForTask(previousTask.tokenUsage, task.tokenUsage)
-          : previousTask.tokenUsage
-      };
+      return mergeTaskWithLocalState(task, previousTask);
     });
+
+    cacheTaskGroups(mergedTasks);
 
     debugLog('[TaskStore.setTasks] Hydrating tasks:', {
       count: mergedTasks.length,
@@ -423,6 +649,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         taskOrder = newTaskOrder;
       }
 
+      invalidateTaskCache(task.projectId);
+
       return {
         tasks: [...state.tasks, task],
         taskOrder
@@ -450,8 +678,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
     const oldTask = state.tasks[index];
     const oldStatus = oldTask.status;
+    const resolvedProjectId = oldTask.projectId;
     // Record activity for stuck detection - status changes prove the task is alive.
-    recordTaskActivity(taskId, oldTask.projectId);
+    recordTaskActivity(taskId, resolvedProjectId);
+    invalidateTaskCache(resolvedProjectId);
 
     // Skip if status AND reviewReason are the same
     if (oldStatus === status && oldTask.reviewReason === reviewReason) {
@@ -510,7 +740,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     // Notify listeners after state update (schedule after current tick)
     queueMicrotask(() => {
-      notifyTaskStatusChange(taskId, oldStatus, status, oldTask.projectId);
+      notifyTaskStatusChange(taskId, oldStatus, status, resolvedProjectId);
     });
   },
 
@@ -530,6 +760,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         debugLog('[updateTaskFromPlan] Task not found:', taskId);
         return state;
       }
+      invalidateTaskCache(state.tasks[index].projectId);
 
       // Validate plan data before processing
       if (!validatePlanData(plan)) {
@@ -594,14 +825,38 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             debugWarn(`[updateTaskFromPlan] Task ${taskId}: ${completedCount}/${subtasks.length} subtasks completed`);
           }
 
-          // NOTE: We do NOT update status or title from plan anymore.
+          // NOTE: We do not generally update status or title from plan anymore.
           // XState is the source of truth for status - it emits TASK_STATUS_CHANGE.
           // The task metadata/spec title is the source of truth for the user-facing title.
-          // Plan updates only update subtasks and execution fields.
-          const executionProgress = promoteExecutionPhaseFromPlan(t, subtasks);
+          // Plan updates only update subtasks/execution fields, with a narrow active-plan
+          // fallback so a missed status IPC cannot leave a running task in backlog/queue.
+          const shouldPromoteStatus = shouldPromoteTaskStatusFromPlan(t, plan);
+          const nextStatus = shouldPromoteStatus ? 'in_progress' : t.status;
+          const executionProgressTask = shouldPromoteStatus
+            ? { ...t, status: nextStatus as TaskStatus }
+            : t;
+          const activePlanPhase = getActiveExecutionPhaseFromPlan(plan);
+          const planExplicitlyRestartedPlanning = nextStatus === 'in_progress' && activePlanPhase === 'planning';
+          let executionProgress = planExplicitlyRestartedPlanning
+            ? buildExecutionProgressForPlanPhase(executionProgressTask, 'planning')
+            : promoteExecutionPhaseFromPlan(executionProgressTask, subtasks);
+
+          if (shouldPromoteStatus && (!executionProgress || executionProgress.phase === 'idle')) {
+            executionProgress = {
+              phase: activePlanPhase ?? 'planning',
+              phaseProgress: t.executionProgress?.phaseProgress ?? 0,
+              overallProgress: t.executionProgress?.overallProgress ?? 0,
+              currentSubtask: t.executionProgress?.currentSubtask,
+              message: t.executionProgress?.message,
+              startedAt: t.executionProgress?.startedAt,
+              sequenceNumber: t.executionProgress?.sequenceNumber,
+              completedPhases: t.executionProgress?.completedPhases,
+            };
+          }
 
           return {
             ...t,
+            status: nextStatus,
             subtasks,
             ...(executionProgress ? { executionProgress } : {}),
             // Keep existing status and reviewReason - XState manages these via TASK_STATUS_CHANGE
@@ -616,6 +871,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const index = findTaskIndex(state.tasks, taskId, projectId);
       if (index === -1) return state;
       recordTaskActivity(taskId, state.tasks[index].projectId);
+      invalidateTaskCache(state.tasks[index].projectId);
 
       return {
         tasks: updateTaskAtIndex(state.tasks, index, (t) => {
@@ -643,13 +899,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
           const currentPhase = existingProgress.phase;
           const nextPhase = progress.phase;
+          const allowPhaseRegression = progress.allowPhaseRegression === true;
           if (
             currentPhase &&
             nextPhase &&
             currentPhase !== nextPhase &&
             incomingSeq === 0 &&
             wouldPhaseRegress(currentPhase, nextPhase) &&
-            !isAllowedPhaseRegression(currentPhase, nextPhase)
+            !isAllowedPhaseRegression(currentPhase, nextPhase) &&
+            !allowPhaseRegression
           ) {
             console.warn('[updateExecutionProgress] Dropping regressive phase update without sequence number:', {
               taskId,
@@ -662,12 +920,16 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           // Only update updatedAt on phase transitions (not on every progress tick)
           // This prevents unnecessary re-renders from the memo comparator
           const phaseChanged = progress.phase && progress.phase !== existingProgress.phase;
+          const {
+            allowPhaseRegression: _allowPhaseRegression,
+            ...progressFields
+          } = progress;
 
           return {
             ...t,
             executionProgress: {
               ...existingProgress,
-              ...progress
+              ...progressFields
             },
             // Only set updatedAt on phase changes to reduce re-renders
             ...(phaseChanged ? { updatedAt: new Date() } : {})
@@ -921,23 +1183,71 @@ export const useTaskStore = create<TaskState>((set, get) => ({
  * @param projectId - The project ID to load tasks for
  * @param options - Optional parameters
  * @param options.forceRefresh - If true, invalidates server-side cache before fetching (for refresh button)
+ * @param options.preferCache - If true, paints a fresh renderer cache before fetching
+ * @param options.backgroundRefresh - If true with a cache hit, refreshes without showing a loading state
+ * @param options.deferRemoteMs - Optional delay before IPC, allowing project tab UI to render first
  */
-export async function loadTasks(projectId: string, options?: { forceRefresh?: boolean }): Promise<void> {
+export async function loadTasks(projectId: string, options?: LoadTasksOptions): Promise<void> {
   const store = useTaskStore.getState();
   const loadSequence = nextTaskLoadSequence(projectId);
-  if (isVisibleTaskProject(projectId)) {
-    store.setLoading(true);
+  const forceRefresh = options?.forceRefresh === true;
+  const cachedTasks = !forceRefresh && options?.preferCache ? getCachedTasks(projectId) : null;
+  const canApplyInitialState = shouldApplyTaskLoad(projectId, loadSequence);
+  const shouldShowLoading = !cachedTasks || !options?.backgroundRefresh;
+
+  if (forceRefresh) {
+    taskCacheByProject.delete(projectId);
+  }
+
+  if (canApplyInitialState) {
     store.setError(null);
+
+    if (cachedTasks) {
+      store.setTasks(cachedTasks);
+      if (!shouldShowLoading) {
+        store.setLoading(false);
+      }
+    } else if (options?.preferCache) {
+      store.clearTasks();
+    }
+
+    if (shouldShowLoading) {
+      store.setLoading(true);
+    }
+  }
+
+  if (cachedTasks && !options?.backgroundRefresh) {
+    debugLog('[TaskStore.loadTasks] Served tasks from renderer cache:', {
+      projectId,
+      taskCount: cachedTasks.length
+    });
+    return;
   }
 
   debugLog('[TaskStore.loadTasks] Loading tasks for project:', {
     projectId,
-    forceRefresh: options?.forceRefresh || false,
+    forceRefresh,
+    preferCache: options?.preferCache || false,
+    backgroundRefresh: options?.backgroundRefresh || false,
+    deferRemoteMs: options?.deferRemoteMs || 0,
     currentTaskCount: store.tasks.length
   });
 
   try {
-    const result = await window.electronAPI.getTasks(projectId, options);
+    if (options?.deferRemoteMs && options.deferRemoteMs > 0 && !forceRefresh) {
+      await delay(options.deferRemoteMs);
+      if (!shouldApplyTaskLoad(projectId, loadSequence)) {
+        debugLog('[TaskStore.loadTasks] Skipping deferred task load for non-visible project:', {
+          projectId,
+          loadSequence,
+          visibleProjectId: getVisibleTaskProjectId(),
+        });
+        return;
+      }
+    }
+
+    const ipcOptions = forceRefresh ? { forceRefresh: true } : undefined;
+    const result = await window.electronAPI.getTasks(projectId, ipcOptions);
 
     debugLog('[TaskStore.loadTasks] Received result from IPC:', {
       success: result.success,
@@ -957,12 +1267,17 @@ export async function loadTasks(projectId: string, options?: { forceRefresh?: bo
     }
 
     if (result.success && result.data) {
+      const tasksForStore = appendMissingActiveLocalTasks(
+        result.data,
+        projectId,
+        useTaskStore.getState().tasks,
+      );
       debugLog('[TaskStore.loadTasks] Tasks loaded successfully:', {
-        count: result.data.length,
-        tasksWithLogs: result.data.filter(t => t.logs && t.logs.length > 0).length,
-        totalLogCount: result.data.reduce((sum, t) => sum + (t.logs?.length || 0), 0)
+        count: tasksForStore.length,
+        tasksWithLogs: tasksForStore.filter(t => t.logs && t.logs.length > 0).length,
+        totalLogCount: tasksForStore.reduce((sum, t) => sum + (t.logs?.length || 0), 0)
       });
-      store.setTasks(result.data);
+      store.setTasks(tasksForStore);
     } else {
       debugWarn('[TaskStore.loadTasks] Failed to load tasks:', result.error);
       store.setError(result.error || 'Failed to load tasks');
@@ -1033,8 +1348,29 @@ export async function createProjectDocumentationTask(
  * Start a task
  */
 export function startTask(taskId: string, options?: TaskStartOptions): void {
-  const task = findTaskInStore(useTaskStore.getState().tasks, taskId, options?.projectId);
+  const store = useTaskStore.getState();
+  const task = findTaskInStore(store.tasks, taskId, options?.projectId);
   const projectId = options?.projectId ?? task?.projectId;
+
+  if (task && projectId) {
+    invalidateTaskCache(projectId);
+    if (task.status !== 'in_progress') {
+      store.updateTaskStatus(taskId, 'in_progress', undefined, projectId);
+    }
+
+    const currentPhase = task.executionProgress?.phase;
+    if (!currentPhase || currentPhase === 'idle' || currentPhase === 'complete' || currentPhase === 'failed') {
+      store.updateExecutionProgress(
+        taskId,
+        {
+          phase: 'planning',
+          phaseProgress: 0,
+          overallProgress: 0,
+        },
+        projectId,
+      );
+    }
+  }
 
   window.electronAPI.startTask(
     taskId,

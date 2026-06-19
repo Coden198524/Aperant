@@ -896,6 +896,10 @@ export class AgentManager extends EventEmitter {
           dataDirName: project?.autoBuildPath,
           specId,
         });
+        if (project?.id) {
+          projectStore.invalidateTasksCache(project.id);
+          this.emit('tasks-refresh', taskId, project.id);
+        }
         console.warn(`[AgentManager] Task ${taskId} will run in worktree: ${worktreePath}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -1091,6 +1095,10 @@ export class AgentManager extends EventEmitter {
           dataDirName: project?.autoBuildPath,
           specId,
         });
+        if (project?.id) {
+          projectStore.invalidateTasksCache(project.id);
+          this.emit('tasks-refresh', taskId, project.id);
+        }
         console.warn(`[AgentManager] Direct task ${taskId} will run in worktree: ${worktreePath}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
