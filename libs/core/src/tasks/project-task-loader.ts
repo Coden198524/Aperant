@@ -611,6 +611,27 @@ function correctStaleAutocodeTaskStatus(input: {
   }
 
   const allCompleted = input.subtasks.every((subtask) => subtask.status === 'completed');
+  if (!allCompleted && shouldResumeIncompleteReviewStatus(input.status, input.reviewReason)) {
+    if (input.persist && input.plan) {
+      const correctedPlan: ImplementationPlanFile = {
+        ...input.plan,
+        status: 'coding',
+        planStatus: 'coding',
+        updated_at: new Date().toISOString(),
+        xstateState: 'coding',
+        executionPhase: 'coding',
+      };
+      delete correctedPlan.reviewReason;
+      try {
+        saveAutocodeImplementationPlanSync(input.planPath, correctedPlan as unknown as MutableAutocodePlan);
+        Object.assign(input.plan, correctedPlan);
+      } catch {
+        return { status: 'in_progress' };
+      }
+    }
+    return { status: 'in_progress' };
+  }
+
   if (
     !allCompleted ||
     input.status === 'human_review' ||
@@ -648,6 +669,18 @@ function correctStaleAutocodeTaskStatus(input: {
   }
 
   return { status: 'human_review', reviewReason: 'completed' };
+}
+
+function shouldResumeIncompleteReviewStatus(
+  status: AutocodeTaskStatus,
+  reviewReason?: AutocodeReviewReason,
+): boolean {
+  if (status === 'human_review') {
+    return reviewReason !== 'plan_review' &&
+      reviewReason !== 'stopped' &&
+      reviewReason !== 'errors';
+  }
+  return status === 'ai_review' || status === 'done' || status === 'pr_created';
 }
 
 function mergeMissingAutocodeProjectTaskFields(

@@ -331,13 +331,13 @@ describe('registerTaskCRUDHandlers', () => {
       expect(result.success).toBe(true);
       expect(result.data.metadata.runtimeConcurrency).toEqual({
         mode: 'concurrent',
-        workers: 2,
+        workers: 5,
         unit: 'work_item',
         conflictPolicy: 'lock-and-queue',
       });
       expect(JSON.parse(readFileSync(metadataPath, 'utf-8')).runtimeConcurrency).toEqual({
         mode: 'concurrent',
-        workers: 2,
+        workers: 5,
         unit: 'work_item',
         conflictPolicy: 'lock-and-queue',
       });

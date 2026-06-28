@@ -298,6 +298,9 @@ function buildTaskRunPrompt(input: {
         `- 编写 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks}，使用 Autocode Markdown 清单组织具体阶段和任务。`,
         `- 不要编写 ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}；运行器会基于 ${AUTOCODE_TASK_ARTIFACTS.tasks} 推导运行时工作包。`,
         '- 需求、设计说明、任务范围和验证必须基于项目源码/文档、现有模式，或经过核实的官方/行业参考；如果缺少证据，请写明假设或验证任务，不要猜测。',
+        '- 对分析、调查、报告或纯文档任务，规划最终 Markdown 为“读者优先”交付物：先回答用户问题，再展示主流程，再说明证据和限制。',
+        '- 文档类产物应要求早期包含“结论速览”和“主流程”，主流程优先使用小型 Mermaid 图或编号决策流；源码证据矩阵、手工演练模板和检查清单放到后部或附录。',
+        '- 不要把“输入/输出/副作用/生命周期/错误边界”等内部实现契约作为文档顶层结构，除非用户明确要求这种格式。',
         '- 待办子任务使用 [ ]，并附上简洁元数据项：_Depends on_、_Requirements_ 和 _Verification_。如果已知写入意图，也包含 _Files to create/modify_。',
       ].join('\n')}`;
     }
@@ -319,6 +322,9 @@ function buildTaskRunPrompt(input: {
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as an Autocode Markdown checklist with concrete phases and tasks.`,
       `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
       '- Ground requirements, design notes, task scope, and verification in project source/docs, existing patterns, or verified official/industry references; if evidence is missing, write an assumption or validation task instead of guessing.',
+      '- For analysis, investigation, report, or documentation-only tasks, plan the final Markdown as a reader-first deliverable: answer the user questions first, show the main flow second, then explain evidence and caveats.',
+      '- Documentation deliverables should require an early Conclusion Snapshot, an early Main Flow with a Mermaid or numbered decision flow, scenario-based sections, and a late source-evidence appendix for large matrices/templates.',
+      '- Do not make implementation-contract headings such as inputs/outputs/side effects/lifecycle/errors the top-level document structure unless the user explicitly asks for that format.',
       '- Use [ ] for pending subtasks and concise metadata bullets: _Depends on_, _Requirements_, _Evidence_, _Done when_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
       '- Cover every spec success criterion with at least one task, or explicitly mark it blocked/out of scope.',
     ].join('\n')}`;
@@ -335,14 +341,19 @@ function buildTaskRunPrompt(input: {
         '',
         `- 按需阅读 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} 和 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements}。`,
         ...buildPlanningIterationContextLines({ hasHumanReviewContext, language: input.language, specDir: input.specDir }),
+        `- ${AUTOCODE_TASK_ARTIFACTS.requirements} 是规范化需求文档；如果仍是 None 占位，或本轮规划推导出具体 R1/R2 需求、场景或验收标准，先更新 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements}。`,
+        `- 不要把唯一具体的 Requirement Index 只放在 ${AUTOCODE_TASK_ARTIFACTS.tasks}；请把具体需求和验收标准同步写回 ${AUTOCODE_TASK_ARTIFACTS.requirements}。`,
         `- 将 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} 写成上游 Autocode 任务列表。`,
         `- 不要编写 ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}；运行器会基于 ${AUTOCODE_TASK_ARTIFACTS.tasks} 推导运行时工作包。`,
         '- 所有新增或修订的需求、设计说明、任务、依赖和验证命令，都必须基于项目源码/文档、现有模式，或经过核实的官方/行业参考。',
         '- 如果缺少证据，请添加假设/开放问题或验证任务；不要基于猜测创建实现工作。',
         '- 保持任务可独立实现和验证。',
         '- 将宽泛工作拆成接近 OpenSpec 的叶子任务：一个任务通常只覆盖一个可独立评审的行为/契约和一个聚焦验证路径。',
-        '- 单个任务如果覆盖超过三个行为、超过三个需求/验收引用，或超过四个写入意图文件，就必须拆分；同文件写入用 _Depends on_ 串行化，不要把独立行为合并成大任务。',
-        '- 每个可执行任务都必须包含 _Depends on_、_Verification_ 和简短 _Evidence_ 说明。只有根任务可使用 _Depends on: none_。如果已知写入意图，也包含 _Files to create/modify_。',
+        '- 单个任务如果覆盖超过三个行为、超过三个需求/验收引用，或超过四个写入意图文件，就必须拆分；即使触碰同一文件，也不要把独立行为合并成大任务。',
+        '- _Depends on_ 只用于真实前置关系；同文件但互不依赖的叶子任务可使用 _Depends on: none_，运行时会用文件冲突调度安全排队重叠写入。',
+        '- 每个可执行任务都必须包含 _Depends on_、_Verification_ 和简短 _Evidence_ 说明。如果已知写入意图，也包含 _Files to create/modify_。',
+        '- 对分析、调查、报告或纯文档任务，tasks.md 必须把最终 Markdown 规划成“读者优先”交付物：前部包含“结论速览”和“主流程”，中部按用户场景/操作路径说明，后部或附录放源码证据、手工演练模板和覆盖矩阵。',
+        '- 文档类任务不要把“输入/输出/副作用/生命周期/错误边界”等内部实现契约作为最终文档顶层结构；这些内容只能作为分析细节服务于用户问题和流程说明。',
         '- 保持本轮迭代可测试、可提交：每个新增或修订任务都需要聚焦的验证命令，并且下一轮编码在验证通过后应能使用正常任务提交流程。',
         '- 新任务复选框保持 [ ]。',
       ].join('\n')}`;
@@ -357,6 +368,8 @@ function buildTaskRunPrompt(input: {
       '',
       `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} and ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if needed.`,
       ...buildPlanningIterationContextLines({ hasHumanReviewContext, language: input.language, specDir: input.specDir }),
+      `- Treat ${AUTOCODE_TASK_ARTIFACTS.requirements} as the canonical requirements artifact. If it still contains None placeholders, or if planning derives concrete R1/R2 requirements, scenarios, or acceptance criteria, update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} before writing ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
+      `- Do not keep the only concrete Requirement Index inside ${AUTOCODE_TASK_ARTIFACTS.tasks}; mirror concrete requirements and acceptance criteria into ${AUTOCODE_TASK_ARTIFACTS.requirements}.`,
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as the upstream Autocode task list.`,
       `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
       '- Ground every new or revised requirement, design note, task, dependency, and verification command in project source/docs, existing patterns, or verified official/industry references.',
@@ -365,8 +378,11 @@ function buildTaskRunPrompt(input: {
       '- Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of silently dropping them.',
       '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
       '- Split broad work into OpenSpec-grade leaf tasks: one independently reviewable behavior or contract plus one focused verification path.',
-      '- A task covering more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files is too broad; if split tasks touch the same file, use _Depends on_ instead of merging independent behavior.',
-      '- Every executable task must include _Depends on_, _Requirements_, _Verification_, and a short _Evidence_ note. Use _Depends on: none_ only for root work. Include _Files to create/modify_ when write intent is known.',
+      '- A task covering more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files is too broad; split it into leaf tasks even when they touch the same file.',
+      '- Use _Depends on_ only for real prerequisites. For independent leaf tasks that touch the same file, use _Depends on: none_ or their actual prerequisite; the runtime queues overlapping file writes safely.',
+      '- Every executable task must include _Depends on_, _Requirements_, _Verification_, and a short _Evidence_ note. Include _Files to create/modify_ when write intent is known.',
+      '- For analysis, investigation, report, or documentation-only tasks, tasks.md must plan the final Markdown as reader-first: early Conclusion Snapshot, early Main Flow, scenario/operational-path sections, and source evidence plus manual templates near the end or in appendices.',
+      '- Documentation tasks must not use implementation-contract headings such as inputs/outputs/side effects/lifecycle/errors as the final document top-level structure unless the user explicitly asks for that format.',
       '- Keep the iteration testable and commit-ready: every new or revised task needs a focused verification command, and the next coding pass should be able to use the normal task commit flow after validation succeeds.',
       '- Set new task checkboxes to [ ].',
     ].join('\n')}`;
@@ -766,12 +782,10 @@ const prompt = readFileSync(promptFilePath, 'utf8');
 const logPhase = phase === 'coding' || phase === 'direct' ? 'coding' : 'planning';
 const executionPhase = logPhase === 'coding' ? 'coding' : 'planning';
 const codexJsonMode = isCodexJsonInvocation(command, args);
-const directCodexGoalMode = phase === 'direct' && isCodexCommand(command);
 const activeFileWriteLockDirs = new Set();
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
 const VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS = 6000;
 const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
-const CODEX_GOAL_OBJECTIVE_MAX_CHARS = 6000;
 const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
 let attemptId = 0;
@@ -845,9 +859,13 @@ const CLI_LOW_VALUE_MEMORY_LINE_PATTERNS = [
   /^(?:Summary:\\s*)?\\u65e0\\u95ee\\u9898/i,
 ];
 const CLI_LOW_VALUE_MEMORY_FRAGMENT_SPLIT_PATTERN = /(?<=[.!?\\u3002\\uff01\\uff1f])\\s+|;\\s+/;
-const CODING_WORKER_INACTIVITY_TIMEOUT_MS = readPositiveInteger(
-  process.env.AUTOCODE_WORKER_INACTIVITY_TIMEOUT_MS,
+const CODING_WORKER_INACTIVITY_WARNING_MS = readNonNegativeInteger(
+  process.env.AUTOCODE_WORKER_INACTIVITY_WARNING_MS,
   10 * 60 * 1000,
+);
+const CODING_WORKER_INACTIVITY_TIMEOUT_MS = readNonNegativeInteger(
+  process.env.AUTOCODE_WORKER_INACTIVITY_TIMEOUT_MS,
+  45 * 60 * 1000,
 );
 const CODING_WORKER_COMPLETION_GRACE_MS = readPositiveInteger(
   process.env.AUTOCODE_WORKER_COMPLETION_GRACE_MS,
@@ -857,6 +875,25 @@ const NOISY_CLI_DIAGNOSTIC_PATTERNS = [
   /WARN\\s+codex_core::shell_snapshot:\\s+Failed to create shell snapshot for powershell\\b/i,
   /WARN\\s+codex_core_plugins::manifest:\\s+ignoring interface\\.defaultPrompt\\[[0-9]+\\]:\\s+prompt must be at most [0-9]+ characters\\b/i,
   /WARN\\s+codex_core_skills::loader:\\s+ignoring interface\\.icon_(?:small|large):\\s+icon path with '\\.\\.' must resolve under plugin assets\\//i,
+];
+const CLI_FAILURE_SIGNAL_PATTERNS = [
+  /\\bERROR\\b/i,
+  /\\bFATAL\\b/i,
+  /\\b(?:failed|failure|error|exception)\\b/i,
+  /stream disconnected/i,
+  /tls handshake eof/i,
+  /http\\/request failed/i,
+  /error sending request/i,
+  /transport channel closed/i,
+  /failed to connect to websocket/i,
+  /exited by signal/i,
+];
+const CLI_RATE_LIMIT_SIGNAL_PATTERNS = [
+  /(?:you['’]?ve|you have)\\s+hit\\s+your\\s+usage\\s+limit/i,
+  /\\busage[_\\s-]*limit[_\\s-]*(?:exceeded|reached)\\b/i,
+  /\\brate\\s*limit\\b/i,
+  /\\btoo\\s*many\\s*requests\\b/i,
+  /\\bquota\\s*(?:exceeded|reached)\\b/i,
 ];
 
 initializeCliMemoryRuntime()
@@ -993,24 +1030,7 @@ function buildPromptWithMemoryContext(basePrompt) {
 }
 
 function formatPromptForCli(basePrompt) {
-  if (!directCodexGoalMode) {
-    return basePrompt;
-  }
-
-  const promptText = String(basePrompt || '').trim();
-  if (/^\\/goal\\b/i.test(promptText)) {
-    return promptText.endsWith('\\n') ? promptText : promptText + '\\n';
-  }
-
-  const objective = buildCodexGoalObjective(promptText);
-  return ['/goal ' + objective, '', promptText].join('\\n').trimEnd() + '\\n';
-}
-
-function buildCodexGoalObjective(basePrompt) {
-  const compact = limitLogText(basePrompt, CODEX_GOAL_OBJECTIVE_MAX_CHARS)
-    .replace(/\\s+/g, ' ')
-    .trim();
-  return compact || 'Complete this Direct mode task.';
+  return basePrompt;
 }
 
 function isCliMemoryEnabled() {
@@ -1541,6 +1561,7 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
     updatePlanRunningState();
     emitPhase(executionPhase, retryMessage, 0);
     defaultAttemptState.lastCodexMessageText = '';
+    defaultAttemptState.completionSummaryDetected = false;
     startAttempt(buildPromptWithMemoryContext(buildArtifactValidationRetryPrompt(validationError)));
     return;
   }
@@ -1552,6 +1573,15 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
   if (finalized) return;
   finalized = true;
   const failed = exitCode !== 0 || Boolean(explicitError) || Boolean(validationError);
+  const failureMessage = failed
+    ? explicitError || validationError || summarizeCliFailureReason(defaultAttemptState, exitCode, signal)
+    : undefined;
+  const rateLimited = failed && isCliRateLimitFailure(defaultAttemptState, explicitError, validationError, failureMessage);
+  const resultMessage = failed
+    ? rateLimited
+      ? summarizeCliRateLimitReason(defaultAttemptState, explicitError, validationError, failureMessage)
+      : failureMessage
+    : localizeMessage('completed', 'Autocode CLI run completed.');
   const now = new Date().toISOString();
   const result = {
     phase,
@@ -1559,8 +1589,8 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     args,
     exitCode,
     signal,
-    status: failed ? 'error' : 'success',
-    message: explicitError || validationError || localizeMessage('completed', 'Autocode CLI run completed.'),
+    status: rateLimited ? 'rate_limited' : failed ? 'error' : 'success',
+    message: resultMessage,
     updatedAt: now,
   };
 
@@ -1575,7 +1605,7 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
       filesToCreate: [],
       patternFiles: [],
       upstreamTaskIds: [],
-    }, failed ? 'failure' : 'success', result.message, memoryNotes);
+    }, rateLimited ? 'rate_limited' : failed ? 'failure' : 'success', result.message, memoryNotes);
   }
 
   writeJson(join(specDir, artifacts.runResult), result);
@@ -1596,9 +1626,12 @@ function createAttemptState(label, subtaskId) {
     pendingModelOutput: '',
     modelOutputFlushTimer: null,
     inactivityTimer: null,
+    inactivityWarningLogged: false,
     completionGraceTimer: null,
+    completionSummaryDetected: false,
     codexJsonLineBuffer: '',
     lastCodexMessageText: '',
+    recentErrorLines: [],
     finalizing: false,
   };
 }
@@ -1628,9 +1661,9 @@ function refreshAttemptActivity(state) {
     return;
   }
   state.lastOutputAt = Date.now();
-  if (state.completionGraceTimer) {
-    clearTimeout(state.completionGraceTimer);
-    state.completionGraceTimer = null;
+  state.inactivityWarningLogged = false;
+  if (state.completionGraceTimer && !state.completionSummaryDetected) {
+    clearAttemptCompletionGrace(state);
   }
   scheduleAttemptInactivityWatchdog(state);
 }
@@ -1642,11 +1675,26 @@ function scheduleAttemptInactivityWatchdog(state) {
   if (state.inactivityTimer) {
     clearTimeout(state.inactivityTimer);
   }
+  const initialDelay = getNextAttemptInactivityDelay(state);
   state.inactivityTimer = setTimeout(() => {
     if (!isCodingWorkerAttempt(state) || state.finalizing) {
       return;
     }
     const idleMs = Date.now() - (state.lastOutputAt || 0);
+    if (
+      CODING_WORKER_INACTIVITY_WARNING_MS > 0 &&
+      !state.inactivityWarningLogged &&
+      idleMs >= CODING_WORKER_INACTIVITY_WARNING_MS &&
+      idleMs < CODING_WORKER_INACTIVITY_TIMEOUT_MS
+    ) {
+      state.inactivityWarningLogged = true;
+      const message = 'Coding worker ' + state.label + ' for ' + state.subtaskId +
+        ' produced no output for ' + formatDuration(CODING_WORKER_INACTIVITY_WARNING_MS) +
+        '; still waiting before timeout at ' + formatDuration(CODING_WORKER_INACTIVITY_TIMEOUT_MS) + '.';
+      appendTaskLogEntry('coding', 'info', message, undefined, buildAttemptLogExtra(state));
+      scheduleAttemptInactivityWatchdog(state);
+      return;
+    }
     if (idleMs < CODING_WORKER_INACTIVITY_TIMEOUT_MS) {
       scheduleAttemptInactivityWatchdog(state);
       return;
@@ -1656,7 +1704,24 @@ function scheduleAttemptInactivityWatchdog(state) {
     appendTaskLogEntry('coding', 'error', message, undefined, buildAttemptLogExtra(state));
     terminateAttemptChild(state, 'inactivity timeout');
     finalizeCodingAttempt(state.attemptId, 1, undefined, message);
-  }, CODING_WORKER_INACTIVITY_TIMEOUT_MS);
+  }, initialDelay);
+}
+
+function getNextAttemptInactivityDelay(state) {
+  const idleMs = Math.max(0, Date.now() - (state.lastOutputAt || Date.now()));
+  const delays = [];
+  if (
+    CODING_WORKER_INACTIVITY_WARNING_MS > 0 &&
+    !state.inactivityWarningLogged &&
+    idleMs < CODING_WORKER_INACTIVITY_WARNING_MS
+  ) {
+    delays.push(CODING_WORKER_INACTIVITY_WARNING_MS - idleMs);
+  }
+  if (idleMs < CODING_WORKER_INACTIVITY_TIMEOUT_MS) {
+    delays.push(CODING_WORKER_INACTIVITY_TIMEOUT_MS - idleMs);
+  }
+  const delay = Math.min(...delays.filter((value) => Number.isFinite(value) && value > 0));
+  return Number.isFinite(delay) ? Math.max(1, delay) : 1;
 }
 
 function scheduleAttemptCompletionGrace(state) {
@@ -1675,6 +1740,42 @@ function scheduleAttemptCompletionGrace(state) {
   }, CODING_WORKER_COMPLETION_GRACE_MS);
 }
 
+function maybeScheduleAttemptCompletionFromModelText(state, text) {
+  if (!isCodingWorkerAttempt(state) || state.finalizing) {
+    return;
+  }
+  if (!hasWorkItemCompletionSummaryText(text)) {
+    return;
+  }
+  state.completionSummaryDetected = true;
+  scheduleAttemptCompletionGrace(state);
+}
+
+function hasWorkItemCompletionSummaryText(value) {
+  const text = String(value || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+  if (!text.trim()) {
+    return false;
+  }
+  return hasCompletionSummaryHeader(text) && hasCompletionSummaryVerification(text);
+}
+
+function hasCompletionSummaryHeader(text) {
+  return /(?:^|\\n)\\s*\\|\\s*(?:变更|鍙樻洿|Change(?:s)?|What changed)\\s*\\|\\s*(?:验证|楠岃瘉|Verification|Validation|Tests?)\\s*\\|\\s*(?:评审备注|璇勫澶囨敞|Review notes?|Review)\\s*\\|/i.test(text) ||
+    /(?:变更|鍙樻洿|Change(?:s)?|What changed)[\\s|]+(?:验证|楠岃瘉|Verification|Validation|Tests?)[\\s|]+(?:评审备注|璇勫澶囨敞|Review notes?|Review)/i.test(text);
+}
+
+function hasCompletionSummaryVerification(text) {
+  return /(?:通过|閫氳繃|passed|success|succeeded|npm\\s+run|pnpm\\s+|yarn\\s+|pytest|vitest|playwright|test:e2e|build)/i.test(text);
+}
+
+function clearAttemptCompletionGrace(state) {
+  if (!state?.completionGraceTimer) {
+    return;
+  }
+  clearTimeout(state.completionGraceTimer);
+  state.completionGraceTimer = null;
+}
+
 function clearAttemptTimers(state) {
   if (!state) {
     return;
@@ -1687,10 +1788,7 @@ function clearAttemptTimers(state) {
     clearTimeout(state.inactivityTimer);
     state.inactivityTimer = null;
   }
-  if (state.completionGraceTimer) {
-    clearTimeout(state.completionGraceTimer);
-    state.completionGraceTimer = null;
-  }
+  clearAttemptCompletionGrace(state);
 }
 
 function terminateAttemptChild(state, reason) {
@@ -1731,15 +1829,25 @@ function readPositiveInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+function readNonNegativeInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
+}
+
 function startCodingWorkQueue() {
   resetInProgressCodingSubtasks();
   const progress = getCodingProgress();
-  if (progress.total === 0 || !hasPendingCodingWork()) {
+  if (progress.total === 0) {
     finishRun(0, undefined, undefined, undefined);
     return;
   }
+  const retryableCount = countRetryableCodingWorkItems();
+  if (retryableCount === 0) {
+    finishCodingWorkQueue();
+    return;
+  }
 
-  const workerCount = Math.min(codingWorkerLimit, Math.max(1, progress.total));
+  const workerCount = Math.min(codingWorkerLimit, Math.max(1, retryableCount));
   appendTaskLogEntry('coding', 'info', 'Starting ' + workerCount + ' coding worker(s).');
   fillCodingWorkers();
 }
@@ -1822,7 +1930,12 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
   flushModelOutput(attempt.state);
 
   if (exitCode !== 0 || explicitError) {
-    const reason = explicitError || signal || 'CLI work item run failed.';
+    const reason = explicitError || summarizeCliFailureReason(
+      attempt.state,
+      exitCode,
+      signal,
+      'CLI work item run failed.',
+    );
     const memoryNotes = extractCliMemoryNotes(attempt.state.lastCodexMessageText);
     failedCodingSubtaskIds.add(attempt.subtask.id);
     codingFailures.push(attempt.subtask.id + ': ' + reason);
@@ -1856,9 +1969,8 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
 function finishCodingWorkQueue() {
   const progress = getCodingProgress();
   const planItems = readPlanItems();
-  const pendingCount = planItems
-    .filter((item) => item.isSubtask && item.status === 'pending')
-    .length;
+  const incompleteItems = getIncompleteCodingWorkItems(planItems);
+  const retryableCount = incompleteItems.filter((item) => isRetryableCodingStatus(item.status)).length;
   const dependencyBlockedItems = getDependencyBlockedPlanItems(planItems);
   if (codingFailures.length > 0 || failedCodingSubtaskIds.size > 0) {
     finishRun(1, undefined, codingFailures.join('; ') || 'One or more coding work items failed.', undefined);
@@ -1878,8 +1990,15 @@ function finishCodingWorkQueue() {
     );
     return;
   }
-  if (pendingCount > 0 || progress.completed < progress.total) {
-    finishRun(1, undefined, 'Coding incomplete: ' + progress.completed + '/' + progress.total + ' work items completed.', undefined);
+  if (retryableCount > 0 || progress.completed < progress.total) {
+    const incompleteSummary = summarizeRunnerPlanItems(incompleteItems);
+    finishRun(
+      1,
+      undefined,
+      'Coding incomplete: ' + progress.completed + '/' + progress.total + ' work items completed.' +
+        (incompleteSummary ? ' Incomplete work items: ' + incompleteSummary + '.' : ''),
+      undefined,
+    );
     return;
   }
   finishRun(0, undefined, undefined, undefined);
@@ -1955,13 +2074,35 @@ function buildFocusedSubtaskPrompt(subtask) {
 function findNextRunnableSubtask() {
   const planItems = readPlanItems();
   const candidates = planItems
-    .filter((item) => item.isSubtask && item.status === 'pending' && !activeCodingSubtaskIds.has(item.id));
+    .filter((item) =>
+      item.isSubtask &&
+      isRetryableCodingStatus(item.status) &&
+      !activeCodingSubtaskIds.has(item.id) &&
+      !failedCodingSubtaskIds.has(item.id)
+    );
   const analysis = analyzeRunnerWorkDependencies(candidates, getPlanItemStatusMap(planItems));
   return analysis.runnable.find((item) => !conflictsWithActiveCodingWork(item)) || null;
 }
 
-function hasPendingCodingWork() {
-  return readPlanItems().some((item) => item.isSubtask && item.status === 'pending');
+function countRetryableCodingWorkItems() {
+  return readPlanItems().filter((item) => item.isSubtask && isRetryableCodingStatus(item.status)).length;
+}
+
+function isRetryableCodingStatus(status) {
+  return status === 'pending' || status === 'failed' || status === 'blocked';
+}
+
+function getIncompleteCodingWorkItems(items) {
+  return items.filter((item) => item.isSubtask && item.status !== 'completed');
+}
+
+function summarizeRunnerPlanItems(items) {
+  const visible = items.slice(0, 12).map((item) => item.id + ' (' + item.status + ')');
+  const remaining = items.length - visible.length;
+  if (remaining > 0) {
+    visible.push('and ' + remaining + ' more');
+  }
+  return visible.join(', ');
 }
 
 function conflictsWithActiveCodingWork(candidate) {
@@ -1993,7 +2134,7 @@ function getPlanItemStatusMap(items) {
 
 function getDependencyBlockedPlanItems(items) {
   return analyzeRunnerWorkDependencies(
-    items.filter((item) => item.isSubtask && item.status === 'pending'),
+    items.filter((item) => item.isSubtask && isRetryableCodingStatus(item.status)),
     getPlanItemStatusMap(items),
   ).blocked;
 }
@@ -2402,6 +2543,7 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
     let updated = false;
     let matchedSubtask = false;
     let completionValue = null;
+    let noteValue = status !== 'completed' && note ? compactPlanField(note) : null;
     let startedValue = null;
     let completedValue = null;
     for (let index = 0; index < lines.length; index += 1) {
@@ -2449,7 +2591,7 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
         if (/^\\s*-\\s+_Completed:/i.test(lines[insertAt])) {
           hasCompleted = true;
           completedValue = extractPlanInlineFieldValue(lines[insertAt], 'Completed');
-          if (status === 'pending' || status === 'in_progress') {
+          if (status !== 'completed') {
             lines.splice(insertAt, 1);
             updated = true;
             completedValue = null;
@@ -2471,7 +2613,7 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
         insertAt += 1;
         updated = true;
       }
-      if ((status === 'completed' || status === 'failed' || status === 'blocked') && !hasCompleted) {
+      if (status === 'completed' && !hasCompleted) {
         completedValue = now;
         lines.splice(insertAt, 0, detailIndent + '- _Completed: ' + now + '_');
         insertAt += 1;
@@ -2490,6 +2632,7 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
     content = lines.join('\\n');
     const contentWithSubtaskMetadata = upsertPlanSubtaskMachineMetadata(content, subtaskId, buildSubtaskStatusMetadataUpdates(status, {
       completionValue,
+      noteValue,
       startedValue,
       completedValue,
     }));
@@ -2528,8 +2671,10 @@ function buildSubtaskStatusMetadataUpdates(status, values) {
 
   if (status === 'in_progress') {
     updates.completed_at = null;
-  } else if (status === 'completed' || status === 'failed' || status === 'blocked') {
+  } else if (status === 'completed') {
     updates.completed_at = values.completedValue || null;
+  } else if (status === 'failed' || status === 'blocked') {
+    updates.completed_at = null;
   }
 
   if (status === 'completed' && values.completionValue) {
@@ -2537,6 +2682,7 @@ function buildSubtaskStatusMetadataUpdates(status, values) {
     updates.notes = values.completionValue;
   } else if (status !== 'completed') {
     updates.completion_summary = null;
+    updates.notes = values.noteValue || null;
   }
 
   return updates;
@@ -2700,6 +2846,7 @@ function handleChildOutput(stream, data, state = defaultAttemptState) {
   const text = decodeCliOutputChunk(data);
   if (!text) return;
   refreshAttemptActivity(state);
+  captureCliFailureSignals(text, state);
   if (codexJsonMode && stream === 'stdout') {
     processCodexJsonOutput(text, state);
     return;
@@ -2710,6 +2857,115 @@ function handleChildOutput(stream, data, state = defaultAttemptState) {
     process.stdout.write(text);
   }
   queueModelOutput(text, state);
+}
+
+function captureCliFailureSignals(text, state = defaultAttemptState) {
+  if (!state || !Array.isArray(state.recentErrorLines)) {
+    return;
+  }
+  const lines = String(text ?? '')
+    .replace(/\\r\\n/g, '\\n')
+    .replace(/\\r/g, '\\n')
+    .split('\\n')
+    .map((line) => normalizeCliFailureSignalLine(line))
+    .filter(Boolean)
+    .filter((line) => isCliFailureSignalLine(line));
+  for (const line of lines) {
+    rememberCliFailureSignalLine(state, line);
+  }
+}
+
+function normalizeCliFailureSignalLine(line) {
+  return cleanLogText(line)
+    .replace(/^\\d{4}-\\d{2}-\\d{2}T[^\\s]+\\s+/, '')
+    .replace(/^\\s*(?:ERROR|WARN|INFO|DEBUG)\\s+/i, '')
+    .replace(/\\s+/g, ' ')
+    .trim();
+}
+
+function isCliFailureSignalLine(line) {
+  if (!line || isNoisyCliDiagnosticLine(line)) {
+    return false;
+  }
+  return isCliRateLimitSignalLine(line) || CLI_FAILURE_SIGNAL_PATTERNS.some((pattern) => pattern.test(line));
+}
+
+function isCliRateLimitSignalLine(line) {
+  if (!line) {
+    return false;
+  }
+  return CLI_RATE_LIMIT_SIGNAL_PATTERNS.some((pattern) => pattern.test(line));
+}
+
+function rememberCliFailureSignalLine(state, line) {
+  const clipped = limitLogText(line, 500);
+  if (!clipped) {
+    return;
+  }
+  const current = state.recentErrorLines;
+  if (current[current.length - 1] !== clipped) {
+    current.push(clipped);
+  }
+  while (current.length > 12) {
+    current.shift();
+  }
+}
+
+function summarizeCliFailureReason(state, exitCode, signal, fallback) {
+  const recent = Array.isArray(state?.recentErrorLines)
+    ? dedupeRecentCliFailureLines(state.recentErrorLines).slice(-5)
+    : [];
+  const recentRateLimitLine = recent.find((line) => isCliRateLimitSignalLine(line));
+  if (recentRateLimitLine) {
+    return 'Autocode CLI rate limited: ' + recentRateLimitLine;
+  }
+  if (recent.length > 0) {
+    return 'Autocode CLI failed: ' + recent.join(' | ');
+  }
+  if (signal) {
+    return 'Autocode CLI exited by signal: ' + signal;
+  }
+  if (exitCode !== 0 && exitCode !== null && exitCode !== undefined) {
+    return 'Autocode CLI failed with exit code ' + exitCode + '.';
+  }
+  return fallback || 'Autocode CLI failed.';
+}
+
+function isCliRateLimitFailure(state, ...messages) {
+  const directSignals = messages
+    .filter(Boolean)
+    .some((message) => isCliRateLimitSignalLine(String(message)));
+  if (directSignals) {
+    return true;
+  }
+  return Array.isArray(state?.recentErrorLines)
+    && state.recentErrorLines.some((line) => isCliRateLimitSignalLine(line));
+}
+
+function summarizeCliRateLimitReason(state, ...messages) {
+  const messageSignals = messages
+    .filter(Boolean)
+    .map((message) => normalizeCliFailureSignalLine(String(message)))
+    .filter(Boolean);
+  const recentSignals = Array.isArray(state?.recentErrorLines)
+    ? dedupeRecentCliFailureLines(state.recentErrorLines)
+    : [];
+  const signal = [...messageSignals, ...recentSignals].find((line) => isCliRateLimitSignalLine(line));
+  return 'Autocode CLI rate limited: ' + (signal || 'the provider reported a usage limit.');
+}
+
+function dedupeRecentCliFailureLines(lines) {
+  const seen = new Set();
+  const result = [];
+  for (const line of lines) {
+    const key = normalizeCliFailureSignalLine(line).toLowerCase();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(line);
+  }
+  return result;
 }
 
 function decodeCliOutputChunk(data) {
@@ -2944,6 +3200,7 @@ function queueModelOutput(text, state = defaultAttemptState) {
       state.lastCodexMessageText,
       cleaned,
     );
+    maybeScheduleAttemptCompletionFromModelText(state, state.lastCodexMessageText);
   }
   state.pendingModelOutput += cleaned;
   if (state.pendingModelOutput.length >= MODEL_OUTPUT_MAX_CHARS || cleaned.includes('\\n')) {
@@ -3266,6 +3523,7 @@ function appendCodexMessageLog(message, state = defaultAttemptState) {
     return;
   }
   state.lastCodexMessageText = cleanMessage;
+  maybeScheduleAttemptCompletionFromModelText(state, cleanMessage);
   const content = limitLogText(cleanMessage, MODEL_OUTPUT_MAX_CHARS);
   process.stdout.write(content + '\\n');
   appendTaskLogEntry(
@@ -3644,29 +3902,65 @@ async function validateStandardPlanArtifactQuality() {
 
 function repairStandardPlanEvidenceScaffolding() {
   const repaired = [];
+  const scaffold = getStandardPlanEvidenceScaffold();
   if (ensureArtifactEvidenceSection(
     artifacts.specFile,
     'Evidence',
-    [
-      '- requirements.md captures the user request and planning constraints for this task.',
-      '- tasks.md maps the implementation work back to the generated Standard requirements.',
-    ],
+    scaffold.specEvidence,
   )) {
     repaired.push(artifacts.specFile);
   }
   if (phase === 'planning' && ensureArtifactEvidenceSection(
     artifacts.requirements,
     'Evidence Sources',
-    [
-      '- User task description captured by Autocode.',
-      '- spec.md planning scope and success criteria.',
-    ],
+    scaffold.requirementsEvidence,
   )) {
     repaired.push(artifacts.requirements);
   }
   if (repaired.length > 0) {
     appendTaskLogEntry(logPhase, 'info', 'Added missing Standard evidence scaffolding to: ' + repaired.join(', '));
   }
+}
+
+function getStandardPlanEvidenceScaffold() {
+  const requestEvidence = String(taskDescription || taskTitle || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+  if (String(language || '').trim().toLowerCase().replace(/_/g, '-').startsWith('zh')) {
+    return {
+      specEvidence: [
+        requestEvidence
+          ? '- 用户请求：' + requestEvidence
+          : '- 用户请求由 Autocode 任务描述提供。',
+        '- requirements.md 记录了本任务的用户请求和规划约束。',
+        '- tasks.md 将实现工作映射回生成的 Standard 需求。',
+      ],
+      requirementsEvidence: [
+        requestEvidence
+          ? '- 用户任务描述：' + requestEvidence
+          : '- Autocode 捕获的用户任务描述。',
+        '- Autocode 捕获的用户任务描述。',
+        '- spec.md 中的规划范围和成功标准。',
+      ],
+    };
+  }
+  return {
+    specEvidence: [
+      requestEvidence
+        ? '- User request: ' + requestEvidence
+        : '- User request captured by Autocode task metadata.',
+      '- requirements.md captures the user request and planning constraints for this task.',
+      '- tasks.md maps the implementation work back to the generated Standard requirements.',
+    ],
+    requirementsEvidence: [
+      requestEvidence
+        ? '- User task description: ' + requestEvidence
+        : '- User task description captured by Autocode.',
+      '- User task description captured by Autocode.',
+      '- spec.md planning scope and success criteria.',
+    ],
+  };
 }
 
 function ensureArtifactEvidenceSection(fileName, heading, lines) {
@@ -3885,20 +4179,25 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '- Do not force named architecture or design pattern guidance onto simple, single-boundary tasks.',
     '- For complex or high-risk plans, add a detailed but compact ## Architecture And Design Pattern References section to spec.md or tasks.md: 4-8 bullets covering boundary/layer, pattern or strategy, source/docs/Project Memory reference or labeled general guidance, and applicable task IDs/boundaries.',
     '- For complex or high-risk tasks, each executable task must include _Architecture: boundary; pattern/strategy; source/reference_ so implementation agents can apply the guidance directly.',
+    '- Use exactly one architecture metadata line per task and keep the metadata key in English: _Architecture: ..._. Do not use localized keys such as _架构: ..._ or include both labels.',
     '- Do not introduce a named design pattern unless source evidence or similar-task memory shows it reduces concrete complexity.',
     ...(standardTasksMode
       ? [
           '- spec.md must include a non-empty ## Evidence section whenever spec.md is written or repaired.',
           '- requirements.md must include a non-empty ## Evidence Sources section whenever requirements.md is written or repaired.',
+          '- requirements.md must include concrete User Requirements and Acceptance Criteria; do not leave either section as None when tasks.md derives requirements or acceptance criteria.',
+          '- Do not keep the only concrete Requirement Index inside tasks.md; mirror concrete requirements and acceptance criteria into requirements.md.',
         ]
       : []),
     '- Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of dropping them.',
     '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
     '- Split broad work into OpenSpec-grade leaf tasks; a task covering more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files is too broad.',
-    '- If split tasks touch the same file, use _Depends on_ to serialize writes instead of merging independent behavior.',
+    '- For runnable/user-facing deliverables, add runtime-readiness verification that starts/opens the artifact, exercises the primary path, and checks console/resource loading/blank-screen/startup/exit status.',
+    '- Runtime-readiness verification cannot be node --check, lint, typecheck, file existence, or inspect-only review.',
+    '- If split tasks touch the same file, keep them separate and add _Depends on_ only for real data, contract, or verification order; the runtime queues overlapping file writes safely.',
     '- Keep spec.md compact as a decision index; put detailed source evidence in context.md and cite it from tasks.md.',
     '- If this is a Request Changes retry, update only affected requirement/design/task sections and preserve unaffected content.',
-    '- Use _Depends on: none_ only for root work. Use _Files to modify: none_ only for read-only validation.',
+    '- Use _Depends on: none_ for any task that has no true prerequisite. Use _Files to modify: none_ only for read-only validation.',
   ];
 
   return [

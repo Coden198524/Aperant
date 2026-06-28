@@ -25,7 +25,8 @@ export interface ResolveAutocodeTaskRuntimeConcurrencyInput {
 }
 
 const MIN_WORKERS = 1;
-const MAX_WORKERS = 8;
+const MAX_WORKERS = 5;
+const DEFAULT_STANDARD_WORKERS = 5;
 
 export function resolveAutocodeTaskRuntimeConcurrency(
   metadata: ResolveAutocodeTaskRuntimeConcurrencyInput | null | undefined,
@@ -68,7 +69,7 @@ function getDefaultRuntimeWorkers(
   if (isDirectRuntimeMode(metadata)) {
     return 1;
   }
-  return 2;
+  return DEFAULT_STANDARD_WORKERS;
 }
 
 function isDirectRuntimeMode(

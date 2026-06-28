@@ -226,7 +226,7 @@ export interface SubtaskInfo {
   workPackage?: boolean;
   upstreamTaskIds?: string[];
   upstreamSource?: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'blocked' | 'stuck';
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'blocked' | 'stuck';
 }
 
 function workItemToSubtaskInfo(workItem: WorkItemInfo): SubtaskInfo {

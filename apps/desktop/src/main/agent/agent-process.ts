@@ -437,6 +437,7 @@ export class AgentProcessManager {
     const rateLimitDetection = detectRateLimit(allOutput);
     console.log('[AgentProcess] Rate limit detection result:', {
       isRateLimited: rateLimitDetection.isRateLimited,
+      provider: rateLimitDetection.provider,
       resetTime: rateLimitDetection.resetTime,
       limitType: rateLimitDetection.limitType,
       profileId: rateLimitDetection.profileId,
@@ -468,6 +469,11 @@ export class AgentProcessManager {
     processType: ProcessType,
     projectId?: string,
   ): boolean {
+    if (rateLimitDetection.provider && rateLimitDetection.provider !== 'anthropic') {
+      console.log('[AgentProcess] Auto-switch skipped for non-Claude provider:', rateLimitDetection.provider);
+      return false;
+    }
+
     const profileManager = getClaudeProfileManager();
     const autoSwitchSettings = profileManager.getAutoSwitchSettings();
 

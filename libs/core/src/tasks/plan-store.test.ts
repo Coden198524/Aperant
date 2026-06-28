@@ -105,6 +105,33 @@ describe('implementation plan markdown', () => {
     ]);
   });
 
+  it('roundtrips localized and English architecture metadata as one structured field', () => {
+    const architecture = 'static entry layer; HTML structure contract strategy; requirements.md R1';
+    const parsed = parseAutocodeImplementationPlanMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Create HTML entry',
+      '    - Create the browser application shell.',
+      `    - _\u67B6\u6784: ${architecture}_`,
+      '    - _Architecture: duplicate label that should not enter the description_',
+      '    - _Files to create: index.html_',
+      '    - _Requirements: R1, AC1.1_',
+      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '',
+    ].join('\n'));
+
+    const subtask = parsed.phases[0].subtasks[0] as Record<string, unknown>;
+    expect(subtask.architecture).toBe(architecture);
+    expect(subtask.description).toBe('Create the browser application shell.');
+
+    const rewritten = stringifyAutocodeImplementationPlanMarkdown(parsed);
+    expect(rewritten.match(/Architecture:/g)).toHaveLength(1);
+    expect(rewritten).not.toContain('\u67B6\u6784:');
+    expect(rewritten).not.toContain('duplicate label');
+  });
+
   it('parses localized and full-width task metadata fields', () => {
     const parsed = parseAutocodeImplementationPlanMarkdown([
       '# Tasks',

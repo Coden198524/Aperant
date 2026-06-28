@@ -12,9 +12,9 @@ Validate the implementation against the MMO spec and plan. Do not fix code.
 4. Run targeted tests or checks.
 5. Write `qa_report.md` with `Status: PASSED` or `Status: FAILED`.
 
-## Product-Grade MMO Review Matrix
+## MMO Review Method
 
-For each affected domain, record:
+For each affected domain, record the evidence needed to trust the change:
 
 - source/config paths reviewed
 - runtime owner and authority/trust boundary
@@ -22,7 +22,7 @@ For each affected domain, record:
 - verification command/manual check
 - residual risk or reason no risk remains
 
-Do not approve if server authority, sync, persistence, performance, security, or rollout impact is relevant but unverified.
+Do not approve when relevant server authority, sync, persistence, performance, security, or rollout impact is unverified.
 
 ## QA Report
 Include:

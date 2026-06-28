@@ -29,6 +29,7 @@ export interface AutocodeRuntimeTask {
   patternFiles: string[];
   dependsOn: string[];
   requirements: string[];
+  architecture?: string;
   evidence?: string;
   verification?: unknown;
 }
@@ -237,6 +238,7 @@ export function flattenAutocodeRuntimeTasks(
         patternFiles: toStringArray(subtask.pattern_files),
         dependsOn: sanitizeAutocodeRuntimeDependencyIds(subtask.depends_on),
         requirements: toStringArray(subtask.requirements),
+        architecture: stringFrom(subtask.architecture),
         evidence: stringFrom(subtask.evidence),
         verification: subtask.verification,
       });
@@ -528,6 +530,7 @@ function buildAutocodeRuntimeWorkPackageSubtask(
     ...workPackage.tasks.flatMap((task) => task.requirements),
   ]);
   const evidence = uniqueAutocodeRuntimeStrings(workPackage.tasks.map((task) => task.evidence || ''));
+  const architecture = uniqueAutocodeRuntimeStrings(workPackage.tasks.map((task) => task.architecture || ''));
   const hasWriteIntent = filesToCreate.length > 0 || filesToModify.length > 0 || patternFiles.length > 0;
 
   return {
@@ -540,6 +543,7 @@ function buildAutocodeRuntimeWorkPackageSubtask(
     ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
     depends_on: workPackage.dependsOn,
     ...(requirements.length > 0 ? { requirements } : {}),
+    ...(architecture.length > 0 ? { architecture: architecture.join('; ') } : {}),
     ...(evidence.length > 0 ? { evidence: evidence.join('; ') } : {}),
     verification: {
       type: 'manual',
@@ -570,6 +574,7 @@ function buildRuntimeWorkPackageDescription(
       ...workPackage.tasks.flatMap((task) => [
         `- ${task.id} ${sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)}`,
         `  ${singleLine(sanitizeAutocodeRuntimeTaskDescription(task.description, sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)))}`,
+        ...(task.architecture ? [`  Architecture: ${singleLine(task.architecture)}`] : []),
         ...(task.evidence ? [`  Evidence: ${singleLine(task.evidence)}`] : []),
         ...(task.dependsOn.length > 0 ? [`  依赖：${task.dependsOn.join(', ')}`] : []),
       ]),
@@ -588,6 +593,7 @@ function buildRuntimeWorkPackageDescription(
     ...workPackage.tasks.flatMap((task) => [
       `- ${task.id} ${sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)}`,
       `  ${singleLine(sanitizeAutocodeRuntimeTaskDescription(task.description, sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)))}`,
+      ...(task.architecture ? [`  Architecture: ${singleLine(task.architecture)}`] : []),
       ...(task.evidence ? [`  Evidence: ${singleLine(task.evidence)}`] : []),
       ...(task.dependsOn.length > 0 ? [`  Upstream prerequisites: ${task.dependsOn.join(', ')}`] : []),
     ]),

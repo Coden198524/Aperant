@@ -141,7 +141,7 @@ export function buildAutocodeDefaultPlannerPrompt(input: BuildAutocodeAgentPromp
     'Every executable subtask must include exactly one _Depends on: ..._ line.',
     'Use _Depends on: none_ only for work that can run without prior output; otherwise list prerequisite subtask IDs only.',
     'File metadata is write intent, not context. List only files the subtask will create or modify, and use _Files to modify: none_ for read-only validation.',
-    'If two subtasks must modify the same file, merge them or add a real dependency.',
+    'If two subtasks modify the same file but do not consume each other\'s output, keep them separate with no artificial dependency; the runtime file-conflict scheduler will queue overlapping writes safely.',
     'Do not mark final verification as modifying all files unless it truly edits them.',
   ].join(' ');
   if (input.projectType === 'game-mmo') {

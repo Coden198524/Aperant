@@ -54,6 +54,23 @@ describe('Rate Limit Detector', () => {
       expect(result.limitType).toBe('session');
     });
 
+    it('should classify Codex usage limits as OpenAI without Claude profile switching', async () => {
+      const { detectRateLimit, createSDKRateLimitInfo } = await import('../rate-limit-detector');
+
+      const output = "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Jul 25th, 2026 12:57 AM.";
+      const result = detectRateLimit(output);
+      const info = createSDKRateLimitInfo('task', result, { taskId: '001-task' });
+
+      expect(result.isRateLimited).toBe(true);
+      expect(result.provider).toBe('openai');
+      expect(result.resetTime).toBe('Jul 25th, 2026 12:57 AM');
+      expect(result.profileId).toBeUndefined();
+      expect(result.suggestedProfile).toBeUndefined();
+      expect(info.provider).toBe('openai');
+      expect(info.profileName).toBe('OpenAI / Codex');
+      expect(info.profileId).toBeUndefined();
+    });
+
     it('should detect secondary rate limit indicators', async () => {
       const { detectRateLimit } = await import('../rate-limit-detector');
 

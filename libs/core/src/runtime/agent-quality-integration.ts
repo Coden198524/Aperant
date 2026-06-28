@@ -324,7 +324,11 @@ export function validateAutocodeCodingSummary(
   subtask: AutocodeQualitySubtask,
   summary: string,
 ): string[] {
-  if (isAutocodeDocumentationSubtask(subtask) || !isAutocodeCodingSubtask(subtask)) {
+  if (
+    isAutocodeDocumentationSubtask(subtask) ||
+    isAutocodeReadOnlyInspectionSubtask(subtask) ||
+    !isAutocodeCodingSubtask(subtask)
+  ) {
     return [];
   }
 
@@ -364,7 +368,11 @@ export function validateAutocodeRuntimeReadinessSummary(
   subtask: AutocodeQualitySubtask,
   summary: string,
 ): string[] {
-  if (isAutocodeDocumentationSubtask(subtask) || !requiresAutocodeRuntimeReadiness(subtask)) {
+  if (
+    isAutocodeDocumentationSubtask(subtask) ||
+    isAutocodeReadOnlyInspectionSubtask(subtask) ||
+    !requiresAutocodeRuntimeReadiness(subtask)
+  ) {
     return [];
   }
 
@@ -378,6 +386,8 @@ export function validateAutocodeRuntimeReadinessSummary(
     issues.push('runtime-readiness: user-facing or runnable work needs an actual launch/open/browser/CLI smoke check, not only static syntax, unit, lint, or type checks');
   } else if (hasAutocodeRuntimeVerificationLimitation(normalized)) {
     issues.push('runtime-readiness: runnable verification is recorded as unavailable, skipped, or limited; keep the work open or blocked until a real startup/use-path check passes');
+  } else if (!hasAutocodeRuntimeHealthEvidence(summary)) {
+    issues.push('runtime-readiness: smoke verification should state startup/open result plus console/resource-load/blank-screen/rendering/primary-path/exit-code health evidence');
   }
 
   return issues;
@@ -554,6 +564,8 @@ function validateAutocodeQaRuntimeReadiness(
     issues.push(`qa-quality: ${filePath} passed a user-facing or runnable change without launch/open/browser/CLI smoke verification evidence`);
   } else if (hasAutocodeRuntimeVerificationLimitation(normalized)) {
     issues.push(`qa-quality: ${filePath} passed despite unavailable, skipped, or limited runnable verification`);
+  } else if (!hasAutocodeRuntimeHealthEvidence(content)) {
+    issues.push(`qa-quality: ${filePath} passed a runnable change without startup/open health evidence such as console/resource-load/blank-screen/rendering/primary-path/exit-code result`);
   }
   return issues;
 }
@@ -672,6 +684,10 @@ function validateAutocodeGameMmoDocumentationMarkdown(markdown: string, outputPa
 }
 
 function isAutocodeDocumentationSubtask(subtask: AutocodeQualitySubtask): boolean {
+  if (hasOnlyAutocodeDocumentationFiles(subtask)) {
+    return true;
+  }
+
   const text = [
     subtask.description,
     ...(subtask.filesToCreate ?? []),
@@ -682,12 +698,18 @@ function isAutocodeDocumentationSubtask(subtask: AutocodeQualitySubtask): boolea
     /\u6587\u6863|\u6e90\u7801\u5206\u6790|\u4ee3\u7801\u5206\u6790/.test(text);
 }
 
+function hasOnlyAutocodeDocumentationFiles(subtask: AutocodeQualitySubtask): boolean {
+  const files = getAutocodeSubtaskFiles(subtask);
+  return files.length > 0 && files.every(isAutocodeDocumentationFile);
+}
+
 function isAutocodeCodingSubtask(subtask: AutocodeQualitySubtask): boolean {
-  const files = [
-    ...(subtask.filesToCreate ?? []),
-    ...(subtask.filesToModify ?? []),
-  ];
-  if (files.some((file) => !/\.(?:md|mdx|txt|rst)$/i.test(file))) {
+  if (isAutocodeReadOnlyInspectionSubtask(subtask)) {
+    return false;
+  }
+
+  const files = getAutocodeSubtaskFiles(subtask);
+  if (files.some((file) => !isAutocodeDocumentationFile(file))) {
     return true;
   }
 
@@ -700,6 +722,10 @@ function isAutocodeCodingSubtask(subtask: AutocodeQualitySubtask): boolean {
 }
 
 function requiresAutocodeRuntimeReadiness(subtask: AutocodeQualitySubtask): boolean {
+  if (isAutocodeReadOnlyInspectionSubtask(subtask)) {
+    return false;
+  }
+
   return requiresAutocodeRuntimeReadinessFromText([
     subtask.description,
     ...(subtask.filesToCreate ?? []),
@@ -710,10 +736,36 @@ function requiresAutocodeRuntimeReadiness(subtask: AutocodeQualitySubtask): bool
 function requiresAutocodeRuntimeReadinessFromText(value: string): boolean {
   const text = value.toLowerCase().replace(/\\/g, '/');
   return /\.(?:html?|css|tsx|jsx|vue|svelte)\b/i.test(text) ||
-    /(?:^|\/)(?:renderer|ui|views?|pages?|routes?|components?|public|static|assets|web|frontend)\//i.test(text) ||
-    /(?:^|\/)src\/(?:index|app|main|game)\.(?:[cm]?[jt]sx?|html?)\b/i.test(text) ||
-    /\b(user[-\s]?facing|browser|web\s?page|webapp|web\s?app|page|screen|view|renderer|frontend|ui|app|application|game|playable|interactive|canvas|button|form|cli|command[-\s]?line|tool|launcher|startup|start screen|open path|launch path|smoke test|e2e|end[-\s]?to[-\s]?end)\b/i.test(text) ||
-    /\u7528\u6237\u754c\u9762|\u754c\u9762|\u6d4f\u89c8\u5668|\u7f51\u9875|\u9875\u9762|\u524d\u7aef|\u6e32\u67d3|\u6e38\u620f|\u53ef\u73a9|\u53ef\u7528|\u4ea4\u4e92|\u753b\u5e03|\u6309\u94ae|\u547d\u4ee4\u884c|\u5de5\u5177|\u542f\u52a8|\u6253\u5f00|\u7aef\u5230\u7aef|\u5192\u70df/.test(text);
+    /(?:^|\/)(?:public|static|assets|web|frontend)\//i.test(text) ||
+    /(?:^|\/)src\/(?:cli|command|launcher)\.(?:[cm]?[jt]sx?|py|go|rs|cs)\b/i.test(text) ||
+    /\b(user[-\s]?facing|browser|web\s?page|webapp|web\s?app|playable|interactive|canvas|cli|command[-\s]?line|launcher|startup|start screen|open path|launch path|dev server|localhost|file:\/\/|electron|smoke test|e2e|end[-\s]?to[-\s]?end)\b/i.test(text) ||
+    /\u7528\u6237\u754c\u9762|\u754c\u9762|\u6d4f\u89c8\u5668|\u7f51\u9875|\u9875\u9762|\u524d\u7aef|\u53ef\u73a9|\u53ef\u7528|\u4ea4\u4e92|\u753b\u5e03|\u547d\u4ee4\u884c|\u542f\u52a8|\u6253\u5f00|\u7aef\u5230\u7aef|\u5192\u70df/.test(text);
+}
+
+function isAutocodeReadOnlyInspectionSubtask(subtask: AutocodeQualitySubtask): boolean {
+  const files = getAutocodeSubtaskFiles(subtask);
+  if (files.length > 0) {
+    return false;
+  }
+
+  const text = subtask.description.toLowerCase();
+  const hasReadOnlySignal = /\b(read[-\s]?only|inspect|inspection|investigate|investigation|analysis|analyze|review|trace|map|document current|manual review|no code change|no source change|do not modify|do not execute|do not submit)\b/i.test(text) ||
+    /\u53ea\u8bfb|\u590d\u6838|\u68c0\u67e5|\u5206\u6790|\u8c03\u67e5|\u8c03\u7814|\u5b9a\u4f4d|\u68b3\u7406|\u8ffd\u8e2a|\u4e0d\u4fee\u6539|\u672a\u4fee\u6539|\u4e0d\u6267\u884c|\u672a\u6267\u884c|\u4e0d\u63d0\u4ea4|\u672a\u63d0\u4ea4/.test(text);
+  const hasRuntimeSmokeIntent = /\b(final\s+)?(?:runtime|browser|cli|startup|launch|open|smoke|e2e|end[-\s]?to[-\s]?end)\s+(?:verification|validation|check|test|smoke)\b/i.test(text) ||
+    /\u6700\u7ec8(?:\u8fd0\u884c|\u542f\u52a8|\u6253\u5f00|\u6d4f\u89c8\u5668|\u5192\u70df)|(?:\u8fd0\u884c|\u542f\u52a8|\u6253\u5f00|\u6d4f\u89c8\u5668|\u7aef\u5230\u7aef|\u5192\u70df)(?:\u9a8c\u8bc1|\u68c0\u67e5|\u6d4b\u8bd5)/.test(text);
+
+  return hasReadOnlySignal && !hasRuntimeSmokeIntent;
+}
+
+function getAutocodeSubtaskFiles(subtask: AutocodeQualitySubtask): string[] {
+  return [
+    ...(subtask.filesToCreate ?? []),
+    ...(subtask.filesToModify ?? []),
+  ].map((item) => item.trim()).filter(Boolean);
+}
+
+function isAutocodeDocumentationFile(filePath: string): boolean {
+  return /\.(?:md|mdx|txt|rst|adoc)$/i.test(filePath.trim());
 }
 
 function normalizeAutocodeRuntimeText(value: string): string {
@@ -727,13 +779,18 @@ function normalizeAutocodeRuntimeText(value: string): string {
 }
 
 function hasAutocodeRuntimeVerificationEvidence(text: string): boolean {
-  return /\b(playwright|cypress|selenium|e2e|end[-\s]?to[-\s]?end|headless|cdp|dev server|localhost|https?:\/\/|file:\/\/|page\.goto|browser smoke|chrome smoke|edge smoke|electron smoke|runtime smoke|startup smoke|opened? (?:the )?(?:app|page|browser|screen)|launched? (?:the )?(?:app|page|browser)|started? (?:the )?(?:app|page|browser|server|cli)|manual(?:ly)? (?:opened|launched|started|checked)|cli smoke|command smoke|ran (?:the )?cli|executed (?:the )?(?:cli|command))\b/i.test(text) ||
+  return /\b(playwright|cypress|selenium|e2e|end[-\s]?to[-\s]?end|headless|cdp|dev server|localhost|https?:\/\/|file:\/\/|page\.goto|browser smoke|chrome smoke|edge smoke|electron smoke|runtime smoke|startup smoke|opened?\s+(?:the\s+)?[^.;\n]{0,80}\b(?:app|page|browser|screen|artifact|index\.html|html)\b|launched?\s+(?:the\s+)?[^.;\n]{0,80}\b(?:app|page|browser|screen|artifact)\b|started?\s+(?:the\s+)?[^.;\n]{0,80}\b(?:app|page|browser|server|cli|command|artifact)\b|manual(?:ly)? (?:opened|launched|started|checked)|cli smoke|command smoke|ran (?:the )?cli|executed (?:the )?(?:cli|command))\b/i.test(text) ||
     /\u6253\u5f00(?:\u5e94\u7528|\u9875\u9762|\u6d4f\u89c8\u5668)?|\u542f\u52a8(?:\u5e94\u7528|\u9875\u9762|\u6d4f\u89c8\u5668|\u670d\u52a1|\u547d\u4ee4\u884c)?|\u6d4f\u89c8\u5668\u5192\u70df|\u542f\u52a8\u5192\u70df|\u8fd0\u884c\u5192\u70df|\u53ef\u73a9|\u53ef\u7528|\u771f\u5b9e\u8fd0\u884c|\u7aef\u5230\u7aef|\u5192\u70df/.test(text);
 }
 
 function hasAutocodeRuntimeVerificationLimitation(text: string): boolean {
   return /\b(not run|not verified|unverified|skipped|unable|could not|cannot|can't|limitation|blocked by environment|missing dependency|tool unavailable)\b/i.test(text) ||
     /\u672a\u8fd0\u884c|\u672a\u9a8c\u8bc1|\u8df3\u8fc7|\u65e0\u6cd5|\u4e0d\u80fd|\u9650\u5236|\u73af\u5883\u963b\u585e|\u7f3a\u5c11\u4f9d\u8d56|\u5de5\u5177\u4e0d\u53ef\u7528/.test(text);
+}
+
+function hasAutocodeRuntimeHealthEvidence(text: string): boolean {
+  return /\b(?:console|resource(?:s)?|load(?:ing)?|blank screen|white screen|non[-\s]?blank|render(?:ed|s)?|canvas|startup (?:passed|ok|succeeded)|started successfully|no startup errors?|exit code|exit status|primary path|click(?:ed)?|interact(?:ed|ion)?|no crash|no hang|no runtime errors?|no page errors?|no console errors?|no resource[-\s]?load failures?)\b/i.test(text) ||
+    /\u63a7\u5236\u53f0|\u8d44\u6e90|\u52a0\u8f7d|\u767d\u5c4f|\u7a7a\u767d|\u975e\u7a7a|\u6e32\u67d3|\u753b\u5e03|\u542f\u52a8|\u9000\u51fa\u7801|\u4e3b\u8def\u5f84|\u70b9\u51fb|\u4ea4\u4e92|\u65e0\u5d29\u6e83|\u65e0\u5361\u6b7b|\u65e0\u9519\u8bef/.test(text);
 }
 
 function hasAutocodeBlockingRuntimeFailureSignal(text: string): boolean {

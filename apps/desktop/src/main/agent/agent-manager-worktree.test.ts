@@ -201,7 +201,7 @@ describe('AgentManager worktree execution', () => {
     expect(executorConfig.session.toolContext.cwd).toBe('E:/repo');
     expect(executorConfig.session.runtimeConcurrency).toEqual({
       mode: 'concurrent',
-      workers: 2,
+      workers: 5,
       unit: 'work_item',
       conflictPolicy: 'lock-and-queue',
     });

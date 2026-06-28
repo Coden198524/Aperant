@@ -98,6 +98,36 @@ describe('runtime work package balancing', () => {
     expect(phases[0].subtasks).toHaveLength(1);
   });
 
+  it('preserves architecture guidance in runtime work packages without duplicating labels', () => {
+    const parsed = parseAutocodeImplementationPlanMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Create HTML entry',
+      '    - Create `index.html` with the browser game shell.',
+      '    - _Files to create: index.html_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1.1_',
+      '    - _Architecture: static entry layer; HTML structure contract strategy; requirements.md R1_',
+      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '    - _Done when: index.html contains canvas, status text, restart control, stylesheet link, and module script._',
+      '    - _Verification: inspect index.html_',
+      '',
+    ].join('\n'));
+
+    const phases = buildAutocodeRuntimeWorkPackagePhases({
+      parsedPhases: parsed.phases as Array<Record<string, unknown>>,
+      requireTaskEvidence: true,
+      sourceName: 'Autocode',
+    });
+    const subtask = phases[0].subtasks?.[0] as Record<string, unknown>;
+
+    expect(subtask.architecture).toBe('static entry layer; HTML structure contract strategy; requirements.md R1');
+    expect(String(subtask.description)).toContain('Architecture: static entry layer; HTML structure contract strategy; requirements.md R1');
+    expect(String(subtask.description).match(/Architecture:/g)).toHaveLength(1);
+  });
+
   it('normalizes vague runtime task evidence when deriving work packages', () => {
     const plan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
       '# Tasks',

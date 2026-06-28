@@ -1251,17 +1251,24 @@ async function updateWorkItemStatuses(
         if (status === 'completed' && !subtask.completed_at) {
           subtask.completed_at = now;
           updated = true;
+        } else if (status !== 'completed' && subtask.completed_at) {
+          subtask.completed_at = undefined;
+          updated = true;
         }
         subtask.updated_at = now;
         const summary = summaries.get(subtask.id);
-        if (summary && !subtask.completion_summary) {
+        if (status === 'completed' && summary && !subtask.completion_summary) {
           subtask.completion_summary = summary;
           if (!subtask.notes) {
             subtask.notes = summary;
           }
           updated = true;
-        } else if (summary && status !== 'completed' && !subtask.notes) {
+        } else if (summary && status !== 'completed') {
           subtask.notes = summary;
+          updated = true;
+        }
+        if (status !== 'completed' && subtask.completion_summary) {
+          subtask.completion_summary = undefined;
           updated = true;
         }
       }
@@ -1295,7 +1302,7 @@ function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
 
   for (const phase of plan.phases) {
     for (const subtask of phase.subtasks) {
-      if (subtask.status === 'pending' || subtask.status === 'in_progress') {
+      if (isRetryableWorkItemStatus(subtask.status)) {
         items.push({
           id: subtask.id,
           phaseId: phase.id ?? phase.name,
@@ -1314,13 +1321,21 @@ function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
             ? subtask.upstream_task_ids.filter((value): value is string => typeof value === 'string')
             : [],
           upstreamSource: typeof subtask.upstream_source === 'string' ? subtask.upstream_source : undefined,
-          status: subtask.status as 'pending' | 'in_progress',
+          status: subtask.status as WorkItemInfo['status'],
         });
       }
     }
   }
 
   return items;
+}
+
+function isRetryableWorkItemStatus(status: string): boolean {
+  return status === 'pending' ||
+    status === 'in_progress' ||
+    status === 'failed' ||
+    status === 'blocked' ||
+    status === 'stuck';
 }
 
 function getTerminalIncompleteWorkItems(plan: ImplementationPlan): Array<{ id: string; status: string }> {

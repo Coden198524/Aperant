@@ -14,10 +14,12 @@ import { debugLog } from '../shared/utils/debug-logger';
 const RATE_LIMIT_PATTERN = /Limit reached\s*[·•]\s*resets\s+(.+?)(?:\s*$|\n)/im;
 
 /**
- * Regex pattern to detect Codex/OpenAI rate limit messages
- * Matches: "Usage limit exceeded" or "UsageLimitExceeded" with optional reset info
+ * Regex pattern to detect Codex/OpenAI rate limit messages.
+ * Matches structured errors and Codex CLI text such as:
+ * "You've hit your usage limit ... try again at Jul 25th, 2026 12:57 AM."
  */
-const CODEX_RATE_LIMIT_PATTERN = /(?:usage_limit_exceeded|UsageLimitExceeded)(?:.*?reset(?:s|_at)?\s*[:\s]*(.+?))?(?:\s*$|\n)/im;
+const CODEX_RATE_LIMIT_PATTERN =
+  /(?:usage_limit_exceeded|UsageLimitExceeded|(?:you['’]?ve|you have)\s+hit\s+your\s+usage\s+limit)(?:[\s\S]{0,300}?(?:try again at|reset(?:s|_at)?|resets?\s+at)\s*[:=]?\s*["']?([^."'}\n]+))?/im;
 
 /**
  * Additional patterns that might indicate rate limiting
@@ -33,6 +35,8 @@ const RATE_LIMIT_INDICATORS = [
   /UsageLimitExceeded/,
   /codex.*rate\s*limit/i,
 ];
+
+export type RateLimitProvider = 'anthropic' | 'openai' | 'unknown';
 
 /**
  * Patterns that indicate authentication failures
@@ -139,6 +143,8 @@ function sanitizeErrorOutput(output: string): string {
 export interface RateLimitDetectionResult {
   /** Whether a rate limit was detected */
   isRateLimited: boolean;
+  /** Provider that owns the limit, used to avoid mixing Codex/OpenAI limits with Claude profile handling */
+  provider?: RateLimitProvider;
   /** The reset time string if detected (e.g., "Dec 17 at 6am (Europe/Oslo)") */
   resetTime?: string;
   /** Type of limit: 'session' (5-hour) or 'weekly' (7-day) */
@@ -198,6 +204,16 @@ function classifyLimitType(resetTimeStr: string): 'session' | 'weekly' {
   return (hasDate || hasWeeklyIndicator) ? 'weekly' : 'session';
 }
 
+function inferRateLimitProvider(output: string): RateLimitProvider {
+  if (/(?:codex|openai|chatgpt|usage_limit_exceeded|UsageLimitExceeded)/i.test(output)) {
+    return 'openai';
+  }
+  if (/(?:claude|anthropic|Limit reached)/i.test(output)) {
+    return 'anthropic';
+  }
+  return 'unknown';
+}
+
 /**
  * Detect rate limit from output (stdout + stderr combined)
  */
@@ -227,6 +243,7 @@ export function detectRateLimit(
 
     return {
       isRateLimited: true,
+      provider: 'anthropic',
       resetTime,
       limitType,
       profileId: effectiveProfileId,
@@ -244,28 +261,12 @@ export function detectRateLimit(
     const resetTime = codexMatch[1]?.trim();
     const limitType = resetTime ? classifyLimitType(resetTime) : 'session';
 
-    const profileManager = getClaudeProfileManager();
-    const effectiveProfileId = profileId || profileManager.getActiveProfile().id;
-
-    try {
-      if (resetTime) {
-        profileManager.recordRateLimitEvent(effectiveProfileId, resetTime);
-      }
-    } catch (err) {
-      console.error('[RateLimitDetector] Failed to record Codex rate limit event:', err);
-    }
-
-    const bestProfile = profileManager.getBestAvailableProfile(effectiveProfileId);
-
     return {
       isRateLimited: true,
+      provider: 'openai',
       resetTime,
       limitType,
-      profileId: effectiveProfileId,
-      suggestedProfile: bestProfile ? {
-        id: bestProfile.id,
-        name: bestProfile.name
-      } : undefined,
+      profileId,
       originalError: sanitizeErrorOutput(output)
     };
   }
@@ -273,12 +274,23 @@ export function detectRateLimit(
   // Check for secondary rate limit indicators
   for (const pattern of RATE_LIMIT_INDICATORS) {
     if (pattern.test(output)) {
+      const provider = inferRateLimitProvider(output);
+      if (provider !== 'anthropic') {
+        return {
+          isRateLimited: true,
+          provider,
+          profileId,
+          originalError: sanitizeErrorOutput(output)
+        };
+      }
+
       const profileManager = getClaudeProfileManager();
       const effectiveProfileId = profileId || profileManager.getActiveProfile().id;
       const bestProfile = profileManager.getBestAvailableProfile(effectiveProfileId);
 
       return {
         isRateLimited: true,
+        provider: 'anthropic',
         profileId: effectiveProfileId,
         suggestedProfile: bestProfile ? {
           id: bestProfile.id,
@@ -734,6 +746,8 @@ export function getActiveProfileId(): string {
 export interface SDKRateLimitInfo {
   /** Source of the rate limit (which feature hit it) */
   source: 'changelog' | 'task' | 'roadmap' | 'ideation' | 'title-generator' | 'other';
+  /** Provider that owns the limit */
+  provider?: RateLimitProvider;
   /** Project ID if applicable */
   projectId?: string;
   /** Task ID if applicable */
@@ -743,7 +757,7 @@ export interface SDKRateLimitInfo {
   /** Type of limit */
   limitType?: 'session' | 'weekly';
   /** Profile that hit the limit */
-  profileId: string;
+  profileId?: string;
   /** Profile name for display */
   profileName?: string;
   /** Suggested alternative profile */
@@ -779,6 +793,23 @@ export function createSDKRateLimitInfo(
     taskId?: string;
   }
 ): SDKRateLimitInfo {
+  const provider = detection.provider ?? 'anthropic';
+  if (provider !== 'anthropic') {
+    return {
+      source,
+      provider,
+      projectId: options?.projectId,
+      taskId: options?.taskId,
+      resetTime: detection.resetTime,
+      limitType: detection.limitType,
+      profileId: detection.profileId,
+      profileName: provider === 'openai' ? 'OpenAI / Codex' : undefined,
+      suggestedProfile: detection.suggestedProfile,
+      detectedAt: new Date(),
+      originalError: detection.originalError
+    };
+  }
+
   const profileManager = getClaudeProfileManager();
   const profile = detection.profileId
     ? profileManager.getProfile(detection.profileId)
@@ -786,6 +817,7 @@ export function createSDKRateLimitInfo(
 
   return {
     source,
+    provider,
     projectId: options?.projectId,
     taskId: options?.taskId,
     resetTime: detection.resetTime,

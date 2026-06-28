@@ -709,6 +709,10 @@ describe('executeConcurrentWorkItems', () => {
   it('counts failed prerequisites and newly blocked dependents in executor result', async () => {
     const plan = createPlan(['a.ts', 'b.ts']);
     plan.phases[0].subtasks[1].depends_on = ['work-1'];
+    (plan.phases[0].subtasks[0] as { completed_at?: string; completion_summary?: string }).completed_at =
+      '2026-06-20T00:00:00.000Z';
+    (plan.phases[0].subtasks[0] as { completed_at?: string; completion_summary?: string }).completion_summary =
+      'Stale success summary';
     const { getPlanState } = setupPlanStates({ '/spec': plan });
     const started: string[] = [];
     const runWorkItemSession = vi.fn().mockImplementation(async (item) => {
@@ -734,30 +738,33 @@ describe('executeConcurrentWorkItems', () => {
       'failed',
       'blocked',
     ]);
+    expect((getPlanState('/spec')?.phases[0].subtasks[0] as { completed_at?: string }).completed_at).toBeUndefined();
+    expect((getPlanState('/spec')?.phases[0].subtasks[0] as { completion_summary?: string }).completion_summary).toBeUndefined();
     expect((getPlanState('/spec')?.phases[0].subtasks[1] as { notes?: string }).notes).toContain(
       'work-1 (failed)',
     );
   });
 
-  it('does not report success when a resumed plan only has failed or blocked work items', async () => {
+  it('retries failed and blocked work items from a previous run', async () => {
     const plan = createPlan(['a.ts', 'b.ts']);
     plan.phases[0].subtasks[0].status = 'failed';
     plan.phases[0].subtasks[1].status = 'blocked';
+    plan.phases[0].subtasks[1].depends_on = ['work-1'];
     const { getPlanState } = setupPlanStates({ '/spec': plan });
-    const runWorkItemSession = vi.fn().mockResolvedValue(makeSessionResult());
+    const started: string[] = [];
+    const runWorkItemSession = vi.fn().mockImplementation(async (item) => {
+      started.push(item.id);
+      return makeSessionResult();
+    });
 
     const result = await executeConcurrentWorkItems(createConfig({ workers: 2, runWorkItemSession }));
 
-    expect(result.success).toBe(false);
-    expect(result.totalFailed).toBe(2);
-    expect(result.totalBlocked).toBe(1);
-    expect(result.error).toContain('terminal incomplete work items');
-    expect(result.error).toContain('work-1 (failed)');
-    expect(result.error).toContain('work-2 (blocked)');
-    expect(runWorkItemSession).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.totalCompleted).toBe(2);
+    expect(started).toEqual(['work-1', 'work-2']);
     expect(getPlanState('/spec')?.phases[0].subtasks.map((subtask) => subtask.status)).toEqual([
-      'failed',
-      'blocked',
+      'completed',
+      'completed',
     ]);
   });
 

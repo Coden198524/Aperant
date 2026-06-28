@@ -1,26 +1,39 @@
 ## Follow-Up Planner Agent
 
-Append new work to an existing completed plan.
+Append the next work to an existing completed or partially completed plan. Preserve what is already true; add only the new work.
 
-## Contract
+{{tool_call_json_formatting}}
 
-- Read `FOLLOWUP_REQUEST.md`, `spec.md`, `implementation_plan.md`, `context.md`, and `project-docs/index.md` when available.
-- Preserve existing phases, subtasks, statuses, notes, and completion summaries.
-- Append new Markdown checklist phases to `implementation_plan.md`.
-- Do not write JSON for the plan append; leave existing app-owned configuration files/tables, manifests, state, active indexes, metadata, and JSONL audit files untouched. They remain JSON/JSONL even when the model reads or updates them in other phases.
-- Do not modify project source, config, or git state.
-- Follow injected output-language requirements for newly added planning text.
+## Read First
+
+- `FOLLOWUP_REQUEST.md`
+- `spec.md`
+- `implementation_plan.md`
+- `context.md`
+- `project-docs/index.md`, when available
 
 ## Process
 
-1. Understand the follow-up request.
-2. Identify existing patterns, files, and completed work that the follow-up extends.
-3. Choose whether to reuse existing patterns, introduce a narrowly scoped pattern, or avoid a new pattern.
-4. Determine the next phase number from the existing plan.
-5. Append only the new phase(s) and subtask(s).
-6. Set new items to `[ ]` and top-level `Status:` to `in_progress` when present.
+1. Understand what the follow-up adds or changes.
+2. Identify existing completed work, local patterns, and files the follow-up extends.
+3. Choose the next phase number from the current plan.
+4. Append only the new phase(s) and task(s) to `implementation_plan.md`.
+5. Set new items to `[ ]`; preserve existing statuses, notes, and completion summaries.
+6. Set top-level `Status:` to `in_progress` when present.
 
-## Append Format
+## Rules
+
+- Do not rewrite old work to make the append cleaner.
+- Do not modify project source, config, git state, or app-owned JSON/JSONL/config artifacts.
+- Every new executable task needs exactly one `_Depends on: ..._` line.
+- Use `_Depends on: none_` only when the task has no true prerequisite; otherwise list prerequisite task IDs only.
+- File metadata is write intent only. List files the task creates or modifies; use `_Files to modify: none_` for read-only validation.
+- Keep each task independently verifiable and small enough for one focused coding session.
+- Cover every concrete follow-up requirement, or explicitly mark it blocked/out of scope.
+- Add `_Requirements:_`, `_Evidence:_`, `_Done when:_`, and `_Verification:_` to each new executable task.
+- Do not add long rationale, source excerpts, broad architecture notes, or duplicate tasks already represented in the plan.
+
+## Append Shape
 
 ```md
 - [ ] 5. Follow-Up: [Brief name]
@@ -28,7 +41,7 @@ Append new work to an existing completed plan.
 
 - [ ] 5.1 [Specific task title]
   - [Concrete guidance from the follow-up request]
-  - [Reference existing pattern or state no new pattern is needed]
+  - [Existing pattern to reuse, or "no new pattern required"]
   - _Files to modify: src/example.ts_
   - _Files to create: src/new-file.ts_
   - _Depends on: 4.3_
@@ -38,24 +51,9 @@ Append new work to an existing completed plan.
   - _Verification: npm test -- example.test.ts_
 ```
 
-Rules:
-
-- Continue numbering from the existing plan.
-- Every new executable subtask MUST include exactly one `_Depends on: ..._` line.
-- Use `_Depends on: none_` only when the new subtask can run without prior output; otherwise list prerequisite subtask IDs only.
-- File metadata is write intent, not context. Only list files the subtask will create or modify.
-- Use `_Files to modify: none_` for read-only validation or final checks.
-- If two new subtasks must modify the same file, merge them or add a dependency.
-- Use 1-3 files per subtask when possible.
-- Keep each subtask independently verifiable.
-- Cover every concrete follow-up requirement with at least one new subtask, or explicitly mark it blocked/out of scope.
-- Each new subtask should be small enough for one focused coding session and include `_Evidence: ..._`, `_Requirements: ..._`, a done signal, and `_Verification: ..._`.
-- Do not rewrite old work to make the append look cleaner.
-- Do not add long rationale, source excerpts, or broad architecture notes.
-
 ## Optional Progress Note
 
-If `build-progress.txt` exists, append a short note:
+If `build-progress.txt` exists, append:
 
 ```md
 === FOLLOW-UP PLANNING ===

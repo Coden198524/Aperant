@@ -60,6 +60,12 @@ const EMPTY_EVIDENCE_TOKENS = new Set([
   'unspecified',
 ]);
 
+const GENERIC_STANDARD_SPEC_EVIDENCE_PATTERN =
+  /\brequirements\.md\s+(?:captures|records|contains)\b.*\b(?:user request|planning constraints?|requirements?)\b|\btasks\.md\s+(?:maps|links|traces)\b.*\bStandard\b|\bUser task description captured by Autocode\b|\bspec\.md planning scope and success criteria\b|requirements\.md\s+记录了本任务的用户请求和规划约束|tasks\.md\s+将实现工作映射回生成的\s*Standard\s*需求|Autocode\s+捕获的用户任务描述|spec\.md\s+中的规划范围和成功标准/iu;
+
+const MANUAL_STANDARD_SPEC_SEED_PATTERN =
+  /\bStandard mode task\b|Standard 标准模式任务|\bUse Standard Autocode planning\b|使用 Autocode Standard 规范流程|Follow the Autocode Standard spec-driven flow/iu;
+
 const TRACEABLE_EVIDENCE_PATTERN =
   /\b(spec\.md|requirements\.md|context\.md|research\.md|agents\.md|readme|official|standard|docs?|source|project)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/i;
 
@@ -74,6 +80,9 @@ const TASK_TITLE_STATE_LABEL_PATTERN =
 
 const READ_ONLY_VALIDATION_TASK_PATTERN =
   /\b(?:validate|verify|verification|manual qa|qa|smoke|test|typecheck|lint|build)\b/i;
+
+const ANALYSIS_DOCUMENTATION_PLAN_PATTERN =
+  /\b(?:analysis|analyze|documentation|docs?|research|investigation|audit|review|report|write[-\s]?up|explain|explanation)\b|分析|文档|说明|调研|研究|审计|复核|报告|梳理|定位/iu;
 
 const LOCALIZED_TASK_DONE_SIGNAL_PATTERN = /完成条件|完成标准|验收标准|验收条件|成功标准/u;
 
@@ -215,16 +224,37 @@ const ARCHITECTURE_REFERENCE_HEADING_PATTERN =
   /^#{2,4}\s+(Architecture|Design\s+Patterns?|Architecture\s+(?:And|&)\s+Design\s+Pattern(?:s)?(?:\s+References?)?|Architecture\s+References?|Design\s+Pattern\s+References?|架构|设计模式)\b/im;
 
 const ARCHITECTURE_REFERENCE_CONTENT_PATTERN =
-  /\b(?:source|project|docs?|memory|Project Memory|Memory Context|workflow recipe|pattern|decision|module insight|general guidance|engineering experience|official|standard|src\/|tests\/)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+|通用工程经验|项目|记忆|源码|参考|模式|架构/iu;
+  /\b(?:source|project|docs?|memory|Project Memory|Memory Context|workflow recipe|pattern|decision|module insight|general guidance|engineering experience|official|standard|src\/|tests\/|spec\.md|requirements\.md|context\.md|MDN|Vite|Playwright)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+|通用工程经验|项目|记忆|源码|参考|模式|架构|来源|证据|官方|文档/iu;
 
 const ARCHITECTURE_BOUNDARY_PATTERN =
-  /\b(?:boundary|layer|module|component|service|adapter|core|domain|state|ui|view|renderer|rendering|input|browser|canvas|persistence|storage|api|ipc|worker|test|contract|model|store|repository|rules?|loop|hud)\b|架构|边界|分层|模块|组件|核心|领域|状态|渲染|输入|浏览器|持久|存储|接口|契约|规则|主循环|界面|测试/u;
+  /\b(?:boundary|layer|module|component|service|adapter|core|domain|state|ui|view|renderer|rendering|input|browser|canvas|persistence|storage|api|ipc|worker|test|contract|model|store|repository|rules?|loop|hud)\b|架构|边界|分层|模块|组件|核心|领域|状态|渲染|输入|浏览器|持久|存储|接口|契约|规则|主循环|界面|页面|验证|测试/u;
 
 const ARCHITECTURE_PATTERN_STRATEGY_PATTERN =
-  /\b(?:pattern|strategy|architecture|separation|separate|decoupl|adapter|facade|repository|state machine|finite state|fsm|reducer|pure function|dependency injection|inject|ports?|event|command|pipeline|orchestrator|service|contract|interface|single responsibility|deterministic|idempotent)\b|模式|策略|分离|解耦|适配器|状态机|纯函数|注入|事件|命令|管道|确定性|幂等|职责/u;
+  /\b(?:pattern|strategy|architecture|separation|separate|decoupl|adapter|facade|repository|state machine|finite state|fsm|reducer|pure function|dependency injection|inject|ports?|event|command|pipeline|orchestrator|service|contract|interface|single responsibility|deterministic|idempotent)\b|模式|策略|分离|解耦|适配器|状态机|纯函数|注入|事件|命令|管道|确定性|幂等|职责|封装|统一|归一|共享|消费|推进|计算|管理|绘制|派生/u;
 
 const TASK_ARCHITECTURE_GUIDANCE_MARKER_PATTERN =
   /\b(?:architecture|architecture\/pattern|design pattern|pattern guidance|boundary\/pattern)\s*:|架构\s*[:：]|设计模式\s*[:：]/iu;
+
+const TASK_ARCHITECTURE_METADATA_LINE_PATTERN =
+  /^\s*(?:[-*]\s*)?(?:[_*`]+)?\s*(?:Architecture|Architecture\/Pattern|Design Pattern|Pattern Guidance|Boundary\/Pattern|\u67B6\u6784|\u8BBE\u8BA1\u6A21\u5F0F)\s*[:\uFF1A]/iu;
+
+const LOCALIZED_TASK_ARCHITECTURE_METADATA_LINE_PATTERN =
+  /^\s*(?:[-*]\s*)?(?:[_*`]+)?\s*(?:\u67B6\u6784|\u8BBE\u8BA1\u6A21\u5F0F)\s*[:\uFF1A]/iu;
+
+const RUNNABLE_DELIVERABLE_FILE_SIGNAL_PATTERN =
+  /\.(?:html?|css|tsx|jsx|vue|svelte)\b|(?:^|[/\\])(?:public|static|assets|web|frontend)(?:[/\\]|$)|(?:^|[/\\])src[/\\](?:cli|command|launcher)\.(?:[cm]?[jt]sx?|py|go|rs|cs)\b/iu;
+
+const RUNNABLE_DELIVERABLE_TEXT_SIGNAL_PATTERN =
+  /\b(?:user[-\s]?facing|browser|web\s?page|webapp|web\s?app|playable|interactive|canvas|cli|command[-\s]?line|launcher|startup|start screen|open path|launch path|dev server|localhost|file:\/\/|electron|smoke test|e2e|end[-\s]?to[-\s]?end)\b|\u7528\u6237\u754c\u9762|\u754c\u9762|\u6d4f\u89c8\u5668|\u7f51\u9875|\u9875\u9762|\u524d\u7aef|\u53ef\u73a9|\u53ef\u7528|\u4ea4\u4e92|\u753b\u5e03|\u547d\u4ee4\u884c|\u542f\u52a8|\u6253\u5f00|\u7aef\u5230\u7aef|\u5192\u70df/iu;
+
+const STATIC_ONLY_VERIFICATION_PATTERN =
+  /\b(?:node\s+--check|tsc\s+--noemit|typecheck|lint|biome|eslint|test-path|get-content|dir\b|ls\b|inspect|review|read|exist(?:s|ence)?|file[-\s]?existence|syntax|static|unit tests?)\b|\u8bed\u6cd5|\u9759\u6001|\u68c0\u67e5\u6587\u4ef6|\u6587\u4ef6\u5b58\u5728|\u67e5\u770b|\u9605\u8bfb/iu;
+
+const RUNTIME_READINESS_VERIFICATION_PATTERN =
+  /\b(?:playwright|cypress|selenium|e2e|end[-\s]?to[-\s]?end|headless|cdp|dev server|localhost|https?:\/\/|file:\/\/|page\.goto|browser smoke|chrome smoke|edge smoke|electron smoke|runtime smoke|startup smoke|open(?:ed)?\s+(?:the\s+)?[^.;\n]{0,80}\b(?:app|page|browser|screen|artifact|index\.html|html)\b|launch(?:ed)?\s+(?:the\s+)?[^.;\n]{0,80}\b(?:app|page|browser|screen|artifact)\b|start(?:ed)?\s+(?:the\s+)?[^.;\n]{0,80}\b(?:app|page|browser|server|cli|command|artifact)\b|manual(?:ly)? (?:opened|launched|started|checked)|cli smoke|command smoke|run(?:s|ning)?\s+(?:the\s+)?[^.;\n]{0,80}\b(?:cli|command|app)\b)\b|\u6253\u5f00(?:\u5e94\u7528|\u9875\u9762|\u6d4f\u89c8\u5668)?|\u542f\u52a8(?:\u5e94\u7528|\u9875\u9762|\u6d4f\u89c8\u5668|\u670d\u52a1|\u547d\u4ee4\u884c)?|\u6d4f\u89c8\u5668\u5192\u70df|\u542f\u52a8\u5192\u70df|\u8fd0\u884c\u5192\u70df|\u771f\u5b9e\u8fd0\u884c|\u7aef\u5230\u7aef|\u5192\u70df/iu;
+
+const RUNTIME_HEALTH_CHECK_PATTERN =
+  /\b(?:console|resource(?:s)?|load(?:ing)?|blank screen|white screen|non[-\s]?blank|render(?:ed|s)?|canvas|startup (?:passed|ok|succeeded)|started successfully|no startup errors?|exit code|exit status|primary path|click(?:ed)?|interact(?:ed|ion)?|no crash|no hang|no runtime errors?|no page errors?|no console errors?|no resource[-\s]?load failures?)\b|\u63a7\u5236\u53f0|\u8d44\u6e90|\u52a0\u8f7d|\u767d\u5c4f|\u7a7a\u767d|\u975e\u7a7a|\u6e32\u67d3|\u753b\u5e03|\u542f\u52a8|\u9000\u51fa\u7801|\u4e3b\u8def\u5f84|\u70b9\u51fb|\u4ea4\u4e92|\u65e0\u5d29\u6e83|\u65e0\u5361\u6b7b|\u65e0\u9519\u8bef/iu;
 
 const PLAN_ARTIFACT_FILE_NAMES = new Set([
   AUTOCODE_TASK_ARTIFACTS.specFile.toLowerCase(),
@@ -296,7 +326,7 @@ export function buildAutocodePlanQualityRetryPrompt(errors: string[]): string {
     'The previous Standard planning artifacts failed quality validation.',
     '',
     'Errors:',
-    ...formatAutocodeRetryErrorLines(errors),
+    ...formatAutocodeRetryErrorLines(errors, { maxCharsPerError: 160 }),
     '',
     'Repair only the affected artifacts with the Write/Edit tools.',
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.specFile} as a compact decision index, not a full analysis dump.`,
@@ -304,15 +334,23 @@ export function buildAutocodePlanQualityRetryPrompt(errors: string[]): string {
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} detailed but compact: split broad work into OpenSpec-grade leaf tasks while keeping each task guidance short.`,
     '- A leaf task should cover one independently reviewable behavior or contract and one focused verification path.',
     '- Split tasks that cover more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files.',
-    '- If split tasks touch the same file, use _Depends on: ..._ to serialize the writes instead of merging independent behavior.',
+    '- If split tasks touch the same file, keep them as separate leaf tasks and add _Depends on: ..._ only for real data, contract, or verification order; the runtime file-conflict scheduler will queue overlapping writes safely.',
     '- Replace generic task text with concrete behavior, affected project boundary, likely files/APIs, and the existing pattern to follow.',
+    `- If ${AUTOCODE_TASK_ARTIFACTS.specFile} is still a manual Standard planning seed, replace or expand it with concrete task-specific requirements, design decisions, acceptance/success criteria, risks or assumptions, and evidence.`,
+    `- Generic Standard Evidence scaffolding is not enough by itself; ${AUTOCODE_TASK_ARTIFACTS.specFile} Evidence must cite the user request, concrete requirements, project files/docs, or verified standards that prove scope and acceptance criteria.`,
     '- For complex or high-risk plans only, include a detailed but compact Architecture And Design Pattern References section in spec.md or tasks.md: 4-8 bullets covering affected boundaries/layers, recommended pattern or strategy, source/docs/Project Memory reference or labeled general guidance, and which task IDs/boundaries should apply it.',
     '- For complex or high-risk plans, each non-read-only executable task must include one short _Architecture: boundary; pattern/strategy; source/reference_ line so implementation agents can apply the guidance directly.',
+    '- Use exactly one architecture metadata line per task and keep the metadata key in English: _Architecture: ..._. Do not use localized keys such as _架构: ..._ or include both labels.',
+    '- For runnable/user-facing deliverables, add runtime-readiness verification that starts/opens the artifact, exercises the primary path, and checks console/resource loading/blank-screen/startup/exit status; node --check, lint, typecheck, file existence, or inspect-only review is not enough.',
     '- Never prefix executable task titles with revision, obsolete, or other state labels. Do not introduce revision/history markers unless real human Request Changes context already requires them.',
+    `- ${AUTOCODE_TASK_ARTIFACTS.requirements} must include concrete User Requirements and Acceptance Criteria; do not leave either section as None when ${AUTOCODE_TASK_ARTIFACTS.tasks} derives requirements or acceptance criteria.`,
+    `- Do not keep the only concrete Requirement Index inside ${AUTOCODE_TASK_ARTIFACTS.tasks}; mirror concrete requirements and acceptance criteria into ${AUTOCODE_TASK_ARTIFACTS.requirements}.`,
     '- Every executable task must include _Requirements: ..._, _Evidence: ..._, a done signal such as _Done when: ..._, and _Verification: ..._.',
     '- Preserve requirement IDs and unaffected design/task content during Request Changes iterations.',
     '- Use Evidence references instead of copying source code or long research notes.',
     '- If evidence is missing, add an assumption/open question or validation task instead of inventing implementation work.',
+    '- For analysis, investigation, report, or documentation-only tasks, keep the final Markdown reader-first: early Conclusion Snapshot, early Main Flow, scenario-based sections, and evidence/verification templates near the end or in appendices.',
+    '- Do not use implementation-contract headings such as inputs/outputs/side effects/lifecycle/errors as the top-level structure for documentation deliverables unless the user explicitly asks for that format.',
   ].join('\n');
 }
 
@@ -328,6 +366,9 @@ function validateComplexPlanArchitectureReferences(input: {
   specMarkdown?: string;
   tasksMarkdown: string;
 }): string[] {
+  if (isDocumentationAnalysisOnlyPlan(input.tasksMarkdown)) {
+    return [];
+  }
   if (!isComplexStandardPlan(input.tasksMarkdown, input.specMarkdown)) {
     return [];
   }
@@ -371,6 +412,66 @@ function isComplexStandardPlan(tasksMarkdown: string, specMarkdown?: string): bo
   const planText = `${singleLine(plan.feature)}\n${tasksMarkdown}\n${specMarkdown ?? ''}`;
   const signalCount = countTermSignals(planText, COMPLEX_PLAN_SIGNAL_TERMS);
   return signalCount >= 4 && (subtasks.length >= 3 || writeIntentFiles.length >= 4);
+}
+
+function isDocumentationAnalysisOnlyPlan(tasksMarkdown: string): boolean {
+  let plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>;
+  try {
+    plan = parseAutocodeImplementationPlanMarkdown(tasksMarkdown);
+  } catch {
+    return false;
+  }
+
+  const subtasks = getPlanSubtasks(plan);
+  if (subtasks.length === 0) {
+    return false;
+  }
+
+  const writeIntentFiles = uniqueStringArray(subtasks.flatMap((subtask) => [
+    ...stringArrayField(subtask.files),
+    ...stringArrayField(subtask.files_to_create),
+    ...stringArrayField(subtask.files_to_modify),
+  ])).filter((item) => !EMPTY_EVIDENCE_TOKENS.has(item.toLowerCase()));
+
+  if (writeIntentFiles.some((file) => !isDocumentationWriteIntentFile(file))) {
+    return false;
+  }
+
+  const planText = [
+    singleLine(plan.feature),
+    singleLine(plan.description),
+    singleLine(plan.workflow_type),
+    tasksMarkdown,
+  ].join('\n');
+
+  if (ANALYSIS_DOCUMENTATION_PLAN_PATTERN.test(planText)) {
+    return true;
+  }
+
+  return writeIntentFiles.length > 0 &&
+    subtasks.every((subtask) => isDocumentationAnalysisTask(subtask as Record<string, unknown>));
+}
+
+function isDocumentationAnalysisTask(subtask: Record<string, unknown>): boolean {
+  const taskText = [
+    stringifyTaskValue(subtask.title),
+    stringifyTaskValue(subtask.description),
+    stringifyTaskValue(subtask.evidence),
+    stringifyTaskValue(subtask.verification),
+  ].join(' ');
+  return ANALYSIS_DOCUMENTATION_PLAN_PATTERN.test(taskText);
+}
+
+function isDocumentationWriteIntentFile(file: string): boolean {
+  const normalized = file
+    .replace(/[`*_]/g, '')
+    .replace(/\\/g, '/')
+    .trim()
+    .toLowerCase();
+  if (!normalized || EMPTY_EVIDENCE_TOKENS.has(normalized)) {
+    return true;
+  }
+  return /\.(?:md|mdx|txt|rst|adoc)$/.test(normalized);
 }
 
 function getPlanWriteBoundaryCount(files: string[]): number {
@@ -477,13 +578,15 @@ function validateComplexTaskArchitectureGuidance(tasksMarkdown: string): string[
 }
 
 function hasTaskArchitectureGuidance(subtask: Record<string, unknown>): boolean {
+  const architecture = stringifyTaskValue(subtask.architecture);
   const text = [
     stringifyTaskValue(subtask.title),
     stringifyTaskValue(subtask.description),
+    architecture,
     stringifyTaskValue(subtask.evidence),
     ...stringArrayField(subtask.pattern_files),
   ].join('\n');
-  if (!TASK_ARCHITECTURE_GUIDANCE_MARKER_PATTERN.test(text)) {
+  if (!architecture && !TASK_ARCHITECTURE_GUIDANCE_MARKER_PATTERN.test(text)) {
     return false;
   }
   return ARCHITECTURE_BOUNDARY_PATTERN.test(text) &&
@@ -590,6 +693,11 @@ function validateSpecEvidence(specMarkdown: string): string[] {
   const hasGlobalEvidence = Boolean(evidenceSection && /(?:^|\n)\s*(?:[-*]|\d+\.)\s+\S/.test(evidenceSection));
   if (!/^\s*##\s+Evidence\b/im.test(specMarkdown)) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} missing "## Evidence" section.`);
+  } else if (hasOnlyGenericStandardSpecEvidence(evidenceSection)) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} Evidence section is only generic Standard scaffolding; cite the user request, concrete requirements, project files/docs, or verified standards that prove scope and acceptance criteria.`);
+  }
+  if (isManualStandardSpecSeed(specMarkdown)) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} is still the manual Standard planning seed; replace it with a concrete Standard spec that records requirements, design decisions, acceptance/success criteria, risks or assumptions, and evidence before planning.`);
   }
   if (hasSectionContent(specMarkdown, 'Requirements') && !sectionContainsEvidence(specMarkdown, 'Requirements') && !hasGlobalEvidence) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} Requirements section must cite Evidence for requirements or acceptance criteria.`);
@@ -600,12 +708,123 @@ function validateSpecEvidence(specMarkdown: string): string[] {
   return errors;
 }
 
+function hasOnlyGenericStandardSpecEvidence(evidenceSection: string): boolean {
+  const bullets = evidenceSection
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+\.)\s+/, '').trim())
+    .filter(Boolean);
+  return bullets.length > 0 && bullets.every((line) => GENERIC_STANDARD_SPEC_EVIDENCE_PATTERN.test(line));
+}
+
+function isManualStandardSpecSeed(specMarkdown: string): boolean {
+  return MANUAL_STANDARD_SPEC_SEED_PATTERN.test(specMarkdown) &&
+    !hasSectionContent(specMarkdown, 'Requirements') &&
+    !hasSectionContent(specMarkdown, 'Design Notes') &&
+    !hasSectionContent(specMarkdown, 'Implementation Notes') &&
+    !hasSectionContent(specMarkdown, 'Success Criteria');
+}
+
 function validateRequirementsEvidence(requirementsMarkdown: string): string[] {
+  const errors: string[] = [];
   const evidenceSection = getMarkdownSection(requirementsMarkdown, 'Evidence Sources');
   if (!evidenceSection || !/-\s+\S/.test(evidenceSection)) {
-    return [`${AUTOCODE_TASK_ARTIFACTS.requirements} missing non-empty "Evidence Sources" section.`];
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.requirements} missing non-empty "Evidence Sources" section.`);
   }
-  return [];
+
+  if (!hasMeaningfulRequirementsSection(requirementsMarkdown, 'User Requirements', ['Requirements'])) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.requirements} User Requirements section must list at least one concrete requirement; do not leave it as None when tasks.md derives requirements.`);
+  }
+  if (!hasMeaningfulRequirementsSection(requirementsMarkdown, 'Acceptance Criteria')) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.requirements} Acceptance Criteria section must list at least one concrete acceptance criterion; do not leave it as None when tasks.md derives acceptance criteria.`);
+  }
+
+  return errors;
+}
+
+function hasMeaningfulRequirementsSection(markdown: string, heading: string, fallbackHeadings: string[] = []): boolean {
+  const sections = [heading, ...fallbackHeadings]
+    .map((candidate) => getMarkdownSection(markdown, candidate))
+    .filter(Boolean);
+  return sections.some((section) => hasMeaningfulRequirementList(section) || hasMeaningfulRequirementSubsection(section, heading));
+}
+
+function isMeaningfulRequirementListItem(value: string): boolean {
+  const raw = singleLine(value);
+  const text = raw.toLowerCase();
+  return raw.length >= 4 &&
+    !EMPTY_EVIDENCE_TOKENS.has(text) &&
+    !/^(?:no requirements?|none identified|not applicable)$/i.test(text);
+}
+
+function hasMeaningfulRequirementList(section: string): boolean {
+  return section
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*(?:[-*]|\d+\.)\s+(.*?)\s*$/)?.[1] ?? '')
+    .some(isMeaningfulRequirementListItem);
+}
+
+function hasMeaningfulRequirementSubsection(section: string, parentHeading: string): boolean {
+  const isAcceptanceSection = /acceptance/i.test(parentHeading);
+  const lines = section.replace(/\r\n/g, '\n').split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const headingMatch = /^\s*#{3,6}\s+(.+?)\s*$/.exec(lines[index]);
+    if (!headingMatch) {
+      continue;
+    }
+
+    const headingText = singleLine(headingMatch[1]);
+    if (!isRequirementSubsectionHeading(headingText, isAcceptanceSection)) {
+      continue;
+    }
+
+    const headingPayload = normalizeRequirementSubsectionHeading(headingText, isAcceptanceSection);
+    if (!isAcceptanceSection && isMeaningfulRequirementListItem(headingPayload)) {
+      return true;
+    }
+
+    const bodyLines: string[] = [];
+    for (let bodyIndex = index + 1; bodyIndex < lines.length; bodyIndex += 1) {
+      if (/^\s*#{3,6}\s+/.test(lines[bodyIndex])) {
+        break;
+      }
+      bodyLines.push(lines[bodyIndex]);
+    }
+    if (hasMeaningfulRequirementParagraph(bodyLines.join('\n'))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isRequirementSubsectionHeading(headingText: string, isAcceptanceSection: boolean): boolean {
+  return isAcceptanceSection
+    ? /\b(?:AC\d+(?:\.\d+)?|Acceptance\s+Criteria?|Acceptance\s+Criterion)\b/i.test(headingText)
+    : /\b(?:R\d+(?:\.\d+)?|Requirement\s+\d+|User\s+Requirement\s+\d+)\b/i.test(headingText);
+}
+
+function normalizeRequirementSubsectionHeading(headingText: string, isAcceptanceSection: boolean): string {
+  const withoutId = headingText
+    .replace(/\bR\d+(?:\.\d+)?\b/gi, ' ')
+    .replace(/\bAC\d+(?:\.\d+)?\b/gi, ' ');
+  if (!isAcceptanceSection) {
+    return withoutId
+      .replace(/\b(?:User\s+Requirements?|Requirements?)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  return withoutId
+    .replace(/\b(?:Acceptance\s+Criteria|Acceptance\s+Criterion)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasMeaningfulRequirementParagraph(section: string): boolean {
+  return section
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+\.)\s+/, '').trim())
+    .filter((line) => line && !/^\s*#{1,6}\s+/.test(line))
+    .some((line) => isMeaningfulRequirementListItem(line) && singleLine(line).length >= 12);
 }
 
 function validateTasksEvidence(tasksMarkdown: string): string[] {
@@ -621,6 +840,8 @@ function validateTasksEvidence(tasksMarkdown: string): string[] {
   if (subtasks.length === 0) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} contains no executable subtasks.`);
   }
+  errors.push(...validateDuplicateTaskArchitectureMetadata(tasksMarkdown));
+  errors.push(...validateTaskArchitectureMetadataLabels(tasksMarkdown));
 
   for (const subtask of subtasks) {
     const record = subtask as Record<string, unknown>;
@@ -643,7 +864,61 @@ function validateTasksEvidence(tasksMarkdown: string): string[] {
   }
   errors.push(...validateTaskProjectSpecificity(plan));
   errors.push(...validateTaskGranularity(plan));
+  errors.push(...validateRunnableRuntimeVerification(plan));
   return errors;
+}
+
+function validateDuplicateTaskArchitectureMetadata(tasksMarkdown: string): string[] {
+  const errors: string[] = [];
+  for (const block of getTaskMarkdownBlocks(tasksMarkdown)) {
+    const architectureLineCount = block.lines.filter(isTaskArchitectureMetadataLine).length;
+    if (architectureLineCount > 1) {
+      errors.push(
+        `${AUTOCODE_TASK_ARTIFACTS.tasks} task ${block.id} has duplicate architecture metadata; use exactly one _Architecture: ..._ line and keep the metadata key in English.`,
+      );
+    }
+  }
+  return errors;
+}
+
+function validateTaskArchitectureMetadataLabels(tasksMarkdown: string): string[] {
+  const errors: string[] = [];
+  for (const block of getTaskMarkdownBlocks(tasksMarkdown)) {
+    if (block.lines.some(isLocalizedTaskArchitectureMetadataLine)) {
+      errors.push(
+        `${AUTOCODE_TASK_ARTIFACTS.tasks} task ${block.id} uses localized architecture metadata; use _Architecture: ..._ so task metadata keys stay consistent with Depends on, Requirements, Evidence, Done when, and Verification.`,
+      );
+    }
+  }
+  return errors;
+}
+
+function getTaskMarkdownBlocks(markdown: string): Array<{ id: string; lines: string[] }> {
+  const blocks: Array<{ id: string; lines: string[] }> = [];
+  let current: { id: string; lines: string[] } | null = null;
+  for (const rawLine of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    const match = /^\s*-\s+\[[ xX/!\-]\]\s+([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(?:\.)?\s+/.exec(rawLine);
+    if (match) {
+      if (current) {
+        blocks.push(current);
+      }
+      current = { id: match[1], lines: [] };
+      continue;
+    }
+    current?.lines.push(rawLine);
+  }
+  if (current) {
+    blocks.push(current);
+  }
+  return blocks;
+}
+
+function isTaskArchitectureMetadataLine(line: string): boolean {
+  return TASK_ARCHITECTURE_METADATA_LINE_PATTERN.test(line);
+}
+
+function isLocalizedTaskArchitectureMetadataLine(line: string): boolean {
+  return LOCALIZED_TASK_ARCHITECTURE_METADATA_LINE_PATTERN.test(line);
 }
 
 function validateTaskProjectSpecificity(plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>): string[] {
@@ -705,6 +980,70 @@ function validateTaskGranularity(plan: ReturnType<typeof parseAutocodeImplementa
   return errors;
 }
 
+function validateRunnableRuntimeVerification(plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>): string[] {
+  const subtasks = getPlanSubtasks(plan);
+  const runnableTasks = subtasks.filter(isRunnableDeliverableTask);
+  if (runnableTasks.length === 0) {
+    return [];
+  }
+
+  const runtimeVerificationTasks = subtasks.filter(hasRuntimeReadinessVerification);
+  if (runtimeVerificationTasks.length > 0) {
+    return [];
+  }
+
+  const runnableIds = runnableTasks
+    .map((subtask) => singleLine(subtask.id) || 'unknown')
+    .slice(0, 8)
+    .join(', ');
+  return [
+    `${AUTOCODE_TASK_ARTIFACTS.tasks} describes runnable/user-facing deliverable task(s) (${runnableIds}) but has no runtime-readiness verification; add a leaf task or verification that starts/opens the artifact, exercises the primary path, and checks console/resource loading/blank-screen/startup/exit status. Static checks such as node --check, lint, typecheck, file existence, or inspect-only verification are not enough.`,
+  ];
+}
+
+function isRunnableDeliverableTask(subtask: Record<string, unknown>): boolean {
+  const narrativeText = [
+    stringifyTaskValue(subtask.title),
+    stringifyTaskValue(subtask.description),
+    stringifyTaskValue(subtask.evidence),
+    stringifyTaskValue(subtask.verification),
+  ].join(' ');
+  const fileText = [
+    ...stringArrayField(subtask.files),
+    ...stringArrayField(subtask.files_to_create),
+    ...stringArrayField(subtask.files_to_modify),
+  ].join(' ');
+
+  if (
+    !RUNNABLE_DELIVERABLE_FILE_SIGNAL_PATTERN.test(fileText) &&
+    !RUNNABLE_DELIVERABLE_TEXT_SIGNAL_PATTERN.test(narrativeText)
+  ) {
+    return false;
+  }
+  if (isReadOnlyValidationTask(subtask, singleLine(subtask.title), singleLine(subtask.description))) {
+    return true;
+  }
+  return true;
+}
+
+function hasRuntimeReadinessVerification(subtask: Record<string, unknown>): boolean {
+  const text = [
+    stringifyTaskValue(subtask.title),
+    stringifyTaskValue(subtask.description),
+    stringifyTaskValue(subtask.verification),
+    stringifyTaskValue(subtask.completion_summary),
+    stringifyTaskValue(subtask.notes),
+  ].join(' ');
+  return RUNTIME_READINESS_VERIFICATION_PATTERN.test(text) &&
+    RUNTIME_HEALTH_CHECK_PATTERN.test(text) &&
+    !isStaticOnlyVerificationOnly(text);
+}
+
+function isStaticOnlyVerificationOnly(text: string): boolean {
+  return STATIC_ONLY_VERIFICATION_PATTERN.test(text) &&
+    !RUNTIME_READINESS_VERIFICATION_PATTERN.test(text);
+}
+
 interface TaskGranularityMetrics {
   behaviorSignals: number;
   boundarySignals: number;
@@ -719,18 +1058,49 @@ function analyzeTaskGranularity(
   title: string,
   description: string,
 ): TaskGranularityMetrics {
-  const taskText = `${title}\n${description}`;
+  const granularityDescription = stripTaskMetadataLinesForGranularity(description);
+  const taskText = `${title}\n${granularityDescription}`;
   return {
     behaviorSignals: countTermSignals(taskText, TASK_GRANULARITY_ACTION_TERMS),
     boundarySignals: countTermSignals(taskText, TASK_GRANULARITY_BOUNDARY_TERMS),
     requirementReferences: estimateTaskRequirementReferenceCount(subtask),
     writeIntentFiles: countTaskWriteIntentFiles(subtask),
     listSeparators: countTaskListSeparators(taskText),
-    descriptionChars: description.length,
+    descriptionChars: granularityDescription.length,
   };
 }
 
+function stripTaskMetadataLinesForGranularity(description: string): string {
+  return description
+    .split(/\r?\n/)
+    .filter((line) => !isTaskMetadataLineForGranularity(line))
+    .join('\n');
+}
+
+function isTaskMetadataLineForGranularity(line: string): boolean {
+  if (isTaskArchitectureMetadataLine(line)) {
+    return true;
+  }
+  return /^\s*(?:[-*]\s*)?(?:[_*`]+)?\s*(?:Architecture|Architecture\/Pattern|Design Pattern|Boundary\/Pattern|Files?|Files to create\/modify|Files to modify|Files to create|Depends on|Requirements?|Acceptance Criteria|Evidence|Done when|Complete when|Finished when|Completion Criteria|Success Criteria|Verification|Validation|Pattern files)\s*[:\uFF1A]/iu.test(line);
+}
+
 function isTaskTooBroad(metrics: TaskGranularityMetrics): boolean {
+  if (
+    metrics.behaviorSignals <= 6 &&
+    metrics.requirementReferences <= 2 &&
+    metrics.writeIntentFiles <= 2
+  ) {
+    return false;
+  }
+  if (
+    metrics.behaviorSignals <= 7 &&
+    metrics.requirementReferences <= 2 &&
+    metrics.writeIntentFiles <= 4 &&
+    metrics.descriptionChars <= 280 &&
+    metrics.listSeparators <= 5
+  ) {
+    return false;
+  }
   if (metrics.behaviorSignals >= 8) {
     return true;
   }
@@ -939,8 +1309,8 @@ function countTaskWriteIntentFiles(subtask: Record<string, unknown>): number {
 }
 
 function countTaskListSeparators(text: string): number {
-  const separators = text.match(/[、，,;；]/gu) ?? [];
-  const conjunctions = text.match(/\b(?:and|plus)\b|以及|并且|同时/uig) ?? [];
+  const separators = text.match(/[\u3001\uFF0C,;\uFF1B]/gu) ?? [];
+  const conjunctions = text.match(/\b(?:and|plus)\b|\u4EE5\u53CA|\u5E76\u4E14|\u540C\u65F6/giu) ?? [];
   return separators.length + conjunctions.length;
 }
 

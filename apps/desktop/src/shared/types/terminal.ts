@@ -129,6 +129,8 @@ export interface RateLimitInfo {
 export interface SDKRateLimitInfo {
   /** Source of the rate limit (which feature hit it) */
   source: 'changelog' | 'task' | 'roadmap' | 'ideation' | 'title-generator' | 'other';
+  /** Provider that owns the limit */
+  provider?: 'anthropic' | 'openai' | 'unknown';
   /** Project ID if applicable */
   projectId?: string;
   /** Task ID if applicable */
@@ -138,7 +140,7 @@ export interface SDKRateLimitInfo {
   /** Type of limit: 'session' (5-hour) or 'weekly' (7-day) */
   limitType?: 'session' | 'weekly';
   /** Profile that hit the limit */
-  profileId: string;
+  profileId?: string;
   /** Profile name for display */
   profileName?: string;
   /** Suggested alternative profile */

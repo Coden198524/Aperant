@@ -60,7 +60,8 @@ type ChangeRequestFlowDocument =
   | 'tasks.md'
   | 'implementation_plan.md'
   | 'qa_report.md'
-  | 'direct_summary.md';
+  | 'direct_summary.md'
+  | 'direct_session.json';
 
 interface ChangeRequestIterationPlan {
   mode: 'standard-planning' | 'standard-implementation' | 'direct-implementation';
@@ -211,6 +212,10 @@ function isStandardWorkflowTask(task: Task): boolean {
 }
 
 function isPlanReviewRequest(task: Task, currentXState?: string | null): boolean {
+  if (isDirectWorkflowTask(task)) {
+    return false;
+  }
+
   if (currentXState === 'plan_review' || task.reviewReason === 'plan_review') {
     return true;
   }
@@ -373,6 +378,13 @@ function shouldRegeneratePlanForFeedback(task: Task, impacts: ChangeRequestImpac
   return false;
 }
 
+function normalizeDirectChangeImpacts(impacts: ChangeRequestImpact[]): ChangeRequestImpact[] {
+  const directImpacts = impacts.filter((impact) =>
+    impact === 'implementation' || impact === 'validation'
+  );
+  return directImpacts.length > 0 ? directImpacts : ['implementation'];
+}
+
 function createChangeRequestRecord(input: {
   task: Task;
   feedback: string;
@@ -443,8 +455,10 @@ function buildChangeRequestIterationPlan(
   }
 
   flowDocuments.add('direct_summary.md');
+  flowDocuments.add('direct_session.json');
+  requiredActions.add('Continue the existing Direct model session when provider continuation is available; otherwise continue from the saved Direct session summary.');
   requiredActions.add('Handle the feedback in one direct implementation pass.');
-  requiredActions.add('Do not create a new task unless the user explicitly asks for one.');
+  requiredActions.add('Do not create planning artifacts, work packages, or a new task unless the user explicitly asks for one.');
   validation.add('Run one relevant validation check, or record why validation was not possible.');
 
   return {
@@ -452,7 +466,7 @@ function buildChangeRequestIterationPlan(
     flowDocuments: orderChangeRequestFlowDocuments(flowDocuments),
     requiredActions: Array.from(requiredActions),
     validation: Array.from(validation),
-    commitPolicy: 'Use the normal task commit flow after validation if commits are enabled; do not push automatically.',
+    commitPolicy: 'Keep the iteration in the same Direct task session after validation if commits are enabled; do not push automatically.',
   };
 }
 
@@ -468,6 +482,7 @@ function orderChangeRequestFlowDocuments(
     'implementation_plan.md',
     'qa_report.md',
     'direct_summary.md',
+    'direct_session.json',
   ];
   return order.filter((document) => documents.has(document));
 }
@@ -477,8 +492,12 @@ function buildIterationProtocolSection(changeRequest?: ChangeRequestRecord): str
     return '';
   }
 
+  const protocolTitle = changeRequest.iteration.mode === 'direct-implementation'
+    ? 'Direct Iteration Protocol'
+    : 'Standard Iteration Protocol';
+
   return (
-    `## Standard Iteration Protocol\n\n` +
+    `## ${protocolTitle}\n\n` +
     `- Mode: ${changeRequest.iteration.mode}\n` +
     `- Flow/runtime documents involved: ${changeRequest.iteration.flowDocuments.join(', ')}\n` +
     `- Validation: ${changeRequest.iteration.validation.join('; ')}\n` +
@@ -564,6 +583,38 @@ function buildHumanInputContent(
     `- Re-run the relevant build/test/validation steps.\n` +
     `- Keep this iteration commit-ready: after validation passes, use the normal task commit flow when commits are enabled.\n` +
     `- Update implementation_plan.md as you make progress and record any affected subtask as needs_revision only in its description or completion note, never in the title.\n`
+  );
+}
+
+function buildDirectHumanInputContent(
+  feedback: string,
+  imageReferences: string,
+  changeRequest: ChangeRequestRecord,
+): string {
+  const changeRequestSection =
+    `## Change Request\n\n` +
+    `- ID: ${changeRequest.id}\n` +
+    `- Created: ${changeRequest.createdAt}\n` +
+    `- Scope: ${changeRequest.scope}\n` +
+    `- Impact analysis: ${changeRequest.impacts.join(', ') || 'implementation'}\n` +
+    `- Audit trail: ${CHANGE_REQUESTS_LOG_FILE}\n\n`;
+  const iterationProtocolSection = buildIterationProtocolSection(changeRequest);
+
+  return (
+    `# Human Input\n\n` +
+    `The user reviewed the previous Direct implementation and requested a focused continuation.\n\n` +
+    changeRequestSection +
+    iterationProtocolSection +
+    `## Requested Changes\n\n` +
+    `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
+    `## Direct Instructions\n\n` +
+    `- Continue the existing Direct task session when provider continuation is available; otherwise use direct_session.json and direct_summary.md as compact continuation context.\n` +
+    `- Apply only the latest requested changes unless the feedback explicitly asks to revisit earlier behavior.\n` +
+    `- Do not create planning artifacts, work packages, or a separate task for this iteration.\n` +
+    `- Preserve accepted behavior from the previous Direct implementation unless this feedback overrides it.\n` +
+    `- Inspect only the files needed to understand and fix the reported issue.\n` +
+    `- Run one focused validation check when practical, or record why validation was not possible.\n` +
+    `- Update direct_summary.md with what changed and the validation result.\n`
   );
 }
 
@@ -1244,17 +1295,19 @@ export function registerTaskExecutionHandlers(
       const hasWorktree = worktreePath !== null;
 
       if (approved) {
-        // Write approval to QA report
-        const qaReportPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.qaReport);
-        try {
-          writeFileSync(
-            qaReportPath,
-            `# QA Review\n\nStatus: APPROVED\n\nReviewed at: ${new Date().toISOString()}\n`,
-            'utf-8'
-          );
-        } catch (error) {
-          console.error('[TASK_REVIEW] Failed to write QA report:', error);
-          return { success: false, error: 'Failed to write QA report file' };
+        if (!isDirectWorkflowTask(task)) {
+          // Write approval to QA report for Standard workflow tasks.
+          const qaReportPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.qaReport);
+          try {
+            writeFileSync(
+              qaReportPath,
+              `# QA Review\n\nStatus: APPROVED\n\nReviewed at: ${new Date().toISOString()}\n`,
+              'utf-8'
+            );
+          } catch (error) {
+            console.error('[TASK_REVIEW] Failed to write QA report:', error);
+            return { success: false, error: 'Failed to write QA report file' };
+          }
         }
 
         taskStateManager.handleUiEvent(
@@ -1265,8 +1318,9 @@ export function registerTaskExecutionHandlers(
         );
       } else {
         const currentXState = taskStateManager.getCurrentState(taskId, project.id);
+        const isDirectReview = isDirectWorkflowTask(task);
         const isPlanReview = isPlanReviewRequest(task, currentXState);
-        const isErrorRecovery = currentXState === 'error' || task.reviewReason === 'errors';
+        const isErrorRecovery = !isDirectReview && (currentXState === 'error' || task.reviewReason === 'errors');
         const needsImplementationRestart = task.status === 'human_review'
           && !isPlanReview
           && !isErrorRecovery;
@@ -1435,6 +1489,78 @@ export function registerTaskExecutionHandlers(
           } catch (dirError) {
             console.error('[TASK_REVIEW] Failed to create attachments directory:', dirError);
           }
+        }
+
+        if (isDirectReview) {
+          const reviewFeedback = feedback || 'No feedback provided';
+          const changeImpacts = normalizeDirectChangeImpacts(
+            classifyChangeRequestImpact(task, reviewFeedback, 'implementation')
+          );
+          const changeRequest = createChangeRequestRecord({
+            task,
+            feedback: reviewFeedback,
+            imageReferences,
+            scope: 'implementation',
+            impacts: changeImpacts,
+          });
+          const humanInputContent = buildDirectHumanInputContent(
+            reviewFeedback,
+            imageReferences,
+            changeRequest,
+          );
+          const humanInputPaths = new Set<string>([
+            path.join(targetSpecDir, 'HUMAN_INPUT.md'),
+            path.join(specDir, 'HUMAN_INPUT.md'),
+          ]);
+          writeChangeRequestArtifacts([targetSpecDir, specDir], changeRequest);
+
+          for (const humanInputPath of humanInputPaths) {
+            try {
+              writeFileSync(humanInputPath, humanInputContent, 'utf-8');
+            } catch (error) {
+              console.error('[TASK_REVIEW] Failed to write Direct HUMAN_INPUT.md:', error);
+              return { success: false, error: 'Failed to write human input file' };
+            }
+          }
+
+          taskStateManager.prepareForRestart(taskId, project.id);
+          if (currentXState === 'plan_review') {
+            taskStateManager.handleUiEvent(
+              taskId,
+              {
+                type: 'CODING_STARTED',
+                subtaskId: 'direct-implementation',
+                subtaskDescription: 'Direct model continuation',
+              },
+              task,
+              project
+            );
+          } else {
+            taskStateManager.handleUiEvent(
+              taskId,
+              { type: 'USER_RESUMED' },
+              task,
+              project
+            );
+          }
+          projectStore.invalidateTasksCache(project.id);
+
+          const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
+          fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
+            console.error(`[TASK_REVIEW] Failed to watch Direct spec dir for ${taskId}:`, err);
+          });
+
+          try {
+            await agentManager.startDirectTaskExecution(taskId, project.path, task.specId, {}, project.id);
+          } catch (error) {
+            console.error('[TASK_REVIEW] Failed to restart Direct execution after review feedback:', error);
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : 'Failed to restart direct task execution'
+            };
+          }
+
+          return { success: true };
         }
 
         if (isPlanReview) {

@@ -24,7 +24,7 @@ export function createAutocodeAdaptiveConcurrency<TSession extends { outcome: st
   maxWorkers: number,
   log: (message: string) => void,
 ) {
-  let workers = maxWorkers > 2 ? 2 : maxWorkers;
+  let workers = Math.max(1, Math.floor(maxWorkers || 1));
   let cleanConcurrentGroups = 0;
 
   return {

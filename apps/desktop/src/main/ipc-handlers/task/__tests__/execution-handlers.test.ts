@@ -768,6 +768,117 @@ describe('registerTaskExecutionHandlers', () => {
     expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();
   });
 
+  it('restarts direct Request Changes as a direct continuation without Standard planning artifacts', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { appendFileSync, existsSync, writeFileSync } = await import('fs');
+    const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
+
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-direct-review',
+        specId: '001-direct-review',
+        projectId: 'project-fast',
+        title: 'Direct review task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'completed',
+        subtasks: [{ id: 'direct-implementation', title: 'Direct model execution', description: 'desc', status: 'completed', files: [] }],
+        logs: [],
+        metadata: { workflowMode: 'off', developmentMode: 'direct' },
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (existsSync as Mock).mockReturnValue(true);
+
+    const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
+    const result = await reviewHandler({}, '001-direct-review', false, 'Keep the original context and fix the start button.');
+
+    expect(result).toEqual({ success: true });
+    const humanInputWrites = (writeFileSync as Mock).mock.calls
+      .filter(([filePath]) => String(filePath).includes('HUMAN_INPUT.md'))
+      .map(([, content]) => String(content));
+    expect(humanInputWrites.length).toBeGreaterThan(0);
+    expect(humanInputWrites[0]).toContain('Direct Iteration Protocol');
+    expect(humanInputWrites[0]).toContain('direct_session.json');
+    expect(humanInputWrites[0]).toContain('Continue the existing Direct task session');
+    expect(humanInputWrites[0]).not.toContain('Standard Iteration Protocol');
+    expect(humanInputWrites[0]).not.toContain('implementation_plan.md');
+    expect(appendFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('change_requests.jsonl'),
+      expect.stringContaining('"mode":"direct-implementation"'),
+      'utf-8'
+    );
+    expect(appendFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('change_requests.jsonl'),
+      expect.stringContaining('direct_session.json'),
+      'utf-8'
+    );
+    expect(writeFileAtomicSync).not.toHaveBeenCalled();
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-direct-review',
+      { type: 'USER_RESUMED' },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(mockAgentManager.startDirectTaskExecution).toHaveBeenCalledWith(
+      '001-direct-review',
+      'E:/Work/FastProject',
+      '001-direct-review',
+      {},
+      'project-fast',
+    );
+    expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();
+    expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
+  });
+
+  it('approves direct review without writing QA artifacts', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { writeFileSync } = await import('fs');
+
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-direct-approve',
+        specId: '001-direct-approve',
+        projectId: 'project-fast',
+        title: 'Direct approve task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'completed',
+        subtasks: [{ id: 'direct-implementation', title: 'Direct model execution', description: 'desc', status: 'completed', files: [] }],
+        logs: [],
+        metadata: { workflowMode: 'off', developmentMode: 'direct' },
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+
+    const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
+    const result = await reviewHandler({}, '001-direct-approve', true);
+
+    expect(result).toEqual({ success: true });
+    expect((writeFileSync as Mock).mock.calls.some(([filePath]) =>
+      String(filePath).includes('qa_report.md')
+    )).toBe(false);
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-direct-approve',
+      { type: 'MARK_DONE' },
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
   it('restarts coding for qa_rejected human review Request Changes', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');

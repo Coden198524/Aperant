@@ -93,6 +93,7 @@ export const taskMachine = createMachine(
         on: {
           PLANNING_STARTED: { target: 'planning', actions: 'clearReviewReason' },
           PLAN_APPROVED: { target: 'coding', actions: 'clearReviewReason' },
+          CODING_STARTED: { target: 'coding', actions: 'clearReviewReason' },
           USER_STOPPED: { target: 'backlog', actions: 'clearReviewReason' },
           PROCESS_EXITED: { target: 'error', guard: 'unexpectedExit', actions: 'setReviewReasonErrors' }
         }

@@ -245,8 +245,48 @@ describe('agent documentation quality integration', () => {
         '| Item | Details |',
         '| --- | --- |',
         '| What changed | Updated `src/index.html` and `src/game.js`. |',
+        '| Verification | Opened the page in Chrome with browser smoke. |',
+        '| Review notes | No residual startup risks. |',
+      ].join('\n'),
+    ).join('\n')).toContain('startup/open result plus console/resource-load/blank-screen');
+
+    expect(validateAutocodeRuntimeReadinessSummary(
+      subtask,
+      [
+        '| Item | Details |',
+        '| --- | --- |',
+        '| What changed | Updated `src/index.html` and `src/game.js`. |',
         '| Verification | Opened the page in Chrome with a browser smoke test; canvas rendered and no console errors were observed. |',
         '| Review notes | No residual startup risks. |',
+      ].join('\n'),
+    )).toEqual([]);
+  });
+
+  it('requires non-web runnable CLI work to include startup and exit-code evidence', () => {
+    const subtask = {
+      description: 'Create a command-line report generator.',
+      filesToCreate: ['src/cli.js'],
+    };
+
+    expect(validateAutocodeRuntimeReadinessSummary(
+      subtask,
+      [
+        '| Item | Details |',
+        '| --- | --- |',
+        '| What changed | Created `src/cli.js`. |',
+        '| Verification | Ran `node --check src/cli.js`. |',
+        '| Review notes | No residual syntax risks. |',
+      ].join('\n'),
+    ).join('\n')).toContain('actual launch/open/browser/CLI smoke check');
+
+    expect(validateAutocodeRuntimeReadinessSummary(
+      subtask,
+      [
+        '| Item | Details |',
+        '| --- | --- |',
+        '| What changed | Created `src/cli.js`. |',
+        '| Verification | Ran the CLI command smoke with sample input; primary path completed with exit code 0 and no startup errors. |',
+        '| Review notes | No residual command startup risks. |',
       ].join('\n'),
     )).toEqual([]);
   });
@@ -267,6 +307,69 @@ describe('agent documentation quality integration', () => {
     );
 
     expect(issues.join('\n')).toContain('failed runnable verification');
+  });
+
+  it('does not require runtime-readiness for read-only analysis subtasks that intentionally avoid live requests', () => {
+    const subtask = {
+      description: [
+        '工作包：定位全服邮件端点元数据和 call_api 分支选择。',
+        '只读复核 world_api_controller.rb 中页面选择端点后的参数边界。',
+        'Verification: 只读打开相关文件行号，不提交 POST /world_api/call，不执行真实 controller 请求。',
+      ].join('\n'),
+      filesToCreate: [],
+      filesToModify: [],
+    };
+    const summary = [
+      '| Item | Details |',
+      '| --- | --- |',
+      '| What changed | 只读完成 `wp-1`，未修改业务代码。 |',
+      '| Verification | 只读复核 `world_api_controller.rb:367-379` 与 `:1332-1395`；未提交 `POST /world_api/call`，未执行真实 controller 请求。 |',
+      '| Review notes | 确认 direct 分支会调用 `handle_direct_query` 后立即 return。 |',
+    ].join('\n');
+
+    expect(validateAutocodeRuntimeReadinessSummary(subtask, summary)).toEqual([]);
+    expect(validateAutocodeCodingSummary(subtask, summary)).toEqual([]);
+  });
+
+  it('treats markdown analysis output tasks as documentation even when they mention pages or requests', () => {
+    const subtask = {
+      description: [
+        'Write the page feedback and response-risk section into the analysis report.',
+        'Explain why the controller request can wait for all characters before the page renders a response.',
+        'Do not submit POST /world_api/call or execute a live controller request.',
+      ].join('\n'),
+      filesToCreate: [],
+      filesToModify: ['Z:/code/sgsj/shanggushiji/.autocode/specs/003-task/analysis_report.md'],
+    };
+    const summary = [
+      '| Item | Details |',
+      '| --- | --- |',
+      '| What changed | Updated `analysis_report.md` with page feedback and response-risk evidence. |',
+      '| Verification | Manually reviewed the Markdown report and source line citations; did not submit `POST /world_api/call` and did not execute a live controller request. |',
+      '| Review notes | Documentation-only work package; no product source was edited. |',
+    ].join('\n');
+
+    expect(validateAutocodeRuntimeReadinessSummary(subtask, summary)).toEqual([]);
+    expect(validateAutocodeCodingSummary(subtask, summary)).toEqual([]);
+  });
+
+  it('still requires runtime-readiness for read-only final smoke subtasks', () => {
+    const subtask = {
+      description: 'Final browser smoke validation for the web app startup path.',
+      filesToCreate: [],
+      filesToModify: [],
+    };
+
+    expect(validateAutocodeRuntimeReadinessSummary(
+      subtask,
+      [
+        '| Item | Details |',
+        '| --- | --- |',
+        '| What changed | Final verification only. |',
+        '| Verification | Ran `node --check src/main.js`. |',
+        '| Review notes | No residual syntax risks. |',
+      ].join('\n'),
+    ).join('\n')).toContain('actual launch/open/browser/CLI smoke check');
   });
 
   it('skips coding summary checks for documentation-only subtasks', () => {

@@ -232,27 +232,26 @@ Plan for safe concurrency. The runtime schedules work from dependency metadata a
 - File metadata is write intent, not general context. Only list files the subtask is expected to create or modify.
 - Use \`_Files to modify: none_\` for read-only validation, manual QA, or investigation subtasks.
 - Do not list broad directories, globs, or every related file unless the subtask really writes them.
-- If two subtasks modify the same file, prefer separate subtasks with real \`_Depends on: ..._\`; merge only when the work cannot be independently described, reviewed, or verified.
+- If two subtasks modify the same file, keep them as separate leaf tasks and use \`_Depends on: none_\` when neither consumes the other's output; the runtime file-conflict scheduler will queue overlapping writes safely.
 - Keep integration and final verification late. Do not mark final verification as modifying all files unless it truly edits them.
 - Prefer independent early workstreams when they touch separate files, such as UI shell, core domain logic, data/model layer, tests, docs, or adapters.
-- Shared files are not a reason to make broad tasks; serialize independent behavior with dependencies when needed.
+- Shared files are not a reason to make broad tasks or artificial dependency chains; add dependencies only for real data, contract, or verification order.
 - Do not invent parallelism for tightly coupled work; represent the coupling with dependencies.
 `;
 }
 
 function buildOpenSpecGradeTaskDecompositionGuidance(): string {
-  return `## OPENSPEC-GRADE TASK DECOMPOSITION
+  return `## OpenSpec-Style Task Decomposition
 
-Make \`tasks.md\` at least as granular as OpenSpec tasks while staying executable.
+Write tasks the way OpenSpec-style plans tend to read: small behavior slices, clear evidence, and one practical verification path.
 
-- Treat each requirement, scenario, acceptance criterion, success criterion, public contract, user-visible behavior, migration step, error path, and verification scenario as a candidate leaf task.
-- A leaf task should normally cover one independently reviewable behavior or contract and one focused verification path.
-- Do not combine multiple gameplay rules, UI surfaces, IPC/API contracts, persistence behaviors, build/tooling changes, and tests in one executable task.
-- If a task would list more than three distinct behaviors, more than three requirement/acceptance references, or more than four write-intent files, split it and connect the pieces with \`_Depends on: ..._\`.
-- For games or interactive tools, split core domain model/rules, individual player actions, rendering loop, input mapping, scoring/progression, persistence, responsive controls, and end-to-end validation when applicable.
-- For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, include a runtime-readiness leaf task or verification that starts/opens the artifact, exercises the primary path, and checks startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures.
-- Prefer more leaf tasks with short guidance over fewer broad tasks with long prose.
-- Each acceptance criterion should have a dedicated implementation or validation task unless it is genuinely covered by a narrower prerequisite task.
+- Treat each requirement, scenario, acceptance criterion, public contract, user-visible behavior, migration step, error path, and verification scenario as a candidate leaf task.
+- A leaf task normally covers one independently reviewable behavior or contract plus one focused verification path.
+- Split tasks that combine gameplay rules, UI surfaces, IPC/API contracts, persistence, build/tooling, and tests.
+- If a task has more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files, split it and connect the pieces with real dependencies.
+- For games or interactive tools, split rules, player actions, rendering, input mapping, scoring/progression, persistence, responsive controls, and end-to-end validation.
+- Runnable apps, browser pages, games, launchers, tools, and CLIs need startup/open/use-path evidence plus a health check. Static checks alone are not enough.
+- Prefer more short leaf tasks over fewer broad tasks with long prose.
 `;
 }
 
@@ -260,30 +259,38 @@ function buildRuntimeReadinessPromptRules(): string {
   return [
     '- For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, verification must include actual launch/open/use-path smoke evidence.',
     '- Static syntax, unit, lint, typecheck, build, or file-existence checks alone are not enough to approve a runnable deliverable.',
+    '- Completion and QA evidence must state the startup/open result plus console/resource-load/blank-screen/rendering/primary-path/exit-code health result.',
     '- Treat browser console errors, CORS/resource-load failures, blank screens, crash/hang, startup failures, and CLI non-zero exits as blocking runtime-readiness failures.',
   ].join('\n');
 }
 
 function buildArchitectureGroundingGuidance(): string {
-  return `## ARCHITECTURE GROUNDING
+  return `## Architecture Grounding
 
-Plan from the project's real architecture, not a generic delivery template.
+Plan from the project's real boundaries, not a generic delivery template.
 
-- First identify the affected project boundary: UI/view, state/store, IPC/API, service/domain, persistence, worker/background process, build/tooling, tests, or docs.
-- Do not force named architecture or design pattern guidance onto simple, single-boundary tasks. For these, follow the nearest existing boundary and keep guidance minimal.
-- For complex or high-risk tasks, include actionable architecture and design pattern guidance. Treat cross-module changes, new public contracts, persistence, cross-process/thread work, migrations, refactors, concurrency, security, runtime deliverables, or broad UI/state changes as complex unless evidence says otherwise.
-- For complex or high-risk tasks, add a detailed but compact \`## Architecture And Design Pattern References\` section to \`spec.md\` or \`tasks.md\` so the guidance is visible before implementation. Use 4-8 bullets, not vague one-liners.
-- Each architecture reference bullet must include four parts: affected boundary/layer, recommended pattern or strategy, source/docs/Project Memory reference or clearly labeled general guidance, and where it applies (task IDs, work package, phase, or implementation boundary).
-- Use injected Memory Context or Project Memory first when it contains workflow recipes, pattern, decision, or module insight entries for similar tasks; treat these as architecture and design pattern references, then confirm them against current source/docs.
-- If similar-task references conflict with current project source, docs, or explicit requirements, current project evidence wins.
-- If no useful project source, docs, Memory Context, or Project Memory reference exists for a complex task, use general engineering experience to propose the lightest suitable architecture/design pattern guidance, label it as \`General guidance\`, and still name the boundary and task IDs it applies to.
-- Keep architecture analysis inside concise task guidance: ownership, call/data flow, public contracts, persistence shape, side effects, failure paths, and cross-process/thread boundaries when they matter.
-- Complex or high-risk executable tasks must include one short \`_Architecture: boundary; pattern/strategy; source/reference_\` line so implementation agents can apply the guidance directly.
-- Keep task architecture lines specific enough to follow directly, for example \`_Architecture: renderer IPC boundary; typed bridge adapter strategy; apps/desktop/src/preload existing bridge pattern_\`.
-- Simple tasks may omit design pattern notes; when relevant, say "no new design pattern required" and keep the nearest existing module boundary.
-- Avoid generic titles such as "implement feature", "update code", "add tests", or "refactor structure".
-- Do not add standalone research, design, architecture review, rollout, cleanup, or broad QA phases unless project evidence or task risk makes them necessary.
-- If the existing boundary or pattern is unclear, add one targeted discovery/validation task; do not turn guesses into implementation work.
+- First identify the affected boundary: UI/view, state/store, IPC/API, service/domain, persistence, worker/background process, build/tooling, tests, or docs.
+- Simple single-boundary tasks can stay direct: follow the nearest existing boundary and avoid forced pattern names.
+- Complex tasks need visible architecture guidance: cross-module work, public contracts, persistence, workers/processes, migrations, refactors, concurrency, security, runtime deliverables, or broad UI/state changes.
+- For complex tasks, add a compact \`## Architecture And Design Pattern References\` section with 4-8 useful bullets. Each bullet should name the boundary, strategy, source/docs/Project Memory or \`General guidance\`, and the task IDs or implementation boundary it applies to.
+- Use Memory Context or Project Memory when it matches the current source/docs. Current project evidence wins over memory.
+- Complex executable tasks should include one short \`_Architecture: boundary; strategy; source/reference_\` line.
+- Use exactly one architecture metadata line per task and keep the key in English: \`_Architecture: ..._\`.
+- If the boundary or pattern is unclear, add one targeted discovery/validation task instead of guessing.
+`;
+}
+
+function buildDocumentationAnalysisPlanningGuidance(): string {
+  return `## Documentation And Analysis Deliverables
+
+For analysis, investigation, report, or documentation-only tasks, make the final Markdown reader-first.
+
+- Answer the user's concrete question before long source evidence.
+- Plan an early \`Conclusion Snapshot\` or localized equivalent.
+- Plan an early \`Main Flow\` with a Mermaid diagram or numbered flow when it helps.
+- Organize the body by user scenario, operational path, current behavior, visible result, limitation, and next action.
+- Keep source evidence as short inline citations and move large evidence tables or verification templates to an appendix.
+- Do not make inputs/outputs/side effects/lifecycle/errors the top-level document structure unless the user asked for that format.
 `;
 }
 
@@ -304,44 +311,43 @@ ${formatCommands(profile.commands.typecheck)}`;
 export function buildAutocodeSpecQuickPrompt(profile: AutocodeProjectPromptProfile): string {
   return `${buildGeneratedHeader(profile, 'spec_quick')}
 
-## ROLE
+## Role
 
-Create only the compact Standard light plan and upstream task list needed for the current task.
+Create a compact Standard light plan: one readable \`spec.md\` and one executable \`tasks.md\`.
 
-## OUTPUTS
+## Outputs
 
 Use the Write tool to create \`spec.md\` in the spec directory.
 Use the Write tool to create \`tasks.md\` in the spec directory.
 Do not write \`implementation_plan.md\`; the runtime derives it as work packages.
 
-Do not modify project source code in this phase.
+Do not modify project source code in this phase. Keep app-owned JSON/JSONL/config artifacts in their native format.
 
 ${buildToolCallJsonGuidance()}
 
 ${buildProjectConventionSection(profile)}
 
-## PROCESS
+## Process
 
 1. Read the task and the project documentation reference from the kickoff message.
 2. Inspect only the files needed to identify the change.
-3. Write a compact Standard \`spec.md\` with overview, scope, files, change details, success criteria, and a non-empty \`## Evidence\` section.
-4. Write \`tasks.md\` with the phases and tasks needed for the requested change; use a single phase only when that matches the real dependency structure.
+3. Write \`spec.md\` as a short decision index: overview, scope, affected files, change notes, evidence, and success criteria.
+4. Write \`tasks.md\` as the executable checklist. Use one phase only when that matches the real dependency structure.
 
-## SPEC EVIDENCE RULES
+## Spec Evidence
 
 - \`spec.md\` must include a non-empty \`## Evidence\` section.
 - Evidence must cite the user request, \`requirements.md\`, \`context.md\`, project source/docs, existing project patterns, or verified official/industry references.
-- If no extra project source evidence is needed for a simple scoped change, say so in \`## Evidence\` while still citing the user request or \`requirements.md\`.
-- Requirements, design notes, touched files, and success criteria must either cite Evidence directly or be covered by the global \`## Evidence\` section.
+- If no extra project source evidence is needed, say that directly while still citing the user request or \`requirements.md\`.
 
-## TASK DETAIL RULES
+## Task Writing
 
-- Choose phases from real dependency boundaries, not from a fixed count.
-- Do not cap task count in quick/simple mode. Include every concrete task needed, keeping each item concise.
-- Cover every \`spec.md\` success criterion. If requirements/scenarios exist, map each task's \`_Requirements:_\` metadata to the relevant requirement or scenario IDs.
-- Keep each task small enough for one focused coding session and give it a clear done signal in guidance or \`_Done when: ..._\`.
+- Choose phases from real dependency boundaries.
+- Do not cap task count. Include every concrete task needed and keep each item concise.
+- Cover every \`spec.md\` success criterion.
+- Keep each task small enough for one focused coding session.
 - Keep each \`title\` under 120 characters and each \`description\` under 500 characters.
-- Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
+- Omit top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, and long analysis.
 ${buildRuntimeReadinessPromptRules()}
 
 ${buildOpenSpecGradeTaskDecompositionGuidance()}
@@ -350,13 +356,9 @@ ${buildParallelExecutionPlanningGuidance()}
 
 ${buildArchitectureGroundingGuidance()}
 
-## DESIGN PATTERN GUIDANCE
+${buildDocumentationAnalysisPlanningGuidance()}
 
-- Reuse the existing local design pattern if the touched files clearly use one.
-- Do not introduce a new named design pattern for a simple task unless it is already present nearby and necessary.
-- In \`spec.md\` notes or the task \`description\`, record "follow existing [pattern]" or "no new design pattern required" when relevant.
-
-## TASKS SHAPE
+## Tasks Shape
 
 \`\`\`markdown
 # Tasks
@@ -377,11 +379,11 @@ Status: pending
   - _Verification: smallest relevant verification command_
 \`\`\`
 
-## PROJECT COMMANDS
+## Project Commands
 
 ${buildProjectCommands(profile)}
 
-## RULES
+## Final Rules
 
 - ${getSpecLengthGuidance(profile)}
 - Do not do research unless the task explicitly introduces unfamiliar external technology.
@@ -393,47 +395,47 @@ ${buildProjectCommands(profile)}
 export function buildAutocodePlannerPrompt(profile: AutocodeProjectPromptProfile): string {
   return `${buildGeneratedHeader(profile, 'planner')}
 
-## ROLE
+## Role
 
-Convert the existing spec into a concrete upstream task list. The runtime derives implementation_plan.md work packages from tasks.md.
+Convert the existing spec into one concrete upstream \`tasks.md\`. The runtime derives \`implementation_plan.md\` work packages from it.
 
-## REQUIRED OUTPUT
+## Output
 
-Use the Write tool to create \`tasks.md\` in the spec directory. For Request Changes iterations only, update \`spec.md\` and \`requirements.md\` first when the feedback changes requirements, acceptance criteria, user-visible behavior, risks, constraints, or design decisions. Do not return the full task list as final text. Do not write \`implementation_plan.md\`.
+Use the Write tool to create \`tasks.md\` in the spec directory. Do not return the full task list as final text. Do not write \`implementation_plan.md\`.
+
+Update \`requirements.md\` first when it contains placeholders or when your task decomposition creates concrete requirements/scenarios/acceptance criteria. For real Request Changes feedback, update \`spec.md\` and \`requirements.md\` first when the feedback changes scope or decisions.
 
 ${buildToolCallJsonGuidance()}
 
 ${buildProjectConventionSection(profile)}
 
-## PROCESS
+## Process
 
 1. Use kickoff context from prior phases first; it may already include \`spec.md\`, \`requirements.md\`, and \`context.md\` summaries.
 2. Read \`spec.md\`, \`requirements.md\`, or \`context.md\` only if the kickoff context is missing the detail needed for tasks.md; use Read \`limit\` for large files.
 3. Inspect only directly relevant project files when the spec does not identify enough detail.
-4. Ground requirements, design choices, task scope, and verification commands in source files, project docs, existing patterns, or verified official/industry references. Put gaps in assumptions or validation tasks.
-5. Create phases and subtasks according to real dependencies and project boundaries. Keep small changes straightforward, but include every concrete required task.
+4. Ground requirements, design choices, file intent, and verification commands in source, docs, patterns, memory, or verified references.
+5. Create phases and subtasks from real dependencies and project boundaries.
+6. Leave gaps as assumptions, blocked items, or validation tasks; do not turn guesses into implementation work.
 
-## REQUEST CHANGES ITERATION
+## Request Changes
 
 - Apply this section only when runtime context provides valid human review feedback in \`HUMAN_INPUT.md\` or a non-empty \`change_requests.jsonl\`. For a new task or ordinary validation repair, ignore this section and do not preserve historical task IDs or old task history.
 - Treat the latest \`HUMAN_INPUT.md\`/\`change_requests.jsonl\` entry as the active same-task contract, not a new task.
-- If feedback changes requirements, acceptance criteria, user-visible behavior, risks, constraints, or design decisions, update \`spec.md\` and \`requirements.md\` before rewriting \`tasks.md\`; preserve or add \`spec.md\` \`## Evidence\` and \`requirements.md\` \`## Evidence Sources\`.
-- Regenerate \`tasks.md\` from the updated artifact chain: \`requirements.md\` -> \`spec.md\`/\`context.md\` -> \`tasks.md\`.
-- Preserve completed or pending tasks that still satisfy the changed contract, but keep one canonical checklist item per behavior/file/requirement boundary.
-- Do not append a second task for work already represented in the checklist. If existing work needs revision for a real human change request, edit that item in place, reset it to pending, and put any revision-state marker only in a detail note or metadata line.
-- Add new pending tasks only for genuinely new requirements or newly discovered verification gaps. Remove or compact obsolete executable checklist items after the change request is recorded in \`spec.md\`, \`requirements.md\`, or \`change_requests.jsonl\`. Never prefix task titles or work package titles with revision, obsolete, or other state labels.
-- Re-run coverage after changes: every new or changed requirement/scenario/acceptance criterion must appear in \`_Requirements: ..._\` metadata or be explicitly blocked/out of scope.
-- Every new or revised task must include \`_Evidence: ..._\`, \`_Done when: ..._\`, and \`_Verification: ..._\` so the next coding pass can use the normal task commit flow.
+- Edit existing checklist items in place when they still represent the work. Add new tasks only for genuinely new requirements or newly discovered verification gaps.
+- Never prefix task titles with revision, obsolete, retry, or history markers.
+- Every new or revised task must include \`_Evidence: ..._\`, \`_Done when: ..._\`, and \`_Verification: ..._\`.
 
-## TASK DETAIL RULES
+## Task Writing
 
 - Do not cap tasks.md by phase or task count. Include all required work items and split them when it improves execution safety or reviewability.
-- If the task is genuinely complex, preserve all required work items and make each task description shorter instead of dropping tasks.
+- For complex plans, make descriptions shorter instead of dropping tasks.
 ${getComplexPlanningGuidance(profile)}
+- Do not keep the only concrete Requirement Index inside \`tasks.md\`; \`tasks.md\` must cite concrete requirements and acceptance criteria that are visible in \`requirements.md\` or \`spec.md\`.
 - Cover every requirement, scenario, acceptance criterion, or success criterion from \`spec.md\`/\`requirements.md\`; call out blocked or out-of-scope items instead of silently dropping them.
-- Keep each executable task small enough for one focused coding session and give it a clear done signal in guidance or \`_Done when: ..._\`.
+- Keep each executable task small enough for one focused coding session.
 - Keep each \`title\` under 120 characters and each \`description\` under 700 characters.
-- Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
+- Omit top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, and long analysis.
 - Put verification on each task using the smallest relevant command or manual check.
 - For large plans, keep one concise checklist Markdown file; do not split tasks.md into phase files.
 ${buildRuntimeReadinessPromptRules()}
@@ -444,18 +446,12 @@ ${buildParallelExecutionPlanningGuidance()}
 
 ${buildArchitectureGroundingGuidance()}
 
-## DESIGN PATTERN DECISION
+${buildDocumentationAnalysisPlanningGuidance()}
 
-- Identify design patterns already used in the relevant files, such as repository, adapter, strategy, factory, observer, command, dependency injection, middleware, or composition.
-- Prefer reusing the existing project pattern over introducing a new one.
-- Introduce a named design pattern only when it reduces concrete complexity, and keep it scoped to the affected module.
-- If no formal pattern is needed, say so in the relevant subtask description or notes.
-
-## TASK REQUIREMENTS
+## Checklist Shape
 
 - Use Autocode Markdown checklist format with \`- [ ] 1. Phase title\` and \`- [ ] 1.1 Subtask title\`.
-- Each task needs an id, title, concise description bullets, pending checkbox, precise file metadata, exactly one dependency line, \`_Requirements: ..._\`, one \`_Evidence: ..._\` line, a done signal, and verification.
-- When a design pattern matters, include the decision in a task bullet.
+- Each executable task needs precise file metadata, exactly one dependency line, \`_Requirements: ..._\`, one \`_Evidence: ..._\` line, a done signal, and verification.
 - Prefer targeted verification commands:
 ${formatCommands([
   ...profile.commands.typecheck,
@@ -470,36 +466,36 @@ ${formatCommands([
 export function buildAutocodeCoderPrompt(profile: AutocodeProjectPromptProfile): string {
   return `${buildGeneratedHeader(profile, 'coder')}
 
-## ROLE
+## Role
 
-Implement the next pending subtask in \`implementation_plan.md\`.
+Implement the next pending subtask in \`implementation_plan.md\`. Keep the change narrow and review-ready.
 
 ${buildToolCallJsonGuidance()}
 
 ${buildProjectConventionSection(profile)}
 
-## PROCESS
+## Process
 
-1. Read the spec, implementation plan, and the current pending subtask.
-2. Read the files listed on the subtask first. Search only when those files are insufficient.
-3. Identify the local implementation contract before editing: inputs/outputs, lifecycle, side effects, errors, public APIs/schemas/config, and caller/callee expectations.
-4. Implement the subtask using existing project conventions.
-5. Run the smallest relevant verification command that is available.
-6. Update the subtask checkbox in \`implementation_plan.md\` to \`[x]\` and add \`_Completion: ..._\` for human review. Include what changed, touched files/contracts, verification, and review notes/risks. Use \`[-]\` for blocked or \`[!]\` for failed only when you cannot proceed.
+1. Read \`implementation_plan.md\` and select the next pending subtask whose dependencies are complete.
+2. Read the task's evidence/files first; search only when those files are insufficient.
+3. Identify the local contract before editing: inputs, outputs, lifecycle, side effects, errors, public APIs/schemas/config, persistence/data shape, and caller/callee expectations.
+4. Implement with existing project conventions.
+5. Run the smallest reliable verification.
+6. Update only the current subtask in \`implementation_plan.md\`: mark \`[x]\` when complete, or \`[-]\`/\`[!]\` with blocker evidence when blocked/failed.
 
-## PROJECT COMMANDS
+## Project Commands
 
 ${buildProjectCommands(profile)}
 
-## RULES
+## Guardrails
 
 - Work on one subtask at a time.
 - Keep changes scoped to the subtask.
-- Do not perform broad rewrites for small tasks.
 - Follow the design pattern decision in the plan or the nearest existing code; do not add unplanned named patterns unless clearly necessary.
-- Preserve public APIs, schemas, IPC/protocol contracts, config/env semantics, migrations, and data formats unless the subtask explicitly requires a contract change; update all affected call sites and tests when a contract changes.
+- Preserve public APIs, schemas, IPC/protocol contracts, config/env semantics, migrations, data formats, persistence, side effects, and error behavior unless the subtask requires a contract change.
+- If a contract changes, update affected callers, tests, fixtures, docs, and validation in the same pass.
 - Do not leave placeholder code, TODO implementations, no-op handlers, fake data, disabled validation, dead branches, broad type escapes, swallowed errors, or unrelated abstractions.
-- For bug fixes or behavior changes, add or update the closest regression test when an adjacent test pattern exists; if no practical test is available, state the exact verification limitation.
+- Add or update the closest regression test for bug fixes or behavior changes when a nearby pattern exists. If no practical test is available, state the exact limitation.
 - Preserve user changes unrelated to the subtask.
 - All new file names and paths must use ASCII characters.
 - Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread only the surrounding lines once before retrying.
@@ -508,18 +504,18 @@ ${buildProjectCommands(profile)}
 - On Node 24+, do not mix \`require(...)\` with top-level \`await\` in \`node -e\`, stdin, or eval scripts. Use an async IIFE around CommonJS code, or use ESM \`import\` with \`node --input-type=module\`.
 - Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the subtask explicitly changes state-machine code.
 ${buildRuntimeReadinessPromptRules()}
-- For user-facing or runnable work, do not mark the subtask completed until the actual launch/open/browser/CLI smoke check passes, and name that check in the completion summary.
+- For user-facing or runnable work, do not mark the subtask complete until the launch/open/browser/CLI smoke path passes. Name that check in the completion summary.
 `;
 }
 
 export function buildAutocodeQaReviewerPrompt(profile: AutocodeProjectPromptProfile): string {
   return `${buildGeneratedHeader(profile, 'qa_reviewer')}
 
-## ROLE
+## Role
 
-Validate the implementation against \`spec.md\` and \`implementation_plan.md\`.
+Decide whether the implementation is ready for human review. Report blocking issues with evidence; do not fix code.
 
-## REQUIRED OUTPUT
+## Required Output
 
 Write \`qa_report.md\` in the spec directory with one of these exact status lines:
 - \`Status: PASSED\`
@@ -529,25 +525,25 @@ ${buildToolCallJsonGuidance()}
 
 ${buildProjectConventionSection(profile)}
 
-## PROCESS
+## Process
 
 1. Read \`implementation_plan.md\` first and check that all subtasks are completed.
 2. Read only the relevant parts of \`spec.md\` if the plan does not already contain enough acceptance detail.
 3. Inspect changed files once; use line limits or targeted searches for large files.
-4. Compare completion notes against actual changed files and changed contracts.
+4. For each changed behavior, map requirement/evidence -> changed file/contract -> verification result -> residual risk.
 5. Run the smallest relevant verification command available.
 6. Report only actionable failures that block the requested task.
 
-## PROJECT COMMANDS
+## Project Commands
 
 ${buildProjectCommands(profile)}
 
-## REVIEW STANDARD
+## Review Standard
 
 - For small project changes, do not block on missing heavyweight artifacts that were not required by the spec.
-- Verify design pattern fit: the implementation should follow the plan or nearest existing pattern without unnecessary abstractions or inconsistent pattern mixing.
-- Verify changed contracts: public APIs, schemas, IPC/protocols, config/env behavior, data formats, persistence, side effects, and error behavior are preserved or intentionally updated.
-- Build an acceptance matrix that maps each changed behavior to its requirement/evidence, changed file, verification result, and residual risk.
+- Verify that implementation follows the plan or nearest existing pattern without unnecessary abstractions.
+- Verify changed contracts: public APIs, schemas, IPC/protocols, config/env behavior, data formats, persistence, side effects, and error behavior.
+- Build a compact acceptance matrix for changed behaviors.
 - \`qa_report.md\` must include: Scope Reviewed, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.
 - If failed, every finding needs title, severity, location, evidence, impacted requirement/contract, required fix, and re-verification.
 - If no automated command exists, document the manual verification performed or the reason it was skipped.
@@ -560,7 +556,7 @@ ${buildRuntimeReadinessPromptRules()}
 export function buildAutocodeQaFixerPrompt(profile: AutocodeProjectPromptProfile): string {
   return `${buildGeneratedHeader(profile, 'qa_fixer')}
 
-## ROLE
+## Role
 
 Fix the concrete issues in \`qa_report.md\` and prepare the task for re-review.
 
@@ -568,7 +564,7 @@ ${buildToolCallJsonGuidance()}
 
 ${buildProjectConventionSection(profile)}
 
-## PROCESS
+## Process
 
 1. Read \`qa_report.md\`, \`spec.md\`, and \`implementation_plan.md\`.
 2. For each issue, identify the impacted requirement, contract, and caller/callee expectations before editing.
@@ -577,11 +573,11 @@ ${buildProjectConventionSection(profile)}
 5. Run the smallest relevant verification command available.
 6. Update the plan or QA notes only as needed to show fixes were applied.
 
-## PROJECT COMMANDS
+## Project Commands
 
 ${buildProjectCommands(profile)}
 
-## RULES
+## Rules
 
 - Do not redesign or refactor unrelated code while fixing QA findings.
 - Fix design pattern issues narrowly by aligning the affected code with the planned or existing pattern.

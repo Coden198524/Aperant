@@ -36,6 +36,7 @@ interface ParsedPlanItem {
   patternFiles: string[];
   dependsOn: string[];
   requirements: string[];
+  architecture?: string;
   evidence?: string;
   verification?: string;
   hasFilesField: boolean;
@@ -44,6 +45,7 @@ interface ParsedPlanItem {
   hasPatternFilesField: boolean;
   hasDependsOnField: boolean;
   hasRequirementsField: boolean;
+  hasArchitectureField: boolean;
   hasEvidenceField: boolean;
   hasVerificationField: boolean;
   completion?: string;
@@ -135,6 +137,7 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
         patternFiles: [],
         dependsOn: [],
         requirements: [],
+        architecture: undefined,
         evidence: undefined,
         hasFilesField: false,
         hasFilesToCreateField: false,
@@ -142,6 +145,7 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
         hasPatternFilesField: false,
         hasDependsOnField: false,
         hasRequirementsField: false,
+        hasArchitectureField: false,
         hasEvidenceField: false,
         hasVerificationField: false,
       };
@@ -253,6 +257,11 @@ export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocod
       addListField(lines, 'Pattern files', subtask.pattern_files, '    ');
       addListField(lines, 'Depends on', subtask.depends_on, '    ', { writeNoneWhenEmptyArray: true });
       addListField(lines, 'Requirements', subtask.requirements, '    ');
+
+      const architecture = stringifyPlanValue(subtask.architecture);
+      if (architecture) {
+        lines.push(`    - _Architecture: ${compactInlineMarkdownField(architecture)}_`);
+      }
 
       const evidence = stringifyPlanValue(subtask.evidence);
       if (evidence) {
@@ -554,6 +563,7 @@ function collectSubtaskMachineMetadata(plan: MutableAutocodePlan): Record<string
         'pattern_files',
         'depends_on',
         'requirements',
+        'architecture',
         'evidence',
         'verification',
         'service',
@@ -603,6 +613,7 @@ function applySubtaskMachineMetadata(plan: MutableAutocodePlan): void {
         'pattern_files',
         'depends_on',
         'requirements',
+        'architecture',
         'evidence',
         'verification',
         'service',
@@ -679,6 +690,16 @@ function applyPlanItemField(item: ParsedPlanItem, rawKey: string, rawValue: stri
     case '成功标准':
       item.hasRequirementsField = true;
       item.requirements = splitPlanList(value);
+      break;
+    case 'architecture':
+    case 'architecture/pattern':
+    case 'design pattern':
+    case 'pattern guidance':
+    case 'boundary/pattern':
+    case '架构':
+    case '设计模式':
+      item.hasArchitectureField = true;
+      item.architecture = item.architecture || value;
       break;
     case 'evidence':
     case 'source evidence':
@@ -796,6 +817,7 @@ function planItemToSubtask(item: ParsedPlanItem): MutableAutocodePlanSubtask {
   if (item.patternFiles.length > 0 || item.hasPatternFilesField) subtask.pattern_files = item.patternFiles;
   if (item.dependsOn.length > 0 || item.hasDependsOnField) subtask.depends_on = item.dependsOn;
   if (item.requirements.length > 0 || item.hasRequirementsField) subtask.requirements = item.requirements;
+  if (item.architecture || item.hasArchitectureField) subtask.architecture = item.architecture ?? '';
   if (item.evidence || item.hasEvidenceField) subtask.evidence = item.evidence ?? '';
   if (item.verification) subtask.verification = { type: 'manual', run: item.verification };
   if (item.completion) {

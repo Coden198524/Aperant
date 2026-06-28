@@ -46,22 +46,22 @@ describe('spec phase prompt mapping', () => {
     expect(specPrompt).toContain('ideation.json');
     expect(specPrompt).toContain('downstream UI/runtime code parses the output');
     expect(specPrompt).toContain('Do not convert JSON configuration tables or app-owned structured data merely because a model prompt references them');
-    expect(plannerPrompt).toContain('configuration files/tables, manifests, state, active indexes, metadata, and JSONL audit files remain JSON/JSONL even when the model reads or updates them');
-    expect(plannerPrompt).toContain('Only pure model-readable prose/reference artifacts should move from JSON to Markdown');
-    expect(plannerPrompt).toContain('First identify the affected project boundary before writing tasks');
-    expect(plannerPrompt).toContain('Do not add standalone research, design, architecture review');
-    expect(plannerPrompt).toContain('Avoid generic task text such as "implement feature"');
+    expect(plannerPrompt).toContain('app-owned JSON/JSONL/config artifacts');
+    expect(plannerPrompt).toContain('Write Markdown checklist text, not JSON');
+    expect(plannerPrompt).toContain('Ground architecture in the current project');
+    expect(plannerPrompt).toContain('Do not add standalone research, architecture review');
+    expect(plannerPrompt).toContain('Use an OpenSpec-like flow');
   });
 
   it('keeps bundled coder prompt contract-aware and reviewable', () => {
     const coderPrompt = readPrompt('coder.md');
 
-    expect(coderPrompt).toContain('local implementation contract');
+    expect(coderPrompt).toContain('identify the local contract');
     expect(coderPrompt).toContain('public APIs, schemas, IPC/protocol contracts');
     expect(coderPrompt).toContain('placeholder code');
     expect(coderPrompt).toContain('closest regression test');
-    expect(coderPrompt).toContain('touched files/contracts, verification, and review notes/risks');
-    expect(coderPrompt).toContain('touched contracts or APIs');
+    expect(coderPrompt).toContain('touched files/contracts, verification, and remaining risk');
+    expect(coderPrompt).toContain('touched contracts/APIs');
   });
 
   it('keeps QA prompts evidence-bound and contract-aware', () => {
@@ -70,15 +70,15 @@ describe('spec phase prompt mapping', () => {
     const mmoReviewerPrompt = readPrompt('mmo_qa_reviewer.md');
     const mmoFixerPrompt = readPrompt('mmo_qa_fixer.md');
 
-    expect(reviewerPrompt).toContain('Product-Grade Review Matrix');
+    expect(reviewerPrompt).toContain('Review Method');
     expect(reviewerPrompt).toContain('Changed Files And Contracts');
     expect(reviewerPrompt).toContain('Acceptance Matrix');
     expect(reviewerPrompt).toContain('impacted requirement or contract');
-    expect(reviewerPrompt).toContain('re-verification command or check');
+    expect(reviewerPrompt).toContain('expected re-verification');
     expect(fixerPrompt).toContain('caller/callee expectations');
     expect(fixerPrompt).toContain('placeholder code');
-    expect(fixerPrompt).toContain('fix ledger');
-    expect(mmoReviewerPrompt).toContain('Product-Grade MMO Review Matrix');
+    expect(fixerPrompt).toContain('verification run');
+    expect(mmoReviewerPrompt).toContain('MMO Review Method');
     expect(mmoReviewerPrompt).toContain('MMO domain matrix');
     expect(mmoReviewerPrompt).toContain('server authority');
     expect(mmoReviewerPrompt).toContain('network sync/protocol');

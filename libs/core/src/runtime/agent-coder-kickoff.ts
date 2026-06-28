@@ -26,6 +26,7 @@ export interface AutocodeCoderKickoffSubtaskContext {
   workflowType?: string;
   title?: string;
   description?: string;
+  architecture?: string;
   phaseName?: string;
   filesToCreate: string[];
   filesToModify: string[];
@@ -93,6 +94,7 @@ export function findAutocodeSubtaskKickoffContext(
         id?: unknown;
         title?: unknown;
         description?: unknown;
+        architecture?: unknown;
         files_to_create?: unknown;
         files_to_modify?: unknown;
         pattern_files?: unknown;
@@ -120,6 +122,7 @@ export function findAutocodeSubtaskKickoffContext(
         documentationFocus: toStringArray((plan as AutocodePlanLike).documentation_focus),
         title: typeof subtaskRecord.title === 'string' ? subtaskRecord.title : undefined,
         description: typeof subtaskRecord.description === 'string' ? subtaskRecord.description : undefined,
+        architecture: typeof subtaskRecord.architecture === 'string' ? subtaskRecord.architecture : undefined,
         phaseName,
         filesToCreate: toStringArray(subtaskRecord.files_to_create),
         filesToModify: toStringArray(subtaskRecord.files_to_modify),
@@ -174,6 +177,9 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
     }
     if (context.description) {
       lines.push(`- Description: ${context.description}`);
+    }
+    if (context.architecture) {
+      lines.push(`- Architecture: ${context.architecture}`);
     }
     if (context.upstreamTaskIds?.length) {
       lines.push(`- Source task IDs: ${context.upstreamTaskIds.join(', ')}`);
@@ -262,7 +268,14 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
     lines.push('- First write `doc_outline.md` with document type, target audience, sections, questions each section answers, and planned source references.');
     lines.push('- Then write `evidence_index.md` as a claim-to-source ledger with files read, subsystem, evidence-backed claims, confidence, inferred/unverified claims, risks, uncovered areas, and open questions. Every major conclusion in the final document should map to evidence or be marked as inference.');
     lines.push('- Then write the final Markdown document from the outline and evidence index.');
-    lines.push('- The final Markdown must include overview, scope, key files/modules, source evidence matrices, entry points, module ownership, public interfaces, core flows, data/state flow, boundaries/risks, and open questions. Cite concrete source/config paths for important claims.');
+    lines.push('- Reader-first final document: optimize for a human who needs decisions, flow, and actions, not for an internal task artifact.');
+    lines.push('- Put a `## Conclusion Snapshot` section, or a localized equivalent such as `## 结论速览`, within the first screen. Use a compact table that answers the user questions with short answer, how to act, and existing capability vs required new work.');
+    lines.push('- Put a `## Main Flow` section, or localized equivalent such as `## 主流程`, immediately after the conclusion. Use a small Mermaid flowchart or compact numbered decision flow before deep source evidence.');
+    lines.push('- Organize the main body by user scenarios/questions and operational paths, not by internal metadata. Prefer sections such as current behavior, configuration/commands, runtime flow, user-visible result, limitations, and recommended next work.');
+    lines.push('- Keep source evidence as short inline citations in the main body and place large evidence matrices in a late `## Source Evidence Appendix` section. Do not interrupt the main flow with full evidence tables before the reader understands the path.');
+    lines.push('- Move detailed startup checks, manual rehearsal forms, result record templates, and coverage matrices to appendices unless the task explicitly asks for a verification manual.');
+    lines.push('- Avoid mechanical top-level structures such as "inputs/outputs/side effects/lifecycle/errors" as the primary reader path. Translate those details into natural headings such as "where this starts", "what happens next", "what operators can configure", and "what is missing".');
+    lines.push('- The final Markdown must still include scope, key files/modules, entry points, module ownership, public interfaces, core flows, data/state flow, boundaries/risks, open questions, and concrete source/config paths for important claims.');
     if (gameMmoDocumentation) {
       lines.push('- Game project documentation profile: write for large-online-game/MMO engineering, not a generic source summary.');
       lines.push('- Cover these dimensions when evidence exists: gameplay systems, progression/economy/quests/items/combat, client runtime, engine/rendering/animation/assets/world streaming, server authority, network sync/protocol, data/config/persistence, GM/editor tools, build/release, performance, security/anti-cheat, telemetry, and live operations.');
@@ -306,7 +319,7 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
   lines.push('- If a listed file was just written successfully, do not read it back unless verification fails or the next edit needs exact local context.');
   lines.push('- Run at most one listed verification before finishing.');
   lines.push('- If the listed verification tool is unavailable, discover one compatible alternative at most, then run the best available targeted check. Do not try multiple equivalent checks.');
-  lines.push('- For simple create-only file tasks, a single existence/key-content check is enough; do not add separate dir/type/findstr checks after a successful write.');
+  lines.push('- For simple create-only file tasks that are not runnable/user-facing deliverables, a single existence/key-content check is enough; do not add separate dir/type/findstr checks after a successful write.');
   lines.push('- For pure documentation, answer, or manual-check tasks, Read or simple file existence is enough; avoid python/node one-liners with non-ASCII quoting.');
   lines.push('- On Windows, avoid nested cmd/powershell quoting for smoke checks. Prefer one simple command such as Test-Path, Get-Content -Raw, or dir on the target path.');
   lines.push('- Never use Bash here-documents such as `python - <<EOF` on Windows. Avoid Python -c or Node -e checks containing non-ASCII text.');
@@ -402,11 +415,12 @@ function formatVerification(verification: string | AutocodeVerificationLike | un
 
 function isDocumentationContext(context: AutocodeCoderKickoffSubtaskContext | null): boolean {
   const workflowType = context?.workflowType?.toLowerCase().trim();
-  if (workflowType === 'documentation') {
+  if (workflowType && /\b(?:documentation|docs?|analysis|investigation|research|report)\b/i.test(workflowType)) {
     return true;
   }
 
   const text = [
+    context?.workflowType,
     context?.title,
     context?.description,
     context?.phaseName,
@@ -414,7 +428,32 @@ function isDocumentationContext(context: AutocodeCoderKickoffSubtaskContext | nu
     ...(context?.filesToModify ?? []),
   ].filter(Boolean).join(' ').toLowerCase();
 
-  return /\b(documentation|document|docs|source analysis|code analysis)\b/.test(text);
+  if (hasNonDocumentationOutputs(context)) {
+    return false;
+  }
+
+  return /\b(documentation|document|docs|source analysis|code analysis|analysis report|technical report|investigation report)\b/.test(text) ||
+    /分析|文档|说明|调研|研究|报告|梳理|复核/u.test(text) ||
+    hasOnlyDocumentationOutputs(context);
+}
+
+function hasOnlyDocumentationOutputs(context: AutocodeCoderKickoffSubtaskContext | null): boolean {
+  const writeTargets = [
+    ...(context?.filesToCreate ?? []),
+    ...(context?.filesToModify ?? []),
+  ].filter((item) => item.trim().length > 0);
+
+  return writeTargets.length > 0 &&
+    writeTargets.every((item) => /\.(?:md|mdx|txt|rst|adoc)$/i.test(item.trim()));
+}
+
+function hasNonDocumentationOutputs(context: AutocodeCoderKickoffSubtaskContext | null): boolean {
+  const writeTargets = [
+    ...(context?.filesToCreate ?? []),
+    ...(context?.filesToModify ?? []),
+  ].filter((item) => item.trim().length > 0);
+
+  return writeTargets.some((item) => !/\.(?:md|mdx|txt|rst|adoc)$/i.test(item.trim()));
 }
 
 function isGameMmoDocumentationContext(context: AutocodeCoderKickoffSubtaskContext | null): boolean {

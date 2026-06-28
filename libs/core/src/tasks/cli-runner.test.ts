@@ -107,6 +107,11 @@ describe('Autocode CLI runner prompt', () => {
 
     expect(plan.prompt).toContain('not a RequestChanges iteration');
     expect(plan.prompt).toContain('ordinary pending tasks');
+    expect(plan.prompt).toContain('canonical requirements artifact');
+    expect(plan.prompt).toContain('Do not keep the only concrete Requirement Index inside tasks.md');
+    expect(plan.prompt).toContain('reader-first');
+    expect(plan.prompt).toContain('Conclusion Snapshot');
+    expect(plan.prompt).toContain('Main Flow');
     expect(plan.prompt).not.toContain('needs_revision');
     expect(plan.prompt).not.toContain('preserve prior change-request history');
   });
@@ -221,6 +226,7 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('repairStandardPlanEvidenceScaffolding();');
     expect(runner).toContain('hasOnlyStandardPlanRecoverableQualityErrors(planQuality, errors)');
     expect(runner).toContain('spec.md must include a non-empty ## Evidence section');
+    expect(runner).toContain('requirements.md must include concrete User Requirements and Acceptance Criteria');
     expect(runner).toContain('validationRetryCount >= maxValidationRetries');
   });
 
@@ -242,8 +248,11 @@ describe('Autocode CLI runner prompt', () => {
     const requirementsMarkdown = [
       '# Requirements',
       '',
-      '## Requirements',
+      '## User Requirements',
       '- R1: Planning validation keeps a traceable Standard task list.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: Runtime work packages are derived from tasks.md after validation passes.',
       '',
       '## Evidence Sources',
       '- User task description captured by Autocode.',
@@ -334,6 +343,210 @@ describe('Autocode CLI runner prompt', () => {
     expect(repairedSpec).toContain('requirements.md captures the user request');
     const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
     expect(implementationPlan?.phases?.[0]?.subtasks?.[0]?.title).toContain('Update evidence repair path');
+  });
+
+  it('uses recent CLI error output as the final failure message on nonzero exit', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-cli-network-failure',
+      title: 'Handle CLI transport failure',
+      description: 'Surface the real CLI transport failure instead of a completed message.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({
+      projectRoot,
+      dataDirName,
+      specId: '001-cli-network-failure',
+    });
+    const fakeCliPath = join(projectRoot, 'fail-cli-transport.cjs');
+    writeFileSync(fakeCliPath, [
+      "process.stderr.write('2026-06-23T01:04:17.346464Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: IO error: tls handshake eof, url: wss://chatgpt.com/backend-api/codex/responses\\n');",
+      "process.stderr.write('stream disconnected before completion: error sending request for url (https://chatgpt.com/backend-api/codex/responses)\\n');",
+      'process.exit(1);',
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-cli-network-failure',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+    });
+
+    let failed = false;
+    try {
+      execFileSync(process.execPath, [plan.runnerFilePath], {
+        cwd: projectRoot,
+        env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+        stdio: 'pipe',
+        timeout: 15_000,
+      });
+    } catch {
+      failed = true;
+    }
+
+    expect(failed).toBe(true);
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status: string;
+      message: string;
+    };
+    expect(result.status).toBe('error');
+    expect(result.message).toContain('stream disconnected');
+    expect(result.message).toContain('tls handshake eof');
+    expect(result.message).not.toContain('Autocode CLI run completed');
+    expect(result.message).not.toContain('Autocode CLI 运行完成');
+    const logs = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
+    expect(logs).toContain('"status":"failed"');
+    expect(logs).toContain('stream disconnected');
+  });
+
+  it('marks Codex usage limit failures as rate limited instead of generic CLI errors', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-codex-rate-limit',
+      title: 'Handle Codex limit',
+      description: 'Do not report OpenAI account limits as Claude failures.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({
+      projectRoot,
+      dataDirName,
+      specId: '001-codex-rate-limit',
+    });
+    const limitMessage = "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Jul 25th, 2026 12:57 AM.";
+    const fakeCliPath = join(projectRoot, 'fail-codex-rate-limit.cjs');
+    writeFileSync(fakeCliPath, [
+      `process.stdout.write(${JSON.stringify(JSON.stringify({ type: 'error', message: limitMessage }) + '\n')});`,
+      `process.stdout.write(${JSON.stringify(JSON.stringify({ type: 'turn.failed', error: { message: limitMessage } }) + '\n')});`,
+      'process.exit(1);',
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-codex-rate-limit',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    let failed = false;
+    try {
+      execFileSync(process.execPath, [plan.runnerFilePath], {
+        cwd: projectRoot,
+        env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+        stdio: 'pipe',
+        timeout: 15_000,
+      });
+    } catch {
+      failed = true;
+    }
+
+    expect(failed).toBe(true);
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status: string;
+      message: string;
+    };
+    expect(result.status).toBe('rate_limited');
+    expect(result.message).toContain('Autocode CLI rate limited');
+    expect(result.message).toContain('usage limit');
+    expect(result.message).toContain('Codex');
+    expect(result.message).not.toContain('Autocode CLI failed:');
+  });
+
+  it('localizes repaired Standard evidence scaffolding for zh-CN tasks', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-evidence-zh',
+      title: '修复规划证据',
+      description: '当 CLI 遗漏证据脚手架时继续规划。',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '001-standard-evidence-zh' });
+    const requirementsMarkdown = [
+      '# Requirements: 修复规划证据',
+      '',
+      '## User Requirements',
+      '- R1: 标准规划校验应补齐证据脚手架。',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: 补齐 Evidence 后可以继续生成 implementation_plan.md。',
+      '',
+    ].join('\n');
+    const specMarkdown = [
+      '# Specification: 修复规划证据',
+      '',
+      '## Overview',
+      '当生成的规格缺少 Evidence 时，标准规划校验应继续推进。',
+      '',
+      '## Requirements',
+      '1. 标准规划校验在补齐 Evidence 后继续。',
+      '',
+      '## Success Criteria',
+      '- [ ] 从 tasks.md 生成 implementation_plan.md。',
+      '',
+    ].join('\n');
+    const tasksMarkdown = [
+      '# Tasks',
+      '',
+      'Feature: 修复规划证据',
+      'Workflow: simple',
+      'Status: pending',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Update evidence repair path',
+      '    - Update `src/evidence.ts` to add Standard evidence scaffolding before validation.',
+      '    - _Files to modify: src/evidence.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1_',
+      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '    - _Done when: validation repairs missing evidence and derives the runtime plan_',
+      '    - _Verification: npm test -- evidence.test.ts_',
+      '',
+    ].join('\n');
+    const fakeCliPath = join(projectRoot, 'write-standard-artifacts-zh.cjs');
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      'const specDir = process.argv[2];',
+      'mkdirSync(specDir, { recursive: true });',
+      `writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'spec.md'), ${JSON.stringify(specMarkdown)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(tasksMarkdown)}, 'utf8');`,
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-standard-evidence-zh',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}" "${specDir.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+      language: 'zh-CN',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const repairedSpec = readFileSync(join(specDir, 'spec.md'), 'utf8');
+    expect(repairedSpec).toContain('## Evidence');
+    expect(repairedSpec).toContain('requirements.md 记录了本任务的用户请求和规划约束。');
+    expect(repairedSpec).toContain('tasks.md 将实现工作映射回生成的 Standard 需求。');
+    expect(repairedSpec).not.toContain('requirements.md captures the user request');
+    const repairedRequirements = readFileSync(join(specDir, 'requirements.md'), 'utf8');
+    expect(repairedRequirements).toContain('## Evidence Sources');
+    expect(repairedRequirements).toContain('Autocode 捕获的用户任务描述。');
+    expect(repairedRequirements).toContain('spec.md 中的规划范围和成功标准。');
+    expect(repairedRequirements).not.toContain('User task description captured by Autocode');
   });
 
   it('folds repeated human feedback lines before generating run prompts', () => {
@@ -651,23 +864,23 @@ describe('Autocode CLI runner prompt', () => {
     expect(memory.insights?.some((insight) => insight.includes('High token usage'))).toBe(false);
   });
 
-  it('uses Codex /goal for direct-mode Codex CLI prompts', () => {
+  it('does not add Codex /goal to direct-mode Codex CLI prompts by default', () => {
     createAutocodeTask({
       projectRoot,
       dataDirName,
-      specId: '007-codex-goal',
-      title: 'Wrap direct Codex prompt',
-      description: 'Add a Direct mode Codex goal regression test.',
+      specId: '007-codex-direct',
+      title: 'Send direct Codex prompt',
+      description: 'Add a Direct mode Codex prompt regression test.',
       metadata: { developmentMode: 'direct' },
     });
 
-    const capturedPromptPath = join(projectRoot, 'captured-codex-goal.txt');
+    const capturedPromptPath = join(projectRoot, 'captured-codex-direct.txt');
     installFakeCodexCommand(projectRoot);
 
     const plan = createAutocodeTaskRunPlan({
       projectRoot,
       dataDirName,
-      taskId: '007-codex-goal',
+      taskId: '007-codex-direct',
       cli: 'custom',
       customCommand: `codex "${capturedPromptPath.replace(/\\/g, '/')}"`,
       phase: 'direct',
@@ -686,10 +899,219 @@ describe('Autocode CLI runner prompt', () => {
 
     const capturedPrompt = readFileSync(capturedPromptPath, 'utf8');
     const firstLine = capturedPrompt.split(/\r?\n/, 1)[0];
-    expect(firstLine).toMatch(/^\/goal\s+/);
-    expect(firstLine).toContain('Add a Direct mode Codex goal regression test.');
+    expect(firstLine).not.toMatch(/^\/goal\b/i);
+    expect(firstLine).toBe('# Autocode Task Run');
+    expect(capturedPrompt).toContain('Add a Direct mode Codex prompt regression test.');
     expect(capturedPrompt).toContain('# Autocode Task Run');
     expect(capturedPrompt).toContain('## Required Workflow');
+  });
+
+  it('warns before failing silent coding workers', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-worker-inactivity',
+      title: 'Keep silent worker alive',
+      description: 'Do not fail long-running model thinking after the first idle warning.',
+      metadata: { developmentMode: 'standard' },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-worker-inactivity',
+      cli: 'codex',
+      phase: 'coding',
+    });
+    const runner = readFileSync(plan.runnerFilePath, 'utf8');
+
+    expect(runner).toContain('const CODING_WORKER_INACTIVITY_WARNING_MS = readNonNegativeInteger(');
+    expect(runner).toContain('10 * 60 * 1000');
+    expect(runner).toContain('45 * 60 * 1000');
+    expect(runner).toContain('still waiting before timeout');
+    expect(runner).toContain('AUTOCODE_WORKER_INACTIVITY_TIMEOUT_MS');
+    expect(runner).not.toContain('const CODING_WORKER_INACTIVITY_TIMEOUT_MS = readPositiveInteger');
+  });
+
+  it('finalizes coding workers after a final summary when the CLI does not exit', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '009-worker-final-summary',
+      title: 'Finalize completed worker',
+      description: 'Treat a final work package summary as completion when the CLI process hangs.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({
+      projectRoot,
+      dataDirName,
+      specId: '009-worker-final-summary',
+    });
+    writeFileSync(join(specDir, 'implementation_plan.md'), [
+      '# Implementation Plan',
+      'Feature: Finalize completed worker',
+      'Status: coding',
+      'Execution Phase: coding',
+      '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","subtaskMetadata":{"wp-1":{"work_package":true,"depends_on":[]}}} -->',
+      '',
+      '- [ ] 1. Implementation',
+      '  - [ ] wp-1 Add start control',
+      '',
+    ].join('\n'), 'utf8');
+    const fakeCliPath = join(projectRoot, 'coding-final-summary-hang.cjs');
+    writeFileSync(fakeCliPath, [
+      "process.chdir(require('node:os').tmpdir());",
+      "process.stdin.resume();",
+      "setTimeout(() => {",
+      "  process.stdout.write('| 变更 | 验证 | 评审备注 |\\n');",
+      "  process.stdout.write('| --- | --- | --- |\\n');",
+      "  process.stdout.write('| Added Start game control | 通过：npm run build | 未改 implementation_plan.md |\\n');",
+      "}, 10);",
+      "setTimeout(() => process.exit(0), 4000);",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '009-worker-final-summary',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'coding',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        AUTOCODE_WORKER_COMPLETION_GRACE_MS: '50',
+        AUTOCODE_WORKER_INACTIVITY_TIMEOUT_MS: '10000',
+        GRAPHITI_ENABLED: 'false',
+      },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+    expect(rawPlan).toContain('- [x] wp-1 Add start control');
+    const logs = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
+    expect(logs).toContain('finished model output but the CLI process did not exit; finalizing the work item.');
+  });
+
+  it('retries failed and blocked coding work packages on continue', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-coding-retry',
+      title: 'Retry coding work packages',
+      description: 'Continue a task with previously failed and blocked work packages.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-coding-retry' });
+    writeFileSync(join(specDir, 'implementation_plan.md'), [
+      '# Implementation Plan',
+      'Feature: Retry coding work packages',
+      'Status: coding',
+      'Execution Phase: coding',
+      '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","subtaskMetadata":{"wp-1":{"work_package":true,"depends_on":[],"completed_at":"2026-06-20T00:00:00.000Z"},"wp-2":{"work_package":true,"depends_on":["wp-1"],"completed_at":"2026-06-20T00:00:00.000Z"}}} -->',
+      '',
+      '- [ ] 1. Implementation',
+      '  - [!] wp-1 Retry failed prerequisite',
+      '    - _Started: 2026-06-20T00:00:00.000Z_',
+      '    - _Completed: 2026-06-20T00:00:00.000Z_',
+      '  - [-] wp-2 Retry blocked dependent',
+      '    - _Depends on: wp-1_',
+      '    - _Started: 2026-06-20T00:00:00.000Z_',
+      '    - _Completed: 2026-06-20T00:00:00.000Z_',
+      '',
+    ].join('\n'), 'utf8');
+    const fakeCliPath = join(projectRoot, 'coding-success.cjs');
+    const capturedPromptPath = join(projectRoot, 'coding-prompts.txt');
+    writeFileSync(fakeCliPath, [
+      "const { appendFileSync } = require('node:fs');",
+      "let input = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { input += chunk; });",
+      "process.stdin.on('end', () => { appendFileSync(process.argv[2], input + '\\n---PROMPT---\\n', 'utf8'); });",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-coding-retry',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}" "${capturedPromptPath.replace(/\\/g, '/')}"`,
+      phase: 'coding',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const capturedPrompts = readFileSync(capturedPromptPath, 'utf8');
+    expect(capturedPrompts).toContain('Work Package ID: wp-1');
+    expect(capturedPrompts).toContain('Work Package ID: wp-2');
+    const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
+    expect(implementationPlan?.phases?.[0]?.subtasks.map((subtask) => subtask.status)).toEqual([
+      'completed',
+      'completed',
+    ]);
+  });
+
+  it('does not write completed_at for failed coding work packages', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-coding-failure',
+      title: 'Fail one coding work package',
+      description: 'Keep failed work package state retryable and incomplete.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-coding-failure' });
+    writeFileSync(join(specDir, 'implementation_plan.md'), [
+      '# Implementation Plan',
+      'Feature: Fail one coding work package',
+      'Status: coding',
+      'Execution Phase: coding',
+      '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","subtaskMetadata":{"wp-1":{"work_package":true,"depends_on":[]}}} -->',
+      '',
+      '- [ ] 1. Implementation',
+      '  - [ ] wp-1 Failing package',
+      '',
+    ].join('\n'), 'utf8');
+    const fakeCliPath = join(projectRoot, 'coding-failure.cjs');
+    writeFileSync(fakeCliPath, [
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', () => {});",
+      "process.stdin.on('end', () => process.exit(1));",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-coding-failure',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'coding',
+    });
+
+    expect(() => execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    })).toThrow();
+
+    const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+    expect(rawPlan).toContain('- [!] wp-1 Failing package');
+    expect(rawPlan).not.toContain('_Completed:');
+    const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
+    const subtask = implementationPlan?.phases?.[0]?.subtasks?.[0];
+    expect(subtask?.status).toBe('failed');
+    expect(subtask?.completed_at).toBeUndefined();
+    expect(subtask?.notes).toContain('CLI work item run failed');
   });
 
   it('counts repeated Codex JSON usage snapshots as one implicit model turn', () => {

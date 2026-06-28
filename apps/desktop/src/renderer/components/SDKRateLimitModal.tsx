@@ -27,6 +27,21 @@ import { debugError } from '../../shared/utils/debug-logger';
 import type { SDKRateLimitInfo } from '../../shared/types';
 
 const CLAUDE_UPGRADE_URL = 'https://claude.ai/upgrade';
+const OPENAI_UPGRADE_URL = 'https://chatgpt.com/explore/plus';
+
+function isClaudeProvider(provider?: SDKRateLimitInfo['provider']): boolean {
+  return !provider || provider === 'anthropic';
+}
+
+function getProviderName(provider?: SDKRateLimitInfo['provider']): string {
+  if (provider === 'openai') return 'Codex/OpenAI';
+  if (provider === 'unknown') return 'AI provider';
+  return 'Claude';
+}
+
+function getUpgradeUrl(provider?: SDKRateLimitInfo['provider']): string {
+  return provider === 'openai' ? OPENAI_UPGRADE_URL : CLAUDE_UPGRADE_URL;
+}
 
 /**
  * Get a human-readable name for the source
@@ -72,10 +87,19 @@ export function SDKRateLimitModal() {
     swappedFrom?: string;
     swappedTo?: string;
   } | null>(null);
+  const provider = sdkRateLimitInfo?.provider ?? 'anthropic';
+  const isClaudeRateLimit = isClaudeProvider(provider);
+  const providerName = getProviderName(provider);
 
   // Load profiles and auto-switch settings when modal opens
   useEffect(() => {
     if (isSDKModalOpen) {
+      if (!isClaudeRateLimit) {
+        setSelectedProfileId(null);
+        setSwapInfo(null);
+        return;
+      }
+
       loadClaudeProfiles();
       loadAutoSwitchSettings();
 
@@ -89,7 +113,7 @@ export function SDKRateLimitModal() {
         setSwapInfo({
           wasAutoSwapped: sdkRateLimitInfo.wasAutoSwapped ?? false,
           swapReason: sdkRateLimitInfo.swapReason,
-          swappedFrom: profiles.find(p => p.id === sdkRateLimitInfo.profileId)?.name,
+          swappedFrom: profiles.find(p => sdkRateLimitInfo.profileId && p.id === sdkRateLimitInfo.profileId)?.name,
           swappedTo: sdkRateLimitInfo.swappedToProfile?.name
         });
       }
@@ -134,7 +158,7 @@ export function SDKRateLimitModal() {
   };
 
   const handleUpgrade = () => {
-    window.open(CLAUDE_UPGRADE_URL, '_blank');
+    window.open(getUpgradeUrl(provider), '_blank');
   };
 
   const handleAddProfile = async () => {
@@ -185,7 +209,7 @@ export function SDKRateLimitModal() {
   };
 
   const handleRetryWithProfile = async () => {
-    if (!selectedProfileId || !sdkRateLimitInfo?.projectId) return;
+    if (!isClaudeRateLimit || !selectedProfileId || !sdkRateLimitInfo?.projectId) return;
 
     setIsRetrying(true);
     setSwitching(true);
@@ -218,14 +242,14 @@ export function SDKRateLimitModal() {
 
   // Get profiles that are not the current rate-limited one
   const currentProfileId = sdkRateLimitInfo.profileId;
-  const availableProfiles = profiles.filter(p => p.id !== currentProfileId);
-  const hasMultipleProfiles = profiles.length > 1;
+  const availableProfiles = isClaudeRateLimit ? profiles.filter(p => p.id !== currentProfileId) : [];
+  const hasMultipleProfiles = isClaudeRateLimit && profiles.length > 1;
 
   const selectedProfile = selectedProfileId
     ? profiles.find(p => p.id === selectedProfileId)
     : null;
 
-  const currentProfile = profiles.find(p => p.id === currentProfileId);
+  const currentProfile = currentProfileId ? profiles.find(p => p.id === currentProfileId) : null;
   const suggestedProfile = sdkRateLimitInfo.suggestedProfile
     ? profiles.find(p => p.id === sdkRateLimitInfo.suggestedProfile?.id)
     : null;
@@ -239,12 +263,12 @@ export function SDKRateLimitModal() {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-warning">
             <AlertCircle className="h-5 w-5" />
-            {t('rateLimit.sdk.title')}
+            {isClaudeRateLimit ? t('rateLimit.sdk.title') : 'Codex/OpenAI usage limit reached'}
           </DialogTitle>
           <DialogDescription className="flex items-center gap-2">
             <SourceIcon className="h-4 w-4" />
             {t('rateLimit.sdk.interrupted', { source: sourceName })}
-            {currentProfile && (
+            {isClaudeRateLimit && currentProfile && (
               <span className="text-muted-foreground"> (Profile: {currentProfile.name})</span>
             )}
           </DialogDescription>
@@ -270,13 +294,21 @@ export function SDKRateLimitModal() {
               </>
             ) : (
               <>
-                <p className="font-medium mb-1">{t('rateLimit.sdk.rateLimitReached')}</p>
-                <p>
-                  {t('rateLimit.sdk.operationStopped', { account: currentProfile?.name || 'your account' })}
-                  {hasMultipleProfiles
-                    ? ' ' + t('rateLimit.sdk.switchBelow')
-                    : ' ' + t('rateLimit.sdk.addAccountToContinue')}
+                <p className="font-medium mb-1">
+                  {isClaudeRateLimit ? t('rateLimit.sdk.rateLimitReached') : `${providerName} usage limit reached`}
                 </p>
+                {isClaudeRateLimit ? (
+                  <p>
+                    {t('rateLimit.sdk.operationStopped', { account: currentProfile?.name || 'your account' })}
+                    {hasMultipleProfiles
+                      ? ' ' + t('rateLimit.sdk.switchBelow')
+                      : ' ' + t('rateLimit.sdk.addAccountToContinue')}
+                  </p>
+                ) : (
+                  <p>
+                    {sourceName} stopped because {providerName} reported a usage limit. Wait for the reset time or switch the signed-in provider account, then retry.
+                  </p>
+                )}
               </>
             )}
           </div>
@@ -286,10 +318,10 @@ export function SDKRateLimitModal() {
             variant="default"
             size="sm"
             className="gap-2 w-full"
-            onClick={() => window.open(CLAUDE_UPGRADE_URL, '_blank')}
+            onClick={handleUpgrade}
           >
             <Zap className="h-4 w-4" />
-            {t('rateLimit.sdk.upgradeToProButton')}
+            {isClaudeRateLimit ? t('rateLimit.sdk.upgradeToProButton') : 'Upgrade ChatGPT plan'}
           </Button>
 
           {/* Reset time info */}
@@ -310,11 +342,12 @@ export function SDKRateLimitModal() {
           )}
 
           {/* Profile switching / Add account section */}
-          <div className="rounded-lg border border-accent/50 bg-accent/10 p-4">
-            <h4 className="text-sm font-medium text-foreground mb-2 flex items-center gap-2">
-              <User className="h-4 w-4" />
-              {hasMultipleProfiles ? t('rateLimit.sdk.switchAccountRetry') : t('rateLimit.useAnotherAccount')}
-            </h4>
+          {isClaudeRateLimit ? (
+            <div className="rounded-lg border border-accent/50 bg-accent/10 p-4">
+              <h4 className="text-sm font-medium text-foreground mb-2 flex items-center gap-2">
+                <User className="h-4 w-4" />
+                {hasMultipleProfiles ? t('rateLimit.sdk.switchAccountRetry') : t('rateLimit.useAnotherAccount')}
+              </h4>
 
             {hasMultipleProfiles ? (
               <>
@@ -456,7 +489,18 @@ export function SDKRateLimitModal() {
                 This will open Claude login to authenticate the new account.
               </p>
             </div>
-          </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-accent/50 bg-accent/10 p-4">
+              <h4 className="text-sm font-medium text-foreground mb-2 flex items-center gap-2">
+                <User className="h-4 w-4" />
+                {providerName} account
+              </h4>
+              <p className="text-sm text-muted-foreground">
+                This limit belongs to the signed-in {providerName} account. Wait for the reset time, upgrade the ChatGPT plan, or switch the provider account outside Claude profile management before retrying.
+              </p>
+            </div>
+          )}
 
           {/* Upgrade prompt */}
           <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
@@ -464,7 +508,9 @@ export function SDKRateLimitModal() {
               Upgrade for more usage
             </h4>
             <p className="text-sm text-muted-foreground mb-3">
-              Upgrade your Claude subscription for higher usage limits.
+              {isClaudeRateLimit
+                ? 'Upgrade your Claude subscription for higher usage limits.'
+                : 'Upgrade your ChatGPT plan for higher Codex/OpenAI usage limits.'}
             </p>
             <Button
               variant="outline"
@@ -473,19 +519,25 @@ export function SDKRateLimitModal() {
               onClick={handleUpgrade}
             >
               <ExternalLink className="h-4 w-4" />
-              Upgrade Subscription
+              {isClaudeRateLimit ? 'Upgrade Subscription' : 'Upgrade ChatGPT Plan'}
             </Button>
           </div>
 
           {/* Info about what was interrupted */}
           <div className="text-xs text-muted-foreground bg-muted/30 rounded-lg p-3">
             <p className="font-medium mb-1">{t('rateLimit.sdk.whatHappened')}</p>
-            <p>
-              {t('rateLimit.sdk.whatHappenedDesc', { source: sourceName.toLowerCase(), account: currentProfile?.name || 'Default' })}
-              {hasMultipleProfiles
-                ? ' ' + t('rateLimit.sdk.switchRetryOrAdd')
-                : ' ' + t('rateLimit.sdk.addOrWait')}
-            </p>
+            {isClaudeRateLimit ? (
+              <p>
+                {t('rateLimit.sdk.whatHappenedDesc', { source: sourceName.toLowerCase(), account: currentProfile?.name || 'Default' })}
+                {hasMultipleProfiles
+                  ? ' ' + t('rateLimit.sdk.switchRetryOrAdd')
+                  : ' ' + t('rateLimit.sdk.addOrWait')}
+              </p>
+            ) : (
+              <p>
+                {sourceName} was interrupted because {providerName} returned a usage limit. This is not a Claude profile limit.
+              </p>
+            )}
           </div>
         </div>
 

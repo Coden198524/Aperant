@@ -342,10 +342,17 @@ function getDocumentationOutputs(plan: Record<string, unknown>): {
 }
 
 function isDocumentationSubtask(subtask: SubtaskInfo): boolean {
-  const text = [
-    subtask.description,
+  const files = [
     ...(subtask.filesToCreate ?? []),
     ...(subtask.filesToModify ?? []),
+  ].map((item) => item.trim()).filter(Boolean);
+  if (files.length > 0 && files.every((file) => /\.(?:md|mdx|txt|rst|adoc)$/i.test(file))) {
+    return true;
+  }
+
+  const text = [
+    subtask.description,
+    ...files,
   ].join(' ').toLowerCase();
   return /\b(documentation|document|docs|markdown|source analysis)\b/.test(text) ||
     /\u6587\u6863|\u6e90\u7801\u5206\u6790|\u4ee3\u7801\u5206\u6790/.test(text);
