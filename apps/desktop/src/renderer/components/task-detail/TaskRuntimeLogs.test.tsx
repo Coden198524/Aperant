@@ -277,6 +277,120 @@ describe('TaskRuntimeLogs', () => {
     expect(screen.queryByText('Work package two output.')).not.toBeInTheDocument();
   });
 
+  it('scrolls shared direct-mode logs to the selected task start marker', async () => {
+    const logs = createTaskLogs();
+    logs.phases.planning.entries = [];
+    logs.phases.coding.entries = [
+      {
+        timestamp: '2026-01-01T00:00:01.000Z',
+        type: 'text',
+        phase: 'coding',
+        content: 'Direct session setup output.',
+      },
+      {
+        timestamp: '2026-01-01T00:00:10.000Z',
+        type: 'text',
+        phase: 'coding',
+        content: 'Work item 1.2 started: Add scoring rules.',
+      },
+      {
+        timestamp: '2026-01-01T00:00:20.000Z',
+        type: 'text',
+        phase: 'coding',
+        content: 'Work item 1.3 started: Add restart control.',
+      },
+    ];
+    let scrolledText = '';
+    const scrollIntoView = vi.fn(function (this: HTMLElement) {
+      scrolledText = this.textContent ?? '';
+    });
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+    render(
+      <TaskRuntimeLogs
+        task={createTask({
+          metadata: { developmentMode: 'direct', workflowMode: 'off' },
+          subtasks: [
+            {
+              id: '1.2',
+              title: 'Add scoring rules',
+              description: 'Add scoring rules',
+              status: 'completed',
+              files: [],
+            },
+            {
+              id: '1.3',
+              title: 'Add restart control',
+              description: 'Add restart control',
+              status: 'completed',
+              files: [],
+            },
+          ],
+        })}
+        modelLogs={logs}
+        focusTarget={{
+          subtaskId: '1.2',
+          title: 'Add scoring rules',
+          directMode: true,
+        }}
+      />
+    );
+
+    expect(screen.getByText('Direct session setup output.')).toBeInTheDocument();
+    expect(screen.getByTestId('model-output-scroll').textContent).toContain('Work item 1.2 started: Add scoring rules.');
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalled();
+    });
+    expect(scrolledText).toContain('Work item 1.2 started');
+  });
+
+  it('renders a bounded shared direct-mode log window around the selected task', async () => {
+    const logs = createTaskLogs();
+    logs.phases.planning.entries = [];
+    logs.phases.coding.entries = Array.from({ length: 1200 }, (_, index) => ({
+      timestamp: `2026-01-01T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
+      type: 'text' as const,
+      phase: 'coding' as const,
+      content: index === 12
+        ? 'Work item 1.2 started: Add scoring rules.'
+        : `Direct shared output ${index}.`,
+    }));
+
+    const scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+    render(
+      <TaskRuntimeLogs
+        task={createTask({
+          metadata: { developmentMode: 'direct', workflowMode: 'off' },
+          subtasks: [
+            {
+              id: '1.2',
+              title: 'Add scoring rules',
+              description: 'Add scoring rules',
+              status: 'completed',
+              files: [],
+            },
+          ],
+        })}
+        modelLogs={logs}
+        focusTarget={{
+          subtaskId: '1.2',
+          title: 'Add scoring rules',
+          directMode: true,
+        }}
+      />
+    );
+
+    const scrollText = screen.getByTestId('model-output-scroll').textContent ?? '';
+    expect(scrollText).toContain('Work item 1.2 started: Add scoring rules.');
+    expect(scrollText).not.toContain('Direct shared output 1199.');
+    expect(scrollText).not.toContain('Direct shared output 1100.');
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalled();
+    });
+  });
+
   it('omits phase badges from model output entries', async () => {
     render(<TaskRuntimeLogs task={createTask()} />);
 

@@ -201,9 +201,22 @@ export function buildAutocodeTaskCardViewModel(
     descriptionPreview,
     metaItems,
     metaText: metaItems.join(' | '),
-    progressPercent: calculateProgress(task.subtasks),
+    progressPercent: calculateAutocodeTaskDisplayProgress(task),
     logs: buildAutocodeTaskLogsViewModel(logs, options),
   };
+}
+
+function calculateAutocodeTaskDisplayProgress(task: AutocodeTaskDisplayInput): number {
+  if (
+    task.status === 'done' ||
+    task.status === 'pr_created' ||
+    task.executionPhase === 'complete' ||
+    (task.status === 'human_review' && task.reviewReason === 'completed')
+  ) {
+    return 100;
+  }
+
+  return calculateProgress(task.subtasks);
 }
 
 export function buildAutocodeTaskLogsViewModel(

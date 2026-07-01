@@ -94,6 +94,7 @@ export const taskMachine = createMachine(
           PLANNING_STARTED: { target: 'planning', actions: 'clearReviewReason' },
           PLAN_APPROVED: { target: 'coding', actions: 'clearReviewReason' },
           CODING_STARTED: { target: 'coding', actions: 'clearReviewReason' },
+          DIRECT_COMPLETED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           USER_STOPPED: { target: 'backlog', actions: 'clearReviewReason' },
           PROCESS_EXITED: { target: 'error', guard: 'unexpectedExit', actions: 'setReviewReasonErrors' }
         }
@@ -159,6 +160,7 @@ export const taskMachine = createMachine(
           USER_RESUMED: { target: 'coding', actions: 'clearReviewReason' },
           // Allow restarting from error back to planning (e.g., spec creation crashed)
           PLANNING_STARTED: { target: 'planning', actions: 'clearReviewReason' },
+          DIRECT_COMPLETED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           MARK_DONE: 'done'
         }
       },

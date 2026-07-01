@@ -11,6 +11,7 @@ import type { Task, TaskLogs as TaskLogsData } from '../../../shared/types';
 import {
   TaskRuntimeLogs,
   shouldSplitConcurrentWorkPackageLogs,
+  type TaskRuntimeLogFocusTarget,
   type TaskRuntimeLogScope,
   useTaskModelLogs,
 } from './TaskRuntimeLogs';
@@ -746,6 +747,10 @@ function clampExecutionGraphRouteCoordinate(value: number, min: number, max: num
 
 function getExecutionGraphRouteKey(point: ExecutionGraphPoint, direction: 'h' | 'v' | 'start'): string {
   return `${point.x},${point.y},${direction}`;
+}
+
+function isDirectModeTask(task: Task): boolean {
+  return task.metadata?.developmentMode === 'direct' || task.metadata?.workflowMode === 'off';
 }
 
 function getExecutionGraphPointKey(point: ExecutionGraphPoint): string {
@@ -1637,6 +1642,7 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const isTaskRunning = task.status === 'in_progress' || task.executionProgress?.phase === 'coding';
   const { modelLogs } = useTaskModelLogs(task);
+  const isDirectTask = isDirectModeTask(task);
   const splitConcurrentWorkPackageLogs = shouldSplitConcurrentWorkPackageLogs(task);
   const selectedGraphSubtask = useMemo(
     () => task.subtasks.find(subtask => subtask.id === selectedGraphNodeId) ?? null,
@@ -1656,12 +1662,29 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
 
     return { type: 'global' };
   }, [selectedScopedSubtask, splitConcurrentWorkPackageLogs]);
+  const runtimeLogFocusTarget = useMemo<TaskRuntimeLogFocusTarget | null>(() => {
+    if (!isDirectTask || !selectedGraphSubtask) {
+      return null;
+    }
+
+    return {
+      subtaskId: selectedGraphSubtask.id,
+      title: selectedGraphSubtask.title,
+      startedAt: selectedGraphSubtask.startedAt,
+      directMode: true,
+    };
+  }, [isDirectTask, selectedGraphSubtask]);
   const runtimeLogTitle = selectedScopedSubtask
     ? t('tasks:subtasks.selectedWorkPackageModelOutput', {
         title: selectedScopedSubtask.title || selectedScopedSubtask.id,
         defaultValue: 'Model output · {{title}}',
       })
-    : undefined;
+    : isDirectTask && selectedGraphSubtask
+      ? t('tasks:subtasks.selectedTaskModelOutput', {
+          title: selectedGraphSubtask.title || selectedGraphSubtask.id,
+          defaultValue: 'Model output · {{title}}',
+        })
+      : undefined;
   const activeSubtaskIndex = resolveActiveSubtaskIndex({
     subtasks: task.subtasks,
     currentSubtask: task.executionProgress?.currentSubtask,
@@ -2025,6 +2048,7 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
           task={task}
           modelLogs={modelLogs}
           scope={runtimeLogScope}
+          focusTarget={runtimeLogFocusTarget}
           title={runtimeLogTitle}
           className="min-h-0 flex-1 border-l-0"
         />

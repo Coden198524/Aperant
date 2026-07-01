@@ -227,7 +227,8 @@ export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocod
     const phaseName = stringifyPlanValue(phase.name)
       || stringifyPlanValue(phase.title)
       || `Phase ${phaseIndex + 1}`;
-    lines.push(`- [ ] ${phaseId}. ${phaseName}`);
+    const phaseStatus = inferPhaseMarkdownStatus(phase);
+    lines.push(`- [${STATUS_TO_MARKER[phaseStatus]}] ${phaseId}. ${phaseName}`);
 
     const phaseDependsOn = arrayFromUnknown(phase.depends_on);
     if (phaseDependsOn.length > 0) {
@@ -300,6 +301,26 @@ export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocod
   }
 
   return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+}
+
+function inferPhaseMarkdownStatus(phase: MutableAutocodePlanPhase): AutocodePlanMarkdownStatus {
+  const subtasks = getPhaseSubtasks(phase);
+  if (subtasks.length === 0) {
+    return normalizeMarkdownStatus(phase.status);
+  }
+  if (subtasks.some((subtask) => normalizeMarkdownStatus(subtask.status) === 'failed')) {
+    return 'failed';
+  }
+  if (subtasks.some((subtask) => normalizeMarkdownStatus(subtask.status) === 'in_progress')) {
+    return 'in_progress';
+  }
+  if (subtasks.every((subtask) => normalizeMarkdownStatus(subtask.status) === 'completed')) {
+    return 'completed';
+  }
+  if (subtasks.some((subtask) => normalizeMarkdownStatus(subtask.status) === 'blocked')) {
+    return 'blocked';
+  }
+  return 'pending';
 }
 
 export function loadAutocodeImplementationPlanSync(specDirOrPlanPath: string): MutableAutocodePlan | null {

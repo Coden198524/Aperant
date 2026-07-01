@@ -112,7 +112,8 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
     isRunning,
     phase,
   });
-  const normalizedPhaseProgress = Math.max(0, Math.min(100, phaseProgress ?? 0));
+  const isCompletePhase = phase === 'complete';
+  const normalizedPhaseProgress = Math.max(0, Math.min(100, phaseProgress ?? (isCompletePhase ? 100 : 0)));
 
   // Get log entry counts for activity indication
   const planningEntries = phaseLogs?.phases?.planning?.entries?.length || 0;
@@ -128,9 +129,10 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
 
   // Determine if we should show indeterminate (activity) vs determinate (%) progress
   const isIndeterminatePhase = phase === 'planning' || phase === 'qa_review' || phase === 'qa_fixing';
-  // Show subtask progress whenever subtasks exist (stops pulsing animation when spec completes)
-  const showSubtaskProgress = totalSubtasks > 0;
-  const showPhaseProgress = !showSubtaskProgress && isIndeterminatePhase && normalizedPhaseProgress > 0;
+  // Show subtask progress whenever subtasks exist, except terminal completion.
+  // A completed Direct task can have stale/pending synthetic subtasks, but the card must still show 100%.
+  const showSubtaskProgress = totalSubtasks > 0 && !isCompletePhase;
+  const showPhaseProgress = isCompletePhase || (!showSubtaskProgress && isIndeterminatePhase && normalizedPhaseProgress > 0);
 
   const colors = PHASE_COLORS[phase] || PHASE_COLORS.idle;
   const phaseLabel = t(PHASE_LABEL_KEYS[phase] || PHASE_LABEL_KEYS.idle);

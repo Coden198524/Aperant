@@ -177,8 +177,15 @@ export const TaskCard = memo(function TaskCard({
 
   const isRunning = task.status === 'in_progress';
   const isExecutionActive = task.status === 'in_progress' || task.status === 'ai_review';
-  const executionPhase = task.executionProgress?.phase;
+  const rawExecutionPhase = task.executionProgress?.phase;
+  const isCompletedTerminal =
+    task.status === 'done' ||
+    task.status === 'pr_created' ||
+    rawExecutionPhase === 'complete' ||
+    (task.status === 'human_review' && task.reviewReason === 'completed');
+  const executionPhase = isCompletedTerminal ? 'complete' : rawExecutionPhase;
   const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed';
+  const cardPhaseProgress = isCompletedTerminal ? 100 : task.executionProgress?.phaseProgress;
   const activeBatchCount = taskView.activeSubtaskCount;
   const hasParallelSubtasks = isRunning && taskView.hasParallelSubtasks;
   const developmentMode = resolveCardDevelopmentMode(task);
@@ -654,13 +661,13 @@ export const TaskCard = memo(function TaskCard({
         )}
 
         {/* Progress section - Phase-aware with animations */}
-        {(task.subtasks.length > 0 || hasActiveExecution || isRunning || isStuck) && (
+        {(task.subtasks.length > 0 || hasActiveExecution || isRunning || isStuck || isCompletedTerminal) && (
           <div className="mt-4">
             <PhaseProgressIndicator
               phase={executionPhase}
               subtasks={task.subtasks}
-              phaseProgress={task.executionProgress?.phaseProgress}
-              currentSubtask={task.executionProgress?.currentSubtask}
+              phaseProgress={cardPhaseProgress}
+              currentSubtask={isCompletedTerminal ? undefined : task.executionProgress?.currentSubtask}
               isStuck={isStuck}
               isRunning={isExecutionActive}
             />

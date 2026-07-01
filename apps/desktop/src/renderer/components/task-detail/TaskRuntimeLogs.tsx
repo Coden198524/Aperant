@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -26,6 +26,7 @@ interface TaskRuntimeLogsProps {
   className?: string;
   modelLogs?: TaskLogsData | null;
   scope?: TaskRuntimeLogScope;
+  focusTarget?: TaskRuntimeLogFocusTarget | null;
   compact?: boolean;
   title?: string;
 }
@@ -37,6 +38,13 @@ export type TaskRuntimeLogScope =
   | { type: 'global' }
   | { type: 'work-item'; workItemId: string };
 
+export interface TaskRuntimeLogFocusTarget {
+  subtaskId: string;
+  title?: string;
+  startedAt?: string;
+  directMode?: boolean;
+}
+
 interface UseTaskModelLogsOptions {
   enabled?: boolean;
 }
@@ -44,6 +52,11 @@ interface UseTaskModelLogsOptions {
 interface RuntimeModelInfo {
   provider?: string;
   modelId?: string;
+}
+
+interface ModelLogWindow {
+  start: number;
+  end: number;
 }
 
 const MODEL_OUTPUT_ENTRY_TYPES = new Set<ModelOutputEntryType>([
@@ -81,9 +94,10 @@ const MODEL_PHASE_STYLES: Record<TaskLogPhase, {
 
 const TYPEWRITER_CHARS_PER_TICK = 12;
 const TYPEWRITER_TICK_MS = 18;
-const INITIAL_RENDERED_MODEL_ENTRIES = 250;
-const LOG_RENDER_BATCH_SIZE = 250;
+const INITIAL_RENDERED_MODEL_ENTRIES = 80;
+const LOG_RENDER_BATCH_SIZE = 80;
 const LOAD_MORE_SCROLL_THRESHOLD = 96;
+const FOCUSED_LOG_CONTEXT_BEFORE = 8;
 const GLOBAL_LOG_SCOPE: TaskRuntimeLogScope = { type: 'global' };
 const MODEL_OUTPUT_LINK_CLASS = [
   'break-all rounded-sm px-0.5 font-semibold underline decoration-sky-500/45 underline-offset-2',
@@ -141,6 +155,104 @@ function shouldIncludeModelEntryInScope(
   }
 
   return !entry.subtask_id || !splitWorkPackageIds.has(entry.subtask_id);
+}
+
+function normalizeFocusSearchText(value: string | null | undefined): string {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function contentMatchesFocusTarget(entry: DisplayTaskLogEntry, target: TaskRuntimeLogFocusTarget): boolean {
+  const content = normalizeFocusSearchText([
+    entry.content,
+    entry.detail,
+    entry.tool_input,
+    entry.tool_name,
+  ].filter(Boolean).join(' '));
+  const subtaskId = normalizeFocusSearchText(target.subtaskId);
+  const title = normalizeFocusSearchText(target.title);
+
+  if (!content || !subtaskId) {
+    return false;
+  }
+
+  const idPhrases = [
+    `work item ${subtaskId}`,
+    `work package ${subtaskId}`,
+    `subtask ${subtaskId}`,
+    `task ${subtaskId}`,
+    `work package id: ${subtaskId}`,
+    `subtask id: ${subtaskId}`,
+    `coding work package ${subtaskId}`,
+    `coding subtask ${subtaskId}`,
+  ];
+
+  if (idPhrases.some(phrase => content.includes(phrase))) {
+    return true;
+  }
+
+  return title.length >= 12 && content.includes(title);
+}
+
+function findRuntimeLogFocusIndex(
+  entries: DisplayTaskLogEntry[],
+  target: TaskRuntimeLogFocusTarget | null | undefined,
+): number {
+  if (!target?.subtaskId || entries.length === 0) {
+    return -1;
+  }
+
+  const exactSubtaskIndex = entries.findIndex(entry => entry.subtask_id === target.subtaskId);
+  if (exactSubtaskIndex >= 0) {
+    return exactSubtaskIndex;
+  }
+
+  const markerIndex = entries.findIndex(entry => contentMatchesFocusTarget(entry, target));
+  if (markerIndex >= 0) {
+    return markerIndex;
+  }
+
+  const startedAtMs = getLogTimestamp(target.startedAt);
+  if (startedAtMs > 0) {
+    const timestampIndex = entries.findIndex(entry => getLogTimestamp(entry.timestamp) >= startedAtMs);
+    if (timestampIndex >= 0) {
+      return timestampIndex;
+    }
+  }
+
+  return target.directMode ? 0 : -1;
+}
+
+function getLatestModelLogWindow(totalCount: number): ModelLogWindow {
+  return {
+    start: Math.max(0, totalCount - INITIAL_RENDERED_MODEL_ENTRIES),
+    end: totalCount,
+  };
+}
+
+function getFocusedModelLogWindow(totalCount: number, focusIndex: number): ModelLogWindow {
+  if (focusIndex < 0 || totalCount <= 0) {
+    return getLatestModelLogWindow(totalCount);
+  }
+
+  const start = Math.max(0, focusIndex - FOCUSED_LOG_CONTEXT_BEFORE);
+  return {
+    start,
+    end: Math.min(totalCount, start + INITIAL_RENDERED_MODEL_ENTRIES),
+  };
+}
+
+function areModelLogWindowsEqual(left: ModelLogWindow, right: ModelLogWindow): boolean {
+  return left.start === right.start && left.end === right.end;
+}
+
+function clampModelLogWindow(window: ModelLogWindow, totalCount: number): ModelLogWindow {
+  if (totalCount <= 0) {
+    return { start: 0, end: 0 };
+  }
+
+  const start = Math.max(0, Math.min(window.start, totalCount - 1));
+  const end = Math.max(start + 1, Math.min(window.end, totalCount));
+  return { start, end };
 }
 
 export function countTaskRuntimeLogEntriesForScope(
@@ -989,11 +1101,12 @@ export function useTaskModelLogs(
   return { modelLogs };
 }
 
-export function TaskRuntimeLogs({
+function TaskRuntimeLogsComponent({
   task,
   className,
   modelLogs: providedModelLogs,
   scope = GLOBAL_LOG_SCOPE,
+  focusTarget = null,
   compact = false,
   title,
 }: TaskRuntimeLogsProps) {
@@ -1004,6 +1117,10 @@ export function TaskRuntimeLogs({
   const modelScrollRef = useRef<HTMLDivElement | null>(null);
   const modelEndRef = useRef<HTMLDivElement | null>(null);
   const isModelPinnedToBottomRef = useRef(true);
+  const pendingFocusIndexRef = useRef<number | null>(null);
+  const pendingLatestScrollBehaviorRef = useRef<ScrollBehavior | null>(null);
+  const lastAppliedFocusKeyRef = useRef<string | null>(null);
+  const scrollFrameRef = useRef<number | null>(null);
   const liveTask = useTaskStore(state =>
     state.tasks.find(item => item.projectId === task.projectId && (item.id === task.id || item.specId === task.specId))
   );
@@ -1022,13 +1139,41 @@ export function TaskRuntimeLogs({
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     return mergeToolLifecycleEntries(buildDisplayLogEntries(entries));
   }, [modelLogs, runtimeSourceTask, scope, scopeKey]);
-  const [visibleModelCount, setVisibleModelCount] = useState(INITIAL_RENDERED_MODEL_ENTRIES);
+  const firstModelEntryIndexBySubtaskId = useMemo(() => {
+    const indexBySubtaskId = new Map<string, number>();
+    fullModelOutputEntries.forEach((entry, index) => {
+      if (entry.subtask_id && !indexBySubtaskId.has(entry.subtask_id)) {
+        indexBySubtaskId.set(entry.subtask_id, index);
+      }
+    });
+    return indexBySubtaskId;
+  }, [fullModelOutputEntries]);
+  const [modelWindow, setModelWindow] = useState<ModelLogWindow>(() => getLatestModelLogWindow(0));
+  const modelWindowRef = useRef<ModelLogWindow>(modelWindow);
+  useEffect(() => {
+    modelWindowRef.current = modelWindow;
+  }, [modelWindow]);
   const modelOutputEntries = useMemo(() => {
-    return fullModelOutputEntries.slice(-visibleModelCount);
-  }, [fullModelOutputEntries, visibleModelCount]);
+    return fullModelOutputEntries.slice(modelWindow.start, modelWindow.end);
+  }, [fullModelOutputEntries, modelWindow]);
+  const visibleStartIndex = modelWindow.start;
   const visibleCount = modelOutputEntries.length;
   const totalCount = fullModelOutputEntries.length;
-  const hasMoreModelOutput = visibleModelCount < fullModelOutputEntries.length;
+  const hasOlderModelOutput = modelWindow.start > 0;
+  const hasNewerModelOutput = modelWindow.end < fullModelOutputEntries.length;
+  const focusKey = focusTarget?.subtaskId
+    ? [focusTarget.subtaskId, focusTarget.title ?? '', focusTarget.startedAt ?? '', focusTarget.directMode === true ? 'direct' : 'scoped'].join('\u0001')
+    : null;
+  const focusIndex = useMemo(() => {
+    if (focusTarget?.subtaskId) {
+      const exactIndex = firstModelEntryIndexBySubtaskId.get(focusTarget.subtaskId);
+      if (exactIndex !== undefined) {
+        return exactIndex;
+      }
+    }
+
+    return findRuntimeLogFocusIndex(fullModelOutputEntries, focusTarget);
+  }, [firstModelEntryIndexBySubtaskId, focusTarget, fullModelOutputEntries]);
   const activeModelPhase = getActiveModelPhase(modelLogs, runtimeSourceTask);
   const runtimeModelInfo = getRuntimeModelInfo(modelOutputEntries, runtimeSourceTask, activeModelPhase);
   const runtimeModelLabel = formatModelInfo(runtimeModelInfo);
@@ -1045,11 +1190,11 @@ export function TaskRuntimeLogs({
   const isModelActive = isTaskModelActive;
   const isModelStreaming = isModelActive;
   const modelActivityCopy = getModelActivityCopy(activeModelPhase, t);
-  const latestModelEntry = modelOutputEntries[modelOutputEntries.length - 1];
+  const latestModelEntry = fullModelOutputEntries[fullModelOutputEntries.length - 1];
   const latestModelContent = latestModelEntry?.content;
   const resolvedTitle = title ?? t('tasks:logs.modelOutputLabel', { defaultValue: 'Model output' });
 
-  const scrollModelToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
+  const scrollVisibleModelWindowToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const container = modelScrollRef.current;
     if (!container) return;
 
@@ -1065,42 +1210,164 @@ export function TaskRuntimeLogs({
     setShowJumpToLatest(false);
   }, []);
 
-  const handleModelScroll = useCallback(() => {
-    const container = modelScrollRef.current;
-    if (!container) return;
+  const scrollModelToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    pendingLatestScrollBehaviorRef.current = behavior;
+    lastAppliedFocusKeyRef.current = null;
+    pendingFocusIndexRef.current = null;
+    isModelPinnedToBottomRef.current = true;
+    setShowJumpToLatest(false);
+    setModelWindow(current => {
+      const next = getLatestModelLogWindow(fullModelOutputEntries.length);
+      return areModelLogWindowsEqual(current, next) ? current : next;
+    });
+    window.requestAnimationFrame(() => {
+      if (pendingLatestScrollBehaviorRef.current !== behavior) {
+        return;
+      }
 
-    const distanceFromTop = container.scrollTop;
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distanceFromTop < LOAD_MORE_SCROLL_THRESHOLD) {
-      setVisibleModelCount(count => Math.min(count + LOG_RENDER_BATCH_SIZE, fullModelOutputEntries.length));
+      pendingLatestScrollBehaviorRef.current = null;
+      scrollVisibleModelWindowToBottom(behavior);
+    });
+  }, [fullModelOutputEntries.length, scrollVisibleModelWindowToBottom]);
+
+  const handleModelScroll = useCallback(() => {
+    if (scrollFrameRef.current !== null) {
+      return;
     }
 
-    const isPinned = distanceFromBottom < 48;
-    isModelPinnedToBottomRef.current = isPinned;
-    setShowJumpToLatest(!isPinned);
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const container = modelScrollRef.current;
+      if (!container) return;
+
+      const distanceFromTop = container.scrollTop;
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      const totalEntries = fullModelOutputEntries.length;
+
+      setModelWindow(current => {
+        let next = current;
+
+        if (distanceFromTop < LOAD_MORE_SCROLL_THRESHOLD && current.start > 0) {
+          next = {
+            ...next,
+            start: Math.max(0, current.start - LOG_RENDER_BATCH_SIZE),
+          };
+        }
+
+        if (distanceFromBottom < LOAD_MORE_SCROLL_THRESHOLD && current.end < totalEntries) {
+          next = {
+            ...next,
+            end: Math.min(totalEntries, current.end + LOG_RENDER_BATCH_SIZE),
+          };
+        }
+
+        return areModelLogWindowsEqual(current, next) ? current : next;
+      });
+
+      const currentWindow = modelWindowRef.current;
+      const isPinned = distanceFromBottom < 48 && currentWindow.end >= totalEntries;
+      isModelPinnedToBottomRef.current = isPinned;
+      setShowJumpToLatest(current => (current === !isPinned ? current : !isPinned));
+    });
   }, [fullModelOutputEntries.length]);
 
+  useEffect(() => () => {
+    if (scrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
-    setVisibleModelCount(count => Math.max(count, INITIAL_RENDERED_MODEL_ENTRIES));
+    setModelWindow(getLatestModelLogWindow(fullModelOutputEntries.length));
     isModelPinnedToBottomRef.current = true;
     setShowJumpToLatest(false);
   }, [task.id, task.specId, scopeKey]);
 
   useEffect(() => {
-    if (!isModelPinnedToBottomRef.current) {
+    setModelWindow(current => {
+      const next = focusKey
+        ? clampModelLogWindow(current, fullModelOutputEntries.length)
+        : getLatestModelLogWindow(fullModelOutputEntries.length);
+      return areModelLogWindowsEqual(current, next) ? current : next;
+    });
+  }, [focusKey, fullModelOutputEntries.length]);
+
+  useEffect(() => {
+    if (!focusKey || !focusTarget?.subtaskId) {
+      pendingFocusIndexRef.current = null;
+      lastAppliedFocusKeyRef.current = null;
       return;
     }
 
+    if (focusIndex < 0 || lastAppliedFocusKeyRef.current === focusKey) {
+      pendingFocusIndexRef.current = null;
+      return;
+    }
+
+    lastAppliedFocusKeyRef.current = focusKey;
+    pendingFocusIndexRef.current = focusIndex;
+    isModelPinnedToBottomRef.current = false;
+    setShowJumpToLatest(true);
+    setModelWindow(current => {
+      const next = getFocusedModelLogWindow(fullModelOutputEntries.length, focusIndex);
+      return areModelLogWindowsEqual(current, next) ? current : next;
+    });
+  }, [focusIndex, focusKey, focusTarget?.subtaskId, fullModelOutputEntries.length]);
+
+  useEffect(() => {
+    const targetIndex = pendingFocusIndexRef.current;
+    const container = modelScrollRef.current;
+    if (targetIndex === null || !container) {
+      return;
+    }
+
+    const target = container.querySelector<HTMLElement>(`[data-model-entry-index="${targetIndex}"]`);
+    if (!target) {
+      return;
+    }
+
+    pendingFocusIndexRef.current = null;
     const frame = window.requestAnimationFrame(() => {
-      scrollModelToLatest('auto');
+      target.scrollIntoView({ block: 'start', behavior: 'smooth' });
     });
 
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [modelOutputEntries.length, latestModelContent, scrollModelToLatest]);
+  }, [modelOutputEntries.length, visibleStartIndex, focusIndex]);
 
   useEffect(() => {
+    const pendingLatestBehavior = pendingLatestScrollBehaviorRef.current;
+    if (pendingLatestBehavior) {
+      pendingLatestScrollBehaviorRef.current = null;
+      const frame = window.requestAnimationFrame(() => {
+        scrollVisibleModelWindowToBottom(pendingLatestBehavior);
+      });
+
+      return () => {
+        window.cancelAnimationFrame(frame);
+      };
+    }
+
+    if (!isModelPinnedToBottomRef.current) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      scrollVisibleModelWindowToBottom('auto');
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [modelOutputEntries.length, latestModelContent, modelWindow.end, scrollVisibleModelWindowToBottom]);
+
+  useEffect(() => {
+    if (focusTarget?.subtaskId) {
+      return;
+    }
+
     isModelPinnedToBottomRef.current = true;
     const frame = window.requestAnimationFrame(() => {
       scrollModelToLatest('auto');
@@ -1109,7 +1376,7 @@ export function TaskRuntimeLogs({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [scrollModelToLatest]);
+  }, [focusTarget?.subtaskId, scrollModelToLatest]);
 
   return (
     <section
@@ -1167,18 +1434,25 @@ export function TaskRuntimeLogs({
             data-testid="model-output-scroll"
           >
             <div className={compact ? 'space-y-2.5' : 'space-y-3'}>
-              {hasMoreModelOutput && (
+              {hasOlderModelOutput && (
                 <LogHistoryLoadingHint label={t('tasks:logs.scrollForOlder', { defaultValue: 'Scroll up to load older output' })} />
               )}
-              {modelOutputEntries.map((entry, index) => (
-                <ModelOutputEntry
-                  key={`${entry.timestamp}-${entry.phase}-${entry.type}-${entry.tool_name ?? ''}-${entry.subtask_id ?? ''}-${index}`}
-                  entry={entry}
-                  isLatest={index === modelOutputEntries.length - 1}
-                  isStreaming={isModelStreaming && index === modelOutputEntries.length - 1}
-                  t={t}
-                />
-              ))}
+              {modelOutputEntries.map((entry, index) => {
+                const absoluteIndex = visibleStartIndex + index;
+                return (
+                  <div key={`${entry.timestamp}-${entry.phase}-${entry.type}-${entry.tool_name ?? ''}-${entry.subtask_id ?? ''}-${absoluteIndex}`} data-model-entry-index={absoluteIndex}>
+                    <MemoizedModelOutputEntry
+                      entry={entry}
+                      isLatest={absoluteIndex === totalCount - 1}
+                      isStreaming={isModelStreaming && absoluteIndex === totalCount - 1}
+                      t={t}
+                    />
+                  </div>
+                );
+              })}
+              {hasNewerModelOutput && (
+                <LogHistoryLoadingHint label={t('tasks:logs.scrollForNewer', { defaultValue: 'Scroll down to load later output' })} />
+              )}
               {isModelStreaming && <ModelActivityStatus label={modelActivityCopy.label} />}
               <div ref={modelEndRef} />
             </div>
@@ -1232,6 +1506,8 @@ export function TaskRuntimeLogs({
     </section>
   );
 }
+
+export const TaskRuntimeLogs = memo(TaskRuntimeLogsComponent);
 
 function ModelActivityStatus({
   label,
@@ -1431,3 +1707,5 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
     </div>
   );
 }
+
+const MemoizedModelOutputEntry = memo(ModelOutputEntry);

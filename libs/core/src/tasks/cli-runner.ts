@@ -8,10 +8,16 @@ import {
   compactChangeRequestJsonlForPrompt,
   DIRECT_CHANGE_REQUEST_LIMIT,
 } from '../runtime/agent-messages.js';
+import { AUTOCODE_TASK_EVENT_PREFIX } from '../runtime/agent-events.js';
 import {
   type AutocodeTaskRuntimeConcurrencyResolved,
   resolveAutocodeTaskRuntimeConcurrency,
 } from '../runtime/concurrency.js';
+import {
+  AUTOCODE_DIRECT_SESSION_STATE_VERSION,
+  compactAutocodeDirectSessionLatestSummary,
+  resolveAutocodeDirectSessionState,
+} from '../runtime/direct-session-state.js';
 import { foldRepeatedAutocodePromptLines } from '../runtime/prompt-context.js';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import {
@@ -232,12 +238,15 @@ function buildTaskRunPrompt(input: {
     buildTaskHumanInputReference(input.specDir, input.language),
     buildTaskChangeRequestReference(input.specDir, input.language),
   ].join('');
+  const directContinuationReference = input.phase === 'direct'
+    ? buildDirectCliContinuationReference(input.specDir)
+    : '';
   const taskDescription = compactTaskRunTaskDescription(input.task.description || input.task.title);
   const hasHumanReviewContext = hasTaskHumanReviewContext(input.specDir);
 
   if (input.phase === 'direct') {
     if (isChinese) {
-      return `${header}${contextReference}${humanInputReference}${[
+      return `${header}${contextReference}${humanInputReference}${directContinuationReference}${[
         '## 目标',
         '',
         '直接实现任务；不使用单独的规格工作流。',
@@ -258,7 +267,7 @@ function buildTaskRunPrompt(input: {
       ].join('\n')}`;
     }
 
-    return `${header}${contextReference}${humanInputReference}${[
+    return `${header}${contextReference}${humanInputReference}${directContinuationReference}${[
       '## Goal',
       '',
       'Implement the task directly; no separate spec workflow.',
@@ -541,6 +550,32 @@ function buildTaskChangeRequestReference(specDir: string, language?: AutocodeAge
   }
 }
 
+function buildDirectCliContinuationReference(specDir: string): string {
+  const state = resolveAutocodeDirectSessionState(specDir);
+  if (!state) {
+    return '';
+  }
+
+  const lines: string[] = [];
+  if (state.latestSummary) {
+    lines.push('## Prior Direct Session Summary');
+    lines.push('');
+    lines.push(compactAutocodeDirectSessionLatestSummary(state.latestSummary) ?? '');
+    lines.push('');
+  }
+  if (Array.isArray(state.changedFiles) && state.changedFiles.length > 0) {
+    lines.push('## Files Changed Previously');
+    for (const filePath of state.changedFiles.slice(0, 25)) {
+      lines.push(`- ${filePath}`);
+    }
+    if (state.changedFiles.length > 25) {
+      lines.push(`- ...${state.changedFiles.length - 25} more omitted`);
+    }
+    lines.push('');
+  }
+  return lines.length > 0 ? lines.join('\n') : '';
+}
+
 function hasTaskHumanReviewContext(specDir: string): boolean {
   return hasNonEmptyTaskFile(join(specDir, 'HUMAN_INPUT.md')) ||
     hasNonEmptyTaskFile(join(specDir, 'change_requests.jsonl'));
@@ -776,6 +811,8 @@ const projectId = ${JSON.stringify(input.projectId)};
 const language = ${JSON.stringify(input.language)};
 const runtimeConcurrency = ${JSON.stringify(input.runtimeConcurrency)};
 const artifacts = ${JSON.stringify(AUTOCODE_TASK_ARTIFACTS)};
+const directSessionStateVersion = ${JSON.stringify(AUTOCODE_DIRECT_SESSION_STATE_VERSION)};
+const taskEventPrefix = ${JSON.stringify(AUTOCODE_TASK_EVENT_PREFIX)};
 const fileWriteLockScope = inferFileWriteLockScope();
 const iconvLite = loadIconvLite();
 const prompt = readFileSync(promptFilePath, 'utf8');
@@ -1608,8 +1645,16 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     }, rateLimited ? 'rate_limited' : failed ? 'failure' : 'success', result.message, memoryNotes);
   }
 
+  persistDirectSessionState(result, now);
   writeJson(join(specDir, artifacts.runResult), result);
   updatePlanStatus(failed, result.message, now);
+  if (phase === 'direct' && !failed) {
+    emitTaskEvent('DIRECT_COMPLETED', {
+      outcome: 'completed',
+      filesChanged: 0,
+      quality: { runner: 'codex-cli' },
+    });
+  }
   updateTaskLogs(logPhase, failed ? 'failed' : 'completed', result.message);
   await flushCliMemoryWrites();
   emitPhase(failed ? 'failed' : phase === 'coding' || phase === 'direct' ? 'complete' : executionPhase, result.message, failed ? 0 : 100);
@@ -3819,6 +3864,122 @@ function formatTokenUsageMessage(usage) {
 
 function emitTokenUsage(usage) {
   process.stdout.write('__TASK_TOKEN_USAGE__:' + JSON.stringify(usage) + '\\n');
+}
+
+function emitTaskEvent(type, extra) {
+  process.stdout.write(taskEventPrefix + JSON.stringify({
+    type,
+    taskId: basename(specDir),
+    specId: basename(specDir),
+    projectId: projectId || '',
+    timestamp: new Date().toISOString(),
+    eventId: basename(specDir) + '-' + type + '-' + Date.now(),
+    sequence: Date.now(),
+    ...(extra || {}),
+  }) + '\\n');
+}
+
+function persistDirectSessionState(result, now) {
+  if (phase !== 'direct') {
+    return;
+  }
+
+  const statePath = join(specDir, artifacts.directSession);
+  const existing = readJsonFile(statePath) || {};
+  const summary = readDirectCompletionSummary(result);
+  const tokenUsage = readCurrentPlanTokenUsage();
+  const sessionId = typeof existing.sessionId === 'string' && existing.sessionId.trim()
+    ? existing.sessionId.trim()
+    : typeof tokenUsage?.sessionId === 'string' && tokenUsage.sessionId.trim()
+      ? tokenUsage.sessionId.trim()
+      : 'codex-cli-' + randomUUID();
+  const iteration = Number.isFinite(existing.iteration)
+    ? Math.max(1, Math.floor(existing.iteration) + 1)
+    : 1;
+
+  if (!existsSync(join(specDir, artifacts.directSummary)) && summary) {
+    writeFileSync(join(specDir, artifacts.directSummary), summary.endsWith('\\n') ? summary : summary + '\\n', 'utf8');
+  }
+
+  writeJson(statePath, {
+    version: directSessionStateVersion,
+    sessionId,
+    createdAt: typeof existing.createdAt === 'string' && existing.createdAt.trim()
+      ? existing.createdAt
+      : now,
+    updatedAt: now,
+    iteration,
+    provider: 'codex-cli',
+    modelId: undefined,
+    originalRequest: compactDirectSessionText(
+      typeof existing.originalRequest === 'string' && existing.originalRequest.trim()
+        ? existing.originalRequest
+        : taskDescription || taskTitle,
+      4000,
+      '\\n...[original request middle omitted for state budget; inspect task metadata if exact omitted detail is required]...\\n',
+    ),
+    latestSummary: compactDirectSessionText(
+      summary || result.message,
+      1200,
+      '\\n...[direct session summary middle omitted for continuation budget; inspect runtime logs if exact omitted detail is required]...\\n',
+    ),
+    changedFiles: Array.isArray(existing.changedFiles) ? existing.changedFiles.filter(Boolean).slice(0, 100) : [],
+    lastOutcome: result.status || 'unknown',
+  });
+}
+
+function readDirectCompletionSummary(result) {
+  const summaryPath = join(specDir, artifacts.directSummary);
+  try {
+    const content = readFileSync(summaryPath, 'utf8').trim();
+    if (content) {
+      return content;
+    }
+  } catch {
+    // Use model output below.
+  }
+  return (defaultAttemptState.lastCodexMessageText || result.message || '').trim();
+}
+
+function readCurrentPlanTokenUsage() {
+  try {
+    const content = readFileSync(join(specDir, artifacts.implementationPlan), 'utf8');
+    return normalizePersistedTokenUsage(readPlanMachineMetadata(content).tokenUsage);
+  } catch {
+    return undefined;
+  }
+}
+
+function readJsonFile(filePath) {
+  try {
+    const parsed = JSON.parse(readFileSync(filePath, 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function compactDirectSessionText(value, maxLength, marker) {
+  const normalized = cleanLogText(String(value || ''))
+    .replace(/\\r\\n/g, '\\n')
+    .replace(/\\r/g, '\\n')
+    .replace(/[ \\t]+\\n/g, '\\n')
+    .replace(/\\n{4,}/g, '\\n\\n\\n')
+    .trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  const budget = Math.max(0, maxLength - marker.length);
+  const headLength = Math.ceil(budget * 0.65);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    normalized.slice(0, headLength).trimEnd(),
+    marker,
+    normalized.slice(-tailLength).trimStart(),
+  ].join('');
 }
 
 async function validateExpectedArtifacts() {

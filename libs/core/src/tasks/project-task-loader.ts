@@ -26,6 +26,11 @@ import {
   readAutocodeTaskLogsFromSpecDir,
   type AutocodeTaskLogs,
 } from './logs.js';
+import {
+  AUTOCODE_DIRECT_SESSION_STATE_VERSION,
+  resolveAutocodeDirectSessionState,
+  saveAutocodeDirectSessionState,
+} from '../runtime/direct-session-state.js';
 
 export const AUTOCODE_JSON_ERROR_PREFIX = '__JSON_ERROR__:';
 export const AUTOCODE_JSON_ERROR_TITLE_SUFFIX = '__JSON_ERROR_SUFFIX__';
@@ -82,6 +87,7 @@ interface ImplementationPlanFile {
   feature?: string;
   title?: string;
   description?: string;
+  workflow_type?: string;
   status?: string;
   planStatus?: string;
   reviewReason?: AutocodeReviewReason;
@@ -90,9 +96,18 @@ interface ImplementationPlanFile {
   stagedInMainProject?: boolean;
   stagedAt?: string;
   tokenUsage?: AutocodeTokenUsage;
+  direct_execution?: {
+    enabled?: boolean;
+    outcome?: string;
+    completed_at?: string;
+    current_subtask_id?: string;
+    change_request_id?: string;
+    summary_file?: string;
+  };
   phases?: Array<{
     subtasks?: RawProjectPlanSubtask[];
     chunks?: RawProjectPlanSubtask[];
+    type?: string;
   }>;
   created_at?: string;
   updated_at?: string;
@@ -110,6 +125,7 @@ interface RawProjectPlanSubtask {
   actual_output?: unknown;
   started_at?: unknown;
   completed_at?: unknown;
+  updated_at?: unknown;
   duration_ms?: unknown;
   durationMs?: unknown;
   files_to_create?: unknown;
@@ -119,6 +135,14 @@ interface RawProjectPlanSubtask {
   work_package?: unknown;
   upstream_task_ids?: unknown;
   upstream_source?: unknown;
+}
+
+interface AutocodeRunResultFile {
+  phase?: string;
+  exitCode?: number | null;
+  status?: string;
+  message?: string;
+  updatedAt?: string;
 }
 
 export function loadAutocodeProjectTasks(input: LoadAutocodeProjectTasksInput): AutocodeProjectTask[] {
@@ -263,6 +287,7 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
   const planPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
   const specFilePath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
   const metadataPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata);
+  const runResultPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.runResult);
 
   let plan: ImplementationPlanFile | null = null;
   let hasJsonError = false;
@@ -276,6 +301,7 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
   }
 
   const metadata = readJsonFile<AutocodeTaskMetadata>(metadataPath) ?? undefined;
+  const runResult = readJsonFile<AutocodeRunResultFile>(runResultPath) ?? undefined;
   const requirements = loadAutocodeTaskRequirementsSync(input.specDir);
   const specTitle = readSpecTitle(specFilePath);
   const description = getProjectTaskDescription(requirements, plan, specFilePath);
@@ -283,7 +309,7 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
   const { status, reviewReason } = hasJsonError
     ? { status: 'human_review' as const, reviewReason: 'errors' as const }
     : determineAutocodeProjectTaskStatus(plan);
-  const subtasks = extractProjectPlanSubtasks(plan);
+  let subtasks = extractProjectPlanSubtasks(plan);
   const taskLogs = readAutocodeTaskLogsFromSpecDir(input.specDir, input.specId);
   const corrected = correctStaleAutocodeTaskStatus({
     subtasks,
@@ -292,10 +318,16 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
     reviewReason,
     plan,
     planPath,
+    specDir: input.specDir,
     specId: input.specId,
+    metadata,
+    runResult,
+    logs: taskLogs,
+    taskDescription: finalDescription,
     persist: input.persistStaleStatusCorrections !== false,
     minAgeMs: input.staleStatusCorrectionAgeMs ?? 30_000,
   });
+  subtasks = extractProjectPlanSubtasks(plan);
 
   const rawTitle = hasJsonError
     ? `${input.specId}${AUTOCODE_JSON_ERROR_TITLE_SUFFIX}`
@@ -602,11 +634,49 @@ function correctStaleAutocodeTaskStatus(input: {
   reviewReason?: AutocodeReviewReason;
   plan: ImplementationPlanFile | null;
   planPath: string;
+  specDir: string;
   specId: string;
+  metadata?: AutocodeTaskMetadata;
+  runResult?: AutocodeRunResultFile;
+  logs?: AutocodeTaskLogs | null;
+  taskDescription?: string;
   persist: boolean;
   minAgeMs: number;
 }): { status: AutocodeTaskStatus; reviewReason?: AutocodeReviewReason } {
-  if (input.subtasks.length === 0 || input.hasJsonError) {
+  if (input.hasJsonError) {
+    return { status: input.status, ...(input.reviewReason ? { reviewReason: input.reviewReason } : {}) };
+  }
+
+  if (shouldResumeStaleCompletedDirectIteration(input)) {
+    if (input.persist && input.plan) {
+      const now = new Date().toISOString();
+      const correctedPlan = applyRunningDirectIterationCorrection(input.plan, now);
+      try {
+        saveAutocodeImplementationPlanSync(input.planPath, correctedPlan as unknown as MutableAutocodePlan);
+        Object.assign(input.plan, correctedPlan);
+      } catch {
+        return { status: 'in_progress' };
+      }
+    }
+    return { status: 'in_progress' };
+  }
+
+  if (isCompletedDirectRun(input)) {
+    if (input.persist && input.plan) {
+      const now = new Date().toISOString();
+      const correctedPlan = applyCompletedDirectRunCorrection(input.plan, now);
+      try {
+        saveAutocodeImplementationPlanSync(input.planPath, correctedPlan as unknown as MutableAutocodePlan);
+        ensureDirectSessionStateForCompletedRun(input, now);
+        Object.assign(input.plan, correctedPlan);
+      } catch {
+        return { status: 'human_review', reviewReason: 'completed' };
+      }
+    }
+    return { status: 'human_review', reviewReason: 'completed' };
+  }
+
+  if (input.subtasks.length === 0) {
     return { status: input.status, ...(input.reviewReason ? { reviewReason: input.reviewReason } : {}) };
   }
 
@@ -669,6 +739,324 @@ function correctStaleAutocodeTaskStatus(input: {
   }
 
   return { status: 'human_review', reviewReason: 'completed' };
+}
+
+function isCompletedDirectRun(input: Parameters<typeof correctStaleAutocodeTaskStatus>[0]): boolean {
+  if (
+    input.status === 'done' ||
+    input.status === 'pr_created' ||
+    (input.status === 'human_review' && input.reviewReason === 'completed')
+  ) {
+    return false;
+  }
+
+  if (!isDirectAutocodeTask(input)) {
+    return false;
+  }
+  if (!isDirectRunResultFreshForCurrentIteration(input)) {
+    return false;
+  }
+
+  return input.runResult?.phase === 'direct' &&
+    input.runResult.status === 'success' &&
+    input.runResult.exitCode === 0;
+}
+
+function shouldResumeStaleCompletedDirectIteration(
+  input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
+): boolean {
+  if (!input.plan || !isDirectAutocodeTask(input)) {
+    return false;
+  }
+
+  const isCompletedStatus = input.status === 'done' ||
+    input.status === 'pr_created' ||
+    (input.status === 'human_review' && input.reviewReason === 'completed') ||
+    input.plan.direct_execution?.outcome === 'completed';
+  if (!isCompletedStatus) {
+    return false;
+  }
+
+  const iterationStartedAtMs = getCurrentDirectIterationStartedAtMs(input.plan);
+  if (iterationStartedAtMs === undefined) {
+    return false;
+  }
+
+  const completionEvidenceMs = getFreshestDirectCompletionEvidenceMs(input);
+  if (completionEvidenceMs !== undefined && completionEvidenceMs >= iterationStartedAtMs) {
+    return false;
+  }
+
+  const latestLogActivityMs = getLatestTaskLogActivityMs(input.logs);
+  if (latestLogActivityMs !== undefined && latestLogActivityMs < iterationStartedAtMs) {
+    return false;
+  }
+
+  return true;
+}
+
+function isDirectAutocodeTask(input: Parameters<typeof correctStaleAutocodeTaskStatus>[0]): boolean {
+  return input.metadata?.developmentMode === 'direct' ||
+    input.metadata?.workflowMode === 'off' ||
+    input.plan?.workflow_type === 'direct' ||
+    input.plan?.direct_execution?.enabled === true;
+}
+
+function isDirectRunResultFreshForCurrentIteration(
+  input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
+): boolean {
+  const iterationStartedAtMs = getCurrentDirectIterationStartedAtMs(input.plan);
+  if (iterationStartedAtMs === undefined) {
+    return true;
+  }
+  const runResultUpdatedAtMs = input.runResult?.phase === 'direct' &&
+    input.runResult.status === 'success' &&
+    input.runResult.exitCode === 0
+    ? timestampMs(input.runResult.updatedAt)
+    : undefined;
+  return runResultUpdatedAtMs !== undefined && runResultUpdatedAtMs >= iterationStartedAtMs;
+}
+
+function getFreshestDirectCompletionEvidenceMs(
+  input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
+): number | undefined {
+  const timestamps: number[] = [];
+  if (
+    input.runResult?.phase === 'direct' &&
+    input.runResult.status === 'success' &&
+    input.runResult.exitCode === 0
+  ) {
+    const runResultUpdatedAtMs = timestampMs(input.runResult.updatedAt);
+    if (runResultUpdatedAtMs !== undefined) {
+      timestamps.push(runResultUpdatedAtMs);
+    }
+  }
+
+  const directSession = resolveAutocodeDirectSessionState(input.specDir);
+  if (isSuccessfulDirectOutcome(directSession?.lastOutcome)) {
+    const sessionUpdatedAtMs = timestampMs(directSession?.updatedAt);
+    if (sessionUpdatedAtMs !== undefined) {
+      timestamps.push(sessionUpdatedAtMs);
+    }
+  }
+
+  return timestamps.length > 0 ? Math.max(...timestamps) : undefined;
+}
+
+function isSuccessfulDirectOutcome(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === 'success' || normalized === 'completed' || normalized === 'done';
+}
+
+function getCurrentDirectIterationStartedAtMs(plan: ImplementationPlanFile | null): number | undefined {
+  if (!plan) {
+    return undefined;
+  }
+  const directSubtaskId = stringFrom(plan.direct_execution?.current_subtask_id);
+  const currentSubtask = findDirectSubtask(plan, directSubtaskId);
+  const candidates = [
+    timestampMs(stringFrom(currentSubtask?.started_at)),
+    parseDirectChangeRequestTimestampMs(directSubtaskId),
+    parseDirectChangeRequestTimestampMs(stringFrom(plan.direct_execution?.change_request_id)),
+  ].filter((value): value is number => value !== undefined);
+  return candidates.length > 0 ? Math.max(...candidates) : undefined;
+}
+
+function findDirectSubtask(
+  plan: ImplementationPlanFile,
+  subtaskId: string,
+): RawProjectPlanSubtask | undefined {
+  if (!subtaskId) {
+    return undefined;
+  }
+  for (const phase of plan.phases ?? []) {
+    const items = Array.isArray(phase.subtasks)
+      ? phase.subtasks
+      : Array.isArray(phase.chunks)
+        ? phase.chunks
+        : [];
+    const match = items.find((subtask) => stringFrom(subtask.id) === subtaskId);
+    if (match) {
+      return match;
+    }
+  }
+  return undefined;
+}
+
+function parseDirectChangeRequestTimestampMs(value: string): number | undefined {
+  const match = /(?:^|-)cr-(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{3})/.exec(value);
+  if (!match) {
+    return undefined;
+  }
+  const timestamp = Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6]),
+    Number(match[7]),
+  );
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function getLatestTaskLogActivityMs(logs: AutocodeTaskLogs | null | undefined): number | undefined {
+  if (!logs) {
+    return undefined;
+  }
+  const timestamps = [
+    timestampMs(logs.updated_at),
+    ...Object.values(logs.phases ?? {}).flatMap((phase) => [
+      timestampMs(phase.started_at ?? undefined),
+      timestampMs(phase.completed_at ?? undefined),
+      ...phase.entries.map((entry) => timestampMs(entry.timestamp)),
+    ]),
+  ].filter((value): value is number => value !== undefined);
+  return timestamps.length > 0 ? Math.max(...timestamps) : undefined;
+}
+
+function timestampMs(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function applyCompletedDirectRunCorrection(plan: ImplementationPlanFile, now: string): ImplementationPlanFile {
+  const directSubtaskId = stringFrom(plan.direct_execution?.current_subtask_id);
+  const completionSummary = 'Completed by Autocode Direct CLI run.';
+  const phases = (plan.phases ?? []).map((phase) => {
+    const phaseIsDirect = phase.type === 'direct';
+    const rewriteItems = (items: RawProjectPlanSubtask[] | undefined): RawProjectPlanSubtask[] | undefined => {
+      if (!Array.isArray(items)) {
+        return items;
+      }
+      return items.map((subtask) => {
+        const subtaskId = stringFrom(subtask.id);
+        if (!phaseIsDirect && (!directSubtaskId || subtaskId !== directSubtaskId)) {
+          return subtask;
+        }
+        return {
+          ...subtask,
+          status: 'completed',
+          completed_at: stringFrom(subtask.completed_at, now),
+          completion_summary: stringFrom(subtask.completion_summary, subtask.notes, completionSummary),
+          notes: stringFrom(subtask.notes, subtask.completion_summary, completionSummary),
+        };
+      });
+    };
+    return {
+      ...phase,
+      subtasks: rewriteItems(phase.subtasks),
+      chunks: rewriteItems(phase.chunks),
+    };
+  });
+
+  return {
+    ...plan,
+    status: 'human_review',
+    planStatus: 'review',
+    reviewReason: 'completed',
+    updated_at: now,
+    xstateState: 'human_review',
+    executionPhase: 'complete',
+    direct_execution: {
+      ...plan.direct_execution,
+      enabled: true,
+      outcome: 'completed',
+      completed_at: now,
+      summary_file: plan.direct_execution?.summary_file || AUTOCODE_TASK_ARTIFACTS.directSummary,
+      ...(directSubtaskId ? { current_subtask_id: directSubtaskId } : {}),
+    },
+    phases,
+  };
+}
+
+function applyRunningDirectIterationCorrection(plan: ImplementationPlanFile, now: string): ImplementationPlanFile {
+  const directSubtaskId = stringFrom(plan.direct_execution?.current_subtask_id);
+  const phases = (plan.phases ?? []).map((phase) => {
+    const rewriteItems = (items: RawProjectPlanSubtask[] | undefined): RawProjectPlanSubtask[] | undefined => {
+      if (!Array.isArray(items) || !directSubtaskId) {
+        return items;
+      }
+      return items.map((subtask) => {
+        if (stringFrom(subtask.id) !== directSubtaskId) {
+          return subtask;
+        }
+        const rest = { ...subtask } as RawProjectPlanSubtask & { completionSummary?: unknown };
+        delete rest.completed_at;
+        delete rest.completion_summary;
+        delete rest.completionSummary;
+        delete rest.completed_summary;
+        delete rest.notes;
+        delete rest.actual_output;
+        return {
+          ...rest,
+          status: 'in_progress',
+          started_at: stringFrom(subtask.started_at, now),
+          updated_at: now,
+        };
+      });
+    };
+    return {
+      ...phase,
+      subtasks: rewriteItems(phase.subtasks),
+      chunks: rewriteItems(phase.chunks),
+    };
+  });
+
+  const directExecution = {
+    ...(plan.direct_execution ?? {}),
+    enabled: true,
+    outcome: 'running',
+    summary_file: plan.direct_execution?.summary_file || AUTOCODE_TASK_ARTIFACTS.directSummary,
+    ...(directSubtaskId ? { current_subtask_id: directSubtaskId } : {}),
+  };
+  delete directExecution.completed_at;
+
+  const correctedPlan: ImplementationPlanFile = {
+    ...plan,
+    status: 'coding',
+    planStatus: 'coding',
+    updated_at: now,
+    xstateState: 'coding',
+    executionPhase: 'coding',
+    direct_execution: directExecution,
+    phases,
+  };
+  delete correctedPlan.reviewReason;
+  return correctedPlan;
+}
+
+function ensureDirectSessionStateForCompletedRun(
+  input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
+  now: string,
+): void {
+  if (resolveAutocodeDirectSessionState(input.specDir)) {
+    return;
+  }
+
+  try {
+    const summary = readTextFile(join(input.specDir, AUTOCODE_TASK_ARTIFACTS.directSummary)) ||
+      input.runResult?.message ||
+      'Autocode Direct run completed.';
+    saveAutocodeDirectSessionState(input.specDir, {
+      version: AUTOCODE_DIRECT_SESSION_STATE_VERSION,
+      sessionId: input.plan?.tokenUsage?.sessionId || `direct-${input.specId}`,
+      createdAt: input.plan?.created_at || now,
+      updatedAt: now,
+      iteration: 1,
+      provider: 'codex-cli',
+      originalRequest: input.taskDescription,
+      latestSummary: summary,
+      changedFiles: [],
+      lastOutcome: input.runResult?.status || 'success',
+    });
+  } catch {
+    // Status correction should not fail just because the compact continuation state
+    // could not be backfilled for an old CLI run.
+  }
 }
 
 function shouldResumeIncompleteReviewStatus(
@@ -797,6 +1185,17 @@ function readJsonFile<T>(filePath: string): T | null {
     return safeParseAutocodeJson<T>(readFileSync(filePath, 'utf8'));
   } catch {
     return null;
+  }
+}
+
+function readTextFile(filePath: string): string {
+  if (!existsSync(filePath)) {
+    return '';
+  }
+  try {
+    return readFileSync(filePath, 'utf8').trim();
+  } catch {
+    return '';
   }
 }
 

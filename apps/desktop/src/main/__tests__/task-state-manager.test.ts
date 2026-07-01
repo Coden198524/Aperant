@@ -1,7 +1,10 @@
 ﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TaskStateManager } from '../task-state-manager';
+import type { BrowserWindow } from 'electron';
 import type { Task, Project } from '../../shared/types';
 import { persistPlanStatusAndReasonSync } from '../ipc-handlers/task/plan-file-utils';
+import { safeSendToRenderer } from '../ipc-handlers/utils';
+import { IPC_CHANNELS } from '../../shared/constants';
 
 // Mock dependencies
 vi.mock('../ipc-handlers/utils', () => ({
@@ -673,6 +676,42 @@ describe('TaskStateManager', () => {
       manager.handleTaskEvent(taskInProgress.id, event, taskInProgress, mockProject);
 
       // No error should occur
+    });
+
+    it('should emit 100% execution progress when Direct completes into human review', () => {
+      manager.configure(() => ({
+        isDestroyed: () => false,
+        webContents: {
+          isDestroyed: () => false,
+          send: vi.fn()
+        }
+      }) as unknown as BrowserWindow);
+
+      const taskInProgress = createMockTask({
+        status: 'in_progress',
+        executionProgress: { phase: 'coding', phaseProgress: 80, overallProgress: 80 }
+      });
+
+      vi.mocked(safeSendToRenderer).mockClear();
+      manager.handleTaskEvent(taskInProgress.id, {
+        type: 'DIRECT_COMPLETED',
+        taskId: taskInProgress.id,
+        specId: taskInProgress.specId,
+        projectId: mockProject.id,
+        timestamp: new Date().toISOString(),
+        eventId: 'evt-direct-completed',
+        sequence: 0,
+        outcome: 'completed'
+      }, taskInProgress, mockProject);
+
+      const progressCalls = vi.mocked(safeSendToRenderer).mock.calls.filter(
+        (call) => call[1] === IPC_CHANNELS.TASK_EXECUTION_PROGRESS
+      );
+      expect(progressCalls.at(-1)?.[3]).toMatchObject({
+        phase: 'complete',
+        phaseProgress: 100,
+        overallProgress: 100
+      });
     });
 
     it('should restore actor state from task with human_review/plan_review', () => {

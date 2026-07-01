@@ -1448,6 +1448,51 @@ function shouldTrackDirectModifiedFile(toolName: string): boolean {
   return shouldTrackAutocodeDirectModifiedFile(toolName);
 }
 
+function getDirectSessionSubtaskId(session: SerializableSessionConfig): string {
+  return session.subtaskId?.trim() || 'direct-implementation';
+}
+
+function ensureDirectPlanPhase(plan: ShardableImplementationPlan): {
+  phase?: number;
+  id?: string;
+  name?: string;
+  type?: string;
+  subtasks?: Array<Record<string, unknown>>;
+} {
+  if (!Array.isArray(plan.phases)) {
+    plan.phases = [];
+  }
+
+  let directPhase = plan.phases.find((phase) => phase.type === 'direct') as
+    | {
+        phase?: number;
+        id?: string;
+        name?: string;
+        type?: string;
+        subtasks?: Array<Record<string, unknown>>;
+      }
+    | undefined;
+  if (!directPhase) {
+    directPhase = {
+      id: 'direct',
+      phase: 1,
+      name: 'Direct execution',
+      type: 'direct',
+      subtasks: [],
+    };
+    plan.phases.unshift(directPhase);
+  }
+
+  directPhase.id = directPhase.id ?? 'direct';
+  directPhase.phase = typeof directPhase.phase === 'number' ? directPhase.phase : 1;
+  directPhase.name = directPhase.name || 'Direct execution';
+  directPhase.type = 'direct';
+  if (!Array.isArray(directPhase.subtasks)) {
+    directPhase.subtasks = [];
+  }
+  return directPhase;
+}
+
 function persistDirectTaskCompletion(
   session: SerializableSessionConfig,
   result: SessionResult | undefined,
@@ -1458,6 +1503,7 @@ function persistDirectTaskCompletion(
   const success = isSuccessfulDirectOutcome(result);
   const summary = buildDirectCompletionSummaryV2(session, result, streamedText, quality);
   const now = new Date().toISOString();
+  const directSubtaskId = getDirectSessionSubtaskId(session);
   const specDirs = Array.from(new Set([
     session.specDir,
     session.sourceSpecDir,
@@ -1488,34 +1534,45 @@ function persistDirectTaskCompletion(
         outcome: result?.outcome ?? 'unknown',
         completed_at: now,
         summary_file: 'direct_summary.md',
+        current_subtask_id: directSubtaskId,
         ai_coding_quality: quality,
       };
       plan.updated_at = now;
       if (!plan.created_at) {
         plan.created_at = now;
       }
-      plan.phases = [
-        {
-          phase: 1,
-          name: 'Direct execution',
-          type: 'direct',
-          subtasks: [
-            {
-              id: 'direct-implementation',
-              title: 'Direct model execution',
-              description: extractDirectTaskDescription(session),
-              status: success ? 'completed' : 'failed',
-              files_to_modify: modifiedFiles,
-              completion_summary: summary,
-              notes: summary,
-              verification: {
-                type: 'manual',
-                scenario: 'Review the completion summary, runtime log, and git changes.',
-              },
-            },
-          ],
-        },
-      ];
+      const directPhase = ensureDirectPlanPhase(plan);
+      const subtasks = directPhase.subtasks ?? [];
+      let currentSubtask = subtasks.find((subtask) => subtask.id === directSubtaskId);
+      if (!currentSubtask) {
+        currentSubtask = {
+          id: directSubtaskId,
+          title: directSubtaskId === 'direct-implementation'
+            ? 'Direct model execution'
+            : 'Direct Request Changes',
+          description: extractDirectTaskDescription(session),
+          created_at: now,
+        };
+        subtasks.push(currentSubtask);
+      }
+
+      currentSubtask.title = typeof currentSubtask.title === 'string' && currentSubtask.title.trim()
+        ? currentSubtask.title
+        : directSubtaskId === 'direct-implementation'
+          ? 'Direct model execution'
+          : 'Direct Request Changes';
+      currentSubtask.description = typeof currentSubtask.description === 'string' && currentSubtask.description.trim()
+        ? currentSubtask.description
+        : extractDirectTaskDescription(session);
+      currentSubtask.status = success ? 'completed' : 'failed';
+      currentSubtask.files_to_modify = modifiedFiles;
+      currentSubtask.completion_summary = summary;
+      currentSubtask.notes = summary;
+      currentSubtask.completed_at = now;
+      currentSubtask.verification = {
+        type: 'manual',
+        scenario: 'Review the completion summary, runtime log, and git changes.',
+      };
       plan.final_acceptance = Array.isArray(plan.final_acceptance) && plan.final_acceptance.length > 0
         ? plan.final_acceptance
         : ['Manual reviewer approves the direct execution summary and git changes.'];
@@ -1756,7 +1813,7 @@ async function runDefaultSession(
       });
     } else {
       postTaskEvent('CODING_FAILED', {
-        subtaskId: 'direct-implementation',
+        subtaskId: getDirectSessionSubtaskId(session),
         error: result?.error?.message ?? `Direct task ended with outcome ${result?.outcome ?? 'unknown'}`,
         attemptCount: 1,
       });

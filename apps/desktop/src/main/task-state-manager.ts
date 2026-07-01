@@ -465,6 +465,7 @@ export class TaskStateManager {
 
       // Only emit if we have a meaningful phase (not idle)
       if (executionPhase && executionPhase !== 'idle') {
+        const progressValue = executionPhase === 'complete' ? 100 : 0;
         console.debug(`[TaskStateManager] emitStatus: Also sending TASK_EXECUTION_PROGRESS for ${taskId}:`, { phase: executionPhase });
         safeSendToRenderer(
           this.getMainWindow,
@@ -472,8 +473,8 @@ export class TaskStateManager {
           taskId,
           {
             phase: executionPhase,
-            phaseProgress: 0,
-            overallProgress: 0,
+            phaseProgress: progressValue,
+            overallProgress: progressValue,
             ...(executionPhase === 'planning' ? { allowPhaseRegression: true } : {}),
           },
           projectId

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PhaseProgressIndicator } from './PhaseProgressIndicator';
 
 vi.mock('react-i18next', () => ({
@@ -25,6 +25,10 @@ describe('PhaseProgressIndicator', () => {
     }
 
     vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   it('shows planning progress when the task is no longer actively running', () => {
@@ -69,5 +73,21 @@ describe('PhaseProgressIndicator', () => {
     );
 
     expect(screen.getByText('2 parallel')).toBeInTheDocument();
+  });
+
+  it('shows 100% for completed terminal phase even when subtasks are not all completed', () => {
+    render(
+      <PhaseProgressIndicator
+        phase="complete"
+        subtasks={[
+          { id: 'subtask-1', title: 'One', description: 'One', status: 'completed', files: [] },
+          { id: 'subtask-2', title: 'Two', description: 'Two', status: 'pending', files: [] },
+        ]}
+        isRunning={false}
+      />
+    );
+
+    expect(screen.getByText('100%')).toBeInTheDocument();
+    expect(screen.queryByText('50%')).not.toBeInTheDocument();
   });
 });

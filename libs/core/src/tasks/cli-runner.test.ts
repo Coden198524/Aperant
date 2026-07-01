@@ -1139,20 +1139,26 @@ describe('Autocode CLI runner prompt', () => {
       phase: 'direct',
     });
 
-    execFileSync(process.execPath, [plan.runnerFilePath], {
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
       cwd: projectRoot,
       env: {
         ...process.env,
         GRAPHITI_ENABLED: 'false',
         PATH: `${projectRoot}${delimiter}${process.env.PATH ?? ''}`,
       },
-      stdio: 'pipe',
+      encoding: 'utf8',
       timeout: 15_000,
     });
 
     const implementationPlan = loadAutocodeImplementationPlanSync(
       join(specDir, 'implementation_plan.md'),
     );
+    const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {
+      sessionId?: string;
+      iteration?: number;
+      latestSummary?: string;
+      lastOutcome?: string;
+    };
 
     expect(implementationPlan?.tokenUsage).toEqual({
       promptTokens: 180,
@@ -1161,6 +1167,13 @@ describe('Autocode CLI runner prompt', () => {
       stepsExecuted: 1,
       sessionId: 'codex-session',
     });
+    expect(directSession.sessionId).toBe('codex-session');
+    expect(directSession.iteration).toBe(1);
+    expect(directSession.latestSummary).toContain('Autocode CLI run completed');
+    expect(directSession.lastOutcome).toBe('success');
+    expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).toContain('Autocode CLI run completed');
+    expect(stdout).toContain('__TASK_EVENT__:');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
   });
 
   it('generates bounded artifact validation retry prompts', () => {

@@ -1,13 +1,15 @@
 ﻿import type { BrowserWindow } from "electron";
 import { ipcMain } from "electron";
 import path from "path";
-import { existsSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync } from "fs";
 import { AUTOCODE_TASK_ARTIFACTS, loadAutocodeImplementationPlanSync } from "@autocode/core";
 import { IPC_CHANNELS, TASK_REFRESH_SENTINEL, getSpecsDir } from "../../shared/constants";
 import type {
   SDKRateLimitInfo,
   AuthFailureInfo,
   ImplementationPlan,
+  Project,
+  Task,
   TaskLogStreamChunk,
   TokenUsage,
 } from "../../shared/types";
@@ -43,6 +45,51 @@ function getMatchingTaskEventScopeKeys(taskId: string, projectId?: string): stri
     taskId,
     ...[...fallbackTimers.keys()].filter((key) => key === taskId || key.endsWith(suffix)),
   ])];
+}
+
+function isDirectModeTask(task: Task | undefined, plan?: ImplementationPlan | null): boolean {
+  const metadata = task?.metadata;
+  const planRecord = plan as (ImplementationPlan & {
+    direct_execution?: { enabled?: unknown };
+  }) | null | undefined;
+  return metadata?.workflowMode === 'off' ||
+    metadata?.developmentMode === 'direct' ||
+    planRecord?.workflow_type === 'direct' ||
+    planRecord?.direct_execution?.enabled === true;
+}
+
+function syncDirectCompletionArtifactsToMain(project: Project, task: Task): void {
+  const worktreePath = findTaskWorktree(project.path, task.specId);
+  if (!worktreePath) {
+    return;
+  }
+
+  const specsBaseDir = getSpecsDir(project.autoBuildPath);
+  const worktreeSpecDir = path.join(worktreePath, specsBaseDir, task.specId);
+  const mainSpecDir = path.join(project.path, specsBaseDir, task.specId);
+  if (worktreeSpecDir === mainSpecDir) {
+    return;
+  }
+
+  for (const artifactName of [
+    AUTOCODE_TASK_ARTIFACTS.directSummary,
+    AUTOCODE_TASK_ARTIFACTS.directSession,
+    AUTOCODE_TASK_ARTIFACTS.runResult,
+  ]) {
+    const sourcePath = path.join(worktreeSpecDir, artifactName);
+    if (!existsSync(sourcePath)) {
+      continue;
+    }
+    try {
+      mkdirSync(mainSpecDir, { recursive: true });
+      copyFileSync(sourcePath, path.join(mainSpecDir, artifactName));
+    } catch (error) {
+      console.warn(
+        `[agent-events-handlers] Failed to sync ${artifactName} from worktree for ${task.id}:`,
+        error,
+      );
+    }
+  }
 }
 
 /**
@@ -178,8 +225,7 @@ export function registerAgenteventsHandlers(
           if (code === 0) {
             // Clean exit (code 0) means the task completed successfully but the terminal
             // event was lost in transit. Treat as completed, not stopped.
-            const directModeFallback = checkTask.metadata?.workflowMode === 'off' ||
-              checkTask.metadata?.developmentMode === 'direct';
+            const directModeFallback = isDirectModeTask(checkTask);
             console.warn(
               `[agent-events-handlers] Task ${taskId} still in XState ${currentState} ` +
               `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing ${directModeFallback ? 'DIRECT_COMPLETED' : 'QA_PASSED'}`
@@ -239,6 +285,28 @@ export function registerAgenteventsHandlers(
         } catch {
           // Worktree plan file not readable - keep fileWatcher plan
         }
+      }
+    }
+    if (
+      code === 0 &&
+      processType === 'task-execution' &&
+      exitTask &&
+      exitProject &&
+      isDirectModeTask(exitTask, finalPlan)
+    ) {
+      syncDirectCompletionArtifactsToMain(exitProject, exitTask);
+      taskStateManager.handleUiEvent(taskId, {
+        type: 'DIRECT_COMPLETED',
+        outcome: 'completed',
+        filesChanged: 0,
+        quality: { fallback: 'clean-exit' },
+      }, exitTask, exitProject);
+      if (finalPlan) {
+        finalPlan.status = 'human_review';
+        finalPlan.planStatus = 'review';
+        finalPlan.reviewReason = 'completed';
+        finalPlan.xstateState = 'human_review';
+        finalPlan.executionPhase = 'complete';
       }
     }
     if (finalPlan) {

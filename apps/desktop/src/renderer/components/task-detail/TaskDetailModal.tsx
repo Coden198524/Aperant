@@ -171,6 +171,10 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
   const progressPercent = calculateProgress(task.subtasks);
   const completedSubtasks = task.subtasks.filter(s => s.status === 'completed').length;
   const totalSubtasks = task.subtasks.length;
+  const isCompletedTerminal =
+    task.status === 'done' ||
+    task.status === 'pr_created' ||
+    (task.status === 'human_review' && task.reviewReason === 'completed');
   const isPlanningExecution = state.hasActiveExecution && state.executionPhase === 'planning';
   const planningProgressPercent = Math.round(
     Math.max(
@@ -178,10 +182,12 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
       Math.min(100, task.executionProgress?.phaseProgress ?? task.executionProgress?.overallProgress ?? 0)
     )
   );
-  const showHeaderProgress = isPlanningExecution || ((state.isRunning || completedSubtasks > 0) && totalSubtasks > 0);
-  const headerProgressPercent = isPlanningExecution ? planningProgressPercent : progressPercent;
+  const showHeaderProgress = isCompletedTerminal || isPlanningExecution || ((state.isRunning || completedSubtasks > 0) && totalSubtasks > 0);
+  const headerProgressPercent = isCompletedTerminal ? 100 : isPlanningExecution ? planningProgressPercent : progressPercent;
   const headerProgressLabel = isPlanningExecution
     ? (task.executionProgress?.message || getTaskExecutionPhaseLabel(t, 'planning'))
+    : isCompletedTerminal
+      ? t('tasks:detail.completedLabel', { defaultValue: 'Completed' })
     : t('tasks:detail.subtasksSummary', {
         completed: completedSubtasks,
         total: totalSubtasks,
@@ -701,7 +707,8 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                     value={headerProgressPercent}
                     className={cn(
                       'h-1.5',
-                      isPlanningExecution && '[&>div]:bg-amber-500'
+                      isPlanningExecution && '[&>div]:bg-amber-500',
+                      isCompletedTerminal && '[&>div]:bg-success'
                     )}
                   />
                 </div>

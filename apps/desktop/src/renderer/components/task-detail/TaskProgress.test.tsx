@@ -82,4 +82,28 @@ describe('TaskProgress', () => {
 
     expect(screen.getByText('Parallel: 2 subtasks active')).toBeInTheDocument();
   });
+
+  it('renders completed human review as 100% even when stale execution progress is 95%', () => {
+    const task = createTask();
+    task.status = 'human_review';
+    task.reviewReason = 'completed';
+    task.executionProgress = {
+      phase: 'qa_review',
+      phaseProgress: 100,
+      overallProgress: 95,
+    };
+
+    render(
+      <TaskProgress
+        task={task}
+        isRunning={false}
+        hasActiveExecution={false}
+        executionPhase="complete"
+        isStuck={false}
+      />,
+    );
+
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.getByText('100%')).toBeInTheDocument();
+  });
 });

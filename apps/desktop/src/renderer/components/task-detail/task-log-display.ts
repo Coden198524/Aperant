@@ -1,6 +1,8 @@
 import type { TaskLogEntry } from '../../../shared/types';
 
 const TEXT_ENTRY_MERGE_WINDOW_MS = 5000;
+const MAX_MERGED_TEXT_ENTRY_CHARS = 4000;
+const MAX_MERGED_TEXT_ENTRY_COUNT = 12;
 
 export interface DisplayTaskLogEntry extends TaskLogEntry {
   mergedEntryCount?: number;
@@ -488,6 +490,8 @@ function canMergeTextEntries(previousEntry: DisplayTaskLogEntry | undefined, nex
   if (previousEntry.subphase !== nextEntry.subphase) return false;
   if (previousEntry.subtask_id !== nextEntry.subtask_id) return false;
   if (previousEntry.detail || nextEntry.detail) return false;
+  if ((previousEntry.mergedEntryCount ?? 1) >= MAX_MERGED_TEXT_ENTRY_COUNT) return false;
+  if (previousEntry.content.length + nextEntry.content.length > MAX_MERGED_TEXT_ENTRY_CHARS) return false;
 
   const previousTimestamp = parseTimestamp(previousEntry.mergedEndTimestamp ?? previousEntry.timestamp);
   const nextTimestamp = parseTimestamp(nextEntry.timestamp);
@@ -515,6 +519,55 @@ function canMergeRuntimeLogs(previousLog: DisplayRuntimeLog | undefined, nextLog
   }
 
   return true;
+}
+
+function splitLongTextContent(content: string): string[] {
+  if (content.length <= MAX_MERGED_TEXT_ENTRY_CHARS) {
+    return [content];
+  }
+
+  const chunks: string[] = [];
+  let remaining = content;
+
+  while (remaining.length > MAX_MERGED_TEXT_ENTRY_CHARS) {
+    const slice = remaining.slice(0, MAX_MERGED_TEXT_ENTRY_CHARS);
+    const breakIndex = Math.max(
+      slice.lastIndexOf('\n\n'),
+      slice.lastIndexOf('\n'),
+      slice.lastIndexOf('. '),
+      slice.lastIndexOf('。'),
+      slice.lastIndexOf(' ')
+    );
+    const splitIndex = breakIndex > MAX_MERGED_TEXT_ENTRY_CHARS * 0.6
+      ? breakIndex + 1
+      : MAX_MERGED_TEXT_ENTRY_CHARS;
+    chunks.push(remaining.slice(0, splitIndex).trim());
+    remaining = remaining.slice(splitIndex).trimStart();
+  }
+
+  if (remaining.trim()) {
+    chunks.push(remaining.trim());
+  }
+
+  return chunks.filter(Boolean);
+}
+
+function splitLongDisplayTextEntry(entry: DisplayTaskLogEntry): DisplayTaskLogEntry[] {
+  if (entry.type !== 'text' || entry.detail || entry.content.length <= MAX_MERGED_TEXT_ENTRY_CHARS) {
+    return [entry];
+  }
+
+  const chunks = splitLongTextContent(entry.content);
+  if (chunks.length <= 1) {
+    return [entry];
+  }
+
+  return chunks.map((content, index) => ({
+    ...entry,
+    content,
+    mergedEntryCount: index === 0 ? entry.mergedEntryCount : undefined,
+    mergedEndTimestamp: index === chunks.length - 1 ? entry.mergedEndTimestamp : entry.timestamp,
+  }));
 }
 
 /**
@@ -550,7 +603,7 @@ export function buildDisplayLogEntries(entries: TaskLogEntry[]): DisplayTaskLogE
     });
   }
 
-  return displayEntries;
+  return displayEntries.flatMap(splitLongDisplayTextEntry);
 }
 
 export function buildDisplayRuntimeLogs(logs: string[]): DisplayRuntimeLog[] {

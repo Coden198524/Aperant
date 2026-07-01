@@ -361,6 +361,7 @@ export interface ImplementationPlan {
   planStatus?: string;
   reviewReason?: ReviewReason;
   xstateState?: string;  // Persisted XState machine state for restoration (e.g., 'planning', 'coding')
+  executionPhase?: ExecutionPhase | string;
   lastEvent?: {
     eventId: string;
     sequence: number;

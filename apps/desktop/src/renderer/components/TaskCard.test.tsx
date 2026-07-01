@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '../../shared/types';
 import { TaskCard } from './TaskCard';
+
+const mockPhaseProgressIndicator = vi.hoisted(() => vi.fn((props: { phase?: string; phaseProgress?: number }) => (
+  <div
+    data-testid="phase-progress-indicator"
+    data-phase={props.phase ?? ''}
+    data-phase-progress={String(props.phaseProgress ?? '')}
+  />
+)));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -21,7 +29,7 @@ vi.mock('react-i18next', () => ({
 }));
 
 vi.mock('./PhaseProgressIndicator', () => ({
-  PhaseProgressIndicator: () => <div data-testid="phase-progress-indicator" />,
+  PhaseProgressIndicator: mockPhaseProgressIndicator,
 }));
 
 vi.mock('../hooks/use-toast', () => ({
@@ -80,6 +88,10 @@ describe('TaskCard', () => {
     };
   });
 
+  afterEach(() => {
+    cleanup();
+  });
+
   it('renders the phase progress indicator and active subtask summary', () => {
     render(
       <TaskCard
@@ -132,5 +144,27 @@ describe('TaskCard', () => {
 
     expect(screen.getByText('Parallel: 2')).toBeInTheDocument();
     expect(screen.getByText('2 subtasks running in parallel')).toBeInTheDocument();
+  });
+
+  it('passes complete phase to the kanban progress indicator for completed human review without execution phase', () => {
+    const task = createTask();
+    task.status = 'human_review';
+    task.reviewReason = 'completed';
+    task.executionProgress = undefined;
+    task.subtasks = [
+      { id: 'subtask-1', title: 'Done', description: 'Done', status: 'completed', files: [] },
+      { id: 'subtask-2', title: 'Stale pending', description: 'Stale pending', status: 'pending', files: [] },
+    ];
+
+    render(
+      <TaskCard
+        task={task}
+        onClick={vi.fn()}
+      />,
+    );
+
+    const progress = screen.getByTestId('phase-progress-indicator');
+    expect(progress).toHaveAttribute('data-phase', 'complete');
+    expect(progress).toHaveAttribute('data-phase-progress', '100');
   });
 });

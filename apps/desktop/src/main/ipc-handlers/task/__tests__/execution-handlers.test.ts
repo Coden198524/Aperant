@@ -772,7 +772,7 @@ describe('registerTaskExecutionHandlers', () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { appendFileSync, existsSync, writeFileSync } = await import('fs');
-    const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
+    const planShards = await import('../../../ai/schema/plan-shards');
 
     (findTaskAndProject as Mock).mockReturnValue({
       task: {
@@ -796,6 +796,27 @@ describe('registerTaskExecutionHandlers', () => {
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
     (existsSync as Mock).mockReturnValue(true);
+    (planShards.loadImplementationPlanFromFilesSync as Mock).mockReturnValueOnce({
+      feature: '001-direct-review',
+      workflow_type: 'direct',
+      phases: [
+        {
+          id: 'direct',
+          phase: 1,
+          name: 'Direct execution',
+          type: 'direct',
+          subtasks: [
+            {
+              id: 'direct-implementation',
+              title: 'Direct model execution',
+              description: 'desc',
+              status: 'completed',
+              files: [],
+            },
+          ],
+        },
+      ],
+    });
 
     const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
     const result = await reviewHandler({}, '001-direct-review', false, 'Keep the original context and fix the start button.');
@@ -820,7 +841,21 @@ describe('registerTaskExecutionHandlers', () => {
       expect.stringContaining('direct_session.json'),
       'utf-8'
     );
-    expect(writeFileAtomicSync).not.toHaveBeenCalled();
+    const savedPlan = (planShards.saveImplementationPlanToFilesSync as Mock).mock.calls[0][1];
+    expect(savedPlan.workflow_type).toBe('direct');
+    expect(savedPlan.status).toBe('in_progress');
+    expect(savedPlan.direct_execution.current_subtask_id).toMatch(/^direct-cr-/);
+    expect(savedPlan.phases[0].subtasks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'direct-implementation', status: 'completed' }),
+        expect.objectContaining({
+          id: expect.stringMatching(/^direct-cr-/),
+          status: 'in_progress',
+          title: expect.stringContaining('Direct Request Changes'),
+          direct_iteration: true,
+        }),
+      ])
+    );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-direct-review',
       { type: 'USER_RESUMED' },
@@ -831,7 +866,7 @@ describe('registerTaskExecutionHandlers', () => {
       '001-direct-review',
       'E:/Work/FastProject',
       '001-direct-review',
-      {},
+      { directSubtaskId: expect.stringMatching(/^direct-cr-/) },
       'project-fast',
     );
     expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();

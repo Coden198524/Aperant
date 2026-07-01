@@ -16,6 +16,15 @@ interface TaskProgressProps {
 export function TaskProgress({ task, isRunning, hasActiveExecution, executionPhase, isStuck }: TaskProgressProps) {
   const { t } = useTranslation('tasks');
   const progress = calculateProgress(task.subtasks);
+  const isCompletedTerminal =
+    task.status === 'done' ||
+    task.status === 'pr_created' ||
+    (task.status === 'human_review' && task.reviewReason === 'completed');
+  const displayProgress = isCompletedTerminal
+    ? 100
+    : hasActiveExecution
+      ? (task.executionProgress?.overallProgress || 0)
+      : progress;
   const activeBatchCount = executionPhase === 'coding'
     ? task.subtasks.filter((subtask) => subtask.status === 'in_progress').length
     : 0;
@@ -72,17 +81,17 @@ export function TaskProgress({ task, isRunning, hasActiveExecution, executionPha
         <span className="text-xs text-muted-foreground">
           {hasActiveExecution && task.executionProgress?.message
             ? task.executionProgress.message
-            : task.subtasks.length > 0
+            : isCompletedTerminal
+              ? t('detail.completedLabel', { defaultValue: 'Completed' })
+              : task.subtasks.length > 0
               ? `${task.subtasks.filter(c => c.status === 'completed').length}/${task.subtasks.length} subtasks completed`
               : 'No subtasks yet'}
         </span>
         <span className={cn(
           'text-sm font-semibold tabular-nums',
-          task.status === 'done' ? 'text-success' : 'text-foreground'
+          isCompletedTerminal ? 'text-success' : 'text-foreground'
         )}>
-          {hasActiveExecution
-            ? `${task.executionProgress?.overallProgress || 0}%`
-            : `${progress}%`}
+          {displayProgress}%
         </span>
       </div>
       <div className={cn(
@@ -90,10 +99,10 @@ export function TaskProgress({ task, isRunning, hasActiveExecution, executionPha
         hasActiveExecution && 'progress-working'
       )}>
         <Progress
-          value={hasActiveExecution ? (task.executionProgress?.overallProgress || 0) : progress}
+          value={displayProgress}
           className={cn(
             'h-2',
-            task.status === 'done' && '[&>div]:bg-success',
+            isCompletedTerminal && '[&>div]:bg-success',
             hasActiveExecution && '[&>div]:bg-info'
           )}
           animated={isRunning || task.status === 'ai_review'}

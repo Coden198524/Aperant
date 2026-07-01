@@ -264,6 +264,47 @@ function captureDirectWorkspaceBaseline(projectPath: string, specDir: string): v
   }
 }
 
+function resolveDirectRuntimeSubtaskId(specDir: string, requestedSubtaskId?: string): string {
+  if (requestedSubtaskId?.trim()) {
+    return requestedSubtaskId.trim();
+  }
+
+  try {
+    const plan = loadAutocodeImplementationPlanSync(specDir) as {
+      phases?: Array<{
+        type?: string;
+        subtasks?: Array<{ id?: unknown; status?: unknown; started_at?: unknown; created_at?: unknown }>;
+      }>;
+    } | null;
+    const candidates = (plan?.phases ?? [])
+      .filter((phase) => phase.type === 'direct' || phase.type === 'iteration')
+      .flatMap((phase) => Array.isArray(phase.subtasks) ? phase.subtasks : [])
+      .filter((subtask) => typeof subtask.id === 'string' && subtask.id.trim().length > 0);
+
+    const active = candidates.find((subtask) =>
+      subtask.status === 'in_progress' || subtask.status === 'pending'
+    );
+    if (active?.id && typeof active.id === 'string') {
+      return active.id;
+    }
+
+    const latestDirectChange = candidates
+      .filter((subtask) => String(subtask.id).startsWith('direct-cr-'))
+      .sort((a, b) => {
+        const aTime = String(a.started_at ?? a.created_at ?? '');
+        const bTime = String(b.started_at ?? b.created_at ?? '');
+        return bTime.localeCompare(aTime);
+      })[0];
+    if (latestDirectChange?.id && typeof latestDirectChange.id === 'string') {
+      return latestDirectChange.id;
+    }
+  } catch {
+    // Fall back to the stable first-run Direct node.
+  }
+
+  return 'direct-implementation';
+}
+
 /**
  * Main AgentManager - orchestrates agent process lifecycle
  * This is a slim facade that delegates to focused modules
@@ -1129,6 +1170,7 @@ export class AgentManager extends EventEmitter {
 
     const effectiveCwd = worktreePath ?? projectPath;
     const effectiveProjectDir = worktreePath ?? projectPath;
+    const directSubtaskId = resolveDirectRuntimeSubtaskId(worktreeSpecDir, options.directSubtaskId);
     const directSessionState = resolveAutocodeDirectSessionState(worktreeSpecDir, specDir);
     const supportsProviderContinuation = isAutocodeOpenAIResponsesTransport(resolved.provider, resolved.modelId);
     const useProviderContinuation = supportsProviderContinuation && Boolean(directSessionState?.providerResponseId);
@@ -1178,6 +1220,7 @@ export class AgentManager extends EventEmitter {
       sourceProjectDir: worktreePath ? projectPath : undefined,
       sourceSpecDir: worktreePath ? specDir : undefined,
       phase: 'coding',
+      subtaskId: directSubtaskId,
       provider: resolved.provider,
       modelId: resolved.modelId,
       thinkingLevel,

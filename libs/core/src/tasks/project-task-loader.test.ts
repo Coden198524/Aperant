@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -136,6 +136,191 @@ describe('project task loading', () => {
       const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
       expect(rawPlan).toContain('Status: human_review');
       expect(rawPlan).toContain('Review Reason: plan_review');
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('repairs completed legacy direct CLI runs that left the plan in coding', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
+    try {
+      const specDir = join(projectRoot, '.autocode', 'specs', '008-direct-cli');
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, 'task_metadata.json'), JSON.stringify({
+        developmentMode: 'direct',
+        workflowMode: 'off',
+        taskTitle: 'Direct task',
+      }, null, 2), 'utf8');
+      writeFileSync(join(specDir, 'direct_summary.md'), 'Fixed the runtime issue and validation passed.\n', 'utf8');
+      writeFileSync(join(specDir, 'autocode-run-result.json'), JSON.stringify({
+        phase: 'direct',
+        exitCode: 0,
+        status: 'success',
+        message: 'Autocode CLI run completed.',
+        updatedAt: '2026-07-01T06:05:24.493Z',
+      }, null, 2), 'utf8');
+      writeFileSync(join(specDir, 'implementation_plan.md'), [
+        '# Implementation Plan',
+        'Feature: Direct task',
+        'Workflow: direct',
+        'Status: coding',
+        'Execution Phase: coding',
+        'Created: 2026-06-20T00:00:00.000Z',
+        'Updated: 2026-07-01T06:05:28.090Z',
+        '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","tokenUsage":{"promptTokens":10,"completionTokens":5,"totalTokens":15,"sessionId":"codex-session"},"direct_execution":{"enabled":true,"outcome":"running","current_subtask_id":"direct-cr-1","summary_file":"direct_summary.md"}} -->',
+        '',
+        '- [ ] direct. Direct execution',
+        '  - [ ] direct-cr-1 Direct Request Changes',
+        '    - Continue the same Direct model session.',
+        '',
+      ].join('\n'), 'utf8');
+
+      const [task] = loadAutocodeProjectTasks({
+        projectRoot,
+        dataDirName: '.autocode',
+      });
+
+      expect(task.status).toBe('human_review');
+      expect(task.reviewReason).toBe('completed');
+      expect(task.executionProgress?.phase).toBe('complete');
+      expect(task.subtasks[0]?.status).toBe('completed');
+      expect(existsSync(join(specDir, 'direct_session.json'))).toBe(true);
+      const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+      expect(rawPlan).toContain('Status: human_review');
+      expect(rawPlan).toContain('Execution Phase: complete');
+      expect(rawPlan).toContain('"outcome":"completed"');
+      expect(rawPlan).toContain('- [x] direct. Direct execution');
+      expect(rawPlan).toContain('  - [x] direct-cr-1 Direct Request Changes');
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not complete a newer direct Request Changes node with an older run result', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
+    try {
+      const specDir = join(projectRoot, '.autocode', 'specs', '008-direct-cli');
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, 'task_metadata.json'), JSON.stringify({
+        developmentMode: 'direct',
+        workflowMode: 'off',
+        taskTitle: 'Direct task',
+      }, null, 2), 'utf8');
+      writeFileSync(join(specDir, 'autocode-run-result.json'), JSON.stringify({
+        phase: 'direct',
+        exitCode: 0,
+        status: 'success',
+        message: 'Older Direct run completed.',
+        updatedAt: '2026-07-01T06:05:24.493Z',
+      }, null, 2), 'utf8');
+      writeFileSync(join(specDir, 'implementation_plan.md'), [
+        '# Implementation Plan',
+        'Feature: Direct task',
+        'Workflow: direct',
+        'Status: coding',
+        'Execution Phase: coding',
+        'Created: 2026-06-20T00:00:00.000Z',
+        'Updated: 2026-07-01T07:49:20.827Z',
+        '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"running","current_subtask_id":"direct-cr-20260701074920826","change_request_id":"cr-20260701074920826","summary_file":"direct_summary.md"}} -->',
+        '',
+        '- [ ] direct. Direct execution',
+        '  - [/] direct-cr-20260701074920826 Direct Request Changes',
+        '    - Continue the same Direct model session.',
+        '    - _Started: 2026-07-01T07:49:20.827Z_',
+        '',
+      ].join('\n'), 'utf8');
+
+      const [task] = loadAutocodeProjectTasks({
+        projectRoot,
+        dataDirName: '.autocode',
+      });
+
+      expect(task.status).toBe('in_progress');
+      expect(task.reviewReason).toBeUndefined();
+      expect(task.executionProgress?.phase).toBe('coding');
+      expect(task.subtasks[0]?.status).toBe('in_progress');
+      const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+      expect(rawPlan).toContain('Status: coding');
+      expect(rawPlan).toContain('"outcome":"running"');
+      expect(rawPlan).toContain('  - [/] direct-cr-20260701074920826 Direct Request Changes');
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('moves a direct Request Changes node back to coding when only older completion evidence exists', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
+    try {
+      const specDir = join(projectRoot, '.autocode', 'specs', '008-direct-cli');
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, 'task_metadata.json'), JSON.stringify({
+        developmentMode: 'direct',
+        workflowMode: 'off',
+        taskTitle: 'Direct task',
+      }, null, 2), 'utf8');
+      writeFileSync(join(specDir, 'autocode-run-result.json'), JSON.stringify({
+        phase: 'direct',
+        exitCode: 0,
+        status: 'success',
+        message: 'Older Direct run completed.',
+        updatedAt: '2026-07-01T06:05:24.493Z',
+      }, null, 2), 'utf8');
+      writeFileSync(join(specDir, 'direct_session.json'), JSON.stringify({
+        version: 1,
+        sessionId: 'direct-008-direct-cli',
+        createdAt: '2026-06-20T00:00:00.000Z',
+        updatedAt: '2026-07-01T07:45:26.989Z',
+        iteration: 1,
+        provider: 'codex-cli',
+        lastOutcome: 'success',
+      }, null, 2), 'utf8');
+      writeFileSync(join(specDir, 'task_logs.jsonl'), [
+        JSON.stringify({
+          record_type: 'phase',
+          timestamp: '2026-07-01T07:51:35.717Z',
+          phase: 'coding',
+          status: 'active',
+          started_at: '2026-07-01T07:49:20.827Z',
+          completed_at: null,
+        }),
+        '',
+      ].join('\n'), 'utf8');
+      writeFileSync(join(specDir, 'implementation_plan.md'), [
+        '# Implementation Plan',
+        'Feature: Direct task',
+        'Workflow: direct',
+        'Status: human_review',
+        'Review Reason: completed',
+        'Execution Phase: complete',
+        'Created: 2026-06-20T00:00:00.000Z',
+        'Updated: 2026-07-01T07:50:11.417Z',
+        '<!-- autocode-plan-meta: {"planStatus":"review","xstateState":"human_review","direct_execution":{"enabled":true,"outcome":"completed","current_subtask_id":"direct-cr-20260701074920826","change_request_id":"cr-20260701074920826","summary_file":"direct_summary.md","completed_at":"2026-07-01T07:50:11.417Z"}} -->',
+        '',
+        '- [ ] direct. Direct execution',
+        '  - [x] direct-cr-20260701074920826 Direct Request Changes',
+        '    - Continue the same Direct model session.',
+        '    - _Completion: Completed by Autocode Direct CLI run._',
+        '    - _Started: 2026-07-01T07:49:20.827Z_',
+        '    - _Completed: 2026-07-01T07:49:21.139Z_',
+        '',
+      ].join('\n'), 'utf8');
+
+      const [task] = loadAutocodeProjectTasks({
+        projectRoot,
+        dataDirName: '.autocode',
+      });
+
+      expect(task.status).toBe('in_progress');
+      expect(task.reviewReason).toBeUndefined();
+      expect(task.executionProgress?.phase).toBe('coding');
+      expect(task.subtasks[0]?.status).toBe('in_progress');
+      const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+      expect(rawPlan).toContain('Status: coding');
+      expect(rawPlan).toContain('Execution Phase: coding');
+      expect(rawPlan).toContain('"outcome":"running"');
+      expect(rawPlan).not.toContain('Review Reason: completed');
+      expect(rawPlan).toContain('- [/] direct. Direct execution');
+      expect(rawPlan).toContain('  - [/] direct-cr-20260701074920826 Direct Request Changes');
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
     }

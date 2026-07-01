@@ -994,6 +994,137 @@ function compactChangeRequestFeedback(feedback: string, maxLength = 1000): strin
   return compact.length > maxLength ? `${compact.slice(0, maxLength)}...` : compact;
 }
 
+function buildDirectChangeRequestSubtaskId(changeRequest: ChangeRequestRecord): string {
+  const suffix = changeRequest.id
+    .replace(/^cr-/, '')
+    .replace(/[^A-Za-z0-9]+/g, '')
+    .slice(0, 17);
+  return `direct-cr-${suffix || Date.now()}`;
+}
+
+function ensureDirectRuntimePhase(plan: ShardableImplementationPlan): {
+  phase?: number;
+  id?: string;
+  name?: string;
+  type?: string;
+  subtasks?: Array<Record<string, unknown>>;
+} {
+  if (!Array.isArray(plan.phases)) {
+    plan.phases = [];
+  }
+
+  let directPhase = plan.phases.find((phase) => phase.type === 'direct') as
+    | {
+        phase?: number;
+        id?: string;
+        name?: string;
+        type?: string;
+        subtasks?: Array<Record<string, unknown>>;
+      }
+    | undefined;
+  if (!directPhase) {
+    directPhase = {
+      id: 'direct',
+      phase: 1,
+      name: 'Direct execution',
+      type: 'direct',
+      subtasks: [],
+    };
+    plan.phases.unshift(directPhase);
+  }
+
+  directPhase.id = directPhase.id ?? 'direct';
+  directPhase.phase = typeof directPhase.phase === 'number' ? directPhase.phase : 1;
+  directPhase.name = directPhase.name || 'Direct execution';
+  directPhase.type = 'direct';
+  if (!Array.isArray(directPhase.subtasks)) {
+    directPhase.subtasks = [];
+  }
+
+  return directPhase;
+}
+
+function patchDirectChangeRequestRuntimePlan(
+  specDirs: Iterable<string>,
+  changeRequest: ChangeRequestRecord,
+): string {
+  const now = new Date().toISOString();
+  const directSubtaskId = buildDirectChangeRequestSubtaskId(changeRequest);
+  const summary = buildFollowupSummary(changeRequest.feedback) || changeRequest.id;
+
+  for (const specDir of new Set(specDirs)) {
+    try {
+      mkdirSync(specDir, { recursive: true });
+      const existingPlan = loadImplementationPlanFromFilesSync(specDir);
+      const plan: ShardableImplementationPlan = existingPlan ?? {
+        feature: changeRequest.specId,
+        workflow_type: 'direct',
+        phases: [],
+        created_at: now,
+        updated_at: now,
+      };
+
+      plan.feature = typeof plan.feature === 'string' && plan.feature.trim()
+        ? plan.feature
+        : changeRequest.specId;
+      plan.workflow_type = 'direct';
+      plan.status = 'in_progress';
+      plan.planStatus = 'in_progress';
+      plan.reviewReason = undefined;
+      plan.xstateState = 'coding';
+      plan.executionPhase = 'coding';
+      plan.updated_at = now;
+      if (!plan.created_at) {
+        plan.created_at = now;
+      }
+      plan.direct_execution = {
+        enabled: true,
+        outcome: 'running',
+        current_subtask_id: directSubtaskId,
+        change_request_id: changeRequest.id,
+        summary_file: 'direct_summary.md',
+      };
+
+      const directPhase = ensureDirectRuntimePhase(plan);
+      const subtasks = directPhase.subtasks ?? [];
+      const existingSubtask = subtasks.find((subtask) => subtask.id === directSubtaskId);
+      const directSubtask = existingSubtask ?? {
+        id: directSubtaskId,
+        created_at: now,
+      };
+
+      directSubtask.title = `Direct Request Changes: ${summary}`;
+      directSubtask.description = [
+        `Continue the same Direct model session for change request ${changeRequest.id}.`,
+        `Feedback: ${compactChangeRequestFeedback(changeRequest.feedback, 600)}`,
+        'This is a Direct runtime iteration node, not a Standard work package.',
+      ].join('\n');
+      directSubtask.status = 'in_progress';
+      directSubtask.started_at = now;
+      directSubtask.files_to_modify = [];
+      directSubtask.depends_on = [];
+      directSubtask.requirements = [changeRequest.id];
+      directSubtask.evidence = `HUMAN_INPUT.md ${changeRequest.id}; ${CHANGE_REQUESTS_LOG_FILE} latest entry`;
+      directSubtask.verification = {
+        type: 'targeted',
+        run: buildChangeRequestVerification(changeRequest),
+      };
+      directSubtask.direct_iteration = true;
+      directSubtask.change_request_id = changeRequest.id;
+
+      if (!existingSubtask) {
+        subtasks.push(directSubtask);
+      }
+
+      saveImplementationPlanToFilesSync(specDir, plan);
+    } catch (error) {
+      console.warn('[TASK_REVIEW] Failed to patch Direct change request runtime plan:', error);
+    }
+  }
+
+  return directSubtaskId;
+}
+
 /**
  * Register task execution handlers (start, stop, review, status management, recovery)
  */
@@ -1513,6 +1644,7 @@ export function registerTaskExecutionHandlers(
             path.join(specDir, 'HUMAN_INPUT.md'),
           ]);
           writeChangeRequestArtifacts([targetSpecDir, specDir], changeRequest);
+          const directSubtaskId = patchDirectChangeRequestRuntimePlan([targetSpecDir, specDir], changeRequest);
 
           for (const humanInputPath of humanInputPaths) {
             try {
@@ -1529,7 +1661,7 @@ export function registerTaskExecutionHandlers(
               taskId,
               {
                 type: 'CODING_STARTED',
-                subtaskId: 'direct-implementation',
+                subtaskId: directSubtaskId,
                 subtaskDescription: 'Direct model continuation',
               },
               task,
@@ -1551,7 +1683,13 @@ export function registerTaskExecutionHandlers(
           });
 
           try {
-            await agentManager.startDirectTaskExecution(taskId, project.path, task.specId, {}, project.id);
+            await agentManager.startDirectTaskExecution(
+              taskId,
+              project.path,
+              task.specId,
+              { directSubtaskId },
+              project.id
+            );
           } catch (error) {
             console.error('[TASK_REVIEW] Failed to restart Direct execution after review feedback:', error);
             return {

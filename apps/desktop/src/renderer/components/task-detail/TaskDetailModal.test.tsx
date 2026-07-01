@@ -3,8 +3,8 @@
  */
 import '@testing-library/jest-dom/vitest';
 import '../../../shared/i18n';
-import { render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '../../../shared/types';
 
 vi.mock('../../hooks/use-toast', () => ({
@@ -12,8 +12,8 @@ vi.mock('../../hooks/use-toast', () => ({
 }));
 
 vi.mock('../../stores/project-store', () => ({
-  useProjectStore: (selector: (state: { getActiveProject: () => undefined }) => unknown) =>
-    selector({ getActiveProject: () => undefined }),
+  useProjectStore: (selector: (state: { projects: []; getActiveProject: () => undefined }) => unknown) =>
+    selector({ projects: [], getActiveProject: () => undefined }),
 }));
 
 vi.mock('../../stores/task-store', () => ({
@@ -176,6 +176,10 @@ describe('TaskDetailModal', () => {
     mockUseTaskDetail.mockReturnValue(createTaskDetailState() as unknown as ReturnType<typeof useTaskDetail>);
   });
 
+  afterEach(() => {
+    cleanup();
+  });
+
   it('shows planning progress before subtasks are generated', () => {
     render(
       <TaskDetailModal
@@ -190,6 +194,35 @@ describe('TaskDetailModal', () => {
     expect(screen.queryByTestId('task-subtasks')).not.toBeInTheDocument();
     expect(screen.queryByTestId('task-logs')).not.toBeInTheDocument();
     expect(screen.queryByTestId('task-files')).not.toBeInTheDocument();
+  });
+
+  it('shows completed human review as 100% in the header', () => {
+    const task = createTask();
+    task.status = 'human_review';
+    task.reviewReason = 'completed';
+    task.executionProgress = {
+      phase: 'complete',
+      phaseProgress: 100,
+      overallProgress: 100,
+    };
+    mockUseTaskDetail.mockReturnValue({
+      ...createTaskDetailState(),
+      isRunning: false,
+      needsReview: true,
+      executionPhase: 'complete',
+      hasActiveExecution: false,
+    } as unknown as ReturnType<typeof useTaskDetail>);
+
+    render(
+      <TaskDetailModal
+        open={true}
+        task={task}
+        onOpenChange={vi.fn()}
+      />
+    );
+
+    expect(screen.getAllByText('Completed').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('100%').length).toBeGreaterThan(0);
   });
 
   it('does not mount detail content while closed', () => {

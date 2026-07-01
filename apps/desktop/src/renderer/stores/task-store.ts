@@ -414,6 +414,81 @@ function buildExecutionProgressForPlanPhase(
   };
 }
 
+function getTerminalTaskStateFromPlan(plan: ImplementationPlan): {
+  status: TaskStatus;
+  reviewReason?: ReviewReason;
+  executionProgress: ExecutionProgress;
+} | undefined {
+  if (plan.status === 'done') {
+    return {
+      status: 'done',
+      executionProgress: { phase: 'complete', phaseProgress: 100, overallProgress: 100 },
+    };
+  }
+  if (plan.status === 'pr_created') {
+    return {
+      status: 'pr_created',
+      executionProgress: { phase: 'complete', phaseProgress: 100, overallProgress: 100 },
+    };
+  }
+  if (plan.status === 'error') {
+    return {
+      status: 'error',
+      executionProgress: { phase: 'failed', phaseProgress: 0, overallProgress: 0 },
+    };
+  }
+  if (
+    plan.status === 'human_review' &&
+    (
+      plan.reviewReason === 'completed' ||
+      plan.reviewReason === 'errors' ||
+      plan.reviewReason === 'qa_rejected'
+    )
+  ) {
+    return {
+      status: 'human_review',
+      reviewReason: plan.reviewReason,
+      executionProgress: plan.reviewReason === 'completed'
+        ? { phase: 'complete', phaseProgress: 100, overallProgress: 100 }
+        : { phase: 'failed', phaseProgress: 0, overallProgress: 0 },
+    };
+  }
+  return undefined;
+}
+
+function getExecutionProgressForStatus(
+  status: TaskStatus,
+  reviewReason?: ReviewReason,
+  current?: ExecutionProgress,
+): ExecutionProgress | undefined {
+  if (status === 'backlog') {
+    return { phase: 'idle', phaseProgress: 0, overallProgress: 0 };
+  }
+  if (status === 'in_progress' && !current?.phase) {
+    return { phase: 'planning', phaseProgress: 0, overallProgress: 0 };
+  }
+  if (status === 'human_review' && reviewReason === 'stopped') {
+    return current;
+  }
+  if (
+    status === 'done' ||
+    status === 'pr_created' ||
+    (status === 'human_review' && reviewReason === 'completed')
+  ) {
+    return { phase: 'complete', phaseProgress: 100, overallProgress: 100 };
+  }
+  if (
+    status === 'error' ||
+    (status === 'human_review' && (reviewReason === 'errors' || reviewReason === 'qa_rejected'))
+  ) {
+    return { phase: 'failed', phaseProgress: 0, overallProgress: 0 };
+  }
+  if (status === 'human_review') {
+    return { phase: 'idle', phaseProgress: 0, overallProgress: 0 };
+  }
+  return current;
+}
+
 function shouldPromoteTaskStatusFromPlan(task: Task, plan: ImplementationPlan): boolean {
   return (task.status === 'backlog' || task.status === 'queue') && isActivePlanStatus(plan);
 }
@@ -707,21 +782,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           const previousStatus = t.status;
           const statusChanged = previousStatus !== status;
 
-          if (status === 'backlog') {
-            // When status goes to backlog, reset execution progress to idle
-            // This ensures the planning/coding animation stops when task is stopped
-            executionProgress = { phase: 'idle' as ExecutionPhase, phaseProgress: 0, overallProgress: 0 };
-          } else if (status === 'in_progress' && !t.executionProgress?.phase) {
-            // When starting a task and no phase is set yet, default to planning
-            // This prevents the "no active phase" UI state during startup race condition
-            executionProgress = { phase: 'planning' as ExecutionPhase, phaseProgress: 0, overallProgress: 0 };
-          } else if (status === 'human_review' && reviewReason === 'stopped') {
-            executionProgress = t.executionProgress;
-          } else if (['human_review', 'error', 'done', 'pr_created'].includes(status)) {
-            // Reset execution progress when task reaches terminal states
-            // This prevents stuck tasks from showing stale progress indicators
-            executionProgress = { phase: 'idle' as ExecutionPhase, phaseProgress: 0, overallProgress: 0 };
-          }
+          executionProgress = getExecutionProgressForStatus(status, reviewReason, t.executionProgress);
 
           // Log status transitions to help diagnose flip-flop issues
           debugLog('[updateTaskStatus] Status transition:', {
@@ -826,20 +887,27 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           }
 
           // NOTE: We do not generally update status or title from plan anymore.
-          // XState is the source of truth for status - it emits TASK_STATUS_CHANGE.
+          // XState is the source of truth for active transitions - it emits TASK_STATUS_CHANGE.
           // The task metadata/spec title is the source of truth for the user-facing title.
-          // Plan updates only update subtasks/execution fields, with a narrow active-plan
-          // fallback so a missed status IPC cannot leave a running task in backlog/queue.
+          // Plan updates only update subtasks/execution fields, with narrow fallbacks for
+          // missed IPC: active plan can promote backlog/queue, terminal plan can clear a
+          // stale blue/running state after Direct/CLI completion.
+          const terminalState = getTerminalTaskStateFromPlan(plan);
           const shouldPromoteStatus = shouldPromoteTaskStatusFromPlan(t, plan);
-          const nextStatus = shouldPromoteStatus ? 'in_progress' : t.status;
+          const nextStatus = terminalState?.status ?? (shouldPromoteStatus ? 'in_progress' : t.status);
+          const nextReviewReason = terminalState
+            ? terminalState.reviewReason
+            : nextStatus === t.status
+              ? t.reviewReason
+              : undefined;
           const executionProgressTask = shouldPromoteStatus
             ? { ...t, status: nextStatus as TaskStatus }
             : t;
           const activePlanPhase = getActiveExecutionPhaseFromPlan(plan);
           const planExplicitlyRestartedPlanning = nextStatus === 'in_progress' && activePlanPhase === 'planning';
-          let executionProgress = planExplicitlyRestartedPlanning
+          let executionProgress = terminalState?.executionProgress ?? (planExplicitlyRestartedPlanning
             ? buildExecutionProgressForPlanPhase(executionProgressTask, 'planning')
-            : promoteExecutionPhaseFromPlan(executionProgressTask, subtasks);
+            : promoteExecutionPhaseFromPlan(executionProgressTask, subtasks));
 
           if (shouldPromoteStatus && (!executionProgress || executionProgress.phase === 'idle')) {
             executionProgress = {
@@ -857,9 +925,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           return {
             ...t,
             status: nextStatus,
+            reviewReason: nextReviewReason,
             subtasks,
             ...(executionProgress ? { executionProgress } : {}),
-            // Keep existing status and reviewReason - XState manages these via TASK_STATUS_CHANGE
             updatedAt: new Date()
           };
         })
@@ -900,6 +968,28 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           const currentPhase = existingProgress.phase;
           const nextPhase = progress.phase;
           const allowPhaseRegression = progress.allowPhaseRegression === true;
+          const isTerminalTaskState =
+            t.status === 'done' ||
+            t.status === 'pr_created' ||
+            t.status === 'error' ||
+            (t.status === 'human_review' &&
+              (t.reviewReason === 'completed' || t.reviewReason === 'errors' || t.reviewReason === 'qa_rejected'));
+          if (
+            isTerminalTaskState &&
+            (currentPhase === 'complete' || currentPhase === 'failed') &&
+            nextPhase &&
+            nextPhase !== currentPhase &&
+            !allowPhaseRegression
+          ) {
+            console.warn('[updateExecutionProgress] Dropping non-terminal update after terminal task state:', {
+              taskId,
+              currentPhase,
+              nextPhase,
+              status: t.status,
+              reviewReason: t.reviewReason
+            });
+            return t;
+          }
           if (
             currentPhase &&
             nextPhase &&

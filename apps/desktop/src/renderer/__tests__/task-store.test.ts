@@ -342,7 +342,16 @@ describe('Task Store', () => {
 
     it('should update when only reviewReason changes', () => {
       useTaskStore.setState({
-        tasks: [createTestTask({ id: 'task-1', status: 'human_review', reviewReason: 'plan_review' })]
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'human_review',
+          reviewReason: 'plan_review',
+          executionProgress: {
+            phase: 'qa_review',
+            phaseProgress: 100,
+            overallProgress: 95
+          }
+        })]
       });
 
       useTaskStore.getState().updateTaskStatus('task-1', 'human_review', 'completed');
@@ -350,6 +359,8 @@ describe('Task Store', () => {
       const task = useTaskStore.getState().tasks[0];
       expect(task.status).toBe('human_review');
       expect(task.reviewReason).toBe('completed');
+      expect(task.executionProgress?.phase).toBe('complete');
+      expect(task.executionProgress?.overallProgress).toBe(100);
     });
   });
 
@@ -448,20 +459,67 @@ describe('Task Store', () => {
       expect(task.executionProgress?.phase).toBe('planning');
     });
 
-    it('should NOT modify status from plan (XState is source of truth)', () => {
+    it('should NOT modify status from non-terminal plan (XState is source of truth)', () => {
       useTaskStore.setState({
         tasks: [createTestTask({ id: 'task-1', status: 'ai_review' })]
       });
 
       const plan = createTestPlan({
-        status: 'human_review',
-        reviewReason: 'completed'
+        status: 'in_progress',
+        xstateState: 'coding'
       });
 
       useTaskStore.getState().updateTaskFromPlan('task-1', plan);
 
-      // Status should remain unchanged - XState controls status via TASK_STATUS_CHANGE
+      // Non-terminal plan updates should not steal active XState transitions.
       expect(useTaskStore.getState().tasks[0].status).toBe('ai_review');
+    });
+
+    it('should apply terminal completed status from final plan when status IPC is missed', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'in_progress',
+          executionProgress: {
+            phase: 'coding',
+            phaseProgress: 50,
+            overallProgress: 50,
+          }
+        })]
+      });
+
+      const plan = createTestPlan({
+        workflow_type: 'direct',
+        status: 'human_review',
+        reviewReason: 'completed',
+        executionPhase: 'complete',
+        xstateState: 'human_review',
+        phases: [
+          {
+            phase: 1,
+            name: 'Direct execution',
+            type: 'direct',
+            subtasks: [
+              {
+                id: 'direct-cr-20260701081142794',
+                title: 'Direct Request Changes',
+                description: 'Direct runtime iteration',
+                status: 'completed',
+                completed_at: '2026-07-01T08:20:42.717Z',
+              }
+            ]
+          }
+        ]
+      } as Partial<ImplementationPlan> & { executionPhase: string });
+
+      useTaskStore.getState().updateTaskFromPlan('task-1', plan);
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.status).toBe('human_review');
+      expect(task.reviewReason).toBe('completed');
+      expect(task.executionProgress?.phase).toBe('complete');
+      expect(task.executionProgress?.overallProgress).toBe(100);
+      expect(task.subtasks[0].status).toBe('completed');
     });
 
     it('should preserve existing status and reviewReason when plan has different values', () => {
@@ -1178,6 +1236,32 @@ describe('Task Store', () => {
       });
 
       expect(useTaskStore.getState().tasks[0].executionProgress?.phase).toBe('qa_review');
+    });
+
+    it('should ignore stale qa_review progress after completed human review', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'human_review',
+          reviewReason: 'completed',
+          executionProgress: {
+            phase: 'complete',
+            phaseProgress: 100,
+            overallProgress: 100,
+          }
+        })]
+      });
+
+      useTaskStore.getState().updateExecutionProgress('task-1', {
+        phase: 'qa_review',
+        phaseProgress: 100,
+        overallProgress: 95,
+        sequenceNumber: 999,
+      });
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.executionProgress?.phase).toBe('complete');
+      expect(task.executionProgress?.overallProgress).toBe(100);
     });
   });
 

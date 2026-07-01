@@ -64,6 +64,7 @@ export interface TaskExecutionOptions {
   useLocalBranch?: boolean; // If true, use local branch directly instead of preferring origin/branch
   pushNewBranches?: boolean; // If false, keep task worktree branches local-only
   forcePlanning?: boolean; // Internal: rerun planning even when an old implementation plan has subtasks
+  directSubtaskId?: string; // Internal: bind a Direct continuation run to a UI/log iteration node
 }
 
 export interface SpecCreationMetadata {
