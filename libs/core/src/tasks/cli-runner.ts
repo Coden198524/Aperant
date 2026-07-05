@@ -1826,7 +1826,9 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
       if (qualityFailureReason) {
         if (directQualityRetryCount < maxDirectQualityRetries) {
           directQualityRetryCount += 1;
-          const retryMessage = 'Direct CLI output failed validation/quality gate: ' + qualityFailureReason + ' Retrying ' + directQualityRetryCount + '/' + maxDirectQualityRetries + '...';
+          const nextDirectAttempt = directQualityRetryCount + 1;
+          const maxDirectAttempts = maxDirectQualityRetries + 1;
+          const retryMessage = 'Direct CLI output failed validation/quality gate: ' + qualityFailureReason + ' Retrying attempt ' + nextDirectAttempt + '/' + maxDirectAttempts + '...';
           appendTaskLogEntry(logPhase, 'info', retryMessage);
           updateTaskLogs(logPhase, 'active', retryMessage);
           updatePlanRunningState();

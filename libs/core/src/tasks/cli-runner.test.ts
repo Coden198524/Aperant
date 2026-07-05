@@ -1349,6 +1349,7 @@ describe('Autocode CLI runner prompt', () => {
     expect(retryPrompt).toContain('Direct Validation Retry (2/3)');
     expect(retryPrompt).toContain('Validation: reported_failed');
     expect(stdout).toContain('Direct CLI output failed validation/quality gate');
+    expect(stdout).toContain('Retrying attempt 2/3');
     expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
     expect(stdout).not.toContain('"type":"CODING_FAILED"');
     const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
