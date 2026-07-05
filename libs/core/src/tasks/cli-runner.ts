@@ -825,11 +825,17 @@ const executionPhase = logPhase === 'coding' ? 'coding' : 'planning';
 const codexJsonMode = isCodexJsonInvocation(command, args);
 const activeFileWriteLockDirs = new Set();
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
+const maxDirectQualityRetries = phase === 'direct' ? 2 : 0;
+const DIRECT_QUALITY_RETRY_FEEDBACK_MAX_CHARS = 1600;
+const DIRECT_QUALITY_RETRY_FILE_PREVIEW_LIMIT = 12;
 const VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS = 6000;
 const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
 const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
+let directQualityRetryCount = 0;
 let attemptId = 0;
+let currentAttemptStartedAt = Date.now();
+let activeCodexSessionId = '';
 let memoryContextBlock = '';
 const pendingMemoryWrites = [];
 const runStartedAt = Date.now();
@@ -1556,10 +1562,16 @@ function normalizeCliMemoryNoteKey(value) {
 
 function startAttempt(attemptPrompt, subtaskId) {
   const currentAttemptId = ++attemptId;
+  currentAttemptStartedAt = Date.now();
   const state = defaultAttemptState;
+  resetMainAttemptStateForRetry(state);
   state.attemptId = currentAttemptId;
   state.subtaskId = subtaskId;
-  const child = spawn(command, args, {
+  const invocation = buildAttemptInvocation(currentAttemptId);
+  if (invocation.resumeSessionId) {
+    appendTaskLogEntry(logPhase, 'info', 'Resuming Codex Direct session for retry: ' + invocation.resumeSessionId);
+  }
+  const child = spawn(invocation.command, invocation.args, {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: process.platform === 'win32',
@@ -1587,6 +1599,53 @@ function startAttempt(attemptPrompt, subtaskId) {
     finalize(currentAttemptId, code ?? 0, undefined)
       .catch((finalizeError) => finishRun(1, undefined, finalizeError instanceof Error ? finalizeError.message : String(finalizeError), undefined));
   });
+}
+
+function resetMainAttemptStateForRetry(state) {
+  state.lastCodexMessageText = '';
+  state.pendingModelOutput = '';
+  state.completionSummaryDetected = false;
+  state.codexJsonLineBuffer = '';
+  state.recentErrorLines = [];
+  state.toolCallCount = 0;
+  state.finalizing = false;
+  if (state.modelOutputFlushTimer) {
+    clearTimeout(state.modelOutputFlushTimer);
+    state.modelOutputFlushTimer = null;
+  }
+}
+
+function buildAttemptInvocation(currentAttemptId) {
+  const resumeArgs = buildCodexDirectResumeArgs(currentAttemptId);
+  if (resumeArgs) {
+    return { command, args: resumeArgs, resumeSessionId: activeCodexSessionId };
+  }
+  return { command, args, resumeSessionId: '' };
+}
+
+function buildCodexDirectResumeArgs(currentAttemptId) {
+  if (
+    phase !== 'direct' ||
+    currentAttemptId <= 1 ||
+    !codexJsonMode ||
+    !activeCodexSessionId ||
+    !isCodexExecInvocation(command, args)
+  ) {
+    return null;
+  }
+
+  const passthrough = [];
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '-' && index === args.length - 1) {
+      continue;
+    }
+    passthrough.push(arg);
+  }
+  if (!passthrough.includes('--json')) {
+    passthrough.unshift('--json');
+  }
+  return ['exec', 'resume', ...passthrough, activeCodexSessionId, '-'];
 }
 
 async function finalize(currentAttemptId, exitCode, signal, explicitError) {
@@ -1617,7 +1676,6 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
 
 async function finishRun(exitCode, signal, explicitError, validationError) {
   if (finalized) return;
-  finalized = true;
   let failed = exitCode !== 0 || Boolean(explicitError) || Boolean(validationError);
   const failureMessage = failed
     ? explicitError || validationError || summarizeCliFailureReason(defaultAttemptState, exitCode, signal)
@@ -1645,11 +1703,28 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     : [];
   let directQuality = undefined;
   if (phase === 'direct') {
-    directQuality = await evaluateDirectCliQuality(result, now, directChangedFiles);
+    directQuality = await evaluateDirectCliQuality(result, now, directChangedFiles, currentAttemptStartedAt);
     result.quality = directQuality;
     if (!failed) {
       const qualityFailureReason = await getDirectCliQualityGateFailureReason(directQuality);
       if (qualityFailureReason) {
+        if (directQualityRetryCount < maxDirectQualityRetries) {
+          directQualityRetryCount += 1;
+          const retryMessage = 'Direct CLI output failed validation/quality gate: ' + qualityFailureReason + ' Retrying ' + directQualityRetryCount + '/' + maxDirectQualityRetries + '...';
+          appendTaskLogEntry(logPhase, 'info', retryMessage);
+          updateTaskLogs(logPhase, 'active', retryMessage);
+          updatePlanRunningState();
+          emitPhase(executionPhase, retryMessage, 0);
+          startAttempt(buildPromptWithMemoryContext(buildDirectQualityRetryPrompt({
+            failureReason: qualityFailureReason,
+            quality: directQuality,
+            changedFiles: directChangedFiles,
+            attempt: directQualityRetryCount,
+            maxRetries: maxDirectQualityRetries,
+            finalText: readDirectCompletionSummary(result, currentAttemptStartedAt),
+          })));
+          return;
+        }
         failed = true;
         result.exitCode = 1;
         result.status = 'error';
@@ -1657,6 +1732,9 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
       }
     }
   }
+
+  finalized = true;
+  result.attemptCount = phase === 'direct' ? directQualityRetryCount + 1 : attemptId;
 
   if (phase === 'direct' || (!failed && phase === 'coding')) {
     const finalText = defaultAttemptState.lastCodexMessageText || result.message;
@@ -1686,7 +1764,7 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     emitTaskEvent('CODING_FAILED', {
       subtaskId: getDirectCliCurrentSubtaskId(readCurrentPlanDirectExecution()),
       error: result.message || 'Direct CLI run failed.',
-      attemptCount: 1,
+      attemptCount: directQualityRetryCount + 1,
     });
   }
   updateTaskLogs(logPhase, failed ? 'failed' : 'completed', result.message);
@@ -3370,12 +3448,24 @@ function processCodexJsonLine(line, state = defaultAttemptState) {
   }
 }
 
+function rememberCodexSessionId(sessionId) {
+  const normalized = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (phase === 'direct' && codexJsonMode && normalized) {
+    activeCodexSessionId = normalized;
+  }
+}
+
 function handleCodexJsonEvent(event, state = defaultAttemptState) {
   const envelope = asRecord(event);
   const payload = getCodexPayload(envelope);
   const payloadType = getFirstString(payload, ['type', 'event_type', 'kind']) || getFirstString(envelope, ['type', 'event_type', 'kind']);
+  const payloadSession = asRecord(payload && payload.session);
+  const envelopeSession = asRecord(envelope && envelope.session);
   const sessionId = getFirstString(payload, ['session_id', 'sessionId', 'conversation_id']) ||
-    getFirstString(envelope, ['session_id', 'sessionId', 'conversation_id']);
+    getFirstString(envelope, ['session_id', 'sessionId', 'conversation_id']) ||
+    getFirstString(payloadSession, ['id', 'session_id', 'sessionId', 'conversation_id']) ||
+    getFirstString(envelopeSession, ['id', 'session_id', 'sessionId', 'conversation_id']);
+  rememberCodexSessionId(sessionId);
   const tokenUsage = extractCodexTokenUsage(envelope, payload, sessionId);
   let tokenUsageHandled = false;
   const handleTokenUsage = () => {
@@ -3922,13 +4012,15 @@ function persistDirectSessionState(result, now, quality, changedFiles = []) {
 
   const statePath = join(specDir, artifacts.directSession);
   const existing = readJsonFile(statePath) || {};
-  const summary = readDirectCompletionSummary(result);
+  const summary = readDirectCompletionSummary(result, currentAttemptStartedAt);
   const tokenUsage = readCurrentPlanTokenUsage();
-  const sessionId = typeof existing.sessionId === 'string' && existing.sessionId.trim()
-    ? existing.sessionId.trim()
+  const sessionId = activeCodexSessionId
+    ? activeCodexSessionId
     : typeof tokenUsage?.sessionId === 'string' && tokenUsage.sessionId.trim()
       ? tokenUsage.sessionId.trim()
-      : 'codex-cli-' + randomUUID();
+      : typeof existing.sessionId === 'string' && existing.sessionId.trim()
+        ? existing.sessionId.trim()
+        : 'codex-cli-' + randomUUID();
   const iteration = Number.isFinite(existing.iteration)
     ? Math.max(1, Math.floor(existing.iteration) + 1)
     : 1;
@@ -4064,7 +4156,7 @@ function mergeRunnerChangedFiles(existing, current) {
     ...(Array.isArray(current) ? current : []),
   ]).slice(0, 100);
 }
-function readDirectCompletionSummary(result) {
+function readDirectCompletionSummary(result, minMtimeMs = runStartedAt) {
   const summaryPath = join(specDir, artifacts.directSummary);
   const liveText = (result.status && result.status !== 'success'
     ? result.message
@@ -4072,7 +4164,7 @@ function readDirectCompletionSummary(result) {
   try {
     const summaryStats = statSync(summaryPath);
     const content = readFileSync(summaryPath, 'utf8').trim();
-    if (content && summaryStats.mtimeMs >= runStartedAt) {
+    if (content && summaryStats.mtimeMs >= minMtimeMs) {
       return content;
     }
   } catch {
@@ -4081,8 +4173,8 @@ function readDirectCompletionSummary(result) {
   return liveText;
 }
 
-async function evaluateDirectCliQuality(result, now, changedFiles = []) {
-  const finalText = readDirectCompletionSummary(result);
+async function evaluateDirectCliQuality(result, now, changedFiles = [], minSummaryMtimeMs = runStartedAt) {
+  const finalText = readDirectCompletionSummary(result, minSummaryMtimeMs);
   const tokenUsage = readCurrentPlanTokenUsage();
   const durationMs = Math.max(0, Date.now() - runStartedAt);
   const stepsExecuted = Number.isFinite(tokenUsage && tokenUsage.stepsExecuted)
@@ -4600,6 +4692,71 @@ function compactArtifactValidationError(value) {
   return text.slice(0, headBudget).trimEnd() + notice + text.slice(-tailBudget).trimStart();
 }
 
+function compactDirectQualityRetryText(value, maxChars = DIRECT_QUALITY_RETRY_FEEDBACK_MAX_CHARS) {
+  const text = foldRepeatedRunnerPromptLines(
+    String(value || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').trim(),
+  );
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const notice = '\\n...[direct retry feedback middle omitted]...\\n';
+  const budget = Math.max(0, maxChars - notice.length);
+  const headBudget = Math.ceil(budget * 0.65);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return text.slice(0, headBudget).trimEnd() + notice + text.slice(-tailBudget).trimStart();
+}
+
+function formatDirectQualityRetryList(items, limit = DIRECT_QUALITY_RETRY_FILE_PREVIEW_LIMIT) {
+  const normalized = (Array.isArray(items) ? items : [])
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+  if (normalized.length === 0) {
+    return 'none';
+  }
+  const preview = normalized.slice(0, limit).join(', ');
+  return normalized.length > limit ? preview + ', ...and ' + (normalized.length - limit) + ' more' : preview;
+}
+
+function buildDirectQualityRetryPrompt(input) {
+  const quality = input.quality || {};
+  const validation = quality.validation || {};
+  const selfCritique = quality.selfCritique
+    ? String(quality.selfCritique.status || 'unknown') +
+      (Number.isFinite(quality.selfCritique.score) ? ' (' + Math.round(quality.selfCritique.score * 100) + '%)' : '') +
+      '; improvements: ' + formatDirectQualityRetryList(quality.selfCritique.improvements, 4)
+    : 'not run';
+  const nextAttempt = Math.max(2, Math.floor(input.attempt || 1) + 1);
+  const maxAttempts = Math.max(nextAttempt, Math.floor(input.maxRetries || 0) + 1);
+  const finalText = compactDirectQualityRetryText(input.finalText || '', 2000);
+
+  return [
+    compactArtifactValidationRetryBasePrompt(prompt),
+    '',
+    '---',
+    '',
+    '## Direct Validation Retry (' + nextAttempt + '/' + maxAttempts + ')',
+    '',
+    'The previous Direct CLI attempt exited successfully, but validation or the quality gate failed.',
+    'Do not repeat the same implementation idea blindly. Inspect the current diff and relevant files first, then decide whether the previous hypothesis was wrong or only incomplete.',
+    '',
+    '## Previous Attempt Feedback',
+    '',
+    'Failure: ' + compactDirectQualityRetryText(input.failureReason),
+    'Validation: ' + String(validation.status || 'unknown') + ' - ' + compactDirectQualityRetryText(validation.reason || 'No validation detail.'),
+    'Self-critique: ' + compactDirectQualityRetryText(selfCritique),
+    'Changed files: ' + formatDirectQualityRetryList(input.changedFiles),
+    finalText ? 'Final response excerpt:\\n' + finalText : '',
+    '',
+    '## Required Next Action',
+    '',
+    '1. Re-read the current files and git diff before editing.',
+    '2. Diagnose why the previous attempt failed; do not only restate the error.',
+    '3. Rework or replace prior edits if they caused the failure. Prefer a smaller verifiable change over repeating the same broad approach.',
+    '4. Run the most focused validation command available and report the exact command and result.',
+    '5. Leave an updated Direct summary in ' + specDir + '/' + artifacts.directSummary + ' or include the summary in the final response.',
+  ].filter((line) => line !== '').join('\\n');
+}
+
 function buildArtifactValidationRetryPrompt(validationError) {
   const standardTasksMode = phase === 'spec' || phase === 'planning';
   const compactValidationError = compactArtifactValidationError(validationError);
@@ -5068,6 +5225,10 @@ function hasTaskLogRecords(logsPath) {
 
 function isCodexJsonInvocation(command, args) {
   return isCodexCommand(command) && Array.isArray(args) && args.includes('--json');
+}
+
+function isCodexExecInvocation(command, args) {
+  return isCodexCommand(command) && Array.isArray(args) && args[0] === 'exec';
 }
 
 function isCodexCommand(command) {

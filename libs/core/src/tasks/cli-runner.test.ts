@@ -1284,6 +1284,181 @@ describe('Autocode CLI runner prompt', () => {
     expect(stdout).toContain('"filesChanged":1');
     expect(stdout).toContain('"changedFiles":["src/direct-output.ts"]');
   });
+  it('retries Direct CLI quality gate failures before reporting completion', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-retry',
+      title: 'Retry failed Direct validation',
+      description: 'Direct CLI should retry quality gate failures with corrective feedback.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-retry' });
+    const fakeCliPath = join(projectRoot, 'direct-retry-cli.cjs');
+    const attemptPath = join(projectRoot, 'direct-retry-attempt.txt');
+    const promptPath = join(projectRoot, 'direct-retry-prompt.txt');
+    const escapedSpecDir = specDir.replace(/\\/g, '\\\\');
+    const escapedAttemptPath = attemptPath.replace(/\\/g, '\\\\');
+    const escapedPromptPath = promptPath.replace(/\\/g, '\\\\');
+    writeFileSync(fakeCliPath, [
+      "const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const promptPath = '${escapedPromptPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  writeFileSync(promptPath, stdin, 'utf8');",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt === 1) {",
+      "    writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 1 summary. Validation: npm test failed.\\n', 'utf8');",
+      "    process.stdout.write('Implemented the first idea.\\nValidation: npm test failed.\\n');",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 2 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write('Reworked the fix after checking the diff.\\nValidation: npm test passed.\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-retry',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(readFileSync(attemptPath, 'utf8')).toBe('2');
+    const retryPrompt = readFileSync(promptPath, 'utf8');
+    expect(retryPrompt).toContain('Direct Validation Retry (2/3)');
+    expect(retryPrompt).toContain('Validation: reported_failed');
+    expect(stdout).toContain('Direct CLI output failed validation/quality gate');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    expect(stdout).not.toContain('"type":"CODING_FAILED"');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      exitCode?: number;
+      attemptCount?: number;
+      quality?: { validation?: { status?: string; reason?: string } };
+    };
+    expect(result.status).toBe('success');
+    expect(result.exitCode).toBe(0);
+    expect(result.attemptCount).toBe(2);
+    expect(result.quality?.validation?.status).toBe('reported_passed');
+    expect(result.quality?.validation?.reason).toContain('npm test passed');
+    expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).toContain('Attempt 2 summary');
+    expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).not.toContain('Attempt 1 summary');
+  });
+  it('resumes the same Codex exec session when retrying Direct quality failures', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-retry-codex-session',
+      title: 'Retry Direct validation in same Codex session',
+      description: 'Direct CLI should resume the original Codex exec session for retry attempts.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-retry-codex-session' });
+    const shimPath = join(projectRoot, 'codex-session-retry-shim.cjs');
+    const attemptPath = join(projectRoot, 'codex-session-retry-attempt.txt');
+    const argvPath = join(projectRoot, 'codex-session-retry-argv.jsonl');
+    const escapedSpecDir = specDir.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedAttemptPath = attemptPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedArgvPath = argvPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    writeFileSync(shimPath, [
+      "const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const argvPath = '${escapedArgvPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      'const argv = process.argv.slice(2);',
+      "appendFileSync(argvPath, JSON.stringify(argv) + '\\n', 'utf8');",
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt === 1) {",
+      "    writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 1 summary. Validation: npm test failed.\\n', 'utf8');",
+      "    process.stdout.write(JSON.stringify({ type: 'session_configured', session_id: 'codex-session-retry' }) + '\\n');",
+      "    process.stdout.write(JSON.stringify({ type: 'agent_message', message: 'Attempt 1 done. Validation: npm test failed.' }) + '\\n');",
+      "    process.stdout.write(JSON.stringify({ type: 'turn_completed' }) + '\\n');",
+      "    return;",
+      "  }",
+      "  const resumed = argv[0] === 'exec' && argv[1] === 'resume' && argv.includes('codex-session-retry');",
+      "  if (!resumed) {",
+      "    process.stderr.write('Expected Codex exec resume args, got ' + JSON.stringify(argv) + '\\n');",
+      "    process.exit(2);",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 2 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write(JSON.stringify({ type: 'usage', session_id: 'codex-session-retry', usage: { input_tokens: 200, output_tokens: 50, total_tokens: 250 } }) + '\\n');",
+      "  process.stdout.write(JSON.stringify({ type: 'agent_message', message: 'Attempt 2 fixed it. Validation: npm test passed.' }) + '\\n');",
+      "  process.stdout.write(JSON.stringify({ type: 'turn_completed' }) + '\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    if (process.platform === 'win32') {
+      writeFileSync(
+        join(projectRoot, 'codex.cmd'),
+        '@echo off\r\nnode "%~dp0codex-session-retry-shim.cjs" %*\r\n',
+        'utf8',
+      );
+    } else {
+      const unixShimPath = join(projectRoot, 'codex');
+      writeFileSync(unixShimPath, [
+        '#!/usr/bin/env node',
+        "require('./codex-session-retry-shim.cjs');",
+      ].join('\n'), 'utf8');
+      chmodSync(unixShimPath, 0o755);
+    }
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-retry-codex-session',
+      cli: 'codex',
+      model: 'gpt-test',
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        GRAPHITI_ENABLED: 'false',
+        PATH: `${projectRoot}${delimiter}${process.env.PATH ?? ''}`,
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    const argvLines = readFileSync(argvPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line) as string[]);
+    expect(argvLines[0]).toEqual(['exec', '--json', '-m', 'gpt-test', '-']);
+    expect(argvLines[1]).toEqual(['exec', 'resume', '--json', '-m', 'gpt-test', 'codex-session-retry', '-']);
+    expect(readFileSync(attemptPath, 'utf8')).toBe('2');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {
+      sessionId?: string;
+      lastOutcome?: string;
+    };
+    expect(directSession.sessionId).toBe('codex-session-retry');
+    expect(directSession.lastOutcome).toBe('success');
+  });
   it('fails Direct CLI completion when final validation evidence reports failure', () => {
     createAutocodeTask({
       projectRoot,
