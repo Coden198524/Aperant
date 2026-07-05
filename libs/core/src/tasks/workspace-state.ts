@@ -73,6 +73,7 @@ export interface StartedAutocodeTaskRun {
 export interface CreateStartedAutocodeAgentRuntimeInput extends CreateAutocodeAgentRuntimeStartPlanInput {
   cli: CreateAutocodeTaskRunPlanInput['cli'];
   customCommand?: string;
+  directCliContinuationStrategy?: CreateAutocodeTaskRunPlanInput['directCliContinuationStrategy'];
   model?: string;
   bypassPermissions?: boolean;
   language?: CreateAutocodeTaskRunPlanInput['language'];
@@ -323,6 +324,7 @@ export function createStartedAutocodeAgentRuntime(
     projectId: input.projectId,
     cli: input.cli,
     customCommand: input.customCommand,
+    directCliContinuationStrategy: input.directCliContinuationStrategy,
     model: input.model,
     bypassPermissions: input.bypassPermissions,
     phase: mapAutocodeAgentRuntimeModeToTaskRunPhase(runtimePlan.mode),

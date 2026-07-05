@@ -50,6 +50,7 @@ export interface CreateAutocodeTaskRunPlanInput {
   bypassPermissions?: boolean;
   phase?: AutocodeTaskRunPhase;
   language?: AutocodeAgentLanguage;
+  directCliContinuationStrategy?: AutocodeCliContinuationStrategy;
 }
 
 export interface AutocodeTaskRunPlan {
@@ -123,7 +124,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
       language: input.language,
       runtimeConcurrency,
       cli: input.cli,
-      directCliContinuationStrategy: getAutocodeCliContinuationStrategy(input.cli),
+      directCliContinuationStrategy: input.directCliContinuationStrategy ?? getAutocodeCliContinuationStrategy(input.cli),
     }),
     'utf8',
   );

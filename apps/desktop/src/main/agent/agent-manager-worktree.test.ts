@@ -547,6 +547,12 @@ describe('AgentManager worktree execution', () => {
           displayName: 'Future CLI',
           cli: 'custom',
           customCommand: 'future-code --provider {provider} --model {modelId} run',
+          continuationStrategy: {
+            type: 'append-continuation-flag',
+            commandNames: ['future-code'],
+            continuationFlag: '--continue',
+            sessionIdSource: 'latest',
+          },
           condition: {
             provider: 'future-ai',
             modelIdPrefix: 'future-',
@@ -591,6 +597,11 @@ describe('AgentManager worktree execution', () => {
     expect(createStartedAutocodeAgentRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
       cli: 'custom',
       customCommand: 'future-code --provider future-ai --model future-large run',
+      directCliContinuationStrategy: expect.objectContaining({
+        type: 'append-continuation-flag',
+        commandNames: ['future-code'],
+        continuationFlag: '--continue',
+      }),
       model: 'future-large',
     }));
     expect(spawnProcessMock).toHaveBeenCalled();

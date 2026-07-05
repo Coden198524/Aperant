@@ -51,6 +51,7 @@ export interface AutocodeCliRuntimeRoute {
   cli: AutocodeCli;
   condition: AutocodeCliRuntimeRouteCondition;
   customCommand?: string;
+  continuationStrategy?: AutocodeCliContinuationStrategy;
 }
 
 export interface ResolveAutocodeCliRuntimeRouteInput {
@@ -159,23 +160,7 @@ export function getAutocodeCliContinuationStrategy(
   cli: AutocodeCli,
 ): AutocodeCliContinuationStrategy | undefined {
   const strategy = AUTOCODE_CLI_CONTINUATION_STRATEGIES[cli];
-  if (!strategy) {
-    return undefined;
-  }
-  const copy: AutocodeCliContinuationStrategy = {
-    ...strategy,
-    commandNames: [...strategy.commandNames],
-  };
-  if (strategy.resumeArgs) {
-    copy.resumeArgs = [...strategy.resumeArgs];
-  }
-  if (strategy.requiredArgs) {
-    copy.requiredArgs = [...strategy.requiredArgs];
-  }
-  if (strategy.existingContinuationFlags) {
-    copy.existingContinuationFlags = [...strategy.existingContinuationFlags];
-  }
-  return copy;
+  return strategy ? copyAutocodeCliContinuationStrategy(strategy) : undefined;
 }
 
 export function getAutocodeCliJsonEventParsers(): AutocodeCliJsonEventParser[] {
@@ -389,11 +374,30 @@ function parseAutocodeCliRuntimeRoute(value: unknown): AutocodeCliRuntimeRoute |
   const cli = parseRuntimeRouteString(record.cli);
   const condition = parseAutocodeCliRuntimeRouteCondition(record.condition);
   const customCommand = parseRuntimeRouteString(record.customCommand) ?? parseRuntimeRouteString(record.custom_command);
-  if (!id || !displayName || !cli || !isAutocodeCli(cli) || !condition || (cli === 'custom' && !customCommand)) {
+  const rawContinuationStrategy = record.continuationStrategy ?? record.continuation_strategy ?? record.continuation;
+  const continuationStrategy = rawContinuationStrategy === undefined
+    ? null
+    : parseAutocodeCliContinuationStrategy(rawContinuationStrategy, displayName ?? cli ?? 'CLI');
+  if (
+    !id ||
+    !displayName ||
+    !cli ||
+    !isAutocodeCli(cli) ||
+    !condition ||
+    (cli === 'custom' && !customCommand) ||
+    (rawContinuationStrategy !== undefined && !continuationStrategy)
+  ) {
     return null;
   }
 
-  return { id, displayName, cli, condition, ...(customCommand ? { customCommand } : {}) };
+  return {
+    id,
+    displayName,
+    cli,
+    condition,
+    ...(customCommand ? { customCommand } : {}),
+    ...(continuationStrategy ? { continuationStrategy } : {}),
+  };
 }
 
 function parseAutocodeCliRuntimeRouteCondition(value: unknown): AutocodeCliRuntimeRouteCondition | null {
@@ -412,6 +416,106 @@ function parseAutocodeCliRuntimeRouteCondition(value: unknown): AutocodeCliRunti
   return condition;
 }
 
+function parseAutocodeCliContinuationStrategy(
+  value: unknown,
+  defaultDisplayName: string,
+): AutocodeCliContinuationStrategy | null {
+  const record = asRuntimeRouteRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const type = parseRuntimeRouteString(record.type);
+  if (type !== 'exec-resume-session' && type !== 'append-continuation-flag') {
+    return null;
+  }
+  const commandNames = parseRuntimeStringList(record.commandNames ?? record.command_names);
+  if (!commandNames) {
+    return null;
+  }
+
+  const displayName = parseRuntimeRouteString(record.displayName) ??
+    parseRuntimeRouteString(record.display_name) ??
+    defaultDisplayName;
+  const strategy: AutocodeCliContinuationStrategy = {
+    displayName,
+    type,
+    commandNames,
+  };
+
+  const sessionIdSource = parseRuntimeRouteString(record.sessionIdSource ?? record.session_id_source);
+  if (sessionIdSource) {
+    if (sessionIdSource !== 'json-event-session' && sessionIdSource !== 'latest') {
+      return null;
+    }
+    strategy.sessionIdSource = sessionIdSource;
+  }
+
+  const requiresJsonMode = parseRuntimeRouteBoolean(record.requiresJsonMode ?? record.requires_json_mode);
+  if (requiresJsonMode !== undefined) {
+    strategy.requiresJsonMode = requiresJsonMode;
+  }
+
+  const jsonEventParser = parseRuntimeRouteString(record.jsonEventParser ?? record.json_event_parser);
+  if (jsonEventParser) {
+    if (jsonEventParser !== 'codex-json') {
+      return null;
+    }
+    strategy.jsonEventParser = jsonEventParser;
+  }
+
+  const execCommand = parseRuntimeRouteString(record.execCommand ?? record.exec_command);
+  if (execCommand) {
+    strategy.execCommand = execCommand;
+  }
+
+  const promptStdinArg = parseRuntimeRouteString(record.promptStdinArg ?? record.prompt_stdin_arg);
+  if (promptStdinArg) {
+    strategy.promptStdinArg = promptStdinArg;
+  }
+
+  const resumeArgs = parseRuntimeStringList(record.resumeArgs ?? record.resume_args);
+  if (resumeArgs) {
+    strategy.resumeArgs = resumeArgs;
+  }
+
+  const requiredArgs = parseRuntimeStringList(record.requiredArgs ?? record.required_args);
+  if (requiredArgs) {
+    strategy.requiredArgs = requiredArgs;
+  }
+
+  if (type === 'append-continuation-flag') {
+    const continuationFlag = parseRuntimeRouteString(record.continuationFlag ?? record.continuation_flag);
+    if (!continuationFlag) {
+      return null;
+    }
+    strategy.continuationFlag = continuationFlag;
+    const existingContinuationFlags = parseRuntimeStringList(
+      record.existingContinuationFlags ?? record.existing_continuation_flags,
+    );
+    if (existingContinuationFlags) {
+      strategy.existingContinuationFlags = existingContinuationFlags;
+    }
+  }
+
+  return strategy;
+}
+
+function parseRuntimeStringList(value: unknown): string[] | null {
+  const single = parseRuntimeRouteString(value);
+  if (single) {
+    return [single];
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const items = value.map(parseRuntimeRouteString).filter((item): item is string => Boolean(item));
+  return items.length > 0 ? items : null;
+}
+
+function parseRuntimeRouteBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
 function parseRuntimeRouteMatch(value: unknown): AutocodeCliRuntimeRouteMatch | null {
   const single = parseRuntimeRouteString(value);
   if (single) {
@@ -438,7 +542,29 @@ function copyAutocodeCliRuntimeRoute(route: AutocodeCliRuntimeRoute): AutocodeCl
   return {
     ...route,
     condition: copyAutocodeCliRuntimeRouteCondition(route.condition),
+    ...(route.continuationStrategy
+      ? { continuationStrategy: copyAutocodeCliContinuationStrategy(route.continuationStrategy) }
+      : {}),
   };
+}
+
+function copyAutocodeCliContinuationStrategy(
+  strategy: AutocodeCliContinuationStrategy,
+): AutocodeCliContinuationStrategy {
+  const copy: AutocodeCliContinuationStrategy = {
+    ...strategy,
+    commandNames: [...strategy.commandNames],
+  };
+  if (strategy.resumeArgs) {
+    copy.resumeArgs = [...strategy.resumeArgs];
+  }
+  if (strategy.requiredArgs) {
+    copy.requiredArgs = [...strategy.requiredArgs];
+  }
+  if (strategy.existingContinuationFlags) {
+    copy.existingContinuationFlags = [...strategy.existingContinuationFlags];
+  }
+  return copy;
 }
 
 function copyAutocodeCliRuntimeRouteCondition(

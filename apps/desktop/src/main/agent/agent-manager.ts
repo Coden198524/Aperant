@@ -786,6 +786,7 @@ export class AgentManager extends EventEmitter {
         baseBranch,
         cli: cliRuntimeRoute.cli,
         customCommand: this.resolveCliRuntimeCustomCommand(cliRuntimeRoute, resolved),
+        directCliContinuationStrategy: cliRuntimeRoute.continuationStrategy,
         routeId: cliRuntimeRoute.id,
         routeDisplayName: cliRuntimeRoute.displayName,
       });
@@ -1004,6 +1005,7 @@ export class AgentManager extends EventEmitter {
         specDir: worktreeSpecDir,
         cli: cliRuntimeRoute.cli,
         customCommand: this.resolveCliRuntimeCustomCommand(cliRuntimeRoute, resolved),
+        directCliContinuationStrategy: cliRuntimeRoute.continuationStrategy,
         routeId: cliRuntimeRoute.id,
         routeDisplayName: cliRuntimeRoute.displayName,
       });
@@ -1222,6 +1224,7 @@ export class AgentManager extends EventEmitter {
         specDir: worktreeSpecDir,
         cli: cliRuntimeRoute.cli,
         customCommand: this.resolveCliRuntimeCustomCommand(cliRuntimeRoute, resolved),
+        directCliContinuationStrategy: cliRuntimeRoute.continuationStrategy,
         routeId: cliRuntimeRoute.id,
         routeDisplayName: cliRuntimeRoute.displayName,
       });
@@ -1894,6 +1897,7 @@ export class AgentManager extends EventEmitter {
     direct?: boolean;
     cli: AutocodeCli;
     customCommand?: string;
+    directCliContinuationStrategy?: AutocodeCliRuntimeRoute['continuationStrategy'];
     routeId: string;
     routeDisplayName?: string;
   }): Promise<void> {
@@ -1910,6 +1914,7 @@ export class AgentManager extends EventEmitter {
       projectId: input.projectId,
       cli: input.cli,
       customCommand: input.customCommand,
+      directCliContinuationStrategy: input.directCliContinuationStrategy,
       model: input.modelId,
       bypassPermissions: settings?.dangerouslySkipPermissions === true,
       language: this.resolveAppLanguage(),

@@ -91,6 +91,13 @@ describe('Autocode CLI catalog', () => {
         displayName: 'Future Custom CLI',
         cli: 'custom',
         customCommand: 'future-code --model {modelId} run',
+        continuationStrategy: {
+          displayName: 'Future Custom CLI',
+          type: 'append-continuation-flag',
+          commandNames: ['future-code'],
+          continuationFlag: '--continue',
+          sessionIdSource: 'latest',
+        },
         condition: {
           provider: 'future-ai',
           modelIdPrefix: 'future-',
@@ -110,6 +117,13 @@ describe('Autocode CLI catalog', () => {
         displayName: 'Future Custom CLI',
         cli: 'custom',
         customCommand: 'future-code --model {modelId} run',
+        continuationStrategy: {
+          displayName: 'Future Custom CLI',
+          type: 'append-continuation-flag',
+          commandNames: ['future-code'],
+          continuationFlag: '--continue',
+          sessionIdSource: 'latest',
+        },
         condition: {
           provider: 'future-ai',
           modelIdPrefix: 'future-',
@@ -124,6 +138,13 @@ describe('Autocode CLI catalog', () => {
       id: 'future-custom-cli',
       cli: 'custom',
       customCommand: 'future-code --model {modelId} run',
+      continuationStrategy: {
+        displayName: 'Future Custom CLI',
+        type: 'append-continuation-flag',
+        commandNames: ['future-code'],
+        continuationFlag: '--continue',
+        sessionIdSource: 'latest',
+      },
     });
   });
   it('lets external CLI runtime routes override built-in routes', () => {

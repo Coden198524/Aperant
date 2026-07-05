@@ -1625,6 +1625,85 @@ describe('Autocode CLI runner prompt', () => {
     expect(result.attemptCount).toBe(2);
     expect(result.quality?.validation?.status).toBe('reported_passed');
   });
+  it('uses configured custom Direct CLI continuation strategy when retrying quality failures', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-retry-custom-session',
+      title: 'Retry Direct validation in configured custom CLI session',
+      description: 'Direct CLI should use route-provided continuation strategy for custom runners.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-retry-custom-session' });
+    const fakeCliPath = join(projectRoot, 'custom-session-retry-cli.cjs');
+    const attemptPath = join(projectRoot, 'custom-session-retry-attempt.txt');
+    const argvPath = join(projectRoot, 'custom-session-retry-argv.jsonl');
+    const escapedSpecDir = specDir.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedAttemptPath = attemptPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedArgvPath = argvPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const normalizedFakeCliPath = fakeCliPath.split(String.fromCharCode(92)).join('/');
+    writeFileSync(fakeCliPath, [
+      "const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const argvPath = '${escapedArgvPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      'const argv = process.argv.slice(2);',
+      "appendFileSync(argvPath, JSON.stringify(argv) + '\\n', 'utf8');",
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt === 1) {",
+      "    writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 1 summary. Validation: npm test failed.\\n', 'utf8');",
+      "    process.stdout.write('Custom attempt 1 finished. Validation: npm test failed.\\n');",
+      "    return;",
+      "  }",
+      "  if (argv[0] !== 'resume' || argv[1] !== 'latest' || argv[2] !== '-') {",
+      "    process.stderr.write('Expected custom resume args, got ' + JSON.stringify(argv) + '\\n');",
+      "    process.exit(2);",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 2 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write('Custom attempt 2 resumed and fixed it. Validation: npm test passed.\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-retry-custom-session',
+      cli: 'custom',
+      customCommand: `node "${normalizedFakeCliPath}"`,
+      directCliContinuationStrategy: {
+        displayName: 'Future CLI',
+        type: 'exec-resume-session',
+        commandNames: ['node'],
+        execCommand: normalizedFakeCliPath,
+        resumeArgs: [normalizedFakeCliPath, 'resume'],
+        promptStdinArg: '-',
+        sessionIdSource: 'latest',
+      },
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    const argvLines = readFileSync(argvPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line) as string[]);
+    expect(argvLines[0]).toEqual([]);
+    expect(argvLines[1]).toEqual(['resume', 'latest', '-']);
+    expect(readFileSync(attemptPath, 'utf8')).toBe('2');
+    expect(readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8')).toContain('Resuming Future CLI Direct session for retry: latest');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+  });
   it('resumes the same Codex exec session when retrying Direct quality failures', () => {
     createAutocodeTask({
       projectRoot,
