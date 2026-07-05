@@ -56,6 +56,8 @@ export interface ResolveAutocodeCliRuntimeRouteInput {
   provider?: unknown;
   authSource?: unknown;
   modelId?: unknown;
+  routes?: unknown;
+  includeBuiltinRoutes?: boolean;
 }
 
 export const AUTOCODE_CLI_DEFINITIONS: Readonly<Record<BuiltinAutocodeCli, AutocodeCliDefinition>> = {
@@ -183,17 +185,34 @@ export function getAutocodeCliJsonEventParsers(): AutocodeCliJsonEventParser[] {
   }));
 }
 
-export function getAutocodeCliRuntimeRoutes(): AutocodeCliRuntimeRoute[] {
-  return AUTOCODE_CLI_RUNTIME_ROUTES.map(copyAutocodeCliRuntimeRoute);
+export function getAutocodeCliRuntimeRoutes(input: {
+  routes?: unknown;
+  includeBuiltinRoutes?: boolean;
+} = {}): AutocodeCliRuntimeRoute[] {
+  const externalRoutes = parseAutocodeCliRuntimeRoutes(input.routes);
+  const builtinRoutes = input.includeBuiltinRoutes === false
+    ? []
+    : AUTOCODE_CLI_RUNTIME_ROUTES.map(copyAutocodeCliRuntimeRoute);
+  return [...externalRoutes, ...builtinRoutes];
 }
 
 export function resolveAutocodeCliRuntimeRoute(
   input: ResolveAutocodeCliRuntimeRouteInput,
 ): AutocodeCliRuntimeRoute | null {
-  const route = AUTOCODE_CLI_RUNTIME_ROUTES.find((candidate) =>
+  const route = getAutocodeCliRuntimeRoutes({
+    routes: input.routes,
+    includeBuiltinRoutes: input.includeBuiltinRoutes,
+  }).find((candidate) =>
     matchesAutocodeCliRuntimeRoute(candidate.condition, input)
   );
   return route ? copyAutocodeCliRuntimeRoute(route) : null;
+}
+
+export function parseAutocodeCliRuntimeRoutes(value: unknown): AutocodeCliRuntimeRoute[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(parseAutocodeCliRuntimeRoute).filter((route): route is AutocodeCliRuntimeRoute => Boolean(route));
 }
 
 export function isAutocodeCli(value: unknown): value is AutocodeCli {
@@ -356,6 +375,61 @@ function quoteShellArg(value: string): string {
     return value;
   }
   return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function parseAutocodeCliRuntimeRoute(value: unknown): AutocodeCliRuntimeRoute | null {
+  const record = asRuntimeRouteRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const id = parseRuntimeRouteString(record.id);
+  const displayName = parseRuntimeRouteString(record.displayName) ?? parseRuntimeRouteString(record.display_name);
+  const cli = parseRuntimeRouteString(record.cli);
+  const condition = parseAutocodeCliRuntimeRouteCondition(record.condition);
+  if (!id || !displayName || !cli || !isAutocodeCli(cli) || !condition) {
+    return null;
+  }
+
+  return { id, displayName, cli, condition };
+}
+
+function parseAutocodeCliRuntimeRouteCondition(value: unknown): AutocodeCliRuntimeRouteCondition | null {
+  const record = asRuntimeRouteRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const condition: AutocodeCliRuntimeRouteCondition = {};
+  for (const key of ['provider', 'authSource', 'modelId', 'modelIdPrefix', 'modelIdIncludes'] as const) {
+    const match = parseRuntimeRouteMatch(record[key]);
+    if (match) {
+      condition[key] = match;
+    }
+  }
+  return condition;
+}
+
+function parseRuntimeRouteMatch(value: unknown): AutocodeCliRuntimeRouteMatch | null {
+  const single = parseRuntimeRouteString(value);
+  if (single) {
+    return single;
+  }
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const matches = value.map(parseRuntimeRouteString).filter((item): item is string => Boolean(item));
+  return matches.length > 0 ? matches : null;
+}
+
+function parseRuntimeRouteString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function asRuntimeRouteRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function copyAutocodeCliRuntimeRoute(route: AutocodeCliRuntimeRoute): AutocodeCliRuntimeRoute {

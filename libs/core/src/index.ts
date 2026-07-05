@@ -1524,6 +1524,7 @@ export {
   getAutocodeCliPermissionArgs,
   getAutocodeCliPermissionBypassFlag,
   isAutocodeCli,
+  parseAutocodeCliRuntimeRoutes,
   resolveAutocodeCli,
   resolveAutocodeCliInvocation,
   resolveAutocodeCliRuntimeRoute,

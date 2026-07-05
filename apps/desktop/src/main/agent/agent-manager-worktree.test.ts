@@ -18,6 +18,10 @@ const createStartedAutocodeAgentRuntimeMock = vi.fn((_input?: unknown) => ({
 }));
 const resolveAutocodeDirectSessionStateMock = vi.fn((..._args: unknown[]): unknown => null);
 const emitSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+const originalCliRuntimeRoutesEnv = {
+  json: process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON,
+  routes: process.env.AUTOCODE_CLI_RUNTIME_ROUTES,
+};
 
 const writeFileSyncMock = vi.fn();
 const initializeClaudeProfileManagerMock = vi.fn(async (): Promise<{ hasValidAuth: () => boolean }> => ({ hasValidAuth: () => true }));
@@ -68,12 +72,8 @@ vi.mock('@autocode/core', async (importOriginal) => {
     ...actual,
     createStartedAutocodeAgentRuntime: (input: unknown) =>
       createStartedAutocodeAgentRuntimeMock(input),
-    resolveAutocodeCliRuntimeRoute: (input: { provider?: unknown; authSource?: unknown }) =>
-      typeof input.provider === 'string' &&
-      ['openai', 'openai.responses', 'openai-responses'].includes(input.provider.toLowerCase()) &&
-      input.authSource === 'codex-oauth'
-        ? { id: 'openai-codex-oauth', displayName: 'Codex CLI', cli: 'codex', condition: {} }
-        : null,
+    resolveAutocodeCliRuntimeRoute: (input: Parameters<typeof actual.resolveAutocodeCliRuntimeRoute>[0]) =>
+      actual.resolveAutocodeCliRuntimeRoute(input),
     resolveAutocodeDirectSessionState: (...args: unknown[]) =>
       resolveAutocodeDirectSessionStateMock(...args),
     buildAutocodeDirectTaskExecutionMessages: (input: {
@@ -179,6 +179,8 @@ vi.mock('./agent-queue', () => ({
 
 describe('AgentManager worktree execution', () => {
   beforeEach(() => {
+    delete process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON;
+    delete process.env.AUTOCODE_CLI_RUNTIME_ROUTES;
     vi.clearAllMocks();
     writeFileSyncMock.mockReset();
     spawnProcessMock.mockReset();
@@ -471,6 +473,66 @@ describe('AgentManager worktree execution', () => {
     expect(executorConfig.session.subtaskId).toBe('direct-cr-new');
   });
 
+  it('routes Direct CLI runtime from settings-defined model routes', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'deepseek-1', provider: 'deepseek' }],
+      globalPriorityOrder: ['deepseek-1'],
+      autocodeCliRuntimeRoutes: [
+        {
+          id: 'deepseek-direct-cli',
+          displayName: 'DeepSeek CLI',
+          cli: 'deepseek',
+          condition: {
+            provider: 'deepseek',
+            modelIdPrefix: 'deepseek-',
+          },
+        },
+      ],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'deepseek-1',
+      resolvedProvider: 'deepseek',
+      resolvedModelId: 'deepseek-v4-flash',
+      apiKey: 'deepseek-key',
+      source: 'api-key',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json') || filePath.endsWith('implementation_plan.md')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+      if (filePath.endsWith('implementation_plan.md')) {
+        return [
+          '# Implementation Plan',
+          'Feature: Direct task',
+          'Workflow: direct',
+          'Status: coding',
+          'Execution Phase: coding',
+          '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"running","current_subtask_id":"direct-implementation","summary_file":"direct_summary.md"}} -->',
+          '',
+          '- [/] direct. Direct execution',
+          '  - [/] direct-implementation Direct model execution',
+          '',
+        ].join('\n');
+      }
+      return JSON.stringify({ workflowMode: 'off', model: 'deepseek-v4-flash' });
+    });
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
+    expect(createStartedAutocodeAgentRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      cli: 'deepseek',
+      model: 'deepseek-v4-flash',
+    }));
+    expect(spawnProcessMock).toHaveBeenCalled();
+  });
   it('passes catalog-routed CLI runtime workspace claims', async () => {
     const fs = await import('fs');
     const settings = await import('../settings-utils');
@@ -519,5 +581,15 @@ describe('AgentManager worktree execution', () => {
 });
 
 afterAll(() => {
+  if (originalCliRuntimeRoutesEnv.json === undefined) {
+    delete process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON;
+  } else {
+    process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON = originalCliRuntimeRoutesEnv.json;
+  }
+  if (originalCliRuntimeRoutesEnv.routes === undefined) {
+    delete process.env.AUTOCODE_CLI_RUNTIME_ROUTES;
+  } else {
+    process.env.AUTOCODE_CLI_RUNTIME_ROUTES = originalCliRuntimeRoutesEnv.routes;
+  }
   emitSpy.mockRestore();
 });

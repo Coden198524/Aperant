@@ -29,6 +29,7 @@ import {
   loadAutocodeTaskRuntimeMetadataConfig,
   normalizeAutocodeBaseBranch,
   normalizeAutocodeRuntimePath,
+  parseAutocodeCliRuntimeRoutes,
   parseAutocodeOriginHeadBranch,
   resolveAutocodeCliRuntimeRoute,
   resolveAutocodeCrossProviderModelRequest,
@@ -1827,7 +1828,29 @@ export class AgentManager extends EventEmitter {
       provider: resolved.provider,
       modelId: resolved.modelId,
       authSource: resolved.auth?.source,
+      routes: this.resolveConfiguredCliRuntimeRoutes(readSettingsFile()),
     });
+  }
+
+  private resolveConfiguredCliRuntimeRoutes(settings?: Record<string, unknown>): AutocodeCliRuntimeRoute[] {
+    return [
+      ...parseAutocodeCliRuntimeRoutes(settings?.autocodeCliRuntimeRoutes),
+      ...this.readEnvCliRuntimeRoutes(),
+    ];
+  }
+
+  private readEnvCliRuntimeRoutes(): AutocodeCliRuntimeRoute[] {
+    const raw = process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON ?? process.env.AUTOCODE_CLI_RUNTIME_ROUTES;
+    if (!raw?.trim()) {
+      return [];
+    }
+
+    try {
+      return parseAutocodeCliRuntimeRoutes(JSON.parse(raw));
+    } catch (error) {
+      console.warn('[AgentManager] Ignoring invalid AUTOCODE_CLI_RUNTIME_ROUTES JSON:', error);
+      return [];
+    }
   }
 
   private async startCliRuntime(input: {

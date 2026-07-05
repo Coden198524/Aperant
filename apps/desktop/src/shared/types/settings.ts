@@ -7,7 +7,7 @@ import type { ChangelogFormat, ChangelogAudience, ChangelogEmojiLevel } from './
 import type { SupportedLanguage } from '../constants/i18n';
 import type { ProviderAccount, BuiltinProvider } from './provider-account';
 import type { ProviderModelSpec } from '../constants/models';
-import type { AutocodeCli } from '@autocode/core/tasks/cli-catalog';
+import type { AutocodeCli, AutocodeCliRuntimeRoute } from '@autocode/core/tasks/cli-catalog';
 
 // Kept for backwards-compatible persisted settings. The app now exposes one
 // light theme and one dark theme only.
@@ -342,6 +342,8 @@ export interface AppSettings {
   customTerminalPath?: string; // For 'custom' terminal
   preferredCLI?: SupportedCLI;
   customCLIPath?: string;
+  /** Optional Direct/runtime CLI route extensions. External routes are matched before built-in routes. */
+  autocodeCliRuntimeRoutes?: AutocodeCliRuntimeRoute[];
   // YOLO mode: invoke Claude with --dangerously-skip-permissions flag
   dangerouslySkipPermissions?: boolean;
   // Legacy setting kept for compatibility. Remote error reporting is disabled.

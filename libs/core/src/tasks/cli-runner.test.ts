@@ -1836,6 +1836,67 @@ describe('Autocode CLI runner prompt', () => {
     expect(directSession.provider).toBe('deepseek-cli');
     expect(directSession.lastOutcome).toBe('success');
   });
+  it('binds Direct CLI completion to the latest active change request when metadata lacks current subtask', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-change-request-current-fallback',
+      title: 'Bind Direct change request fallback',
+      description: 'Direct CLI should not complete stale Direct request-change nodes.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-change-request-current-fallback' });
+    writeFileSync(join(specDir, 'implementation_plan.md'), [
+      '# Implementation Plan',
+      'Feature: Bind Direct change request fallback',
+      'Workflow: direct',
+      'Status: coding',
+      'Execution Phase: coding',
+      '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"running","summary_file":"direct_summary.md"}} -->',
+      '',
+      '- [/] direct. Direct execution',
+      '  - [ ] direct-cr-old Direct Request Changes',
+      '    - Older pending Direct iteration that should not steal completion.',
+      '  - [/] direct-cr-new Direct Request Changes',
+      '    - Active Direct iteration that should receive completion.',
+      '',
+    ].join(String.fromCharCode(10)), 'utf8');
+    const fakeCliPath = join(projectRoot, 'direct-cr-current-fallback.cjs');
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const specDir = '${specDir.replace(/\\/g, '\\\\')}';`,
+      "mkdirSync(specDir, { recursive: true });",
+      "writeFileSync(join(specDir, 'direct_summary.md'), 'Direct change request fallback completed. Validation: npm test passed.\\n', 'utf8');",
+      "process.stdout.write('Direct change request fallback completed.\\nValidation: npm test passed.\\n');",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-change-request-current-fallback',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+    expect(rawPlan).toContain('"current_subtask_id":"direct-cr-new"');
+    expect(rawPlan).toContain('  - [ ] direct-cr-old Direct Request Changes');
+    expect(rawPlan).toContain('  - [x] direct-cr-new Direct Request Changes');
+    const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
+    const subtasks = implementationPlan?.phases?.[0]?.subtasks ?? [];
+    expect(subtasks.find((subtask) => subtask.id === 'direct-cr-old')?.status).toBe('pending');
+    expect(subtasks.find((subtask) => subtask.id === 'direct-cr-new')?.status).toBe('completed');
+  });
   it('fails Direct CLI completion when final validation evidence reports failure', () => {
     createAutocodeTask({
       projectRoot,

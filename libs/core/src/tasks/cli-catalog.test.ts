@@ -4,6 +4,7 @@ import {
   getAutocodeCliContinuationStrategy,
   getAutocodeCliJsonEventParsers,
   getAutocodeCliRuntimeRoutes,
+  parseAutocodeCliRuntimeRoutes,
   resolveAutocodeCliRuntimeRoute,
   resolveAutocodeCliTaskRunInvocation,
 } from './cli-catalog.js';
@@ -41,6 +42,71 @@ describe('Autocode CLI catalog', () => {
     ]);
   });
 
+  it('extends CLI runtime routes from external configuration without provider-specific branches', () => {
+    const routes = parseAutocodeCliRuntimeRoutes([
+      {
+        id: 'deepseek-direct-cli',
+        displayName: 'DeepSeek CLI',
+        cli: 'deepseek',
+        condition: {
+          provider: 'deepseek',
+          modelIdPrefix: 'deepseek-',
+        },
+      },
+      {
+        id: 'bad-cli-route',
+        displayName: 'Bad CLI',
+        cli: 'not-a-cli',
+        condition: { provider: 'bad' },
+      },
+    ]);
+
+    expect(routes).toEqual([
+      {
+        id: 'deepseek-direct-cli',
+        displayName: 'DeepSeek CLI',
+        cli: 'deepseek',
+        condition: {
+          provider: 'deepseek',
+          modelIdPrefix: 'deepseek-',
+        },
+      },
+    ]);
+    expect(resolveAutocodeCliRuntimeRoute({
+      provider: 'deepseek',
+      authSource: 'api-key',
+      modelId: 'deepseek-v4-flash',
+      routes,
+    })).toMatchObject({
+      id: 'deepseek-direct-cli',
+      cli: 'deepseek',
+    });
+    expect(getAutocodeCliRuntimeRoutes({ routes })[0].id).toBe('deepseek-direct-cli');
+  });
+
+  it('lets external CLI runtime routes override built-in routes', () => {
+    const routes = parseAutocodeCliRuntimeRoutes([
+      {
+        id: 'custom-openai-cli',
+        displayName: 'OpenAI Custom CLI',
+        cli: 'opencode',
+        condition: {
+          provider: 'openai',
+          authSource: 'codex-oauth',
+        },
+      },
+    ]);
+
+    expect(resolveAutocodeCliRuntimeRoute({
+      provider: 'openai',
+      authSource: 'codex-oauth',
+      modelId: 'gpt-test',
+      routes,
+    })).toMatchObject({
+      id: 'custom-openai-cli',
+      cli: 'opencode',
+    });
+  });
   it('describes Direct continuation and JSON parsing capabilities outside the runner', () => {
     expect(getAutocodeCliContinuationStrategy('codex')).toMatchObject({
       type: 'exec-resume-session',

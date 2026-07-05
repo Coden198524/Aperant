@@ -1881,7 +1881,7 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     });
   } else if (phase === 'direct' && failed) {
     emitTaskEvent('CODING_FAILED', {
-      subtaskId: getDirectCliCurrentSubtaskId(readCurrentPlanDirectExecution()),
+      subtaskId: getDirectCliCurrentSubtaskId(readCurrentPlanDirectExecution(), readCurrentPlanContent()),
       error: result.message || 'Direct CLI run failed.',
       attemptCount: directQualityRetryCount + 1,
     });
@@ -5143,14 +5143,15 @@ function updatePlanStatus(failed, message, now, directQuality, result) {
 }
 
 function updateDirectCliPlanItemStatus(status, note) {
-  const directExecution = readCurrentPlanDirectExecution();
-  const currentSubtaskId = getDirectCliCurrentSubtaskId(directExecution);
+  const content = readCurrentPlanContent();
+  const directExecution = readPlanMachineMetadata(content).direct_execution;
+  const currentSubtaskId = getDirectCliCurrentSubtaskId(directExecution, content);
   markPlanSubtaskStatus('direct', status, note);
   markPlanSubtaskStatus(currentSubtaskId, status, note);
 }
 
 function ensureDirectCliPlanItems(content, directExecution) {
-  const currentSubtaskId = getDirectCliCurrentSubtaskId(directExecution);
+  const currentSubtaskId = getDirectCliCurrentSubtaskId(directExecution, content);
   const normalized = String(content || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
   const lines = normalized.split('\\n');
   let directIndex = findRunnerPlanItemLineIndex(lines, 'direct');
@@ -5227,22 +5228,26 @@ function getDirectCliExecutionOutcome(failed, result) {
 }
 
 function readCurrentPlanDirectExecution() {
+  const content = readCurrentPlanContent();
+  return readPlanMachineMetadata(content).direct_execution;
+}
+
+function readCurrentPlanContent() {
   try {
-    const content = readFileSync(join(specDir, artifacts.implementationPlan), 'utf8');
-    return readPlanMachineMetadata(content).direct_execution;
+    return readFileSync(join(specDir, artifacts.implementationPlan), 'utf8');
   } catch {
-    return undefined;
+    return '';
   }
 }
 
-function buildDirectCliExecutionMetadata(existing, input) {
+function buildDirectCliExecutionMetadata(existing, input, content) {
   const metadata = normalizeDirectCliMetadataObject(existing);
   metadata.enabled = true;
   metadata.outcome = input.outcome || metadata.outcome || 'unknown';
   metadata.summary_file = typeof metadata.summary_file === 'string' && metadata.summary_file.trim()
     ? metadata.summary_file
     : artifacts.directSummary;
-  metadata.current_subtask_id = getDirectCliCurrentSubtaskId(metadata);
+  metadata.current_subtask_id = getDirectCliCurrentSubtaskId(metadata, content);
   if (input.completedAt) {
     metadata.completed_at = input.completedAt;
   } else {
@@ -5260,10 +5265,31 @@ function normalizeDirectCliMetadataObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {};
 }
 
-function getDirectCliCurrentSubtaskId(existing) {
+function getDirectCliCurrentSubtaskId(existing, content) {
   const metadata = normalizeDirectCliMetadataObject(existing);
   const current = typeof metadata.current_subtask_id === 'string' ? metadata.current_subtask_id.trim() : '';
-  return current || 'direct-implementation';
+  if (current) {
+    return current;
+  }
+  return inferDirectCliCurrentSubtaskIdFromPlan(content) || 'direct-implementation';
+}
+
+function inferDirectCliCurrentSubtaskIdFromPlan(content) {
+  const lines = String(content || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').split('\\n');
+  const candidates = [];
+  for (const line of lines) {
+    const match = /^\\s*-\\s+\\[([ xX/!\\-])\\]\\s+(direct-cr-[A-Za-z0-9_.-]+)(?:\\s+|\\.|$)/i.exec(String(line || '').trim());
+    if (!match) {
+      continue;
+    }
+    candidates.push({ id: match[2], status: markerToStatus(match[1]) });
+  }
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    if (candidates[index].status === 'in_progress' || candidates[index].status === 'pending') {
+      return candidates[index].id;
+    }
+  }
+  return candidates.length > 0 ? candidates[candidates.length - 1].id : '';
 }
 function updatePlanMetadata(input) {
   const planPath = join(specDir, artifacts.implementationPlan);
@@ -5302,6 +5328,7 @@ function updatePlanMetadata(input) {
       const directExecutionMetadata = buildDirectCliExecutionMetadata(
         currentMachineMetadata.direct_execution,
         input.directExecution,
+        content,
       );
       machineUpdates.direct_execution = directExecutionMetadata;
       content = ensureDirectCliPlanItems(content, directExecutionMetadata);
