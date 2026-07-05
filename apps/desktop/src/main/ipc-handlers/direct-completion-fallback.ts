@@ -1,6 +1,10 @@
 import { existsSync, readFileSync, statSync } from 'fs';
 import path from 'path';
-import { AUTOCODE_TASK_ARTIFACTS } from '@autocode/core';
+import {
+  AUTOCODE_TASK_ARTIFACTS,
+  getAutocodeDirectQualityGateFailureReason,
+  type AutocodeDirectCodingQualityMetrics,
+} from '@autocode/core';
 
 type DirectExecutionRecord = {
   enabled?: unknown;
@@ -158,6 +162,16 @@ export function evaluateDirectCompletionFallback(input: {
 
   if (runResultIsDirect && !runResultIsStale && runResultStatus === 'success' && runResultExitCode === 0) {
     if (iterationStartedAtMs === undefined || runResultUpdatedAtMs !== undefined) {
+      const qualityFailure = getDirectFallbackQualityGateFailureReason(plan, runResult);
+      if (qualityFailure) {
+        return failDecision(
+          input.fallback,
+          'quality-gate-failed-run-result',
+          qualityFailure,
+          plan,
+          runResult,
+        );
+      }
       return {
         action: 'complete',
         reason: 'fresh-successful-run-result',
@@ -187,6 +201,16 @@ export function evaluateDirectCompletionFallback(input: {
   if (directOutcome && SUCCESSFUL_DIRECT_OUTCOMES.has(directOutcome)) {
     const completedAtMs = timestampMs(stringValue(plan?.direct_execution?.completed_at));
     if (iterationStartedAtMs === undefined || (completedAtMs !== undefined && completedAtMs >= iterationStartedAtMs)) {
+      const qualityFailure = getDirectFallbackQualityGateFailureReason(plan, runResultIsStale ? null : runResult);
+      if (qualityFailure) {
+        return failDecision(
+          input.fallback,
+          'quality-gate-failed-plan-outcome',
+          qualityFailure,
+          plan,
+          runResultIsStale ? null : runResult,
+        );
+      }
       return {
         action: 'complete',
         reason: 'completed-plan-outcome',
@@ -303,6 +327,56 @@ function buildFallbackQuality(
     fallback,
     fallbackReason: reason,
   };
+}
+
+function getDirectFallbackQualityGateFailureReason(
+  plan: DirectFallbackPlan | null,
+  runResult: DirectRunResultFile | null,
+): string | null {
+  const metrics = directQualityMetricsFromRecord({
+    ...recordValue(plan?.direct_execution?.ai_coding_quality),
+    ...recordValue(runResult?.quality),
+  });
+  return metrics ? getAutocodeDirectQualityGateFailureReason(metrics) : null;
+}
+
+function directQualityMetricsFromRecord(record: Record<string, unknown>): AutocodeDirectCodingQualityMetrics | null {
+  const validation = recordValue(record.validation);
+  const selfCritique = recordValue(record.selfCritique);
+  if (Object.keys(validation).length === 0 && Object.keys(selfCritique).length === 0) {
+    return null;
+  }
+
+  const changedFiles = stringArray(record.changedFiles);
+  const selfCritiqueMetrics = Object.keys(selfCritique).length > 0
+    ? {
+        status: normalizeDirectSelfCritiqueStatus(selfCritique.status),
+        ...(numberValue(selfCritique.score) !== undefined ? { score: numberValue(selfCritique.score) } : {}),
+        filesReviewed: nonNegativeInteger(selfCritique.filesReviewed) ?? 0,
+        improvements: stringArray(selfCritique.improvements),
+      }
+    : undefined;
+
+  return {
+    mode: 'direct',
+    outcome: stringValue(record.outcome) || 'unknown',
+    changedFiles,
+    filesChanged: nonNegativeInteger(record.filesChanged) ?? changedFiles.length,
+    stepsExecuted: nonNegativeInteger(record.stepsExecuted) ?? 0,
+    toolCallCount: nonNegativeInteger(record.toolCallCount) ?? 0,
+    durationMs: nonNegativeInteger(record.durationMs) ?? 0,
+    recordedAt: stringValue(record.recordedAt) || 'unknown',
+    ...(selfCritiqueMetrics ? { selfCritique: selfCritiqueMetrics } : {}),
+    validation: {
+      status: stringValue(validation.status) || 'not_run',
+      reason: stringValue(validation.reason) || 'No validation detail in Direct fallback quality.',
+    },
+  };
+}
+
+function normalizeDirectSelfCritiqueStatus(value: unknown): 'passed' | 'failed' | 'skipped' {
+  const status = normalizedString(value);
+  return status === 'passed' || status === 'failed' ? status : 'skipped';
 }
 
 function inferFilesChanged(plan: DirectFallbackPlan | null, runResult: DirectRunResultFile | null): number {

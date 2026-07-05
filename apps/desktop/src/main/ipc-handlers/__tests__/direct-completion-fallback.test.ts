@@ -182,6 +182,39 @@ describe('evaluateDirectCompletionFallback', () => {
     });
   });
 
+  it('fails when a fresh successful Direct run result contains failed quality evidence', () => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'clean-exit',
+      plan: currentIterationPlan(),
+      runResult: {
+        phase: 'direct',
+        status: 'success',
+        exitCode: 0,
+        updatedAt: '2026-07-01T01:01:02.000Z',
+        quality: {
+          mode: 'direct',
+          outcome: 'completed',
+          changedFiles: ['src/direct.ts'],
+          filesChanged: 1,
+          validation: {
+            status: 'reported_failed',
+            reason: 'npm test failed with 1 assertion error',
+          },
+        },
+      },
+    });
+
+    expect(decision).toMatchObject({
+      action: 'fail',
+      reason: 'quality-gate-failed-run-result',
+      error: 'Direct validation reported_failed: npm test failed with 1 assertion error',
+      quality: {
+        fallback: 'clean-exit',
+        fallbackReason: 'quality-gate-failed-run-result',
+      },
+    });
+  });
   it('fails when a Direct run result is explicit failure even if plan still says completed', () => {
     const decision = evaluateDirectCompletionFallback({
       exitCode: 0,
@@ -293,6 +326,43 @@ describe('evaluateDirectCompletionFallback', () => {
     });
   });
 
+  it('fails when a completed Direct plan contains failed self-critique evidence', () => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'stuck-clean-exit',
+      plan: currentIterationPlan({
+        outcome: 'completed',
+        completed_at: '2026-07-01T01:01:05.000Z',
+        ai_coding_quality: {
+          mode: 'direct',
+          outcome: 'completed',
+          changedFiles: ['src/direct.ts'],
+          filesChanged: 1,
+          validation: {
+            status: 'reported_passed',
+            reason: 'npm test passed',
+          },
+          selfCritique: {
+            status: 'failed',
+            score: 0.5,
+            filesReviewed: 1,
+            improvements: ['Handle null input'],
+          },
+        },
+      }),
+      runResult: null,
+    });
+
+    expect(decision).toMatchObject({
+      action: 'fail',
+      reason: 'quality-gate-failed-plan-outcome',
+      error: 'Direct self-critique failed: Handle null input',
+      quality: {
+        fallback: 'stuck-clean-exit',
+        fallbackReason: 'quality-gate-failed-plan-outcome',
+      },
+    });
+  });
   it('completes documentation tasks on clean exit without durable success evidence', () => {
     const decision = evaluateDirectCompletionFallback({
       exitCode: 0,
