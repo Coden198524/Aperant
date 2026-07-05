@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Plan File Utilities
  *
  * Provides serialized operations for reading and writing implementation_plan.md files.
@@ -337,6 +337,73 @@ export function persistPlanTokenUsageSync(
   }
 }
 
+
+export function persistDirectFallbackPlanStateSync(
+  planPath: string,
+  source: {
+    status?: TaskStatus;
+    planStatus?: string;
+    reviewReason?: string;
+    xstateState?: string;
+    executionPhase?: string;
+    direct_execution?: Record<string, unknown>;
+  },
+  projectId?: string
+): boolean {
+  try {
+    let plan: Record<string, unknown>;
+
+    const existing = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
+    if (existing) {
+      plan = existing;
+    } else {
+      const planDir = path.dirname(planPath);
+      mkdirSync(planDir, { recursive: true });
+      plan = createMinimalAutocodePlan(
+        { title: '', description: '', createdAt: new Date().toISOString() },
+        source.status ?? 'backlog'
+      ) as Record<string, unknown>;
+    }
+
+    if (source.status) {
+      plan.status = source.status;
+    }
+    if (source.planStatus !== undefined) {
+      plan.planStatus = source.planStatus;
+    }
+    if (source.reviewReason !== undefined) {
+      plan.reviewReason = source.reviewReason;
+    } else {
+      delete plan.reviewReason;
+    }
+    if (source.xstateState !== undefined) {
+      plan.xstateState = source.xstateState;
+    }
+    if (source.executionPhase !== undefined) {
+      plan.executionPhase = source.executionPhase;
+    }
+    if (source.direct_execution) {
+      plan.direct_execution = {
+        ...(typeof plan.direct_execution === 'object' && plan.direct_execution !== null && !Array.isArray(plan.direct_execution)
+          ? plan.direct_execution as Record<string, unknown>
+          : {}),
+        ...source.direct_execution,
+      };
+    }
+    plan.updated_at = new Date().toISOString();
+
+    saveImplementationPlanToFilesSync(planPath, plan);
+
+    if (projectId) {
+      projectStore.invalidateTasksCache(projectId);
+    }
+
+    return true;
+  } catch (err) {
+    console.warn(`[plan-file-utils] Could not persist Direct fallback plan state to ${planPath}:`, err);
+    return false;
+  }
+}
 /**
  * Read and update the plan file atomically.
  *

@@ -19,12 +19,18 @@ import type { ProcessType, ExecutionProgressData } from "../agent";
 import { titleGenerator } from "../title-generator";
 import { fileWatcher } from "../file-watcher";
 import { notificationService } from "../notification-service";
-import { persistPlanLastEventSync, getPlanPath, persistPlanPhaseSync, persistPlanStatusAndReasonSync, persistPlanTokenUsageSync, hasPlanWithSubtasks, syncPlanPhasesToMainSync } from "./task/plan-file-utils";
+import { persistPlanLastEventSync, getPlanPath, persistPlanPhaseSync, persistPlanStatusAndReasonSync, persistPlanTokenUsageSync, hasPlanWithSubtasks, syncPlanPhasesToMainSync, persistDirectFallbackPlanStateSync } from "./task/plan-file-utils";
 import { findTaskWorktree } from "../worktree-paths";
 import { findTaskAndProject } from "./task/shared";
 import { safeSendToRenderer } from "./utils";
 import { getClaudeProfileManager } from "../claude-profile-manager";
 import { taskStateManager } from "../task-state-manager";
+import {
+  evaluateDirectCompletionFallback,
+  readDirectRunResultFromSpecDirs,
+  type DirectCompletionFallbackDecision,
+  type DirectFallbackPlan,
+} from "./direct-completion-fallback";
 
 // Timeout for fallback safety net to check if task is still stuck after process exit
 const STUCK_TASK_FALLBACK_TIMEOUT_MS = 500;
@@ -89,6 +95,119 @@ function syncDirectCompletionArtifactsToMain(project: Project, task: Task): void
         error,
       );
     }
+  }
+}
+
+function getDirectTaskSpecDirs(project: Project, task: Task): string[] {
+  const specsBaseDir = getSpecsDir(project.autoBuildPath);
+  const mainSpecDir = path.join(project.path, specsBaseDir, task.specId);
+  const worktreePath = findTaskWorktree(project.path, task.specId);
+  const specDirs = worktreePath
+    ? [path.join(worktreePath, specsBaseDir, task.specId), mainSpecDir]
+    : [mainSpecDir];
+  return [...new Set(specDirs)];
+}
+
+function loadLatestDirectFallbackPlan(
+  specDirs: string[],
+  fallbackPlan?: ImplementationPlan | null,
+): (ImplementationPlan & DirectFallbackPlan) | null {
+  for (const specDir of specDirs) {
+    try {
+      const parsed = loadAutocodeImplementationPlanSync(specDir) as (ImplementationPlan & DirectFallbackPlan) | null;
+      if (parsed) {
+        return parsed;
+      }
+    } catch {
+      // Keep checking the remaining artifact locations.
+    }
+  }
+  return (fallbackPlan as (ImplementationPlan & DirectFallbackPlan) | null | undefined) ?? null;
+}
+
+function evaluateDirectCompletionFallbackForTask(input: {
+  project: Project;
+  task: Task;
+  exitCode: number | null;
+  fallbackPlan?: ImplementationPlan | null;
+  fallback: string;
+}): { decision: DirectCompletionFallbackDecision; plan: (ImplementationPlan & DirectFallbackPlan) | null } {
+  const specDirs = getDirectTaskSpecDirs(input.project, input.task);
+  const plan = loadLatestDirectFallbackPlan(specDirs, input.fallbackPlan);
+  const runResult = readDirectRunResultFromSpecDirs(specDirs);
+  return {
+    decision: evaluateDirectCompletionFallback({
+      exitCode: input.exitCode,
+      plan,
+      runResult,
+      fallback: input.fallback,
+    }),
+    plan,
+  };
+}
+
+function getDirectFallbackSubtaskId(plan: DirectFallbackPlan | null): string {
+  const value = plan?.direct_execution?.current_subtask_id;
+  return typeof value === 'string' && value.trim() ? value.trim() : 'direct-implementation';
+}
+
+function markDirectFallbackCompletionOnPlan(plan: ImplementationPlan, decision?: DirectCompletionFallbackDecision): void {
+  plan.status = 'human_review';
+  plan.planStatus = 'review';
+  plan.reviewReason = 'completed';
+  plan.xstateState = 'human_review';
+  plan.executionPhase = 'complete';
+  const planRecord = plan as ImplementationPlan & DirectFallbackPlan;
+  planRecord.direct_execution = {
+    ...(planRecord.direct_execution ?? {}),
+    enabled: true,
+    outcome: 'completed',
+    completed_at: typeof planRecord.direct_execution?.completed_at === 'string'
+      ? planRecord.direct_execution.completed_at
+      : new Date().toISOString(),
+    summary_file: 'direct_summary.md',
+    ...(decision?.action === 'complete' ? { ai_coding_quality: decision.quality } : {}),
+  };
+}
+
+function markDirectFallbackFailureOnPlan(plan: ImplementationPlan, decision: DirectCompletionFallbackDecision): void {
+  if (decision.action !== 'fail') {
+    return;
+  }
+  plan.status = 'error';
+  plan.planStatus = 'pending';
+  plan.reviewReason = 'errors';
+  plan.xstateState = 'error';
+  plan.executionPhase = 'failed';
+  const planRecord = plan as ImplementationPlan & DirectFallbackPlan;
+  planRecord.direct_execution = {
+    ...(planRecord.direct_execution ?? {}),
+    enabled: true,
+    outcome: 'error',
+    summary_file: 'direct_summary.md',
+    ai_coding_quality: decision.quality,
+  };
+}
+
+function persistDirectFallbackPlanState(project: Project, task: Task, plan: ImplementationPlan): void {
+  const planRecord = plan as ImplementationPlan & DirectFallbackPlan;
+  const directExecution = planRecord.direct_execution && typeof planRecord.direct_execution === 'object'
+    ? planRecord.direct_execution as Record<string, unknown>
+    : undefined;
+  const state = {
+    status: plan.status,
+    planStatus: plan.planStatus,
+    reviewReason: plan.reviewReason,
+    xstateState: plan.xstateState,
+    executionPhase: typeof plan.executionPhase === 'string' ? plan.executionPhase : undefined,
+    direct_execution: directExecution,
+  };
+  for (const specDir of getDirectTaskSpecDirs(project, task)) {
+    persistDirectFallbackPlanStateSync(
+      path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
+      state,
+      project.id,
+    );
   }
 }
 
@@ -226,18 +345,46 @@ export function registerAgenteventsHandlers(
             // Clean exit (code 0) means the task completed successfully but the terminal
             // event was lost in transit. Treat as completed, not stopped.
             const directModeFallback = isDirectModeTask(checkTask);
-            console.warn(
-              `[agent-events-handlers] Task ${taskId} still in XState ${currentState} ` +
-              `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing ${directModeFallback ? 'DIRECT_COMPLETED' : 'QA_PASSED'}`
-            );
             if (directModeFallback) {
-              taskStateManager.handleUiEvent(taskId, {
-                type: 'DIRECT_COMPLETED',
-                outcome: 'completed',
-                filesChanged: 0,
-                quality: { fallback: true },
-              }, checkTask, checkProject);
+              const { decision, plan } = evaluateDirectCompletionFallbackForTask({
+                project: checkProject,
+                task: checkTask,
+                exitCode: code,
+                fallback: 'stuck-clean-exit',
+              });
+              console.warn(
+                `[agent-events-handlers] Task ${taskId} still in XState ${currentState} ` +
+                `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing ${decision.action === 'complete' ? 'DIRECT_COMPLETED' : 'CODING_FAILED'} (${decision.reason})`
+              );
+              syncDirectCompletionArtifactsToMain(checkProject, checkTask);
+              if (decision.action === 'complete') {
+                taskStateManager.handleUiEvent(taskId, {
+                  type: 'DIRECT_COMPLETED',
+                  outcome: 'completed',
+                  filesChanged: decision.filesChanged,
+                  quality: decision.quality,
+                }, checkTask, checkProject);
+                if (plan) {
+                  markDirectFallbackCompletionOnPlan(plan, decision);
+                  persistDirectFallbackPlanState(checkProject, checkTask, plan);
+                }
+              } else if (decision.action === 'fail') {
+                taskStateManager.handleUiEvent(taskId, {
+                  type: 'CODING_FAILED',
+                  subtaskId: getDirectFallbackSubtaskId(plan),
+                  error: decision.error,
+                  attemptCount: 1,
+                }, checkTask, checkProject);
+                if (plan) {
+                  markDirectFallbackFailureOnPlan(plan, decision);
+                  persistDirectFallbackPlanState(checkProject, checkTask, plan);
+                }
+              }
             } else {
+              console.warn(
+                `[agent-events-handlers] Task ${taskId} still in XState ${currentState} ` +
+                `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing QA_PASSED`
+              );
               taskStateManager.handleUiEvent(taskId, {
                 type: 'QA_PASSED', iteration: 0, testsRun: {}
               }, checkTask, checkProject);
@@ -287,6 +434,7 @@ export function registerAgenteventsHandlers(
         }
       }
     }
+    let cleanExitDirectFallbackFailed = false;
     if (
       code === 0 &&
       processType === 'task-execution' &&
@@ -294,19 +442,38 @@ export function registerAgenteventsHandlers(
       exitProject &&
       isDirectModeTask(exitTask, finalPlan)
     ) {
+      const { decision, plan } = evaluateDirectCompletionFallbackForTask({
+        project: exitProject,
+        task: exitTask,
+        exitCode: code,
+        fallbackPlan: finalPlan,
+        fallback: 'clean-exit',
+      });
       syncDirectCompletionArtifactsToMain(exitProject, exitTask);
-      taskStateManager.handleUiEvent(taskId, {
-        type: 'DIRECT_COMPLETED',
-        outcome: 'completed',
-        filesChanged: 0,
-        quality: { fallback: 'clean-exit' },
-      }, exitTask, exitProject);
-      if (finalPlan) {
-        finalPlan.status = 'human_review';
-        finalPlan.planStatus = 'review';
-        finalPlan.reviewReason = 'completed';
-        finalPlan.xstateState = 'human_review';
-        finalPlan.executionPhase = 'complete';
+      finalPlan = plan ?? finalPlan;
+      if (decision.action === 'complete') {
+        taskStateManager.handleUiEvent(taskId, {
+          type: 'DIRECT_COMPLETED',
+          outcome: 'completed',
+          filesChanged: decision.filesChanged,
+          quality: decision.quality,
+        }, exitTask, exitProject);
+        if (finalPlan) {
+          markDirectFallbackCompletionOnPlan(finalPlan, decision);
+          persistDirectFallbackPlanState(exitProject, exitTask, finalPlan);
+        }
+      } else if (decision.action === 'fail') {
+        cleanExitDirectFallbackFailed = true;
+        taskStateManager.handleUiEvent(taskId, {
+          type: 'CODING_FAILED',
+          subtaskId: getDirectFallbackSubtaskId(plan),
+          error: decision.error,
+          attemptCount: 1,
+        }, exitTask, exitProject);
+        if (finalPlan) {
+          markDirectFallbackFailureOnPlan(finalPlan, decision);
+          persistDirectFallbackPlanState(exitProject, exitTask, finalPlan);
+        }
       }
     }
     if (finalPlan) {
@@ -428,7 +595,7 @@ export function registerAgenteventsHandlers(
     if (!task || !project) return;
 
     const taskTitle = task.title || task.specId;
-    if (code === 0) {
+    if (code === 0 && !cleanExitDirectFallbackFailed) {
       notificationService.notifyReviewNeeded(taskTitle, project.id, taskId);
     } else {
       notificationService.notifyTaskFailed(taskTitle, project.id, taskId);

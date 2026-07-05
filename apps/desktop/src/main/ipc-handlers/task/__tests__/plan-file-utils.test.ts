@@ -13,7 +13,7 @@ vi.mock('../../../project-store', () => ({
   },
 }));
 
-import { persistPlanTokenUsageSync, syncPlanPhasesToMainSync } from '../plan-file-utils';
+import { persistDirectFallbackPlanStateSync, persistPlanTokenUsageSync, syncPlanPhasesToMainSync } from '../plan-file-utils';
 import { projectStore } from '../../../project-store';
 
 describe('plan-file-utils token usage persistence', () => {
@@ -84,6 +84,64 @@ describe('plan-file-utils token usage persistence', () => {
     expect(projectStore.invalidateTasksCache).not.toHaveBeenCalled();
   });
 
+  it('persists Direct fallback status metadata without replacing phases', () => {
+    saveAutocodeImplementationPlanSync(planPath, {
+      workflow_type: 'direct',
+      status: 'coding',
+      planStatus: 'coding',
+      xstateState: 'coding',
+      executionPhase: 'coding',
+      direct_execution: {
+        enabled: true,
+        outcome: 'running',
+        current_subtask_id: 'direct-cr-1',
+      },
+      phases: [
+        {
+          phase: 1,
+          name: 'Direct execution',
+          type: 'direct',
+          subtasks: [
+            { id: 'direct-cr-1', title: 'Direct Request Changes', description: 'Do work', status: 'in_progress' },
+          ],
+        },
+      ],
+    });
+
+    const success = persistDirectFallbackPlanStateSync(planPath, {
+      status: 'error',
+      planStatus: 'pending',
+      reviewReason: 'errors',
+      xstateState: 'error',
+      executionPhase: 'failed',
+      direct_execution: {
+        enabled: true,
+        outcome: 'error',
+        summary_file: 'direct_summary.md',
+        ai_coding_quality: { fallback: 'clean-exit' },
+      },
+    }, 'project-1');
+
+    const plan = loadAutocodeImplementationPlanSync(planPath)!;
+
+    expect(success).toBe(true);
+    expect(plan.status).toBe('error');
+    expect(plan.reviewReason).toBe('errors');
+    expect(plan.xstateState).toBe('error');
+    expect(plan.executionPhase).toBe('failed');
+    expect(plan.direct_execution).toMatchObject({
+      enabled: true,
+      outcome: 'error',
+      current_subtask_id: 'direct-cr-1',
+      summary_file: 'direct_summary.md',
+      ai_coding_quality: { fallback: 'clean-exit' },
+    });
+    expect(plan.phases?.[0]?.subtasks?.[0]).toMatchObject({
+      id: 'direct-cr-1',
+      status: 'in_progress',
+    });
+    expect(projectStore.invalidateTasksCache).toHaveBeenCalledWith('project-1');
+  });
   it('round-trips subtask execution timing metadata through markdown plans', () => {
     saveAutocodeImplementationPlanSync(planPath, {
       phases: [
