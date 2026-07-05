@@ -7,6 +7,7 @@ import {
   CHANGE_REQUEST_AUDIT_MAX_CHARS,
   compactChangeRequestJsonlForPrompt,
   DIRECT_CHANGE_REQUEST_LIMIT,
+  DIRECT_PROJECT_DOCS_REFERENCE_MAX_BYTES,
 } from '../runtime/agent-messages.js';
 import { AUTOCODE_TASK_EVENT_PREFIX } from '../runtime/agent-events.js';
 import {
@@ -231,6 +232,7 @@ function buildTaskRunPrompt(input: {
   const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
     projectRoot: input.projectRoot,
     dataDirName: input.dataDirName,
+    maxBytes: input.phase === 'direct' ? DIRECT_PROJECT_DOCS_REFERENCE_MAX_BYTES : undefined,
     language: input.language,
   });
   const contextReference = projectDocsReference ? `${projectDocsReference}\n\n` : '';
@@ -787,10 +789,10 @@ function buildNodeRunnerScript(input: {
   language?: AutocodeAgentLanguage;
   runtimeConcurrency: AutocodeTaskRuntimeConcurrencyResolved;
 }): string {
-  return `const { spawn } = require('node:child_process');
+  return `const { spawn, spawnSync } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
 const { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } = require('node:fs');
-const { basename, dirname, join, resolve } = require('node:path');
+const { basename, dirname, isAbsolute, join, relative, resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { TextDecoder } = require('node:util');
 
@@ -800,10 +802,12 @@ const args = ${JSON.stringify(input.args)};
 const iconvLiteModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('iconv-lite'))};
 const workPackagesModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/work-packages') ?? resolveOptionalRunnerDependency('./work-packages.js'))};
 const planQualityModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/plan-quality') ?? resolveOptionalRunnerDependency('./plan-quality.js'))};
+const directTaskSummaryModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/runtime/direct-task-summary') ?? resolveOptionalRunnerDependency('../runtime/direct-task-summary.js'))};
 const libsqlSqlite3ModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@libsql/client/sqlite3'))};
 const promptFilePath = ${JSON.stringify(input.promptFilePath)};
 const phase = ${JSON.stringify(input.phase)};
 const specDir = ${JSON.stringify(input.specDir)};
+const projectDataRelativeDir = inferRunnerProjectDataRelativeDir();
 const taskTitle = ${JSON.stringify(input.taskTitle)};
 const taskDescription = ${JSON.stringify(input.taskDescription)};
 const taskMetadata = ${JSON.stringify(input.taskMetadata ?? {})};
@@ -828,6 +832,7 @@ let validationRetryCount = 0;
 let attemptId = 0;
 let memoryContextBlock = '';
 const pendingMemoryWrites = [];
+const runStartedAt = Date.now();
 const startMessage = logPhase === 'coding'
   ? localizeMessage('startCoding', \`Starting Autocode \${phase} coding session with \${command}.\`, { phase, command })
   : localizeMessage('startPlanning', \`Starting Autocode \${phase} planning session with \${command}.\`, { phase, command });
@@ -842,7 +847,11 @@ let tokenUsageEventCount = 0;
 let tokenUsageImplicitSessionCounted = false;
 let lastTokenUsageLogTotal = 0;
 let gb18030Decoder = undefined;
+let directTaskSummaryModulePromise = undefined;
 const defaultAttemptState = createAttemptState('main');
+const directChangedFileBaseline = phase === 'direct'
+  ? collectRunnerGitChangedFileSnapshot()
+  : { files: new Set() };
 const codingWorkerLimit = phase === 'coding' && runtimeConcurrency.mode === 'concurrent'
   ? Math.max(1, Math.floor(runtimeConcurrency.workers || 1))
   : 1;
@@ -1609,7 +1618,7 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
 async function finishRun(exitCode, signal, explicitError, validationError) {
   if (finalized) return;
   finalized = true;
-  const failed = exitCode !== 0 || Boolean(explicitError) || Boolean(validationError);
+  let failed = exitCode !== 0 || Boolean(explicitError) || Boolean(validationError);
   const failureMessage = failed
     ? explicitError || validationError || summarizeCliFailureReason(defaultAttemptState, exitCode, signal)
     : undefined;
@@ -1631,6 +1640,24 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     updatedAt: now,
   };
 
+  const directChangedFiles = phase === 'direct'
+    ? collectRunnerFilesChangedSinceBaseline(directChangedFileBaseline)
+    : [];
+  let directQuality = undefined;
+  if (phase === 'direct') {
+    directQuality = await evaluateDirectCliQuality(result, now, directChangedFiles);
+    result.quality = directQuality;
+    if (!failed) {
+      const qualityFailureReason = await getDirectCliQualityGateFailureReason(directQuality);
+      if (qualityFailureReason) {
+        failed = true;
+        result.exitCode = 1;
+        result.status = 'error';
+        result.message = qualityFailureReason;
+      }
+    }
+  }
+
   if (phase === 'direct' || (!failed && phase === 'coding')) {
     const finalText = defaultAttemptState.lastCodexMessageText || result.message;
     const memoryNotes = extractCliMemoryNotes(finalText);
@@ -1645,14 +1672,21 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     }, rateLimited ? 'rate_limited' : failed ? 'failure' : 'success', result.message, memoryNotes);
   }
 
-  persistDirectSessionState(result, now);
+  persistDirectSessionState(result, now, directQuality, directChangedFiles);
   writeJson(join(specDir, artifacts.runResult), result);
-  updatePlanStatus(failed, result.message, now);
+  updatePlanStatus(failed, result.message, now, directQuality, result);
   if (phase === 'direct' && !failed) {
     emitTaskEvent('DIRECT_COMPLETED', {
       outcome: 'completed',
-      filesChanged: 0,
-      quality: { runner: 'codex-cli' },
+      filesChanged: directChangedFiles.length,
+      changedFiles: directChangedFiles,
+      quality: directQuality || { runner: 'codex-cli' },
+    });
+  } else if (phase === 'direct' && failed) {
+    emitTaskEvent('CODING_FAILED', {
+      subtaskId: getDirectCliCurrentSubtaskId(readCurrentPlanDirectExecution()),
+      error: result.message || 'Direct CLI run failed.',
+      attemptCount: 1,
     });
   }
   updateTaskLogs(logPhase, failed ? 'failed' : 'completed', result.message);
@@ -1660,7 +1694,6 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
   emitPhase(failed ? 'failed' : phase === 'coding' || phase === 'direct' ? 'complete' : executionPhase, result.message, failed ? 0 : 100);
   process.exit(failed ? 1 : 0);
 }
-
 function createAttemptState(label, subtaskId) {
   return {
     label,
@@ -1677,6 +1710,7 @@ function createAttemptState(label, subtaskId) {
     codexJsonLineBuffer: '',
     lastCodexMessageText: '',
     recentErrorLines: [],
+    toolCallCount: 0,
     finalizing: false,
   };
 }
@@ -3387,6 +3421,7 @@ function handleCodexJsonEvent(event, state = defaultAttemptState) {
 
   if (payloadType === 'function_call' || payloadType === 'tool_call') {
     handleTokenUsage();
+    state.toolCallCount = (state.toolCallCount || 0) + 1;
     const toolName = getFirstString(payload, ['name', 'tool_name', 'toolName']) || 'tool';
     const toolInput = stringifyCodexText(payload.arguments ?? payload.input ?? payload.args);
     appendTaskLogEntry(
@@ -3475,6 +3510,7 @@ function handleCodexCommandExecutionEvent(envelope, payload, payloadType, state 
     : exitCode === 0;
   const content = formatCodexCommandExecutionSummary(commandText, success, exitCode);
   const detail = formatCodexCommandExecutionDetail(commandText, output, exitCode, status);
+  state.toolCallCount = (state.toolCallCount || 0) + 1;
 
   appendTaskLogEntry(
     logPhase,
@@ -3879,7 +3915,7 @@ function emitTaskEvent(type, extra) {
   }) + '\\n');
 }
 
-function persistDirectSessionState(result, now) {
+function persistDirectSessionState(result, now, quality, changedFiles = []) {
   if (phase !== 'direct') {
     return;
   }
@@ -3897,10 +3933,9 @@ function persistDirectSessionState(result, now) {
     ? Math.max(1, Math.floor(existing.iteration) + 1)
     : 1;
 
-  if (!existsSync(join(specDir, artifacts.directSummary)) && summary) {
+  if (summary) {
     writeFileSync(join(specDir, artifacts.directSummary), summary.endsWith('\\n') ? summary : summary + '\\n', 'utf8');
   }
-
   writeJson(statePath, {
     version: directSessionStateVersion,
     sessionId,
@@ -3923,24 +3958,294 @@ function persistDirectSessionState(result, now) {
       1200,
       '\\n...[direct session summary middle omitted for continuation budget; inspect runtime logs if exact omitted detail is required]...\\n',
     ),
-    changedFiles: Array.isArray(existing.changedFiles) ? existing.changedFiles.filter(Boolean).slice(0, 100) : [],
+    changedFiles: mergeRunnerChangedFiles(existing.changedFiles, changedFiles),
     lastOutcome: result.status || 'unknown',
   });
 }
 
+function collectRunnerGitChangedFileSnapshot() {
+  return {
+    files: new Set(collectRunnerGitChangedFiles()),
+  };
+}
+
+function collectRunnerFilesChangedSinceBaseline(baseline) {
+  const current = new Set(collectRunnerGitChangedFiles());
+  const baselineFiles = baseline && baseline.files instanceof Set ? baseline.files : new Set();
+  return uniqueRunnerProjectPaths([...current].filter((filePath) => !baselineFiles.has(filePath)));
+}
+
+function collectRunnerGitChangedFiles() {
+  if (!isRunnerGitWorkspace()) {
+    return [];
+  }
+  const outputs = [
+    runRunnerGitListCommand(['diff', '--name-only', '--diff-filter=ACMRT', '--']),
+    runRunnerGitListCommand(['diff', '--cached', '--name-only', '--diff-filter=ACMRT', '--']),
+    runRunnerGitListCommand(['ls-files', '--others', '--exclude-standard']),
+  ];
+  return uniqueRunnerProjectPaths(outputs.flatMap((output) => output.split(/\\r?\\n/)));
+}
+
+function isRunnerGitWorkspace() {
+  const result = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 3000,
+    windowsHide: true,
+  });
+  return result.status === 0;
+}
+
+function runRunnerGitListCommand(args) {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    timeout: 5000,
+    maxBuffer: 1024 * 1024,
+    windowsHide: true,
+  });
+  return result.status === 0 ? String(result.stdout || '') : '';
+}
+
+function uniqueRunnerProjectPaths(paths) {
+  const seen = new Set();
+  const result = [];
+  for (const rawPath of paths) {
+    const normalized = normalizeRunnerProjectRelativePath(rawPath);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function normalizeRunnerProjectRelativePath(filePath) {
+  const trimmed = String(filePath || '').trim();
+  if (!trimmed) {
+    return null;
+  }
+  const projectRoot = resolve(cwd);
+  const resolvedPath = isAbsolute(trimmed) ? resolve(trimmed) : resolve(projectRoot, trimmed);
+  const relativePath = relative(projectRoot, resolvedPath).replace(/\\\\/g, '/');
+  if (!relativePath || relativePath === '..' || relativePath.startsWith('../')) {
+    return null;
+  }
+  if (relativePath.includes('/../') || isRunnerAutocodeProjectDataPath(relativePath)) {
+    return null;
+  }
+  return relativePath;
+}
+
+function isRunnerAutocodeProjectDataPath(relativePath) {
+  const normalized = String(relativePath || '').replace(/\\\\/g, '/').replace(/^\\.\\//, '');
+  return Boolean(projectDataRelativeDir) && (normalized === projectDataRelativeDir || normalized.startsWith(projectDataRelativeDir + '/'));
+}
+
+function inferRunnerProjectDataRelativeDir() {
+  try {
+    const projectRoot = resolve(cwd);
+    const dataDir = resolve(dirname(dirname(specDir)));
+    const relativeDir = relative(projectRoot, dataDir).replace(/\\\\/g, '/');
+    if (!relativeDir || relativeDir === '..' || relativeDir.startsWith('../')) {
+      return '.autocode';
+    }
+    return relativeDir.replace(/^\\.\\//, '');
+  } catch {
+    return '.autocode';
+  }
+}
+
+function mergeRunnerChangedFiles(existing, current) {
+  return uniqueRunnerProjectPaths([
+    ...(Array.isArray(existing) ? existing : []),
+    ...(Array.isArray(current) ? current : []),
+  ]).slice(0, 100);
+}
 function readDirectCompletionSummary(result) {
   const summaryPath = join(specDir, artifacts.directSummary);
+  const liveText = (result.status && result.status !== 'success'
+    ? result.message
+    : defaultAttemptState.lastCodexMessageText || result.message || '').trim();
   try {
+    const summaryStats = statSync(summaryPath);
     const content = readFileSync(summaryPath, 'utf8').trim();
-    if (content) {
+    if (content && summaryStats.mtimeMs >= runStartedAt) {
       return content;
     }
   } catch {
-    // Use model output below.
+    // Use current model output below.
   }
-  return (defaultAttemptState.lastCodexMessageText || result.message || '').trim();
+  return liveText;
 }
 
+async function evaluateDirectCliQuality(result, now, changedFiles = []) {
+  const finalText = readDirectCompletionSummary(result);
+  const tokenUsage = readCurrentPlanTokenUsage();
+  const durationMs = Math.max(0, Date.now() - runStartedAt);
+  const stepsExecuted = Number.isFinite(tokenUsage && tokenUsage.stepsExecuted)
+    ? Math.max(0, Math.floor(tokenUsage.stepsExecuted))
+    : tokenUsageEventCount > 0
+      ? 1
+      : 0;
+  const quality = {
+    mode: 'direct',
+    outcome: normalizeDirectCliQualityOutcome(result),
+    changedFiles,
+    filesChanged: changedFiles.length,
+    stepsExecuted,
+    toolCallCount: Math.max(0, Math.floor(defaultAttemptState.toolCallCount || 0)),
+    durationMs,
+    recordedAt: now,
+    selfCritique: {
+      status: 'skipped',
+      filesReviewed: 0,
+      improvements: changedFiles.length > 0
+        ? ['Codex CLI Direct runner records changed files but does not run in-process self-critique; review git diff before approval.']
+        : ['No changed files were detected for this Direct CLI run; review runner output before approval.'],
+    },
+    validation: inferRunnerDirectValidationEvidence(finalText),
+  };
+
+  const directSummary = await loadDirectTaskSummaryModule();
+  if (directSummary && typeof directSummary.inferAutocodeDirectValidationEvidence === 'function') {
+    try {
+      quality.validation = directSummary.inferAutocodeDirectValidationEvidence(
+        buildDirectCliSessionResultForQuality(result, quality, finalText, tokenUsage),
+        finalText,
+      );
+    } catch {
+      // Keep the local fallback evidence.
+    }
+  }
+
+  return quality;
+}
+
+function normalizeDirectCliQualityOutcome(result) {
+  if (!result) {
+    return 'unknown';
+  }
+  if (result.status === 'success') {
+    return 'completed';
+  }
+  return result.status || 'unknown';
+}
+
+function buildDirectCliSessionResultForQuality(result, quality, finalText, tokenUsage) {
+  const usage = tokenUsage || {};
+  return {
+    outcome: quality.outcome,
+    usage: {
+      promptTokens: usage.promptTokens || 0,
+      completionTokens: usage.completionTokens || 0,
+      totalTokens: usage.totalTokens || 0,
+      sessionId: usage.sessionId,
+    },
+    messages: finalText ? [{ role: 'assistant', content: finalText }] : [],
+    stepsExecuted: quality.stepsExecuted,
+    toolCallCount: quality.toolCallCount,
+    durationMs: quality.durationMs,
+    error: result && result.status !== 'success'
+      ? {
+          code: result.status || 'error',
+          message: result.message || 'Direct CLI run failed.',
+          retryable: result.status === 'rate_limited',
+        }
+      : undefined,
+  };
+}
+
+async function getDirectCliQualityGateFailureReason(quality) {
+  const directSummary = await loadDirectTaskSummaryModule();
+  if (directSummary && typeof directSummary.getAutocodeDirectQualityGateFailureReason === 'function') {
+    try {
+      return directSummary.getAutocodeDirectQualityGateFailureReason(quality);
+    } catch {
+      // Use the local fallback below.
+    }
+  }
+  return getRunnerDirectQualityGateFailureReason(quality);
+}
+
+async function loadDirectTaskSummaryModule() {
+  if (!directTaskSummaryModulePath) {
+    return null;
+  }
+  if (!directTaskSummaryModulePromise) {
+    directTaskSummaryModulePromise = import(pathToFileURL(directTaskSummaryModulePath).href).catch(() => null);
+  }
+  return directTaskSummaryModulePromise;
+}
+
+function getRunnerDirectQualityGateFailureReason(quality) {
+  if (!quality) {
+    return null;
+  }
+  if (quality.selfCritique && quality.selfCritique.status === 'failed') {
+    const improvements = Array.isArray(quality.selfCritique.improvements)
+      ? quality.selfCritique.improvements.slice(0, 3).map((item) => String(item || '').trim()).filter(Boolean).join('; ')
+      : '';
+    return 'Direct self-critique failed' + (improvements ? ': ' + improvements : ': quality score below threshold');
+  }
+  if (quality.validation && (quality.validation.status === 'reported_failed' || quality.validation.status === 'reported_mixed')) {
+    return 'Direct validation ' + quality.validation.status + ': ' + quality.validation.reason;
+  }
+  return null;
+}
+
+function inferRunnerDirectValidationEvidence(finalText) {
+  const validationText = extractRunnerDirectValidationText(finalText);
+  if (!validationText) {
+    return {
+      status: 'not_run',
+      reason: 'No validation command or result was reported in the Direct final response.',
+    };
+  }
+
+  const hasPass = /\\b(?:passed|pass|succeeded|success|green|ok)\\b/i.test(validationText);
+  const hasFail = /\\b(?:failed|failing|failure|error|errors|exception|red)\\b/i.test(validationText);
+  const hasSkip = /\\b(?:not run|not executed|skipped|manual only|not required|n\\/a)\\b/i.test(validationText);
+  const reason = compactRunnerDirectValidationReason(validationText);
+  if (hasPass && hasFail) {
+    return { status: 'reported_mixed', reason };
+  }
+  if (hasFail) {
+    return { status: 'reported_failed', reason };
+  }
+  if (hasPass) {
+    return { status: 'reported_passed', reason };
+  }
+  if (hasSkip) {
+    return { status: 'not_run', reason };
+  }
+  return { status: 'reported', reason };
+}
+
+function extractRunnerDirectValidationText(value) {
+  return cleanLogText(String(value || ''))
+    .replace(/\\r\\n/g, '\\n')
+    .replace(/\\r/g, '\\n')
+    .split('\\n')
+    .map((line) => line.trim())
+    .filter((line) => line && isRunnerDirectValidationLine(line))
+    .slice(-12)
+    .join('\\n');
+}
+
+function isRunnerDirectValidationLine(line) {
+  return /\\b(?:validation|verify|verified|test|tests|typecheck|build|lint|smoke|passed|failed|not run|skipped|npm|npx|pnpm|yarn|dotnet|cargo|pytest|go test)\\b/i.test(line);
+}
+
+function compactRunnerDirectValidationReason(value) {
+  const normalized = cleanLogText(String(value || '')).replace(/\\s+/g, ' ').trim();
+  if (normalized.length <= 500) {
+    return normalized;
+  }
+  return normalized.slice(0, 497).trimEnd() + '...';
+}
 function readCurrentPlanTokenUsage() {
   try {
     const content = readFileSync(join(specDir, artifacts.implementationPlan), 'utf8');
@@ -4416,10 +4721,14 @@ function updatePlanRunningState() {
     reviewReason: undefined,
     executionPhase: phaseValue,
     updatedAt: now,
+    directExecution: phase === 'direct' ? { outcome: 'running' } : undefined,
   });
+  if (phase === 'direct') {
+    updateDirectCliPlanItemStatus('in_progress', 'Direct CLI run started.');
+  }
 }
 
-function updatePlanStatus(failed, message, now) {
+function updatePlanStatus(failed, message, now, directQuality, result) {
   const isCodingPhase = phase === 'coding' || phase === 'direct';
   updatePlanMetadata({
     status: failed ? 'error' : 'human_review',
@@ -4428,9 +4737,145 @@ function updatePlanStatus(failed, message, now) {
     reviewReason: failed ? 'errors' : isCodingPhase ? 'completed' : 'plan_review',
     executionPhase: failed ? 'failed' : isCodingPhase ? 'complete' : 'planning',
     updatedAt: now,
+    directExecution: phase === 'direct'
+      ? {
+          outcome: getDirectCliExecutionOutcome(failed, result),
+          completedAt: now,
+          quality: directQuality,
+        }
+      : undefined,
   });
+  if (phase === 'direct') {
+    updateDirectCliPlanItemStatus(
+      failed ? 'failed' : 'completed',
+      message || (failed ? 'Direct CLI run failed.' : 'Completed by Autocode Direct CLI run.'),
+    );
+  }
 }
 
+function updateDirectCliPlanItemStatus(status, note) {
+  const directExecution = readCurrentPlanDirectExecution();
+  const currentSubtaskId = getDirectCliCurrentSubtaskId(directExecution);
+  markPlanSubtaskStatus('direct', status, note);
+  markPlanSubtaskStatus(currentSubtaskId, status, note);
+}
+
+function ensureDirectCliPlanItems(content, directExecution) {
+  const currentSubtaskId = getDirectCliCurrentSubtaskId(directExecution);
+  const normalized = String(content || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+  const lines = normalized.split('\\n');
+  let directIndex = findRunnerPlanItemLineIndex(lines, 'direct');
+  if (directIndex < 0) {
+    while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+      lines.pop();
+    }
+    if (lines.length > 0) {
+      lines.push('');
+    }
+    lines.push('- [ ] direct. Direct execution');
+    directIndex = lines.length - 1;
+  }
+
+  if (findRunnerPlanItemLineIndex(lines, currentSubtaskId) < 0) {
+    let insertAt = directIndex + 1;
+    while (insertAt < lines.length) {
+      if (isRunnerTopLevelPlanItemLine(lines[insertAt])) {
+        break;
+      }
+      insertAt += 1;
+    }
+    lines.splice(insertAt, 0, ...buildDirectCliSubtaskLines(currentSubtaskId));
+  }
+
+  return lines.join('\\n');
+}
+
+function buildDirectCliSubtaskLines(subtaskId) {
+  const isChangeRequest = /^direct-cr-/i.test(subtaskId);
+  const title = isChangeRequest ? 'Direct Request Changes' : 'Direct model execution';
+  const description = isChangeRequest
+    ? 'Continue the same Direct model session for the active change request.'
+    : 'Implement the task directly with the configured CLI runner.';
+  return [
+    '  - [ ] ' + subtaskId + ' ' + title,
+    '    - ' + description,
+    '    - _Depends on: none_',
+    '    - _Verification: Review direct_summary.md, runtime logs, and git diff_',
+  ];
+}
+
+function findRunnerPlanItemLineIndex(lines, itemId) {
+  for (let index = 0; index < lines.length; index += 1) {
+    if (isRunnerPlanItemLineForId(lines[index], itemId)) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function isRunnerTopLevelPlanItemLine(line) {
+  return /^-\\s+\\[[ xX/!\\-]\\]\\s+/.test(String(line || ''));
+}
+
+function isRunnerPlanItemLineForId(line, itemId) {
+  const text = String(line || '').trim();
+  const prefixPattern = /^-\\s+\\[[ xX/!\\-]\\]\\s+/;
+  const match = prefixPattern.exec(text);
+  if (!match) {
+    return false;
+  }
+  const rest = text.slice(match[0].length);
+  return rest === itemId || rest.startsWith(itemId + '.') || rest.startsWith(itemId + ' ');
+}
+function getDirectCliExecutionOutcome(failed, result) {
+  if (!result) {
+    return failed ? 'error' : 'completed';
+  }
+  if (result.status === 'success') {
+    return 'completed';
+  }
+  return result.status || (failed ? 'error' : 'completed');
+}
+
+function readCurrentPlanDirectExecution() {
+  try {
+    const content = readFileSync(join(specDir, artifacts.implementationPlan), 'utf8');
+    return readPlanMachineMetadata(content).direct_execution;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildDirectCliExecutionMetadata(existing, input) {
+  const metadata = normalizeDirectCliMetadataObject(existing);
+  metadata.enabled = true;
+  metadata.outcome = input.outcome || metadata.outcome || 'unknown';
+  metadata.summary_file = typeof metadata.summary_file === 'string' && metadata.summary_file.trim()
+    ? metadata.summary_file
+    : artifacts.directSummary;
+  metadata.current_subtask_id = getDirectCliCurrentSubtaskId(metadata);
+  if (input.completedAt) {
+    metadata.completed_at = input.completedAt;
+  } else {
+    delete metadata.completed_at;
+  }
+  if (input.quality) {
+    metadata.ai_coding_quality = input.quality;
+  } else if (input.outcome === 'running') {
+    delete metadata.ai_coding_quality;
+  }
+  return metadata;
+}
+
+function normalizeDirectCliMetadataObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {};
+}
+
+function getDirectCliCurrentSubtaskId(existing) {
+  const metadata = normalizeDirectCliMetadataObject(existing);
+  const current = typeof metadata.current_subtask_id === 'string' ? metadata.current_subtask_id.trim() : '';
+  return current || 'direct-implementation';
+}
 function updatePlanMetadata(input) {
   const planPath = join(specDir, artifacts.implementationPlan);
   withFileWriteLock(planPath, 'runner:plan-metadata', () => {
@@ -4458,11 +4903,21 @@ function updatePlanMetadata(input) {
     }
     content = upsertPlanMetadata(content, 'Execution Phase', input.executionPhase);
     content = upsertPlanMetadata(content, 'Updated', input.updatedAt);
-    content = upsertPlanMachineMetadata(content, {
+    const currentMachineMetadata = readPlanMachineMetadata(content);
+    const machineUpdates = {
       planStatus: input.planStatus,
       xstateState: input.xstateState,
       last_updated: input.updatedAt,
-    });
+    };
+    if (input.directExecution) {
+      const directExecutionMetadata = buildDirectCliExecutionMetadata(
+        currentMachineMetadata.direct_execution,
+        input.directExecution,
+      );
+      machineUpdates.direct_execution = directExecutionMetadata;
+      content = ensureDirectCliPlanItems(content, directExecutionMetadata);
+    }
+    content = upsertPlanMachineMetadata(content, machineUpdates);
     writeFileSync(planPath, content.endsWith('\\n') ? content : \`\${content}\\n\`, 'utf8');
   });
 }

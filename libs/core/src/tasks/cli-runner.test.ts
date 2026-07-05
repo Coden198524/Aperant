@@ -87,6 +87,46 @@ describe('Autocode CLI runner prompt', () => {
     expect(readFileSync(plan.promptFilePath, 'utf8')).toBe(`${plan.prompt}\n`);
   });
 
+  it('keeps Direct CLI project documentation reference compact', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-direct-docs-budget',
+      title: 'Use compact Direct docs',
+      description: 'Direct CLI should avoid injecting the full project documentation pack.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const docsDir = join(projectRoot, dataDirName, 'project-docs');
+    mkdirSync(docsDir, { recursive: true });
+    const lineBreak = String.fromCharCode(10);
+    const longDoc = (label: string) => [
+      `# ${label}`,
+      `## ${label} Reference`,
+      ...Array.from({ length: 18 }, (_, index) => (
+        `- ${label}_REFERENCE_BODY_${index}: ${'detail '.repeat(28)}`
+      )),
+    ].join(lineBreak);
+    writeFileSync(join(docsDir, 'index.md'), longDoc('INDEX_DOC'), 'utf8');
+    writeFileSync(join(docsDir, 'architecture.md'), longDoc('ARCHITECTURE_DOC'), 'utf8');
+    writeFileSync(join(docsDir, 'technical.md'), [
+      '# Technical',
+      'TECHNICAL_REFERENCE_BODY_SHOULD_BE_EXCLUDED',
+      ...Array.from({ length: 12 }, (_, index) => `- technical detail ${index} ${'x '.repeat(30)}`),
+    ].join(lineBreak), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-direct-docs-budget',
+      cli: 'codex',
+      phase: 'direct',
+    });
+
+    expect(plan.prompt).toContain('INDEX_DOC_REFERENCE_BODY_0');
+    expect(plan.prompt).toContain('ARCHITECTURE_DOC_REFERENCE_BODY_0');
+    expect(plan.prompt).not.toContain('TECHNICAL_REFERENCE_BODY_SHOULD_BE_EXCLUDED');
+  });
+
   it('does not inject revision-state wording for new planning tasks without review input', () => {
     createAutocodeTask({
       projectRoot,
@@ -1167,6 +1207,18 @@ describe('Autocode CLI runner prompt', () => {
       stepsExecuted: 1,
       sessionId: 'codex-session',
     });
+    const directExecution = implementationPlan?.direct_execution as {
+      outcome?: string;
+      ai_coding_quality?: { mode?: string; validation?: { status?: string }; stepsExecuted?: number };
+    } | undefined;
+    expect(directExecution?.outcome).toBe('completed');
+    expect(directExecution?.ai_coding_quality?.mode).toBe('direct');
+    expect(directExecution?.ai_coding_quality?.validation?.status).toBe('not_run');
+    expect(directExecution?.ai_coding_quality?.stepsExecuted).toBe(1);
+    const directSubtask = implementationPlan?.phases?.[0]?.subtasks?.[0];
+    expect(directSubtask?.id).toBe('direct-implementation');
+    expect(directSubtask?.status).toBe('completed');
+    expect(directSubtask?.completion_summary).toContain('Autocode CLI run completed');
     expect(directSession.sessionId).toBe('codex-session');
     expect(directSession.iteration).toBe(1);
     expect(directSession.latestSummary).toContain('Autocode CLI run completed');
@@ -1174,6 +1226,157 @@ describe('Autocode CLI runner prompt', () => {
     expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).toContain('Autocode CLI run completed');
     expect(stdout).toContain('__TASK_EVENT__:');
     expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    expect(stdout).toContain('"quality":{"mode":"direct"');
+  });
+
+  it('records changed files from Direct CLI git baseline', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-changed-files',
+      title: 'Record Direct changed files',
+      description: 'Direct CLI should report files changed by the run.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-changed-files' });
+    execFileSync('git', ['init'], { cwd: projectRoot, stdio: 'ignore' });
+    const fakeCliPath = join(projectRoot, 'write-direct-file.cjs');
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      'const projectRoot = process.cwd();',
+      "mkdirSync(join(projectRoot, 'src'), { recursive: true });",
+      "writeFileSync(join(projectRoot, 'src', 'direct-output.ts'), 'export const directOutput = true;\\n', 'utf8');",
+      "process.stdout.write('Implemented Direct CLI file write.\\nValidation: npm test passed.\\n');",
+    ].join(String.fromCharCode(10)), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-changed-files',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
+    const directExecution = implementationPlan?.direct_execution as {
+      ai_coding_quality?: { changedFiles?: string[]; filesChanged?: number; validation?: { status?: string } };
+    } | undefined;
+    expect(directExecution?.ai_coding_quality?.changedFiles).toEqual(['src/direct-output.ts']);
+    expect(directExecution?.ai_coding_quality?.filesChanged).toBe(1);
+    expect(directExecution?.ai_coding_quality?.validation?.status).toBe('reported_passed');
+    const directSubtask = implementationPlan?.phases?.[0]?.subtasks?.[0];
+    expect(directSubtask?.id).toBe('direct-implementation');
+    expect(directSubtask?.status).toBe('completed');
+    expect(directSubtask?.completion_summary).toContain('Autocode CLI run completed');
+    const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {
+      changedFiles?: string[];
+    };
+    expect(directSession.changedFiles).toEqual(['src/direct-output.ts']);
+    expect(stdout).toContain('"filesChanged":1');
+    expect(stdout).toContain('"changedFiles":["src/direct-output.ts"]');
+  });
+  it('fails Direct CLI completion when final validation evidence reports failure', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-failure',
+      title: 'Gate failed Direct validation',
+      description: 'Direct CLI should not report completion when validation failed.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-failure' });
+    writeFileSync(join(specDir, 'direct_summary.md'), 'STALE DIRECT SUMMARY FROM PREVIOUS ITERATION', 'utf8');
+    writeFileSync(join(specDir, 'implementation_plan.md'), [
+      '# Implementation Plan',
+      'Feature: Gate failed Direct validation',
+      'Workflow: direct',
+      'Status: coding',
+      'Execution Phase: coding',
+      '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"running","current_subtask_id":"direct-cr-20260701074920826","change_request_id":"cr-20260701074920826","summary_file":"direct_summary.md"}} -->',
+      '',
+      '- [/] direct. Direct execution',
+      '  - [/] direct-cr-20260701074920826 Direct Request Changes',
+      '    - Continue the same Direct model session.',
+      '',
+    ].join(String.fromCharCode(10)), 'utf8');
+    writeFakeCodexJsonCommand(projectRoot, [
+      {
+        type: 'agent_message',
+        message: [
+          'Implemented the requested change.',
+          'Validation: npm test failed with assertion error in direct workflow.',
+        ].join(String.fromCharCode(10)),
+      },
+      { type: 'turn_completed' },
+    ]);
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-failure',
+      cli: 'custom',
+      customCommand: 'codex --json',
+      phase: 'direct',
+    });
+
+    let failed = false;
+    let stdout = '';
+    try {
+      stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+        cwd: projectRoot,
+        env: {
+          ...process.env,
+          GRAPHITI_ENABLED: 'false',
+          PATH: `${projectRoot}${delimiter}${process.env.PATH ?? ''}`,
+        },
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+    } catch (error) {
+      failed = true;
+      stdout = String((error as { stdout?: string | Buffer }).stdout ?? '');
+    }
+
+    expect(failed).toBe(true);
+    expect(stdout).toContain('"type":"CODING_FAILED"');
+    expect(stdout).not.toContain('"type":"DIRECT_COMPLETED"');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      exitCode?: number;
+      status?: string;
+      message?: string;
+      quality?: { validation?: { status?: string; reason?: string } };
+    };
+    expect(result.exitCode).toBe(1);
+    expect(result.status).toBe('error');
+    expect(result.message).toContain('Direct validation reported_failed');
+    expect(result.quality?.validation?.status).toBe('reported_failed');
+    expect(result.quality?.validation?.reason).toContain('npm test failed');
+    const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+    expect(rawPlan).toContain('"change_request_id":"cr-20260701074920826"');
+    expect(rawPlan).toContain('"outcome":"error"');
+    expect(rawPlan).toContain('"ai_coding_quality"');
+    expect(rawPlan).toContain('- [!] direct. Direct execution');
+    expect(rawPlan).toContain('  - [!] direct-cr-20260701074920826 Direct Request Changes');
+    const failedPlan = loadAutocodeImplementationPlanSync(specDir);
+    expect(failedPlan?.phases?.[0]?.subtasks?.[0]?.status).toBe('failed');
+    expect(failedPlan?.phases?.[0]?.subtasks?.[0]?.notes).toContain('Direct validation reported');
+    expect(failedPlan?.phases?.[0]?.subtasks?.[0]?.notes).toContain('npm test failed');
+    expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).not.toContain('STALE DIRECT SUMMARY');
+    const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {
+      lastOutcome?: string;
+      latestSummary?: string;
+    };
+    expect(directSession.lastOutcome).toBe('error');
+    expect(directSession.latestSummary).toContain('Direct validation reported_failed');
   });
 
   it('generates bounded artifact validation retry prompts', () => {
