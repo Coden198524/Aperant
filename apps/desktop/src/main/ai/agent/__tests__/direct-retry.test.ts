@@ -149,9 +149,40 @@ describe('Direct validation retry helpers', () => {
     );
 
     expect(retryConfig.previousResponseId).toBeUndefined();
-    expect(retryConfig.initialMessages.map((message) => message.role)).toEqual(['assistant', 'user']);
+    expect(retryConfig.initialMessages.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(retryConfig.initialMessages[0]?.content).toBe('Fix the bug.');
     expect(retryConfig.initialMessages.at(-1)?.content).toContain('Direct Validation Retry (2/3)');
   });
+
+  it('does not duplicate the original task when attempt messages already include it', () => {
+    const attempt = createAttempt({
+      result: createResult({
+        outcome: 'error',
+        messages: [
+          { role: 'user', content: 'Fix the bug.' },
+          { role: 'assistant', content: 'Validation: npm test failed after editing src/direct.ts.' },
+        ],
+        error: {
+          code: 'direct_quality_gate_failed',
+          message: 'validation failed',
+          retryable: true,
+        },
+      }),
+    });
+
+    const retryConfig = buildDirectRetrySessionConfig(
+      createSessionConfig(),
+      { language: 'en' },
+      [attempt],
+      2,
+    );
+
+    expect(retryConfig.previousResponseId).toBeUndefined();
+    expect(retryConfig.initialMessages.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(retryConfig.initialMessages.filter((message) => message.content === 'Fix the bug.')).toHaveLength(1);
+    expect(retryConfig.initialMessages.at(-1)?.content).toContain('Direct Validation Retry (2/3)');
+  });
+
   it('falls back to transcript continuation when provider session state is unavailable', () => {
     const attempt = createAttempt({
       result: createResult({
@@ -177,6 +208,7 @@ describe('Direct validation retry helpers', () => {
 
     expect(retryConfig.previousResponseId).toBeUndefined();
     expect(retryConfig.initialMessages.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(retryConfig.initialMessages[0]?.content).toBe('Fix the original bug.');
     expect(retryConfig.initialMessages.at(-1)?.content).toContain('Re-read the current files and diff');
   });
 

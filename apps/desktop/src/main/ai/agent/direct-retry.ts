@@ -43,9 +43,7 @@ export function buildDirectRetrySessionConfig(
 
   const latestAttempt = attempts[attempts.length - 1];
   const providerResponseId = latestAttempt?.result.providerResponseId;
-  const transcriptMessages = latestAttempt?.result.messages.length
-    ? latestAttempt.result.messages
-    : buildFallbackRetryTranscript(baseConfig.initialMessages, latestAttempt);
+  const transcriptMessages = buildRetryTranscript(baseConfig.initialMessages, latestAttempt);
 
   return {
     ...baseConfig,
@@ -56,10 +54,14 @@ export function buildDirectRetrySessionConfig(
   };
 }
 
-function buildFallbackRetryTranscript(
+function buildRetryTranscript(
   initialMessages: SessionMessage[],
   latestAttempt: DirectValidationAttemptFeedback | undefined,
 ): SessionMessage[] {
+  const attemptMessages = latestAttempt?.result.messages ?? [];
+  if (attemptMessages.length > 0) {
+    return mergeSessionTranscript(initialMessages, attemptMessages);
+  }
   if (!latestAttempt?.streamedText.trim()) {
     return initialMessages;
   }
@@ -67,6 +69,45 @@ function buildFallbackRetryTranscript(
     ...initialMessages,
     { role: 'assistant', content: latestAttempt.streamedText.trim() },
   ];
+}
+
+function mergeSessionTranscript(
+  initialMessages: SessionMessage[],
+  attemptMessages: SessionMessage[],
+): SessionMessage[] {
+  const sharedPrefixLength = countSharedMessagePrefix(initialMessages, attemptMessages);
+  if (sharedPrefixLength > 0) {
+    return [
+      ...initialMessages,
+      ...attemptMessages.slice(sharedPrefixLength),
+    ];
+  }
+  if (attemptMessages[0]?.role === 'user') {
+    return attemptMessages;
+  }
+  return [
+    ...initialMessages,
+    ...attemptMessages,
+  ];
+}
+
+function countSharedMessagePrefix(
+  first: SessionMessage[],
+  second: SessionMessage[],
+): number {
+  const max = Math.min(first.length, second.length);
+  let index = 0;
+  while (index < max && isSameSessionMessage(first[index], second[index])) {
+    index += 1;
+  }
+  return index;
+}
+
+function isSameSessionMessage(
+  first: SessionMessage | undefined,
+  second: SessionMessage | undefined,
+): boolean {
+  return first?.role === second?.role && first?.content === second?.content;
 }
 
 export function mergeDirectValidationAttemptResults(
