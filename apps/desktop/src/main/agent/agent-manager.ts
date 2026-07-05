@@ -30,6 +30,7 @@ import {
   normalizeAutocodeBaseBranch,
   normalizeAutocodeRuntimePath,
   parseAutocodeOriginHeadBranch,
+  resolveAutocodeCliRuntimeRoute,
   resolveAutocodeCrossProviderModelRequest,
   resolveAutocodeTaskPhaseModelId,
   resolveAutocodeTaskPhaseProvider,
@@ -37,6 +38,8 @@ import {
   resolveAutocodeTaskWorkflowMode,
   resolveAutocodeDirectSessionState,
   withAutocodeRuntimeFileWriteLockSync,
+  type AutocodeCli,
+  type AutocodeCliRuntimeRoute,
   type AutocodeTaskRuntimeConcurrencyResolved,
   type AutocodeRuntimeWorkspaceMode,
 } from '@autocode/core';
@@ -755,8 +758,9 @@ export class AgentManager extends EventEmitter {
       specId: taskId,
     });
 
-    if (this.shouldUseCodexCliRuntime(resolved)) {
-      await this.startCodexCliRuntime({
+    const cliRuntimeRoute = this.resolveCliRuntimeRoute(resolved);
+    if (cliRuntimeRoute) {
+      await this.startCliRuntime({
         taskId,
         projectPath,
         runtimeProjectRoot: projectPath,
@@ -771,6 +775,9 @@ export class AgentManager extends EventEmitter {
         specDir: resolvedSpecDir,
         metadata,
         baseBranch,
+        cli: cliRuntimeRoute.cli,
+        routeId: cliRuntimeRoute.id,
+        routeDisplayName: cliRuntimeRoute.displayName,
       });
       return;
     }
@@ -972,8 +979,9 @@ export class AgentManager extends EventEmitter {
     const effectiveCwd = worktreePath ?? projectPath;
     const effectiveProjectDir = worktreePath ?? projectPath;
 
-    if (this.shouldUseCodexCliRuntime(resolved)) {
-      await this.startCodexCliRuntime({
+    const cliRuntimeRoute = this.resolveCliRuntimeRoute(resolved);
+    if (cliRuntimeRoute) {
+      await this.startCliRuntime({
         taskId,
         projectPath,
         runtimeProjectRoot: effectiveProjectDir,
@@ -984,6 +992,9 @@ export class AgentManager extends EventEmitter {
         processType: 'task-execution',
         projectId,
         specDir: worktreeSpecDir,
+        cli: cliRuntimeRoute.cli,
+        routeId: cliRuntimeRoute.id,
+        routeDisplayName: cliRuntimeRoute.displayName,
       });
       return;
     }
@@ -1184,8 +1195,9 @@ export class AgentManager extends EventEmitter {
         : 'summary'
       : undefined;
 
-    if (this.shouldUseCodexCliRuntime(resolved)) {
-      await this.startCodexCliRuntime({
+    const cliRuntimeRoute = this.resolveCliRuntimeRoute(resolved);
+    if (cliRuntimeRoute) {
+      await this.startCliRuntime({
         taskId,
         projectPath,
         runtimeProjectRoot: effectiveProjectDir,
@@ -1197,6 +1209,9 @@ export class AgentManager extends EventEmitter {
         projectId,
         direct: true,
         specDir: worktreeSpecDir,
+        cli: cliRuntimeRoute.cli,
+        routeId: cliRuntimeRoute.id,
+        routeDisplayName: cliRuntimeRoute.displayName,
       });
       return;
     }
@@ -1795,18 +1810,19 @@ export class AgentManager extends EventEmitter {
     return provider !== 'ollama';
   }
 
-  private shouldUseCodexCliRuntime(resolved: {
+  private resolveCliRuntimeRoute(resolved: {
     provider: string;
     modelId: string;
     auth: { source?: string; oauthTokenFilePath?: string } | null;
-  }): boolean {
-    return (
-      resolved.provider === 'openai' &&
-      resolved.auth?.source === 'codex-oauth'
-    );
+  }): AutocodeCliRuntimeRoute | null {
+    return resolveAutocodeCliRuntimeRoute({
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+      authSource: resolved.auth?.source,
+    });
   }
 
-  private async startCodexCliRuntime(input: {
+  private async startCliRuntime(input: {
     taskId: string;
     projectPath: string;
     runtimeProjectRoot: string;
@@ -1822,6 +1838,9 @@ export class AgentManager extends EventEmitter {
     metadata?: SpecCreationMetadata;
     baseBranch?: string;
     direct?: boolean;
+    cli: AutocodeCli;
+    routeId: string;
+    routeDisplayName?: string;
   }): Promise<void> {
     const runtimeSpecDir = input.specDir ?? getAutocodeSpecDir({
       projectRoot: input.runtimeProjectRoot,
@@ -1834,7 +1853,7 @@ export class AgentManager extends EventEmitter {
       dataDirName: input.dataDirName,
       taskId: input.specId || input.taskId,
       projectId: input.projectId,
-      cli: 'codex',
+      cli: input.cli,
       model: input.modelId,
       bypassPermissions: settings?.dangerouslySkipPermissions === true,
       language: this.resolveAppLanguage(),
@@ -1842,7 +1861,7 @@ export class AgentManager extends EventEmitter {
     });
     const processCommand = started.request.runner?.process;
     if (!processCommand) {
-      throw new Error('Codex CLI runtime request did not include a process command.');
+      throw new Error('CLI runtime request did not include a process command.');
     }
 
     this.storeTaskContext(
@@ -1868,9 +1887,12 @@ export class AgentManager extends EventEmitter {
       input.projectId,
     );
 
-    console.warn('[AgentManager] Routing OpenAI Codex subscription task through Codex CLI runtime:', {
+    console.warn(`[AgentManager] Routing task through ${input.routeDisplayName ?? input.cli} runtime:`, {
       taskId: input.taskId,
       specId: input.specId,
+      cli: input.cli,
+      routeId: input.routeId,
+      direct: input.direct === true,
       cwd: processCommand.cwd,
       command: processCommand.shellCommand,
     });

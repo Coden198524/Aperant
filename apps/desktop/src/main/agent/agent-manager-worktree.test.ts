@@ -4,7 +4,7 @@ const createOrGetWorktreeMock = vi.fn();
 const spawnWorkerProcessMock = vi.fn();
 const spawnProcessMock = vi.fn();
 const invalidateTasksCacheMock = vi.fn();
-const createStartedAutocodeAgentRuntimeMock = vi.fn(() => ({
+const createStartedAutocodeAgentRuntimeMock = vi.fn((_input?: unknown) => ({
   request: {
     runner: {
       process: {
@@ -66,8 +66,14 @@ vi.mock('@autocode/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@autocode/core')>();
   return {
     ...actual,
-    createStartedAutocodeAgentRuntime: (_input: unknown) =>
-      createStartedAutocodeAgentRuntimeMock(),
+    createStartedAutocodeAgentRuntime: (input: unknown) =>
+      createStartedAutocodeAgentRuntimeMock(input),
+    resolveAutocodeCliRuntimeRoute: (input: { provider?: unknown; authSource?: unknown }) =>
+      typeof input.provider === 'string' &&
+      ['openai', 'openai.responses', 'openai-responses'].includes(input.provider.toLowerCase()) &&
+      input.authSource === 'codex-oauth'
+        ? { id: 'openai-codex-oauth', displayName: 'Codex CLI', cli: 'codex', condition: {} }
+        : null,
     resolveAutocodeDirectSessionState: (...args: unknown[]) =>
       resolveAutocodeDirectSessionStateMock(...args),
     buildAutocodeDirectTaskExecutionMessages: (input: {
@@ -428,7 +434,7 @@ describe('AgentManager worktree execution', () => {
     expect(executorConfig.session.initialMessages[0].content).not.toContain('Prior Direct Session Summary');
   });
 
-  it('passes the task spec directory to Codex CLI workspace claims', async () => {
+  it('passes catalog-routed CLI runtime workspace claims', async () => {
     const fs = await import('fs');
     const settings = await import('../settings-utils');
     const authResolver = await import('../ai/auth/resolver');
@@ -465,6 +471,10 @@ describe('AgentManager worktree execution', () => {
     await manager.startTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
 
     expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
+    expect(createStartedAutocodeAgentRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      cli: 'codex',
+      model: 'gpt-5.5',
+    }));
     expect(spawnProcessMock).toHaveBeenCalled();
     const workspaceClaim = spawnProcessMock.mock.calls[0][6];
     expect(workspaceClaim.fileIntents).toEqual(['src/board.ts']);

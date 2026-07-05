@@ -35,6 +35,29 @@ export interface AutocodeCliDefinition {
   taskRunStrategy?: AutocodeCliTaskRunStrategy;
 }
 
+export type AutocodeCliRuntimeRouteMatch = string | readonly string[];
+
+export interface AutocodeCliRuntimeRouteCondition {
+  provider?: AutocodeCliRuntimeRouteMatch;
+  authSource?: AutocodeCliRuntimeRouteMatch;
+  modelId?: AutocodeCliRuntimeRouteMatch;
+  modelIdPrefix?: AutocodeCliRuntimeRouteMatch;
+  modelIdIncludes?: AutocodeCliRuntimeRouteMatch;
+}
+
+export interface AutocodeCliRuntimeRoute {
+  id: string;
+  displayName: string;
+  cli: AutocodeCli;
+  condition: AutocodeCliRuntimeRouteCondition;
+}
+
+export interface ResolveAutocodeCliRuntimeRouteInput {
+  provider?: unknown;
+  authSource?: unknown;
+  modelId?: unknown;
+}
+
 export const AUTOCODE_CLI_DEFINITIONS: Readonly<Record<BuiltinAutocodeCli, AutocodeCliDefinition>> = {
   'claude-code': {
     command: 'claude',
@@ -66,6 +89,18 @@ export const AUTOCODE_CLI_DEFINITIONS: Readonly<Record<BuiltinAutocodeCli, Autoc
 export const AUTOCODE_CLI_COMMANDS: Readonly<Record<BuiltinAutocodeCli, string>> = Object.fromEntries(
   Object.entries(AUTOCODE_CLI_DEFINITIONS).map(([cli, definition]) => [cli, definition.command]),
 ) as Readonly<Record<BuiltinAutocodeCli, string>>;
+
+export const AUTOCODE_CLI_RUNTIME_ROUTES: readonly AutocodeCliRuntimeRoute[] = [
+  {
+    id: 'openai-codex-oauth',
+    displayName: 'Codex CLI',
+    cli: 'codex',
+    condition: {
+      provider: ['openai', 'openai.responses', 'openai-responses'],
+      authSource: 'codex-oauth',
+    },
+  },
+] as const;
 
 export const AUTOCODE_CLI_JSON_EVENT_PARSERS: readonly AutocodeCliJsonEventParser[] = [
   {
@@ -146,6 +181,19 @@ export function getAutocodeCliJsonEventParsers(): AutocodeCliJsonEventParser[] {
     commandNames: [...parser.commandNames],
     ...(parser.requiredArgs ? { requiredArgs: [...parser.requiredArgs] } : {}),
   }));
+}
+
+export function getAutocodeCliRuntimeRoutes(): AutocodeCliRuntimeRoute[] {
+  return AUTOCODE_CLI_RUNTIME_ROUTES.map(copyAutocodeCliRuntimeRoute);
+}
+
+export function resolveAutocodeCliRuntimeRoute(
+  input: ResolveAutocodeCliRuntimeRouteInput,
+): AutocodeCliRuntimeRoute | null {
+  const route = AUTOCODE_CLI_RUNTIME_ROUTES.find((candidate) =>
+    matchesAutocodeCliRuntimeRoute(candidate.condition, input)
+  );
+  return route ? copyAutocodeCliRuntimeRoute(route) : null;
 }
 
 export function isAutocodeCli(value: unknown): value is AutocodeCli {
@@ -308,4 +356,80 @@ function quoteShellArg(value: string): string {
     return value;
   }
   return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function copyAutocodeCliRuntimeRoute(route: AutocodeCliRuntimeRoute): AutocodeCliRuntimeRoute {
+  return {
+    ...route,
+    condition: copyAutocodeCliRuntimeRouteCondition(route.condition),
+  };
+}
+
+function copyAutocodeCliRuntimeRouteCondition(
+  condition: AutocodeCliRuntimeRouteCondition,
+): AutocodeCliRuntimeRouteCondition {
+  return {
+    ...(condition.provider ? { provider: copyRuntimeRouteMatch(condition.provider) } : {}),
+    ...(condition.authSource ? { authSource: copyRuntimeRouteMatch(condition.authSource) } : {}),
+    ...(condition.modelId ? { modelId: copyRuntimeRouteMatch(condition.modelId) } : {}),
+    ...(condition.modelIdPrefix ? { modelIdPrefix: copyRuntimeRouteMatch(condition.modelIdPrefix) } : {}),
+    ...(condition.modelIdIncludes ? { modelIdIncludes: copyRuntimeRouteMatch(condition.modelIdIncludes) } : {}),
+  };
+}
+
+function copyRuntimeRouteMatch(match: AutocodeCliRuntimeRouteMatch): AutocodeCliRuntimeRouteMatch {
+  return Array.isArray(match) ? [...match] : match;
+}
+
+function matchesAutocodeCliRuntimeRoute(
+  condition: AutocodeCliRuntimeRouteCondition,
+  input: ResolveAutocodeCliRuntimeRouteInput,
+): boolean {
+  return matchesExactRouteValue(input.provider, condition.provider)
+    && matchesExactRouteValue(input.authSource, condition.authSource)
+    && matchesExactRouteValue(input.modelId, condition.modelId)
+    && matchesPrefixRouteValue(input.modelId, condition.modelIdPrefix)
+    && matchesIncludesRouteValue(input.modelId, condition.modelIdIncludes);
+}
+
+function matchesExactRouteValue(value: unknown, match?: AutocodeCliRuntimeRouteMatch): boolean {
+  if (!match) {
+    return true;
+  }
+  const normalized = normalizeRouteString(value);
+  return normalized !== null && toRouteMatchList(match).some((candidate) =>
+    normalized === normalizeRouteString(candidate)
+  );
+}
+
+function matchesPrefixRouteValue(value: unknown, match?: AutocodeCliRuntimeRouteMatch): boolean {
+  if (!match) {
+    return true;
+  }
+  const normalized = normalizeRouteString(value);
+  return normalized !== null && toRouteMatchList(match).some((candidate) => {
+    const normalizedCandidate = normalizeRouteString(candidate);
+    return Boolean(normalizedCandidate && normalized.startsWith(normalizedCandidate));
+  });
+}
+
+function matchesIncludesRouteValue(value: unknown, match?: AutocodeCliRuntimeRouteMatch): boolean {
+  if (!match) {
+    return true;
+  }
+  const normalized = normalizeRouteString(value);
+  return normalized !== null && toRouteMatchList(match).some((candidate) => {
+    const normalizedCandidate = normalizeRouteString(candidate);
+    return Boolean(normalizedCandidate && normalized.includes(normalizedCandidate));
+  });
+}
+
+function toRouteMatchList(match: AutocodeCliRuntimeRouteMatch): readonly string[] {
+  return typeof match === 'string' ? [match] : match;
+}
+
+function normalizeRouteString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim()
+    ? value.trim().toLowerCase()
+    : null;
 }
