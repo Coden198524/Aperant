@@ -21,6 +21,54 @@ export const AUTOCODE_CLI_COMMANDS: Readonly<Record<Exclude<AutocodeCli, 'custom
   deepseek: 'deepseek',
 };
 
+export type AutocodeCliContinuationStrategyType = 'exec-resume-session' | 'append-continuation-flag';
+export type AutocodeCliContinuationSessionIdSource = 'json-event-session' | 'latest';
+
+export interface AutocodeCliContinuationStrategy {
+  displayName: string;
+  type: AutocodeCliContinuationStrategyType;
+  commandNames: string[];
+  requiresJsonMode?: boolean;
+  continuationFlag?: string;
+  existingContinuationFlags?: string[];
+  sessionIdSource?: AutocodeCliContinuationSessionIdSource;
+}
+
+export const AUTOCODE_CLI_CONTINUATION_STRATEGIES: Readonly<Partial<Record<AutocodeCli, AutocodeCliContinuationStrategy>>> = {
+  codex: {
+    displayName: 'Codex',
+    type: 'exec-resume-session',
+    commandNames: ['codex'],
+    requiresJsonMode: true,
+    sessionIdSource: 'json-event-session',
+  },
+  'claude-code': {
+    displayName: 'Claude Code',
+    type: 'append-continuation-flag',
+    commandNames: ['claude'],
+    continuationFlag: '--continue',
+    existingContinuationFlags: ['--continue', '-c', '--resume', '-r'],
+    sessionIdSource: 'latest',
+  },
+};
+
+export function getAutocodeCliContinuationStrategy(
+  cli: AutocodeCli,
+): AutocodeCliContinuationStrategy | undefined {
+  const strategy = AUTOCODE_CLI_CONTINUATION_STRATEGIES[cli];
+  if (!strategy) {
+    return undefined;
+  }
+  const copy: AutocodeCliContinuationStrategy = {
+    ...strategy,
+    commandNames: [...strategy.commandNames],
+  };
+  if (strategy.existingContinuationFlags) {
+    copy.existingContinuationFlags = [...strategy.existingContinuationFlags];
+  }
+  return copy;
+}
+
 export function isAutocodeCli(value: unknown): value is AutocodeCli {
   return typeof value === 'string' && SUPPORTED_AUTOCODE_CLIS.includes(value as AutocodeCli);
 }

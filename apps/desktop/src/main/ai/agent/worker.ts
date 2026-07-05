@@ -116,6 +116,7 @@ import {
 import { buildAggressiveCoderPrompt } from './aggressive-coder-prompt';
 import {
   AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
+  applyDirectProviderSessionPersistence,
   buildDirectRetrySessionConfig,
   mergeDirectValidationAttemptResults,
   shouldRetryDirectValidationAttempt,
@@ -1814,7 +1815,7 @@ async function runDefaultSession(
   // Resolve context window limit from model metadata
   const contextWindowLimit = getModelContextWindow(session.modelId);
 
-  const sessionConfig: SessionConfig = {
+  const baseSessionConfig: SessionConfig = {
     sessionId: session.sessionId,
     agentType: session.agentType,
     model,
@@ -1834,6 +1835,9 @@ async function runDefaultSession(
     responsePersistence: session.responsePersistence,
     previousResponseId: session.previousResponseId,
   };
+  const sessionConfig = isDirectTaskSession(session)
+    ? applyDirectProviderSessionPersistence(baseSessionConfig)
+    : baseSessionConfig;
 
   // Start phase logging for default session
   if (logWriter) {

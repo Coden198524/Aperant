@@ -1648,6 +1648,191 @@ describe('Autocode CLI runner prompt', () => {
     expect(directSession.sessionId).toBe('codex-session-retry');
     expect(directSession.lastOutcome).toBe('success');
   });
+  it('continues Claude Code sessions with --continue when retrying Direct quality failures', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-retry-claude-session',
+      title: 'Retry Direct validation in same Claude Code session',
+      description: 'Direct CLI should continue the Claude Code session for retry attempts.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-retry-claude-session' });
+    const shimPath = join(projectRoot, 'claude-session-retry-shim.cjs');
+    const attemptPath = join(projectRoot, 'claude-session-retry-attempt.txt');
+    const argvPath = join(projectRoot, 'claude-session-retry-argv.jsonl');
+    const escapedSpecDir = specDir.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedAttemptPath = attemptPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedArgvPath = argvPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    writeFileSync(shimPath, [
+      "const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const argvPath = '${escapedArgvPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      'const argv = process.argv.slice(2);',
+      "appendFileSync(argvPath, JSON.stringify(argv) + '\\n', 'utf8');",
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt === 1) {",
+      "    writeFileSync(join(specDir, 'direct_summary.md'), 'Claude attempt 1 summary. Validation: npm test failed.\\n', 'utf8');",
+      "    process.stdout.write('Claude attempt 1 output. Validation: npm test failed.\\n');",
+      "    return;",
+      "  }",
+      "  if (!argv.includes('--continue')) {",
+      "    process.stderr.write('Expected Claude Code --continue args, got ' + JSON.stringify(argv) + '\\n');",
+      "    process.exit(2);",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Claude attempt 2 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write('Claude continued and fixed it. Validation: npm test passed.\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    if (process.platform === 'win32') {
+      writeFileSync(
+        join(projectRoot, 'claude.cmd'),
+        '@echo off\r\nnode "%~dp0claude-session-retry-shim.cjs" %*\r\n',
+        'utf8',
+      );
+    } else {
+      const unixShimPath = join(projectRoot, 'claude');
+      writeFileSync(unixShimPath, [
+        '#!/usr/bin/env node',
+        "require('./claude-session-retry-shim.cjs');",
+      ].join('\n'), 'utf8');
+      chmodSync(unixShimPath, 0o755);
+    }
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-retry-claude-session',
+      cli: 'claude-code',
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        GRAPHITI_ENABLED: 'false',
+        PATH: `${projectRoot}${delimiter}${process.env.PATH ?? ''}`,
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    const argvLines = readFileSync(argvPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line) as string[]);
+    expect(argvLines[0]).toEqual([]);
+    expect(argvLines[1]).toContain('--continue');
+    expect(readFileSync(attemptPath, 'utf8')).toBe('2');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+  });
+
+  it('carries Direct retry transcript for DeepSeek CLI attempts', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-retry-deepseek-session',
+      title: 'Retry Direct validation with DeepSeek context',
+      description: 'Direct CLI should preserve retry context for DeepSeek attempts.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-retry-deepseek-session' });
+    const shimPath = join(projectRoot, 'deepseek-session-retry-shim.cjs');
+    const attemptPath = join(projectRoot, 'deepseek-session-retry-attempt.txt');
+    const argvPath = join(projectRoot, 'deepseek-session-retry-argv.jsonl');
+    const promptPath = join(projectRoot, 'deepseek-session-retry-prompt.txt');
+    const escapedSpecDir = specDir.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedAttemptPath = attemptPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedArgvPath = argvPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedPromptPath = promptPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    writeFileSync(shimPath, [
+      "const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const argvPath = '${escapedArgvPath}';`,
+      `const promptPath = '${escapedPromptPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      'const argv = process.argv.slice(2);',
+      "appendFileSync(argvPath, JSON.stringify(argv) + '\\n', 'utf8');",
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  writeFileSync(promptPath, stdin, 'utf8');",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt === 1) {",
+      "    writeFileSync(join(specDir, 'direct_summary.md'), 'DeepSeek attempt 1 summary. Validation: npm test failed.\\n', 'utf8');",
+      "    process.stdout.write('DeepSeek attempt 1 output. Validation: npm test failed.\\n');",
+      "    return;",
+      "  }",
+      "  if (argv[0] === 'exec' || argv.includes('resume') || argv.includes('--continue')) {",
+      "    process.stderr.write('DeepSeek retry should use prompt context, got ' + JSON.stringify(argv) + '\\n');",
+      "    process.exit(2);",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'DeepSeek attempt 2 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write('DeepSeek used retry context and fixed it. Validation: npm test passed.\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    if (process.platform === 'win32') {
+      writeFileSync(
+        join(projectRoot, 'deepseek.cmd'),
+        '@echo off\r\nnode "%~dp0deepseek-session-retry-shim.cjs" %*\r\n',
+        'utf8',
+      );
+    } else {
+      const unixShimPath = join(projectRoot, 'deepseek');
+      writeFileSync(unixShimPath, [
+        '#!/usr/bin/env node',
+        "require('./deepseek-session-retry-shim.cjs');",
+      ].join('\n'), 'utf8');
+      chmodSync(unixShimPath, 0o755);
+    }
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-retry-deepseek-session',
+      cli: 'deepseek',
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        GRAPHITI_ENABLED: 'false',
+        PATH: `${projectRoot}${delimiter}${process.env.PATH ?? ''}`,
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    const argvLines = readFileSync(argvPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line) as string[]);
+    expect(argvLines[0]).toEqual([]);
+    expect(argvLines[1]).toEqual([]);
+    const retryPrompt = readFileSync(promptPath, 'utf8');
+    expect(retryPrompt).toContain('Previous attempt transcript');
+    expect(retryPrompt).toContain('DeepSeek attempt 1 output');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {
+      provider?: string;
+      lastOutcome?: string;
+    };
+    expect(directSession.provider).toBe('deepseek-cli');
+    expect(directSession.lastOutcome).toBe('success');
+  });
   it('fails Direct CLI completion when final validation evidence reports failure', () => {
     createAutocodeTask({
       projectRoot,

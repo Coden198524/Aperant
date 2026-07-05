@@ -264,6 +264,30 @@ function captureDirectWorkspaceBaseline(projectPath: string, specDir: string): v
   }
 }
 
+interface DirectProviderContinuationCapability {
+  id: string;
+  mode: 'provider';
+  supports(input: { provider: unknown; modelId: string }): boolean;
+}
+
+const DIRECT_PROVIDER_CONTINUATION_CAPABILITIES: DirectProviderContinuationCapability[] = [
+  {
+    id: 'responses-previous-response',
+    mode: 'provider',
+    supports: ({ provider, modelId }) => isAutocodeOpenAIResponsesTransport(
+      typeof provider === 'string' ? provider : undefined,
+      modelId,
+    ),
+  },
+];
+
+function resolveDirectProviderContinuationCapability(input: {
+  provider: unknown;
+  modelId: string;
+}): DirectProviderContinuationCapability | null {
+  return DIRECT_PROVIDER_CONTINUATION_CAPABILITIES.find((capability) => capability.supports(input)) ?? null;
+}
+
 function resolveDirectRuntimeSubtaskId(specDir: string, requestedSubtaskId?: string): string {
   if (requestedSubtaskId?.trim()) {
     return requestedSubtaskId.trim();
@@ -1172,11 +1196,15 @@ export class AgentManager extends EventEmitter {
     const effectiveProjectDir = worktreePath ?? projectPath;
     const directSubtaskId = resolveDirectRuntimeSubtaskId(worktreeSpecDir, options.directSubtaskId);
     const directSessionState = resolveAutocodeDirectSessionState(worktreeSpecDir, specDir);
-    const supportsProviderContinuation = isAutocodeOpenAIResponsesTransport(resolved.provider, resolved.modelId);
+    const providerContinuationCapability = resolveDirectProviderContinuationCapability({
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+    });
+    const supportsProviderContinuation = Boolean(providerContinuationCapability);
     const useProviderContinuation = supportsProviderContinuation && Boolean(directSessionState?.providerResponseId);
     const directContinuationMode = directSessionState
       ? useProviderContinuation
-        ? 'provider'
+        ? providerContinuationCapability?.mode ?? 'provider'
         : 'summary'
       : undefined;
 

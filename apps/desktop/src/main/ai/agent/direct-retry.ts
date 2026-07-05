@@ -18,6 +18,13 @@ export interface DirectValidationAttemptFeedback {
   failureReason: string;
 }
 
+export function applyDirectProviderSessionPersistence(config: SessionConfig): SessionConfig {
+  return {
+    ...config,
+    responsePersistence: true,
+  };
+}
+
 export function shouldRetryDirectValidationAttempt(
   result: SessionResult | undefined,
   attempt: number,

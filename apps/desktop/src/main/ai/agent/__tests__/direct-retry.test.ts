@@ -4,6 +4,7 @@ import type { AutocodeDirectCodingQualityMetrics } from '@autocode/core/runtime/
 import type { SessionConfig, SessionResult } from '../../session/types';
 import {
   AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
+  applyDirectProviderSessionPersistence,
   buildDirectRetrySessionConfig,
   mergeDirectValidationAttemptResults,
   shouldRetryDirectValidationAttempt,
@@ -82,6 +83,16 @@ function createSessionConfig(overrides: Partial<SessionConfig> = {}): SessionCon
 }
 
 describe('Direct validation retry helpers', () => {
+  it('enables provider session persistence for Direct attempts', () => {
+    const config = createSessionConfig({ responsePersistence: false });
+
+    const directConfig = applyDirectProviderSessionPersistence(config);
+
+    expect(directConfig).not.toBe(config);
+    expect(directConfig.responsePersistence).toBe(true);
+    expect(directConfig.previousResponseId).toBeUndefined();
+  });
+
   it('retries only retryable Direct quality gate failures before the third attempt', () => {
     const retryable = createResult({
       outcome: 'error',

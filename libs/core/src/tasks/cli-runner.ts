@@ -23,6 +23,8 @@ import { foldRepeatedAutocodePromptLines } from '../runtime/prompt-context.js';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import {
   type AutocodeCli,
+  type AutocodeCliContinuationStrategy,
+  getAutocodeCliContinuationStrategy,
   getAutocodeCliPermissionArgs,
   resolveAutocodeCliInvocation,
 } from './cli-catalog.js';
@@ -120,6 +122,8 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
       projectId: input.projectId,
       language: input.language,
       runtimeConcurrency,
+      cli: input.cli,
+      directCliContinuationStrategy: getAutocodeCliContinuationStrategy(input.cli),
     }),
     'utf8',
   );
@@ -788,6 +792,8 @@ function buildNodeRunnerScript(input: {
   projectId?: string;
   language?: AutocodeAgentLanguage;
   runtimeConcurrency: AutocodeTaskRuntimeConcurrencyResolved;
+  cli: AutocodeCli;
+  directCliContinuationStrategy?: AutocodeCliContinuationStrategy;
 }): string {
   return `const { spawn, spawnSync } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
@@ -799,6 +805,8 @@ const { TextDecoder } = require('node:util');
 const cwd = ${JSON.stringify(input.cwd)};
 const command = ${JSON.stringify(input.command)};
 const args = ${JSON.stringify(input.args)};
+const cli = ${JSON.stringify(input.cli)};
+const directCliContinuationStrategy = ${JSON.stringify(input.directCliContinuationStrategy ?? null)};
 const iconvLiteModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('iconv-lite'))};
 const workPackagesModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/work-packages') ?? resolveOptionalRunnerDependency('./work-packages.js'))};
 const planQualityModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/plan-quality') ?? resolveOptionalRunnerDependency('./plan-quality.js'))};
@@ -835,7 +843,7 @@ let validationRetryCount = 0;
 let directQualityRetryCount = 0;
 let attemptId = 0;
 let currentAttemptStartedAt = Date.now();
-let activeCodexSessionId = '';
+let activeCliJsonSessionId = '';
 let memoryContextBlock = '';
 const pendingMemoryWrites = [];
 const runStartedAt = Date.now();
@@ -1569,7 +1577,7 @@ function startAttempt(attemptPrompt, subtaskId) {
   state.subtaskId = subtaskId;
   const invocation = buildAttemptInvocation(currentAttemptId);
   if (invocation.resumeSessionId) {
-    appendTaskLogEntry(logPhase, 'info', 'Resuming Codex Direct session for retry: ' + invocation.resumeSessionId);
+    appendTaskLogEntry(logPhase, 'info', formatDirectRetryContinuationLog(invocation));
   }
   const child = spawn(invocation.command, invocation.args, {
     cwd,
@@ -1616,20 +1624,95 @@ function resetMainAttemptStateForRetry(state) {
 }
 
 function buildAttemptInvocation(currentAttemptId) {
-  const resumeArgs = buildCodexDirectResumeArgs(currentAttemptId);
-  if (resumeArgs) {
-    return { command, args: resumeArgs, resumeSessionId: activeCodexSessionId };
+  const directRetryInvocation = buildDirectRetryInvocation(currentAttemptId);
+  if (directRetryInvocation) {
+    return directRetryInvocation;
   }
-  return { command, args, resumeSessionId: '' };
+  return { command, args, resumeSessionId: '', resumeKind: '' };
 }
 
-function buildCodexDirectResumeArgs(currentAttemptId) {
+function buildDirectRetryInvocation(currentAttemptId) {
+  if (!isDirectCliRetryAttempt(currentAttemptId)) {
+    return null;
+  }
+
+  for (const strategy of getDirectCliContinuationStrategies()) {
+    const invocation = buildDirectCliContinuationInvocation(strategy);
+    if (invocation) {
+      return invocation;
+    }
+  }
+
+  return null;
+}
+
+function isDirectCliRetryAttempt(currentAttemptId) {
+  return phase === 'direct' && currentAttemptId > 1;
+}
+
+function getDirectCliContinuationStrategies() {
+  if (!directCliContinuationStrategy || typeof directCliContinuationStrategy !== 'object') {
+    return [];
+  }
+  const resumeSessionId = resolveDirectCliContinuationSessionId(directCliContinuationStrategy);
+  return [{
+    ...directCliContinuationStrategy,
+    cli,
+    ...(resumeSessionId ? { resumeSessionId } : {}),
+  }];
+}
+
+function resolveDirectCliContinuationSessionId(strategy) {
+  if (strategy.sessionIdSource === 'json-event-session') {
+    return activeCliJsonSessionId;
+  }
+  if (strategy.sessionIdSource === 'latest') {
+    return 'latest';
+  }
+  return '';
+}
+
+function buildDirectCliContinuationInvocation(strategy) {
+  if (!strategy || strategy.cli !== cli || !isCliCommandOneOf(command, strategy.commandNames)) {
+    return null;
+  }
+
+  if (strategy.type === 'exec-resume-session') {
+    const resumeArgs = buildDirectCliExecResumeArgs(strategy);
+    return resumeArgs
+      ? {
+          command,
+          args: resumeArgs,
+          resumeSessionId: strategy.resumeSessionId,
+          resumeKind: strategy.type,
+          resumeDisplayName: strategy.displayName,
+        }
+      : null;
+  }
+
+  if (strategy.type === 'append-continuation-flag') {
+    const continuationArgs = buildDirectCliFlagContinuationArgs(strategy);
+    return continuationArgs
+      ? {
+          command,
+          args: continuationArgs,
+          resumeSessionId: strategy.resumeSessionId,
+          resumeKind: strategy.type,
+          resumeDisplayName: strategy.displayName,
+          continuationFlag: strategy.continuationFlag,
+        }
+      : null;
+  }
+
+  return null;
+}
+
+function buildDirectCliExecResumeArgs(strategy) {
   if (
-    phase !== 'direct' ||
-    currentAttemptId <= 1 ||
-    !codexJsonMode ||
-    !activeCodexSessionId ||
-    !isCodexExecInvocation(command, args)
+    !strategy.resumeSessionId ||
+    (strategy.requiresJsonMode && !codexJsonMode) ||
+    !Array.isArray(args) ||
+    args[0] !== 'exec'
   ) {
     return null;
   }
@@ -1642,10 +1725,34 @@ function buildCodexDirectResumeArgs(currentAttemptId) {
     }
     passthrough.push(arg);
   }
-  if (!passthrough.includes('--json')) {
+  if (strategy.requiresJsonMode && !passthrough.includes('--json')) {
     passthrough.unshift('--json');
   }
-  return ['exec', 'resume', ...passthrough, activeCodexSessionId, '-'];
+  return ['exec', 'resume', ...passthrough, strategy.resumeSessionId, '-'];
+}
+
+function buildDirectCliFlagContinuationArgs(strategy) {
+  if (!Array.isArray(args) || !strategy.continuationFlag) {
+    return null;
+  }
+  const existingFlags = Array.isArray(strategy.existingContinuationFlags)
+    ? strategy.existingContinuationFlags
+    : [strategy.continuationFlag];
+  if (existingFlags.some((arg) => args.includes(arg))) {
+    return args;
+  }
+  return [strategy.continuationFlag, ...args];
+}
+
+function formatDirectRetryContinuationLog(invocation) {
+  const displayName = invocation.resumeDisplayName || 'Direct CLI';
+  if (invocation.resumeKind === 'exec-resume-session') {
+    return 'Resuming ' + displayName + ' Direct session for retry: ' + invocation.resumeSessionId;
+  }
+  if (invocation.resumeKind === 'append-continuation-flag') {
+    return 'Continuing ' + displayName + ' Direct session for retry with ' + invocation.continuationFlag + '.';
+  }
+  return 'Continuing Direct CLI session for retry.';
 }
 
 async function finalize(currentAttemptId, exitCode, signal, explicitError) {
@@ -1722,6 +1829,7 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
             attempt: directQualityRetryCount,
             maxRetries: maxDirectQualityRetries,
             finalText: readDirectCompletionSummary(result, currentAttemptStartedAt),
+            attemptTranscript: defaultAttemptState.lastCodexMessageText,
           })));
           return;
         }
@@ -3448,10 +3556,10 @@ function processCodexJsonLine(line, state = defaultAttemptState) {
   }
 }
 
-function rememberCodexSessionId(sessionId) {
+function rememberCliJsonSessionId(sessionId) {
   const normalized = typeof sessionId === 'string' ? sessionId.trim() : '';
   if (phase === 'direct' && codexJsonMode && normalized) {
-    activeCodexSessionId = normalized;
+    activeCliJsonSessionId = normalized;
   }
 }
 
@@ -3465,7 +3573,7 @@ function handleCodexJsonEvent(event, state = defaultAttemptState) {
     getFirstString(envelope, ['session_id', 'sessionId', 'conversation_id']) ||
     getFirstString(payloadSession, ['id', 'session_id', 'sessionId', 'conversation_id']) ||
     getFirstString(envelopeSession, ['id', 'session_id', 'sessionId', 'conversation_id']);
-  rememberCodexSessionId(sessionId);
+  rememberCliJsonSessionId(sessionId);
   const tokenUsage = extractCodexTokenUsage(envelope, payload, sessionId);
   let tokenUsageHandled = false;
   const handleTokenUsage = () => {
@@ -4014,13 +4122,13 @@ function persistDirectSessionState(result, now, quality, changedFiles = []) {
   const existing = readJsonFile(statePath) || {};
   const summary = readDirectCompletionSummary(result, currentAttemptStartedAt);
   const tokenUsage = readCurrentPlanTokenUsage();
-  const sessionId = activeCodexSessionId
-    ? activeCodexSessionId
+  const sessionId = activeCliJsonSessionId
+    ? activeCliJsonSessionId
     : typeof tokenUsage?.sessionId === 'string' && tokenUsage.sessionId.trim()
       ? tokenUsage.sessionId.trim()
       : typeof existing.sessionId === 'string' && existing.sessionId.trim()
         ? existing.sessionId.trim()
-        : 'codex-cli-' + randomUUID();
+        : getDirectCliSessionPrefix() + randomUUID();
   const iteration = Number.isFinite(existing.iteration)
     ? Math.max(1, Math.floor(existing.iteration) + 1)
     : 1;
@@ -4036,7 +4144,7 @@ function persistDirectSessionState(result, now, quality, changedFiles = []) {
       : now,
     updatedAt: now,
     iteration,
-    provider: 'codex-cli',
+    provider: getDirectCliProviderName(),
     modelId: undefined,
     originalRequest: compactDirectSessionText(
       typeof existing.originalRequest === 'string' && existing.originalRequest.trim()
@@ -4195,7 +4303,7 @@ async function evaluateDirectCliQuality(result, now, changedFiles = [], minSumma
       status: 'skipped',
       filesReviewed: 0,
       improvements: changedFiles.length > 0
-        ? ['Codex CLI Direct runner records changed files but does not run in-process self-critique; review git diff before approval.']
+        ? ['Direct CLI runner records changed files but does not run in-process self-critique; review git diff before approval.']
         : ['No changed files were detected for this Direct CLI run; review runner output before approval.'],
     },
     validation: inferRunnerDirectValidationEvidence(finalText),
@@ -4823,6 +4931,7 @@ function buildDirectQualityRetryPrompt(input) {
   const nextAttempt = Math.max(2, Math.floor(input.attempt || 1) + 1);
   const maxAttempts = Math.max(nextAttempt, Math.floor(input.maxRetries || 0) + 1);
   const finalText = compactDirectQualityRetryText(input.finalText || '', 2000);
+  const attemptTranscript = compactDirectQualityRetryText(input.attemptTranscript || '', 3000);
 
   return [
     compactArtifactValidationRetryBasePrompt(prompt),
@@ -4841,6 +4950,7 @@ function buildDirectQualityRetryPrompt(input) {
     'Self-critique: ' + compactDirectQualityRetryText(selfCritique),
     'Changed files: ' + formatDirectQualityRetryList(input.changedFiles),
     finalText ? 'Final response excerpt:\\n' + finalText : '',
+    attemptTranscript && attemptTranscript !== finalText ? 'Previous attempt transcript:\\n' + attemptTranscript : '',
     '',
     '## Required Next Action',
     '',
@@ -5327,8 +5437,27 @@ function isCodexExecInvocation(command, args) {
 }
 
 function isCodexCommand(command) {
-  const commandName = String(command || '').split(/[\\\\/]/).pop().toLowerCase().replace(/\\.cmd$|\\.exe$/, '');
-  return commandName === 'codex';
+  return isCliCommandOneOf(command, ['codex']);
+}
+
+function isCliCommandOneOf(command, names) {
+  const commandName = getCliCommandName(command);
+  return (Array.isArray(names) ? names : [])
+    .map((name) => String(name || '').toLowerCase())
+    .includes(commandName);
+}
+
+function getCliCommandName(command) {
+  return String(command || '').split(/[\\\\/]/).pop().toLowerCase().replace(/\\.cmd$|\\.exe$/, '');
+}
+
+function getDirectCliProviderName() {
+  const normalized = String(cli || '').trim() || 'custom';
+  return normalized + '-cli';
+}
+
+function getDirectCliSessionPrefix() {
+  return getDirectCliProviderName().replace(/[^A-Za-z0-9_.-]+/g, '-') + '-';
 }
 
 function sanitizeCodexRulesFiles() {
