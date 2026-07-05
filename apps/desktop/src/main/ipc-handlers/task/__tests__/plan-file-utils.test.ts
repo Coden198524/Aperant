@@ -142,6 +142,121 @@ describe('plan-file-utils token usage persistence', () => {
     });
     expect(projectStore.invalidateTasksCache).toHaveBeenCalledWith('project-1');
   });
+  it('persists Direct fallback current subtask failure without replacing phases', () => {
+    saveAutocodeImplementationPlanSync(planPath, {
+      workflow_type: 'direct',
+      status: 'coding',
+      direct_execution: {
+        enabled: true,
+        outcome: 'running',
+        current_subtask_id: 'direct-cr-1',
+      },
+      phases: [
+        {
+          phase: 1,
+          name: 'Direct execution',
+          type: 'direct',
+          subtasks: [
+            {
+              id: 'direct-cr-1',
+              title: 'Direct Request Changes',
+              description: 'Do work',
+              status: 'in_progress',
+              started_at: '2026-01-01T00:00:00.000Z',
+              completed_at: '2026-01-01T00:00:05.000Z',
+            },
+            { id: 'unrelated', title: 'Other', description: 'Keep me', status: 'pending' },
+          ],
+        },
+      ],
+    });
+
+    const success = persistDirectFallbackPlanStateSync(planPath, {
+      status: 'error',
+      direct_execution: {
+        enabled: true,
+        outcome: 'error',
+        current_subtask_id: 'direct-cr-1',
+      },
+      directSubtask: {
+        id: 'direct-cr-1',
+        status: 'failed',
+        timestamp: '2026-01-01T00:01:00.000Z',
+        summary: 'Direct clean-exit fallback failed.',
+      },
+    }, 'project-1');
+
+    const plan = loadAutocodeImplementationPlanSync(planPath)!;
+    const directSubtask = plan.phases?.[0]?.subtasks?.[0];
+    const unrelatedSubtask = plan.phases?.[0]?.subtasks?.[1];
+
+    expect(success).toBe(true);
+    expect(plan.phases?.[0]?.subtasks).toHaveLength(2);
+    expect(directSubtask).toMatchObject({
+      id: 'direct-cr-1',
+      status: 'failed',
+      started_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:01:00.000Z',
+      notes: 'Direct clean-exit fallback failed.',
+    });
+    expect(directSubtask?.completed_at).toBe('2026-01-01T00:01:00.000Z');
+    expect(unrelatedSubtask).toMatchObject({
+      id: 'unrelated',
+      status: 'pending',
+    });
+    expect(projectStore.invalidateTasksCache).toHaveBeenCalledWith('project-1');
+  });
+
+  it('persists Direct fallback current subtask completion without replacing phases', () => {
+    saveAutocodeImplementationPlanSync(planPath, {
+      workflow_type: 'direct',
+      direct_execution: {
+        enabled: true,
+        outcome: 'running',
+        current_subtask_id: 'direct-cr-1',
+      },
+      phases: [
+        {
+          phase: 1,
+          name: 'Direct execution',
+          type: 'direct',
+          subtasks: [
+            { id: 'direct-cr-1', title: 'Direct Request Changes', description: 'Do work', status: 'in_progress' },
+          ],
+        },
+      ],
+    });
+
+    const success = persistDirectFallbackPlanStateSync(planPath, {
+      status: 'human_review',
+      reviewReason: 'completed',
+      direct_execution: {
+        enabled: true,
+        outcome: 'completed',
+        current_subtask_id: 'direct-cr-1',
+        completed_at: '2026-01-01T00:02:00.000Z',
+      },
+      directSubtask: {
+        id: 'direct-cr-1',
+        status: 'completed',
+        timestamp: '2026-01-01T00:02:00.000Z',
+        summary: 'Completed by Direct fallback.',
+      },
+    }, 'project-1');
+
+    const plan = loadAutocodeImplementationPlanSync(planPath)!;
+    const directSubtask = plan.phases?.[0]?.subtasks?.[0];
+
+    expect(success).toBe(true);
+    expect(directSubtask).toMatchObject({
+      id: 'direct-cr-1',
+      status: 'completed',
+      started_at: '2026-01-01T00:02:00.000Z',
+      completed_at: '2026-01-01T00:02:00.000Z',
+      completion_summary: 'Completed by Direct fallback.',
+      notes: 'Completed by Direct fallback.',
+    });
+  });
   it('round-trips subtask execution timing metadata through markdown plans', () => {
     saveAutocodeImplementationPlanSync(planPath, {
       phases: [

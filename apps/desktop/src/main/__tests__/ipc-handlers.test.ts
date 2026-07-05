@@ -207,6 +207,7 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
     startQAProcess: ReturnType<typeof vi.fn>;
     killTask: ReturnType<typeof vi.fn>;
     configure: ReturnType<typeof vi.fn>;
+    resolveTaskProjectId: ReturnType<typeof vi.fn>;
   };
   let mockTerminalManager: {
     create: ReturnType<typeof vi.fn>;
@@ -241,6 +242,7 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
       startQAProcess: vi.fn(),
       killTask: vi.fn(),
       configure: vi.fn(),
+      resolveTaskProjectId: vi.fn(() => undefined),
     });
 
     // Create mock terminal manager
@@ -699,6 +701,153 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
         expect.any(String), // projectId for multi-project filtering
         "errors"
       );
+    });
+
+    it("should fail Direct clean exit when durable run result reports failure", async () => {
+      const { setupIpcHandlers } = await import("../ipc-handlers");
+      const { projectStore } = await import("../project-store");
+      const { taskStateManager } = await import("../task-state-manager");
+      const { notificationService } = await import("../notification-service");
+      const {
+        AUTOCODE_TASK_ARTIFACTS,
+        loadAutocodeImplementationPlanSync,
+        saveAutocodeImplementationPlanSync,
+      } = await import("@autocode/core");
+      setupIpcHandlers(
+        mockAgentManager as never,
+        mockTerminalManager as never,
+        () => mockMainWindow as never
+      );
+
+      mkdirSync(path.join(TEST_PROJECT_PATH, ".autocode", "specs"), { recursive: true });
+      const addResult = await ipcMain.invokeHandler("project:add", {}, TEST_PROJECT_PATH);
+      const projectId = (addResult as { data: { id: string } }).data.id;
+
+      const specId = "001-direct-clean-exit-failure";
+      const directSubtaskId = "direct-cr-20260601000000000";
+      const specDir = path.join(TEST_PROJECT_PATH, ".autocode", "specs", specId);
+      mkdirSync(specDir, { recursive: true });
+      const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+      saveAutocodeImplementationPlanSync(planPath, {
+        feature: "Direct clean exit failure",
+        workflow_type: "direct",
+        status: "in_progress",
+        planStatus: "coding",
+        xstateState: "coding",
+        executionPhase: "coding",
+        direct_execution: {
+          enabled: true,
+          outcome: "running",
+          current_subtask_id: directSubtaskId,
+        },
+        phases: [
+          {
+            phase: 1,
+            name: "Direct execution",
+            type: "direct",
+            subtasks: [
+              {
+                id: directSubtaskId,
+                title: "Direct model execution",
+                description: "Run Direct mode",
+                status: "in_progress",
+                started_at: "2026-06-01T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      });
+      writeFileSync(
+        path.join(specDir, AUTOCODE_TASK_ARTIFACTS.runResult),
+        JSON.stringify({
+          phase: "direct",
+          status: "error",
+          exitCode: 1,
+          message: "Direct execution failed after the process exited cleanly.",
+          updatedAt: "2026-06-01T00:00:02.000Z",
+        }),
+        "utf-8"
+      );
+      projectStore.invalidateTasksCache(projectId);
+
+      const task = projectStore.getTasks(projectId).find((item) => item.id === specId);
+      const project = projectStore.getProject(projectId);
+      expect(task).toBeDefined();
+      expect(project).toBeDefined();
+
+      taskStateManager.handleUiEvent(task!.id, {
+        type: "CODING_STARTED",
+        subtaskId: directSubtaskId,
+        subtaskDescription: "Direct model execution",
+      }, task!, project!);
+      mockMainWindow.webContents.send.mockClear();
+      vi.mocked(notificationService.notifyTaskFailed).mockClear();
+      vi.mocked(notificationService.notifyReviewNeeded).mockClear();
+
+      mockAgentManager.emit("exit", task!.id, 0, "task-execution", projectId);
+
+      expect(taskStateManager.getCurrentState(task!.id, projectId)).toBe("error");
+      expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+        "task:statusChange",
+        task!.id,
+        "human_review",
+        projectId,
+        "errors"
+      );
+      expect(mockMainWindow.webContents.send).not.toHaveBeenCalledWith(
+        "task:statusChange",
+        task!.id,
+        "human_review",
+        projectId,
+        "completed"
+      );
+      expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+        "task:progress",
+        task!.id,
+        expect.objectContaining({
+          phases: expect.arrayContaining([
+            expect.objectContaining({
+              subtasks: expect.arrayContaining([
+                expect.objectContaining({
+                  id: directSubtaskId,
+                  status: "failed",
+                  completed_at: expect.any(String),
+                }),
+              ]),
+            }),
+          ]),
+        }),
+        projectId
+      );
+      expect(notificationService.notifyTaskFailed).toHaveBeenCalledWith(
+        task!.title || task!.specId,
+        projectId,
+        task!.id
+      );
+      expect(notificationService.notifyReviewNeeded).not.toHaveBeenCalled();
+
+      const savedPlan = loadAutocodeImplementationPlanSync(planPath) as {
+        status?: string;
+        reviewReason?: string;
+        xstateState?: string;
+        executionPhase?: string;
+        direct_execution?: { outcome?: string; ai_coding_quality?: Record<string, unknown> };
+        phases?: Array<{ subtasks?: Array<{ id?: string; status?: string; completed_at?: string }> }>;
+      } | null;
+      expect(savedPlan?.status).toBe("error");
+      expect(savedPlan?.reviewReason).toBe("errors");
+      expect(savedPlan?.xstateState).toBe("error");
+      expect(savedPlan?.executionPhase).toBe("failed");
+      expect(savedPlan?.direct_execution?.outcome).toBe("error");
+      expect(savedPlan?.phases?.[0]?.subtasks?.[0]).toMatchObject({
+        id: directSubtaskId,
+        status: "failed",
+      });
+      expect(savedPlan?.phases?.[0]?.subtasks?.[0]?.completed_at).toEqual(expect.any(String));
+      expect(savedPlan?.direct_execution?.ai_coding_quality).toMatchObject({
+        fallback: "clean-exit",
+        fallbackReason: "direct-run-result-not-successful",
+      });
     });
 
     it("should require manual plan review before coding when requireReviewBeforeCoding is enabled", async () => {

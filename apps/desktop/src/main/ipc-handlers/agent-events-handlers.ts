@@ -19,7 +19,18 @@ import type { ProcessType, ExecutionProgressData } from "../agent";
 import { titleGenerator } from "../title-generator";
 import { fileWatcher } from "../file-watcher";
 import { notificationService } from "../notification-service";
-import { persistPlanLastEventSync, getPlanPath, persistPlanPhaseSync, persistPlanStatusAndReasonSync, persistPlanTokenUsageSync, hasPlanWithSubtasks, syncPlanPhasesToMainSync, persistDirectFallbackPlanStateSync } from "./task/plan-file-utils";
+import {
+  applyDirectFallbackSubtaskStateToPlan,
+  getPlanPath,
+  hasPlanWithSubtasks,
+  persistDirectFallbackPlanStateSync,
+  persistPlanLastEventSync,
+  persistPlanPhaseSync,
+  persistPlanStatusAndReasonSync,
+  persistPlanTokenUsageSync,
+  syncPlanPhasesToMainSync,
+  type DirectFallbackSubtaskState,
+} from "./task/plan-file-utils";
 import { findTaskWorktree } from "../worktree-paths";
 import { findTaskAndProject } from "./task/shared";
 import { safeSendToRenderer } from "./utils";
@@ -140,6 +151,7 @@ function evaluateDirectCompletionFallbackForTask(input: {
       exitCode: input.exitCode,
       plan,
       runResult,
+      taskMetadata: input.task.metadata,
       fallback: input.fallback,
     }),
     plan,
@@ -151,28 +163,43 @@ function getDirectFallbackSubtaskId(plan: DirectFallbackPlan | null): string {
   return typeof value === 'string' && value.trim() ? value.trim() : 'direct-implementation';
 }
 
-function markDirectFallbackCompletionOnPlan(plan: ImplementationPlan, decision?: DirectCompletionFallbackDecision): void {
+function markDirectFallbackCompletionOnPlan(
+  plan: ImplementationPlan,
+  decision?: DirectCompletionFallbackDecision
+): DirectFallbackSubtaskState {
   plan.status = 'human_review';
   plan.planStatus = 'review';
   plan.reviewReason = 'completed';
   plan.xstateState = 'human_review';
   plan.executionPhase = 'complete';
   const planRecord = plan as ImplementationPlan & DirectFallbackPlan;
+  const completedAt = typeof planRecord.direct_execution?.completed_at === 'string'
+    ? planRecord.direct_execution.completed_at
+    : new Date().toISOString();
   planRecord.direct_execution = {
     ...(planRecord.direct_execution ?? {}),
     enabled: true,
     outcome: 'completed',
-    completed_at: typeof planRecord.direct_execution?.completed_at === 'string'
-      ? planRecord.direct_execution.completed_at
-      : new Date().toISOString(),
+    completed_at: completedAt,
     summary_file: 'direct_summary.md',
     ...(decision?.action === 'complete' ? { ai_coding_quality: decision.quality } : {}),
   };
+  const directSubtask: DirectFallbackSubtaskState = {
+    id: getDirectFallbackSubtaskId(planRecord),
+    status: 'completed',
+    timestamp: completedAt,
+    summary: 'Completed by Direct fallback after a clean process exit.',
+  };
+  applyDirectFallbackSubtaskStateToPlan(plan as unknown as Record<string, unknown>, directSubtask);
+  return directSubtask;
 }
 
-function markDirectFallbackFailureOnPlan(plan: ImplementationPlan, decision: DirectCompletionFallbackDecision): void {
+function markDirectFallbackFailureOnPlan(
+  plan: ImplementationPlan,
+  decision: DirectCompletionFallbackDecision
+): DirectFallbackSubtaskState | undefined {
   if (decision.action !== 'fail') {
-    return;
+    return undefined;
   }
   plan.status = 'error';
   plan.planStatus = 'pending';
@@ -187,9 +214,22 @@ function markDirectFallbackFailureOnPlan(plan: ImplementationPlan, decision: Dir
     summary_file: 'direct_summary.md',
     ai_coding_quality: decision.quality,
   };
+  const directSubtask: DirectFallbackSubtaskState = {
+    id: getDirectFallbackSubtaskId(planRecord),
+    status: 'failed',
+    timestamp: new Date().toISOString(),
+    summary: decision.error,
+  };
+  applyDirectFallbackSubtaskStateToPlan(plan as unknown as Record<string, unknown>, directSubtask);
+  return directSubtask;
 }
 
-function persistDirectFallbackPlanState(project: Project, task: Task, plan: ImplementationPlan): void {
+function persistDirectFallbackPlanState(
+  project: Project,
+  task: Task,
+  plan: ImplementationPlan,
+  directSubtask?: DirectFallbackSubtaskState
+): void {
   const planRecord = plan as ImplementationPlan & DirectFallbackPlan;
   const directExecution = planRecord.direct_execution && typeof planRecord.direct_execution === 'object'
     ? planRecord.direct_execution as Record<string, unknown>
@@ -201,6 +241,7 @@ function persistDirectFallbackPlanState(project: Project, task: Task, plan: Impl
     xstateState: plan.xstateState,
     executionPhase: typeof plan.executionPhase === 'string' ? plan.executionPhase : undefined,
     direct_execution: directExecution,
+    ...(directSubtask ? { directSubtask } : {}),
   };
   for (const specDir of getDirectTaskSpecDirs(project, task)) {
     persistDirectFallbackPlanStateSync(
@@ -365,8 +406,8 @@ export function registerAgenteventsHandlers(
                   quality: decision.quality,
                 }, checkTask, checkProject);
                 if (plan) {
-                  markDirectFallbackCompletionOnPlan(plan, decision);
-                  persistDirectFallbackPlanState(checkProject, checkTask, plan);
+                  const directSubtask = markDirectFallbackCompletionOnPlan(plan, decision);
+                  persistDirectFallbackPlanState(checkProject, checkTask, plan, directSubtask);
                 }
               } else if (decision.action === 'fail') {
                 taskStateManager.handleUiEvent(taskId, {
@@ -376,8 +417,8 @@ export function registerAgenteventsHandlers(
                   attemptCount: 1,
                 }, checkTask, checkProject);
                 if (plan) {
-                  markDirectFallbackFailureOnPlan(plan, decision);
-                  persistDirectFallbackPlanState(checkProject, checkTask, plan);
+                  const directSubtask = markDirectFallbackFailureOnPlan(plan, decision);
+                  persistDirectFallbackPlanState(checkProject, checkTask, plan, directSubtask);
                 }
               }
             } else {
@@ -434,6 +475,13 @@ export function registerAgenteventsHandlers(
         }
       }
     }
+    if (exitTask && exitProject) {
+      finalPlan = loadLatestDirectFallbackPlan(
+        getDirectTaskSpecDirs(exitProject, exitTask),
+        finalPlan
+      ) ?? finalPlan;
+    }
+
     let cleanExitDirectFallbackFailed = false;
     if (
       code === 0 &&
@@ -459,8 +507,8 @@ export function registerAgenteventsHandlers(
           quality: decision.quality,
         }, exitTask, exitProject);
         if (finalPlan) {
-          markDirectFallbackCompletionOnPlan(finalPlan, decision);
-          persistDirectFallbackPlanState(exitProject, exitTask, finalPlan);
+          const directSubtask = markDirectFallbackCompletionOnPlan(finalPlan, decision);
+          persistDirectFallbackPlanState(exitProject, exitTask, finalPlan, directSubtask);
         }
       } else if (decision.action === 'fail') {
         cleanExitDirectFallbackFailed = true;
@@ -471,8 +519,8 @@ export function registerAgenteventsHandlers(
           attemptCount: 1,
         }, exitTask, exitProject);
         if (finalPlan) {
-          markDirectFallbackFailureOnPlan(finalPlan, decision);
-          persistDirectFallbackPlanState(exitProject, exitTask, finalPlan);
+          const directSubtask = markDirectFallbackFailureOnPlan(finalPlan, decision);
+          persistDirectFallbackPlanState(exitProject, exitTask, finalPlan, directSubtask);
         }
       }
     }

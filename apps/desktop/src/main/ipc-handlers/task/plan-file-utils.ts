@@ -338,6 +338,69 @@ export function persistPlanTokenUsageSync(
 }
 
 
+export type DirectFallbackSubtaskState = {
+  id?: string;
+  status: 'completed' | 'failed';
+  timestamp: string;
+  summary?: string;
+};
+
+export function applyDirectFallbackSubtaskStateToPlan(
+  plan: Record<string, unknown>,
+  state: DirectFallbackSubtaskState
+): boolean {
+  const phases = Array.isArray(plan.phases) ? plan.phases : [];
+  const directExecution = directFallbackRecordValue(plan.direct_execution);
+  const targetId = state.id?.trim() || directFallbackStringValue(directExecution.current_subtask_id);
+  const targetIds = new Set(['direct']);
+  if (targetId) {
+    targetIds.add(targetId);
+  }
+
+  let updated = false;
+  for (const phase of phases) {
+    const phaseRecord = directFallbackRecordValue(phase);
+    for (const collectionKey of ['subtasks', 'chunks'] as const) {
+      const subtasks = Array.isArray(phaseRecord[collectionKey]) ? phaseRecord[collectionKey] as unknown[] : [];
+      for (const subtask of subtasks) {
+        const subtaskRecord = directFallbackRecordValue(subtask);
+        const subtaskId = directFallbackStringValue(subtaskRecord.id);
+        if (!subtaskId || !targetIds.has(subtaskId)) {
+          continue;
+        }
+
+        subtaskRecord.status = state.status;
+        if (!directFallbackStringValue(subtaskRecord.started_at)) {
+          subtaskRecord.started_at = state.timestamp;
+        }
+        subtaskRecord.updated_at = state.timestamp;
+        if (state.status === 'completed') {
+          subtaskRecord.completed_at = state.timestamp;
+          const summary = state.summary || 'Completed by Direct fallback.';
+          subtaskRecord.completion_summary = directFallbackStringValue(subtaskRecord.completion_summary) || summary;
+          subtaskRecord.notes = directFallbackStringValue(subtaskRecord.notes) || summary;
+        } else {
+          subtaskRecord.completed_at = state.timestamp;
+          const summary = state.summary || 'Direct fallback marked this execution as failed.';
+          subtaskRecord.notes = directFallbackStringValue(subtaskRecord.notes) || summary;
+        }
+        updated = true;
+      }
+    }
+  }
+
+  return updated;
+}
+
+function directFallbackRecordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function directFallbackStringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
 export function persistDirectFallbackPlanStateSync(
   planPath: string,
   source: {
@@ -347,6 +410,7 @@ export function persistDirectFallbackPlanStateSync(
     xstateState?: string;
     executionPhase?: string;
     direct_execution?: Record<string, unknown>;
+    directSubtask?: DirectFallbackSubtaskState;
   },
   projectId?: string
 ): boolean {
@@ -389,6 +453,9 @@ export function persistDirectFallbackPlanStateSync(
           : {}),
         ...source.direct_execution,
       };
+    }
+    if (source.directSubtask) {
+      applyDirectFallbackSubtaskStateToPlan(plan, source.directSubtask);
     }
     plan.updated_at = new Date().toISOString();
 
