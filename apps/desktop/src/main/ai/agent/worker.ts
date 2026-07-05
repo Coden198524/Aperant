@@ -118,7 +118,7 @@ import {
   AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
   buildDirectRetrySessionConfig,
   mergeDirectValidationAttemptResults,
-  shouldRetryDirectValidationAttempt,
+  shouldRetryDirectAttempt,
   type DirectValidationAttemptFeedback,
 } from './direct-retry';
 import { resolveProjectAgentProfile } from '../config/project-agent-profile';
@@ -1641,7 +1641,7 @@ async function runDirectSessionWithValidationRetries(input: {
     };
     attempts.push(feedback);
 
-    if (!shouldRetryDirectValidationAttempt(gatedResult, attempt, AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS)) {
+    if (!shouldRetryDirectAttempt(gatedResult, attempt, AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS)) {
       const mergedResult = mergeDirectValidationAttemptResults(gatedResult, attempts);
       return {
         result: mergedResult,
@@ -1653,7 +1653,7 @@ async function runDirectSessionWithValidationRetries(input: {
     }
 
     postLog(
-      `Direct validation attempt ${attempt}/${AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS} failed: ${gatedResult.error?.message ?? 'quality gate failed'}. Retrying with corrective feedback.`,
+      `Direct attempt ${attempt}/${AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS} did not complete or pass quality gates: ${gatedResult.error?.message ?? `outcome ${gatedResult.outcome}`}. Retrying with corrective feedback.`,
     );
     currentSessionConfig = buildDirectRetrySessionConfig(
       currentSessionConfig,

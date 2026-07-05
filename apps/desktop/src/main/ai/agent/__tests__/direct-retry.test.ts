@@ -6,7 +6,7 @@ import {
   AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
   buildDirectRetrySessionConfig,
   mergeDirectValidationAttemptResults,
-  shouldRetryDirectValidationAttempt,
+  shouldRetryDirectAttempt,
   type DirectValidationAttemptFeedback,
 } from '../direct-retry';
 
@@ -82,8 +82,7 @@ function createSessionConfig(overrides: Partial<SessionConfig> = {}): SessionCon
 }
 
 describe('Direct validation retry helpers', () => {
-
-  it('retries only retryable Direct quality gate failures before the third attempt', () => {
+  it('retries retryable Direct quality failures and incomplete step-budget attempts before the third attempt', () => {
     const retryable = createResult({
       outcome: 'error',
       error: {
@@ -93,11 +92,21 @@ describe('Direct validation retry helpers', () => {
       },
     });
 
-    expect(shouldRetryDirectValidationAttempt(retryable, 1)).toBe(true);
-    expect(shouldRetryDirectValidationAttempt(retryable, 2)).toBe(true);
-    expect(shouldRetryDirectValidationAttempt(retryable, AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS)).toBe(false);
-    expect(shouldRetryDirectValidationAttempt(createResult({ outcome: 'auth_failure' }), 1)).toBe(false);
-    expect(shouldRetryDirectValidationAttempt(createResult({
+    const maxSteps = createResult({
+      outcome: 'max_steps',
+      stepsExecuted: 5,
+      messages: [{ role: 'assistant', content: 'I edited src/direct.ts but still need to run validation.' }],
+    });
+
+    expect(shouldRetryDirectAttempt(retryable, 1)).toBe(true);
+    expect(shouldRetryDirectAttempt(retryable, 2)).toBe(true);
+    expect(shouldRetryDirectAttempt(retryable, AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS)).toBe(false);
+    expect(shouldRetryDirectAttempt(maxSteps, 1)).toBe(true);
+    expect(shouldRetryDirectAttempt(maxSteps, 2)).toBe(true);
+    expect(shouldRetryDirectAttempt(maxSteps, AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS)).toBe(false);
+    expect(shouldRetryDirectAttempt(createResult({ outcome: 'context_window' }), 1)).toBe(false);
+    expect(shouldRetryDirectAttempt(createResult({ outcome: 'auth_failure' }), 1)).toBe(false);
+    expect(shouldRetryDirectAttempt(createResult({
       outcome: 'error',
       error: { code: 'direct_session_error', message: 'transport failed', retryable: false },
     }), 1)).toBe(false);
@@ -127,6 +136,7 @@ describe('Direct validation retry helpers', () => {
     expect(retryConfig.initialMessages).toHaveLength(1);
     expect(retryConfig.initialMessages[0]?.content).toContain('Direct Validation Retry (2/3)');
     expect(retryConfig.initialMessages[0]?.content).toContain('Do not repeat the same implementation idea blindly');
+    expect(retryConfig.initialMessages[0]?.content).toContain('ended before completion');
   });
 
   it('does not infer provider continuation from response metadata when persistence is disabled', () => {

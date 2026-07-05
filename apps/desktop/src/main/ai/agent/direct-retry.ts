@@ -18,13 +18,20 @@ export interface DirectValidationAttemptFeedback {
   failureReason: string;
 }
 
-export function shouldRetryDirectValidationAttempt(
+export function shouldRetryDirectAttempt(
   result: SessionResult | undefined,
   attempt: number,
   maxAttempts = AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
 ): boolean {
-  return attempt < maxAttempts &&
-    result?.outcome === 'error' &&
+  if (!result || attempt >= maxAttempts) {
+    return false;
+  }
+
+  if (result.outcome === 'max_steps') {
+    return true;
+  }
+
+  return result.outcome === 'error' &&
     result.error?.code === 'direct_quality_gate_failed' &&
     result.error.retryable === true;
 }
@@ -164,7 +171,7 @@ function buildDirectRetryPrompt(
   const repeatedFailure = hasRepeatedDirectFailureSignature(attempts);
   const parts = [
     `## Direct Validation Retry (${nextAttempt}/${maxAttempts})`,
-    'The previous Direct attempt did not pass the validation/quality gate.',
+    'The previous Direct attempt did not pass validation/quality gates or ended before completion.',
     'Do not repeat the same implementation idea blindly. First inspect the current diff and relevant files, then decide whether the previous hypothesis was wrong or only incomplete.',
   ];
 
@@ -182,8 +189,9 @@ function buildDirectRetryPrompt(
       '1. Re-read the current files and diff before making changes.',
       '2. Diagnose why the previous attempt failed; do not only restate the error.',
       '3. Apply a targeted fix. Rework or replace prior edits when they caused the failure.',
-      '4. Run the most focused validation command available and report the exact command and result.',
-      `5. If validation still cannot pass by attempt ${maxAttempts}, report the blocker with evidence instead of claiming success.`,
+      '4. If the previous attempt hit max_steps, continue the remaining work from current file state and avoid broad rediscovery.',
+      '5. Run the most focused validation command available and report the exact command and result.',
+      `6. If validation still cannot pass by attempt ${maxAttempts}, report the blocker with evidence instead of claiming success.`,
     ].join('\n'),
   );
 
