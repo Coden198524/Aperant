@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, type Dirent } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
 import { join } from 'node:path';
 import { safeParseAutocodeJson } from './json-repair.js';
 import {
@@ -302,6 +302,7 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
 
   const metadata = readJsonFile<AutocodeTaskMetadata>(metadataPath) ?? undefined;
   const runResult = readJsonFile<AutocodeRunResultFile>(runResultPath) ?? undefined;
+  const runResultMtimeMs = fileModifiedTimeMs(runResultPath);
   const requirements = loadAutocodeTaskRequirementsSync(input.specDir);
   const specTitle = readSpecTitle(specFilePath);
   const description = getProjectTaskDescription(requirements, plan, specFilePath);
@@ -322,6 +323,7 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
     specId: input.specId,
     metadata,
     runResult,
+    runResultMtimeMs,
     logs: taskLogs,
     taskDescription: finalDescription,
     persist: input.persistStaleStatusCorrections !== false,
@@ -638,6 +640,7 @@ function correctStaleAutocodeTaskStatus(input: {
   specId: string;
   metadata?: AutocodeTaskMetadata;
   runResult?: AutocodeRunResultFile;
+  runResultMtimeMs?: number;
   logs?: AutocodeTaskLogs | null;
   taskDescription?: string;
   persist: boolean;
@@ -753,13 +756,12 @@ function isCompletedDirectRun(input: Parameters<typeof correctStaleAutocodeTaskS
   if (!isDirectAutocodeTask(input)) {
     return false;
   }
-  if (!isDirectRunResultFreshForCurrentIteration(input)) {
+
+  if (hasFreshFailedDirectRunResult(input)) {
     return false;
   }
 
-  return input.runResult?.phase === 'direct' &&
-    input.runResult.status === 'success' &&
-    input.runResult.exitCode === 0;
+  return hasFreshSuccessfulDirectRunResult(input) || hasFreshCompletedDirectPlanOutcome(input);
 }
 
 function shouldResumeStaleCompletedDirectIteration(
@@ -802,31 +804,90 @@ function isDirectAutocodeTask(input: Parameters<typeof correctStaleAutocodeTaskS
     input.plan?.direct_execution?.enabled === true;
 }
 
-function isDirectRunResultFreshForCurrentIteration(
+function hasFreshSuccessfulDirectRunResult(
   input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
+): boolean {
+  return input.runResult?.phase === 'direct' &&
+    input.runResult.status === 'success' &&
+    input.runResult.exitCode === 0 &&
+    isDirectEvidenceFreshForCurrentIteration(input, getDirectRunResultEvidenceMs(input));
+}
+
+function hasFreshFailedDirectRunResult(
+  input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
+): boolean {
+  if (input.runResult?.phase !== 'direct') {
+    return false;
+  }
+  if (input.runResult.status === 'success' && input.runResult.exitCode === 0) {
+    return false;
+  }
+  return isDirectEvidenceFreshForCurrentIteration(input, getDirectRunResultEvidenceMs(input));
+}
+
+function hasFreshCompletedDirectPlanOutcome(
+  input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
+): boolean {
+  if (!isSuccessfulDirectOutcome(input.plan?.direct_execution?.outcome)) {
+    return false;
+  }
+  const completedAtMs = timestampMs(input.plan?.direct_execution?.completed_at);
+  if (hasActiveCodingLogAfter(input.logs, completedAtMs)) {
+    return false;
+  }
+  return isDirectEvidenceFreshForCurrentIteration(input, completedAtMs);
+}
+
+function hasActiveCodingLogAfter(
+  logs: AutocodeTaskLogs | null | undefined,
+  evidenceMs: number | undefined,
+): boolean {
+  if (evidenceMs === undefined || logs?.phases?.coding?.status !== 'active') {
+    return false;
+  }
+  const coding = logs.phases.coding;
+  const timestamps = [
+    timestampMs(logs.updated_at),
+    timestampMs(coding.started_at ?? undefined),
+    timestampMs(coding.completed_at ?? undefined),
+    ...coding.entries.map((entry) => timestampMs(entry.timestamp)),
+  ].filter((value): value is number => value !== undefined);
+  return timestamps.some((timestamp) => timestamp > evidenceMs);
+}
+
+function isDirectEvidenceFreshForCurrentIteration(
+  input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
+  evidenceMs: number | undefined,
 ): boolean {
   const iterationStartedAtMs = getCurrentDirectIterationStartedAtMs(input.plan);
   if (iterationStartedAtMs === undefined) {
     return true;
   }
-  const runResultUpdatedAtMs = input.runResult?.phase === 'direct' &&
-    input.runResult.status === 'success' &&
-    input.runResult.exitCode === 0
-    ? timestampMs(input.runResult.updatedAt)
-    : undefined;
-  return runResultUpdatedAtMs !== undefined && runResultUpdatedAtMs >= iterationStartedAtMs;
+  return evidenceMs !== undefined && evidenceMs >= iterationStartedAtMs;
+}
+
+function getDirectRunResultEvidenceMs(
+  input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
+): number | undefined {
+  return timestampMs(input.runResult?.updatedAt) ?? input.runResultMtimeMs;
 }
 
 function getFreshestDirectCompletionEvidenceMs(
   input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
 ): number | undefined {
   const timestamps: number[] = [];
+  if (isSuccessfulDirectOutcome(input.plan?.direct_execution?.outcome)) {
+    const completedAtMs = timestampMs(input.plan?.direct_execution?.completed_at);
+    if (completedAtMs !== undefined && !hasActiveCodingLogAfter(input.logs, completedAtMs)) {
+      timestamps.push(completedAtMs);
+    }
+  }
   if (
     input.runResult?.phase === 'direct' &&
     input.runResult.status === 'success' &&
     input.runResult.exitCode === 0
   ) {
-    const runResultUpdatedAtMs = timestampMs(input.runResult.updatedAt);
+    const runResultUpdatedAtMs = getDirectRunResultEvidenceMs(input);
     if (runResultUpdatedAtMs !== undefined) {
       timestamps.push(runResultUpdatedAtMs);
     }
@@ -845,7 +906,7 @@ function getFreshestDirectCompletionEvidenceMs(
 
 function isSuccessfulDirectOutcome(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
-  return normalized === 'success' || normalized === 'completed' || normalized === 'done';
+  return normalized === 'success' || normalized === 'completed' || normalized === 'done' || normalized === 'max_steps';
 }
 
 function getCurrentDirectIterationStartedAtMs(plan: ImplementationPlanFile | null): number | undefined {
@@ -1174,6 +1235,15 @@ function readSpecTitle(filePath: string): string | null {
     return match?.[1]?.trim() || null;
   } catch {
     return null;
+  }
+}
+
+function fileModifiedTimeMs(filePath: string): number | undefined {
+  try {
+    const timestamp = statSync(filePath).mtimeMs;
+    return Number.isFinite(timestamp) ? timestamp : undefined;
+  } catch {
+    return undefined;
   }
 }
 

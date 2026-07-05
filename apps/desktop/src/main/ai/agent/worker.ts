@@ -114,6 +114,13 @@ import {
   type ShardableImplementationPlan,
 } from '../schema/plan-shards';
 import { buildAggressiveCoderPrompt } from './aggressive-coder-prompt';
+import {
+  AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
+  buildDirectRetrySessionConfig,
+  mergeDirectValidationAttemptResults,
+  shouldRetryDirectValidationAttempt,
+  type DirectValidationAttemptFeedback,
+} from './direct-retry';
 import { resolveProjectAgentProfile } from '../config/project-agent-profile';
 import { extractSpecTaskDescriptionFromInitialMessages } from './task-description';
 import { WorkerObserverProxy } from '../memory/ipc/worker-observer-proxy';
@@ -1464,6 +1471,178 @@ function persistDirectTaskCompletion(
   }
 }
 
+interface DirectAttemptTrace {
+  streamedText: string;
+  modifiedFiles: Set<string>;
+}
+
+interface DirectExecutionOutcome {
+  result: SessionResult;
+  streamedText: string;
+  modifiedFiles: string[];
+  quality: DirectCodingQualityMetrics;
+  attemptCount: number;
+}
+
+async function runDirectSessionWithValidationRetries(input: {
+  session: SerializableSessionConfig;
+  sessionConfig: SessionConfig;
+  runnerOptions: Parameters<typeof runContinuableSession>[1];
+  continuationOptions: Parameters<typeof runContinuableSession>[2];
+  modelId: string;
+  changedFileBaseline: ChangedFileSnapshot | null;
+  modifiedFileHints: Set<string>;
+  setActiveAttempt: (attempt: DirectAttemptTrace | null) => void;
+}): Promise<DirectExecutionOutcome> {
+  const attempts: DirectValidationAttemptFeedback[] = [];
+  let currentSessionConfig = input.sessionConfig;
+
+  for (let attempt = 1; attempt <= AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS; attempt += 1) {
+    const trace: DirectAttemptTrace = {
+      streamedText: '',
+      modifiedFiles: new Set<string>(),
+    };
+    input.setActiveAttempt(trace);
+
+    let attemptResult: SessionResult;
+    try {
+      attemptResult = await runDirectSessionWithGatewayFallback(
+        currentSessionConfig,
+        input.runnerOptions,
+        input.continuationOptions,
+        input.session,
+        input.modelId,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      attemptResult = buildDirectSessionErrorResult(message);
+      postError(`Direct task session failed: ${message}`);
+    } finally {
+      input.setActiveAttempt(null);
+    }
+
+    const modifiedFiles = await collectDirectModifiedFiles(
+      input.session,
+      input.changedFileBaseline,
+      input.modifiedFileHints,
+    );
+    const quality = await evaluateDirectCodingQuality(
+      input.session,
+      attemptResult,
+      modifiedFiles,
+      trace.streamedText,
+    );
+    const gatedResult = applyDirectQualityGateToResult(attemptResult, quality) ?? attemptResult;
+    const feedback: DirectValidationAttemptFeedback = {
+      attempt,
+      result: gatedResult,
+      quality,
+      streamedText: trace.streamedText,
+      modifiedFiles,
+      failureReason: getDirectAttemptFailureReason(gatedResult),
+    };
+    attempts.push(feedback);
+
+    if (!shouldRetryDirectValidationAttempt(gatedResult, attempt, AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS)) {
+      const mergedResult = mergeDirectValidationAttemptResults(gatedResult, attempts);
+      return {
+        result: mergedResult,
+        streamedText: trace.streamedText,
+        modifiedFiles,
+        quality: applyDirectAttemptTotalsToQuality(quality, mergedResult, modifiedFiles),
+        attemptCount: attempt,
+      };
+    }
+
+    postLog(
+      `Direct validation attempt ${attempt}/${AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS} failed: ${gatedResult.error?.message ?? 'quality gate failed'}. Retrying with corrective feedback.`,
+    );
+    currentSessionConfig = buildDirectRetrySessionConfig(
+      input.sessionConfig,
+      input.session,
+      attempts,
+      attempt + 1,
+      AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
+    );
+  }
+
+  const last = attempts[attempts.length - 1];
+  const fallbackResult = last?.result ?? buildDirectSessionErrorResult('Direct task ended without a result.');
+  const mergedResult = mergeDirectValidationAttemptResults(fallbackResult, attempts);
+  return {
+    result: mergedResult,
+    streamedText: last?.streamedText ?? '',
+    modifiedFiles: last?.modifiedFiles ?? [],
+    quality: applyDirectAttemptTotalsToQuality(last?.quality ?? buildFallbackDirectQuality(mergedResult), mergedResult, last?.modifiedFiles ?? []),
+    attemptCount: attempts.length,
+  };
+}
+
+async function collectDirectModifiedFiles(
+  session: SerializableSessionConfig,
+  changedFileBaseline: ChangedFileSnapshot | null,
+  modifiedFileHints: Set<string>,
+): Promise<string[]> {
+  return changedFileBaseline
+    ? collectFilesChangedSinceBaseline(session.projectDir, changedFileBaseline, [...modifiedFileHints])
+    : [...modifiedFileHints];
+}
+
+function buildDirectSessionErrorResult(message: string): SessionResult {
+  return {
+    outcome: 'error',
+    stepsExecuted: 0,
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    messages: [],
+    toolCallCount: 0,
+    durationMs: 0,
+    error: {
+      code: 'direct_session_error',
+      message,
+      retryable: false,
+    },
+  };
+}
+
+function getDirectAttemptFailureReason(result: SessionResult): string {
+  return result.error?.message ?? `Direct task ended with outcome ${result.outcome}`;
+}
+
+function applyDirectAttemptTotalsToQuality(
+  quality: DirectCodingQualityMetrics,
+  result: SessionResult,
+  modifiedFiles: string[],
+): DirectCodingQualityMetrics {
+  return {
+    ...quality,
+    outcome: result.outcome,
+    changedFiles: modifiedFiles,
+    filesChanged: modifiedFiles.length,
+    stepsExecuted: result.stepsExecuted,
+    toolCallCount: result.toolCallCount,
+    durationMs: result.durationMs,
+  };
+}
+
+function buildFallbackDirectQuality(result: SessionResult): DirectCodingQualityMetrics {
+  return {
+    mode: 'direct',
+    outcome: result.outcome,
+    changedFiles: [],
+    filesChanged: 0,
+    stepsExecuted: result.stepsExecuted,
+    toolCallCount: result.toolCallCount,
+    durationMs: result.durationMs,
+    recordedAt: new Date().toISOString(),
+    selfCritique: {
+      status: 'skipped',
+      filesReviewed: 0,
+      improvements: [],
+    },
+    validation: inferAutocodeDirectValidationEvidence(result),
+  };
+}
+
 async function learnFromDirectTaskSession(
   session: SerializableSessionConfig,
   result: SessionResult | undefined,
@@ -1569,7 +1748,9 @@ async function runDefaultSession(
   let result: SessionResult | undefined;
   let streamedText = '';
   const directModifiedFiles = new Set<string>();
+  let activeDirectAttempt: DirectAttemptTrace | null = null;
   let directChangedFileBaseline: ChangedFileSnapshot | null = null;
+  let directExecutionOutcome: DirectExecutionOutcome | undefined;
   try {
     if (isDirectTaskSession(session)) {
       directChangedFileBaseline = await collectGitChangedFileSnapshot(session.projectDir);
@@ -1579,12 +1760,17 @@ async function runDefaultSession(
       memoryContext: memoryProxy ? { proxy: memoryProxy } : undefined,
       onEvent: (event: StreamEvent) => {
         if (isDirectTaskSession(session) && event.type === 'text-delta') {
-          streamedText += event.text;
+          if (activeDirectAttempt) {
+            activeDirectAttempt.streamedText += event.text;
+          } else {
+            streamedText += event.text;
+          }
         }
         if (isDirectTaskSession(session) && event.type === 'tool-call' && shouldTrackDirectModifiedFile(event.toolName)) {
           const filePath = extractFilePathFromToolArgs(event.args);
           if (filePath) {
             directModifiedFiles.add(filePath);
+            activeDirectAttempt?.modifiedFiles.add(filePath);
           }
         }
         // Write stream events to task_logs.jsonl for UI log display
@@ -1626,15 +1812,29 @@ async function runDefaultSession(
       contextWindowExhaustedOutcome: isDirectTaskSession(session) ? 'context_window' as const : undefined,
     };
 
-    result = isDirectTaskSession(session)
-      ? await runDirectSessionWithGatewayFallback(sessionConfig, runnerOptions, continuationOptions, session, session.modelId)
-      : await runContinuableSessionWithGatewayFallback(
-          sessionConfig,
-          runnerOptions,
-          continuationOptions,
-          session,
-          session.modelId,
-        );
+    if (isDirectTaskSession(session)) {
+      directExecutionOutcome = await runDirectSessionWithValidationRetries({
+        session,
+        sessionConfig,
+        runnerOptions,
+        continuationOptions,
+        modelId: session.modelId,
+        changedFileBaseline: directChangedFileBaseline,
+        modifiedFileHints: directModifiedFiles,
+        setActiveAttempt: (attempt) => {
+          activeDirectAttempt = attempt;
+        },
+      });
+      result = directExecutionOutcome.result;
+    } else {
+      result = await runContinuableSessionWithGatewayFallback(
+        sessionConfig,
+        runnerOptions,
+        continuationOptions,
+        session,
+        session.modelId,
+      );
+    }
   } catch (error) {
     if (!isDirectTaskSession(session)) {
       throw error;
@@ -1665,24 +1865,35 @@ async function runDefaultSession(
   }
 
   if (isDirectTaskSession(session)) {
-    const modifiedFiles = directChangedFileBaseline
-      ? await collectFilesChangedSinceBaseline(session.projectDir, directChangedFileBaseline, [...directModifiedFiles])
-      : [...directModifiedFiles];
-    const directQuality = await evaluateDirectCodingQuality(session, result, modifiedFiles, streamedText);
-    result = applyDirectQualityGateToResult(result, directQuality);
-    persistDirectTaskCompletion(session, result, streamedText, modifiedFiles, directQuality);
+    const modifiedFiles = directExecutionOutcome?.modifiedFiles ?? await collectDirectModifiedFiles(
+      session,
+      directChangedFileBaseline,
+      directModifiedFiles,
+    );
+    const finalStreamedText = directExecutionOutcome?.streamedText ?? streamedText;
+    const directQuality = directExecutionOutcome?.quality ?? await evaluateDirectCodingQuality(
+      session,
+      result,
+      modifiedFiles,
+      finalStreamedText,
+    );
+    if (!directExecutionOutcome) {
+      result = applyDirectQualityGateToResult(result, directQuality);
+    }
+    persistDirectTaskCompletion(session, result, finalStreamedText, modifiedFiles, directQuality);
     await learnFromDirectTaskSession(session, result, modifiedFiles);
     if (isSuccessfulDirectOutcome(result)) {
       postTaskEvent('DIRECT_COMPLETED', {
         outcome: result?.outcome ?? 'unknown',
         filesChanged: modifiedFiles.length,
         quality: directQuality,
+        attemptCount: directExecutionOutcome?.attemptCount ?? 1,
       });
     } else {
       postTaskEvent('CODING_FAILED', {
         subtaskId: getDirectSessionSubtaskId(session),
         error: result?.error?.message ?? `Direct task ended with outcome ${result?.outcome ?? 'unknown'}`,
-        attemptCount: 1,
+        attemptCount: directExecutionOutcome?.attemptCount ?? 1,
       });
     }
   }
