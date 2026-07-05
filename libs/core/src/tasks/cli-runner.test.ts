@@ -1366,6 +1366,78 @@ describe('Autocode CLI runner prompt', () => {
     expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).toContain('Attempt 2 summary');
     expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).not.toContain('Attempt 1 summary');
   });
+  it('adds a repeated failure guard to Direct CLI retry prompts after the same quality failure repeats', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-repeated-failure',
+      title: 'Avoid repeated Direct CLI retry idea',
+      description: 'Direct CLI should change strategy when the same validation failure repeats.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-repeated-failure' });
+    const fakeCliPath = join(projectRoot, 'direct-repeated-failure-cli.cjs');
+    const attemptPath = join(projectRoot, 'direct-repeated-failure-attempt.txt');
+    const promptPath = join(projectRoot, 'direct-repeated-failure-prompts.txt');
+    const escapedSpecDir = specDir.replace(/\\/g, '\\\\');
+    const escapedAttemptPath = attemptPath.replace(/\\/g, '\\\\');
+    const escapedPromptPath = promptPath.replace(/\\/g, '\\\\');
+    writeFileSync(fakeCliPath, [
+      "const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const promptPath = '${escapedPromptPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  appendFileSync(promptPath, '\\n---PROMPT ' + attempt + '---\\n' + stdin, 'utf8');",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt < 3) {",
+      "    writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt ' + attempt + ' summary. Validation: npm test failed with SAME_ASSERTION.\\n', 'utf8');",
+      "    process.stdout.write('Attempt ' + attempt + ' followed the same idea.\\nValidation: npm test failed with SAME_ASSERTION.\\n');",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 3 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write('Attempt 3 changed strategy.\\nValidation: npm test passed.\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-repeated-failure',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(readFileSync(attemptPath, 'utf8')).toBe('3');
+    const retryPrompts = readFileSync(promptPath, 'utf8');
+    expect(retryPrompts).toContain('---PROMPT 3---');
+    expect(retryPrompts).toContain('Repeated failure guard: this failure matches an earlier Direct CLI attempt');
+    expect(retryPrompts).toContain('choose a different strategy');
+    expect(stdout).toContain('Retrying attempt 3/3');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      attemptCount?: number;
+      status?: string;
+      quality?: { validation?: { status?: string } };
+    };
+    expect(result.status).toBe('success');
+    expect(result.attemptCount).toBe(3);
+    expect(result.quality?.validation?.status).toBe('reported_passed');
+  });
   it('allows documentation Direct CLI runs without validation evidence', () => {
     createAutocodeTask({
       projectRoot,

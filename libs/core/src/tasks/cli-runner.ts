@@ -821,6 +821,7 @@ const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
 const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
 let directQualityRetryCount = 0;
+const directQualityFailureSignatures = [];
 let attemptId = 0;
 let currentAttemptStartedAt = Date.now();
 let activeCliJsonSessionId = '';
@@ -1824,6 +1825,11 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     if (!failed) {
       const qualityFailureReason = await getDirectCliQualityGateFailureReason(directQuality);
       if (qualityFailureReason) {
+        const failureSignature = getDirectQualityFailureSignature(qualityFailureReason, directQuality);
+        const repeatedFailure = Boolean(failureSignature && directQualityFailureSignatures.includes(failureSignature));
+        if (failureSignature) {
+          directQualityFailureSignatures.push(failureSignature);
+        }
         if (directQualityRetryCount < maxDirectQualityRetries) {
           directQualityRetryCount += 1;
           const nextDirectAttempt = directQualityRetryCount + 1;
@@ -1841,6 +1847,7 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
             maxRetries: maxDirectQualityRetries,
             finalText: readDirectCompletionSummary(result, currentAttemptStartedAt),
             attemptTranscript: defaultAttemptState.lastCliMessageText,
+            repeatedFailure,
           })));
           return;
         }
@@ -4936,6 +4943,30 @@ function compactDirectQualityRetryText(value, maxChars = DIRECT_QUALITY_RETRY_FE
   return text.slice(0, headBudget).trimEnd() + notice + text.slice(-tailBudget).trimStart();
 }
 
+function getDirectQualityFailureSignature(failureReason, quality) {
+  const validation = quality && quality.validation ? quality.validation : {};
+  const selfCritique = quality && quality.selfCritique ? quality.selfCritique : {};
+  return normalizeDirectQualityFailureSignatureText([
+    failureReason,
+    validation.status,
+    validation.reason,
+    selfCritique.status,
+    Array.isArray(selfCritique.improvements) ? selfCritique.improvements.slice(0, 3).join('|') : '',
+  ].join(' '));
+}
+
+function normalizeDirectQualityFailureSignatureText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\\battempt\\s+\\d+(?:\\s*\\/\\s*\\d+)?\\b/g, 'attempt #')
+    .replace(/\\bretry\\s+\\d+(?:\\s*\\/\\s*\\d+)?\\b/g, 'retry #')
+    .replace(/\\bpid\\s*[:=]?\\s*\\d+\\b/g, 'pid #')
+    .replace(/\\b\\d{4}-\\d{2}-\\d{2}t\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?z?\\b/g, '<timestamp>')
+    .replace(/\\b\\d+(?:\\.\\d+)?\\s*(?:ms|milliseconds?|s|sec|seconds?|mins?|minutes?)\\b/g, '<duration>')
+    .replace(/[a-z]:[\\\\/][^\\s]+/g, '<path>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 function formatDirectQualityRetryList(items, limit = DIRECT_QUALITY_RETRY_FILE_PREVIEW_LIMIT) {
   const normalized = (Array.isArray(items) ? items : [])
     .map((item) => String(item || '').trim())
@@ -4969,6 +5000,7 @@ function buildDirectQualityRetryPrompt(input) {
     '',
     'The previous Direct CLI attempt exited successfully, but validation or the quality gate failed.',
     'Do not repeat the same implementation idea blindly. Inspect the current diff and relevant files first, then decide whether the previous hypothesis was wrong or only incomplete.',
+    input.repeatedFailure ? 'Repeated failure guard: this failure matches an earlier Direct CLI attempt. Treat the previous approach as suspect, choose a different strategy, or reduce the fix to a smaller verifiable change before editing again.' : '',
     '',
     '## Previous Attempt Feedback',
     '',

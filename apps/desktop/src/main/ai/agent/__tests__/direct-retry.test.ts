@@ -247,6 +247,38 @@ describe('Direct validation retry helpers', () => {
     expect(retryConfig.initialMessages[0]?.content).toContain('metadata was unavailable');
   });
 
+  it('adds a repeated failure guard when attempt numbering is the only signature difference', () => {
+    const firstAttempt = createAttempt({
+      attempt: 1,
+      failureReason: 'Direct validation reported_failed: Attempt 1 summary. Validation: npm test failed with SAME_ASSERTION.',
+      quality: createQuality({
+        validation: {
+          status: 'reported_failed',
+          reason: 'Attempt 1 summary. Validation: npm test failed with SAME_ASSERTION.',
+        },
+      }),
+    });
+    const secondAttempt = createAttempt({
+      attempt: 2,
+      failureReason: 'Direct validation reported_failed: Attempt 2 summary. Validation: npm test failed with SAME_ASSERTION.',
+      quality: createQuality({
+        validation: {
+          status: 'reported_failed',
+          reason: 'Attempt 2 summary. Validation: npm test failed with SAME_ASSERTION.',
+        },
+      }),
+    });
+
+    const retryConfig = buildDirectRetrySessionConfig(
+      createSessionConfig(),
+      { language: 'en' },
+      [firstAttempt, secondAttempt],
+      3,
+    );
+
+    expect(retryConfig.initialMessages.at(-1)?.content).toContain('Repeated failure guard');
+    expect(retryConfig.initialMessages.at(-1)?.content).toContain('choose a different strategy');
+  });
   it('keeps the previous provider response id across later retries when metadata is missing', () => {
     const firstAttempt = createAttempt({
       result: createResult({

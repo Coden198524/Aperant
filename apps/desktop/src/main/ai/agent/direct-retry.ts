@@ -259,15 +259,24 @@ function hasRepeatedDirectFailureSignature(attempts: DirectValidationAttemptFeed
 }
 
 function getDirectFailureSignature(attempt: DirectValidationAttemptFeedback): string {
-  return [
+  return normalizeDirectFailureSignatureText([
     attempt.failureReason,
     attempt.quality.validation.status,
     attempt.quality.validation.reason,
     attempt.quality.selfCritique?.status ?? 'no-critique',
     attempt.quality.selfCritique?.improvements.slice(0, 3).join('|') ?? '',
-  ]
-    .join(' ')
+  ].join(' '));
+}
+
+function normalizeDirectFailureSignatureText(value: string): string {
+  return value
     .toLowerCase()
+    .replace(/\battempt\s+\d+(?:\s*\/\s*\d+)?\b/g, 'attempt #')
+    .replace(/\bretry\s+\d+(?:\s*\/\s*\d+)?\b/g, 'retry #')
+    .replace(/\bpid\s*[:=]?\s*\d+\b/g, 'pid #')
+    .replace(/\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}(?:\.\d+)?z?\b/g, '<timestamp>')
+    .replace(/\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|sec|seconds?|mins?|minutes?)\b/g, '<duration>')
+    .replace(/[a-z]:[\\/][^\s]+/g, '<path>')
     .replace(/\s+/g, ' ')
     .trim();
 }
