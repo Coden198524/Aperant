@@ -1875,7 +1875,7 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
       outcome: 'completed',
       filesChanged: directChangedFiles.length,
       changedFiles: directChangedFiles,
-      quality: directQuality || { runner: 'codex-cli' },
+      quality: directQuality || { runner: getDirectCliProviderName() },
     });
   } else if (phase === 'direct' && failed) {
     emitTaskEvent('CODING_FAILED', {

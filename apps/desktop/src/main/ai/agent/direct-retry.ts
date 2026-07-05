@@ -18,13 +18,6 @@ export interface DirectValidationAttemptFeedback {
   failureReason: string;
 }
 
-export function applyDirectProviderSessionPersistence(config: SessionConfig): SessionConfig {
-  return {
-    ...config,
-    responsePersistence: true,
-  };
-}
-
 export function shouldRetryDirectValidationAttempt(
   result: SessionResult | undefined,
   attempt: number,
@@ -49,7 +42,10 @@ export function buildDirectRetrySessionConfig(
   );
 
   const latestAttempt = attempts[attempts.length - 1];
-  const providerResponseId = latestAttempt?.result.providerResponseId ?? baseConfig.previousResponseId;
+  const useProviderContinuation = baseConfig.responsePersistence === true || Boolean(baseConfig.previousResponseId);
+  const providerResponseId = useProviderContinuation
+    ? latestAttempt?.result.providerResponseId ?? baseConfig.previousResponseId
+    : undefined;
   const transcriptMessages = buildRetryTranscript(baseConfig.initialMessages, latestAttempt);
 
   return {

@@ -4,7 +4,6 @@ import type { AutocodeDirectCodingQualityMetrics } from '@autocode/core/runtime/
 import type { SessionConfig, SessionResult } from '../../session/types';
 import {
   AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
-  applyDirectProviderSessionPersistence,
   buildDirectRetrySessionConfig,
   mergeDirectValidationAttemptResults,
   shouldRetryDirectValidationAttempt,
@@ -83,15 +82,6 @@ function createSessionConfig(overrides: Partial<SessionConfig> = {}): SessionCon
 }
 
 describe('Direct validation retry helpers', () => {
-  it('enables provider session persistence for Direct attempts', () => {
-    const config = createSessionConfig({ responsePersistence: false });
-
-    const directConfig = applyDirectProviderSessionPersistence(config);
-
-    expect(directConfig).not.toBe(config);
-    expect(directConfig.responsePersistence).toBe(true);
-    expect(directConfig.previousResponseId).toBeUndefined();
-  });
 
   it('retries only retryable Direct quality gate failures before the third attempt', () => {
     const retryable = createResult({
@@ -127,7 +117,7 @@ describe('Direct validation retry helpers', () => {
     });
 
     const retryConfig = buildDirectRetrySessionConfig(
-      createSessionConfig(),
+      createSessionConfig({ responsePersistence: true }),
       { language: 'zh-CN' },
       [attempt],
       2,
@@ -137,6 +127,36 @@ describe('Direct validation retry helpers', () => {
     expect(retryConfig.initialMessages).toHaveLength(1);
     expect(retryConfig.initialMessages[0]?.content).toContain('Direct Validation Retry (2/3)');
     expect(retryConfig.initialMessages[0]?.content).toContain('Do not repeat the same implementation idea blindly');
+  });
+
+  it('does not infer provider continuation from response metadata when persistence is disabled', () => {
+    const attempt = createAttempt({
+      result: createResult({
+        outcome: 'error',
+        providerResponseId: 'resp_attempt_1',
+        messages: [
+          { role: 'user', content: 'Fix the original bug.' },
+          { role: 'assistant', content: 'Validation: npm test failed after editing src/direct.ts.' },
+        ],
+        error: {
+          code: 'direct_quality_gate_failed',
+          message: 'validation failed',
+          retryable: true,
+        },
+      }),
+    });
+
+    const retryConfig = buildDirectRetrySessionConfig(
+      createSessionConfig({ responsePersistence: false }),
+      { language: 'en' },
+      [attempt],
+      2,
+    );
+
+    expect(retryConfig.previousResponseId).toBeUndefined();
+    expect(retryConfig.initialMessages.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(retryConfig.initialMessages[0]?.content).toBe('Fix the original bug.');
+    expect(retryConfig.initialMessages.at(-1)?.content).toContain('Direct Validation Retry (2/3)');
   });
 
   it('continues from the base provider session when the latest attempt has no new response id', () => {
@@ -180,7 +200,7 @@ describe('Direct validation retry helpers', () => {
     });
 
     const secondConfig = buildDirectRetrySessionConfig(
-      createSessionConfig(),
+      createSessionConfig({ responsePersistence: true }),
       { language: 'en' },
       [firstAttempt],
       2,
@@ -211,6 +231,7 @@ describe('Direct validation retry helpers', () => {
     expect(thirdConfig.initialMessages[0]?.content).toContain('Direct Validation Retry (3/3)');
     expect(thirdConfig.initialMessages[0]?.content).toContain('response metadata was unavailable');
   });
+
   it('does not duplicate the original task when attempt messages already include it', () => {
     const attempt = createAttempt({
       result: createResult({
