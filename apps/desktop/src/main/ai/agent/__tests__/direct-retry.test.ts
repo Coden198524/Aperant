@@ -6,6 +6,7 @@ import {
   AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
   buildDirectRetrySessionConfig,
   mergeDirectValidationAttemptResults,
+  resolveDirectProviderResponseIdForPersistence,
   shouldRetryDirectAttempt,
   type DirectValidationAttemptFeedback,
 } from '../direct-retry';
@@ -112,6 +113,23 @@ describe('Direct validation retry helpers', () => {
       outcome: 'error',
       error: { code: 'direct_session_error', message: 'transport failed', retryable: false },
     }), 1)).toBe(false);
+  });
+
+  it('drops provider response persistence after context window exhaustion', () => {
+    expect(resolveDirectProviderResponseIdForPersistence(
+      createResult({ outcome: 'context_window', providerResponseId: 'resp_too_large' }),
+      'resp_existing',
+    )).toBeUndefined();
+
+    expect(resolveDirectProviderResponseIdForPersistence(
+      createResult({ outcome: 'max_steps' }),
+      'resp_existing',
+    )).toBe('resp_existing');
+
+    expect(resolveDirectProviderResponseIdForPersistence(
+      createResult({ outcome: 'completed', providerResponseId: 'resp_new' }),
+      'resp_existing',
+    )).toBe('resp_new');
   });
 
   it('keeps retry attempts inside the provider session when a response id is available', () => {

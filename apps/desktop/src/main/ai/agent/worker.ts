@@ -118,6 +118,7 @@ import {
   AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
   buildDirectRetrySessionConfig,
   mergeDirectValidationAttemptResults,
+  resolveDirectProviderResponseIdForPersistence,
   shouldRetryDirectAttempt,
   type DirectValidationAttemptFeedback,
 } from './direct-retry';
@@ -1557,7 +1558,7 @@ function persistDirectTaskCompletion(
         iteration: (existingState?.iteration ?? 0) + 1,
         provider: session.provider,
         modelId: session.modelId,
-        providerResponseId: result?.providerResponseId ?? existingState?.providerResponseId,
+        providerResponseId: resolveDirectProviderResponseIdForPersistence(result, existingState?.providerResponseId),
         originalRequest: existingState?.originalRequest ?? extractDirectTaskDescription(session),
         latestSummary: summary,
         changedFiles: modifiedFiles,

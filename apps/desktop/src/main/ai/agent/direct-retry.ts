@@ -36,6 +36,15 @@ export function shouldRetryDirectAttempt(
     result.error.retryable === true;
 }
 
+export function resolveDirectProviderResponseIdForPersistence(
+  result: SessionResult | undefined,
+  existingProviderResponseId: string | undefined,
+): string | undefined {
+  if (result?.outcome === 'context_window') {
+    return undefined;
+  }
+  return result?.providerResponseId ?? existingProviderResponseId;
+}
 export function buildDirectRetrySessionConfig(
   baseConfig: SessionConfig,
   session: Pick<SerializableSessionConfig, 'language'>,
