@@ -274,11 +274,19 @@ function resolveDirectRuntimeSubtaskId(specDir: string, requestedSubtaskId?: str
 
   try {
     const plan = loadAutocodeImplementationPlanSync(specDir) as {
+      direct_execution?: { current_subtask_id?: unknown };
       phases?: Array<{
         type?: string;
         subtasks?: Array<{ id?: unknown; status?: unknown; started_at?: unknown; created_at?: unknown }>;
       }>;
     } | null;
+    const currentDirectSubtaskId = typeof plan?.direct_execution?.current_subtask_id === 'string'
+      ? plan.direct_execution.current_subtask_id.trim()
+      : '';
+    if (currentDirectSubtaskId) {
+      return currentDirectSubtaskId;
+    }
+
     const candidates = (plan?.phases ?? [])
       .filter((phase) => phase.type === 'direct' || phase.type === 'iteration')
       .flatMap((phase) => Array.isArray(phase.subtasks) ? phase.subtasks : [])

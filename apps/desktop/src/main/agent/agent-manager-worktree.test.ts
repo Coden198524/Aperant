@@ -434,6 +434,43 @@ describe('AgentManager worktree execution', () => {
     expect(executorConfig.session.initialMessages[0].content).not.toContain('Prior Direct Session Summary');
   });
 
+  it('binds direct execution to current direct metadata before stale pending nodes', async () => {
+    const fs = await import('fs');
+
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json') || filePath.endsWith('implementation_plan.md')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+      if (filePath.endsWith('implementation_plan.md')) {
+        return [
+          '# Implementation Plan',
+          'Feature: Direct task',
+          'Workflow: direct',
+          'Status: coding',
+          'Execution Phase: coding',
+          '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"running","current_subtask_id":"direct-cr-new","summary_file":"direct_summary.md"}} -->',
+          '',
+          '- [ ] direct. Direct execution',
+          '  - [ ] direct-cr-old Direct Request Changes',
+          '    - Older pending Direct iteration that should not steal the runtime binding.',
+          '  - [/] direct-cr-new Direct Request Changes',
+          '    - Current Direct iteration from direct_execution metadata.',
+          '',
+        ].join('\n');
+      }
+      return JSON.stringify({ workflowMode: 'off', model: 'sonnet' });
+    });
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).toHaveBeenCalled();
+    const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
+    expect(executorConfig.session.subtaskId).toBe('direct-cr-new');
+  });
+
   it('passes catalog-routed CLI runtime workspace claims', async () => {
     const fs = await import('fs');
     const settings = await import('../settings-utils');
