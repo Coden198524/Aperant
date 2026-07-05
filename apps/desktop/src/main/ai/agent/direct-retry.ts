@@ -27,7 +27,7 @@ export function shouldRetryDirectAttempt(
     return false;
   }
 
-  if (result.outcome === 'max_steps') {
+  if (result.outcome === 'max_steps' || result.outcome === 'context_window') {
     return true;
   }
 
@@ -49,7 +49,9 @@ export function buildDirectRetrySessionConfig(
   );
 
   const latestAttempt = attempts[attempts.length - 1];
-  const useProviderContinuation = baseConfig.responsePersistence === true || Boolean(baseConfig.previousResponseId);
+  const contextWindowRetry = latestAttempt?.result.outcome === 'context_window';
+  const useProviderContinuation = !contextWindowRetry &&
+    (baseConfig.responsePersistence === true || Boolean(baseConfig.previousResponseId));
   const providerResponseId = useProviderContinuation
     ? latestAttempt?.result.providerResponseId ?? baseConfig.previousResponseId
     : undefined;
@@ -68,6 +70,9 @@ function buildRetryTranscript(
   initialMessages: SessionMessage[],
   latestAttempt: DirectValidationAttemptFeedback | undefined,
 ): SessionMessage[] {
+  if (latestAttempt?.result.outcome === 'context_window') {
+    return initialMessages;
+  }
   const attemptMessages = latestAttempt?.result.messages ?? [];
   if (attemptMessages.length > 0) {
     return mergeSessionTranscript(initialMessages, attemptMessages);
@@ -189,7 +194,7 @@ function buildDirectRetryPrompt(
       '1. Re-read the current files and diff before making changes.',
       '2. Diagnose why the previous attempt failed; do not only restate the error.',
       '3. Apply a targeted fix. Rework or replace prior edits when they caused the failure.',
-      '4. If the previous attempt hit max_steps, continue the remaining work from current file state and avoid broad rediscovery.',
+      '4. If the previous attempt hit max_steps or context_window, continue the remaining work from current file state and avoid broad rediscovery.',
       '5. Run the most focused validation command available and report the exact command and result.',
       `6. If validation still cannot pass by attempt ${maxAttempts}, report the blocker with evidence instead of claiming success.`,
     ].join('\n'),

@@ -104,7 +104,9 @@ describe('Direct validation retry helpers', () => {
     expect(shouldRetryDirectAttempt(maxSteps, 1)).toBe(true);
     expect(shouldRetryDirectAttempt(maxSteps, 2)).toBe(true);
     expect(shouldRetryDirectAttempt(maxSteps, AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS)).toBe(false);
-    expect(shouldRetryDirectAttempt(createResult({ outcome: 'context_window' }), 1)).toBe(false);
+    expect(shouldRetryDirectAttempt(createResult({ outcome: 'context_window' }), 1)).toBe(true);
+    expect(shouldRetryDirectAttempt(createResult({ outcome: 'context_window' }), 2)).toBe(true);
+    expect(shouldRetryDirectAttempt(createResult({ outcome: 'context_window' }), AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS)).toBe(false);
     expect(shouldRetryDirectAttempt(createResult({ outcome: 'auth_failure' }), 1)).toBe(false);
     expect(shouldRetryDirectAttempt(createResult({
       outcome: 'error',
@@ -167,6 +169,37 @@ describe('Direct validation retry helpers', () => {
     expect(retryConfig.initialMessages.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
     expect(retryConfig.initialMessages[0]?.content).toBe('Fix the original bug.');
     expect(retryConfig.initialMessages.at(-1)?.content).toContain('Direct Validation Retry (2/3)');
+  });
+
+  it('uses compact transcript retry after context window exhaustion', () => {
+    const bloatedText = Array.from({ length: 200 }, (_, index) => `CONTEXT_WINDOW_BLOAT_${index}`).join('\n');
+    const attempt = createAttempt({
+      result: createResult({
+        outcome: 'context_window',
+        providerResponseId: 'resp_context_window',
+        messages: [
+          { role: 'user', content: 'Fix the original bug.' },
+          { role: 'assistant', content: bloatedText },
+        ],
+      }),
+      streamedText: bloatedText,
+      failureReason: 'Direct task ended with outcome context_window',
+    });
+
+    const retryConfig = buildDirectRetrySessionConfig(
+      createSessionConfig({ responsePersistence: true, previousResponseId: 'resp_original' }),
+      { language: 'en' },
+      [attempt],
+      2,
+    );
+
+    const promptText = retryConfig.initialMessages.map((message) => message.content).join('\n');
+    expect(retryConfig.previousResponseId).toBeUndefined();
+    expect(retryConfig.initialMessages.map((message) => message.role)).toEqual(['user', 'user']);
+    expect(retryConfig.initialMessages[0]?.content).toBe('Fix the bug.');
+    expect(retryConfig.initialMessages.at(-1)?.content).toContain('Outcome: context_window');
+    expect(retryConfig.initialMessages.at(-1)?.content).toContain('max_steps or context_window');
+    expect(promptText.length).toBeLessThan(bloatedText.length);
   });
 
   it('continues from the base provider session when the latest attempt has no new response id', () => {
