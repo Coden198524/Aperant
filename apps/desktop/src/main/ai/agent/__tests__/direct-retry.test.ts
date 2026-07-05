@@ -155,6 +155,51 @@ describe('Direct validation retry helpers', () => {
     expect(retryConfig.initialMessages[0]?.content).toContain('metadata was unavailable');
   });
 
+  it('keeps the previous provider response id across later retries when metadata is missing', () => {
+    const firstAttempt = createAttempt({
+      result: createResult({
+        outcome: 'error',
+        providerResponseId: 'resp_attempt_1',
+        error: {
+          code: 'direct_quality_gate_failed',
+          message: 'first validation failed',
+          retryable: true,
+        },
+      }),
+    });
+
+    const secondConfig = buildDirectRetrySessionConfig(
+      createSessionConfig(),
+      { language: 'en' },
+      [firstAttempt],
+      2,
+    );
+
+    const secondAttempt = createAttempt({
+      attempt: 2,
+      result: createResult({
+        outcome: 'error',
+        messages: [{ role: 'assistant', content: 'Validation: npm test still failed, but response metadata was unavailable.' }],
+        error: {
+          code: 'direct_quality_gate_failed',
+          message: 'second validation failed',
+          retryable: true,
+        },
+      }),
+    });
+
+    const thirdConfig = buildDirectRetrySessionConfig(
+      secondConfig,
+      { language: 'en' },
+      [firstAttempt, secondAttempt],
+      3,
+    );
+
+    expect(thirdConfig.previousResponseId).toBe('resp_attempt_1');
+    expect(thirdConfig.initialMessages).toHaveLength(1);
+    expect(thirdConfig.initialMessages[0]?.content).toContain('Direct Validation Retry (3/3)');
+    expect(thirdConfig.initialMessages[0]?.content).toContain('response metadata was unavailable');
+  });
   it('does not duplicate the original task when attempt messages already include it', () => {
     const attempt = createAttempt({
       result: createResult({

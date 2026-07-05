@@ -1656,7 +1656,7 @@ async function runDirectSessionWithValidationRetries(input: {
       `Direct validation attempt ${attempt}/${AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS} failed: ${gatedResult.error?.message ?? 'quality gate failed'}. Retrying with corrective feedback.`,
     );
     currentSessionConfig = buildDirectRetrySessionConfig(
-      input.sessionConfig,
+      currentSessionConfig,
       input.session,
       attempts,
       attempt + 1,
