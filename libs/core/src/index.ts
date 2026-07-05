@@ -625,6 +625,7 @@ export {
   localizeAutocodeDirectSummaryText,
   shouldTrackAutocodeDirectModifiedFile,
   type AutocodeDirectCodingQualityMetrics,
+  type AutocodeDirectQualityGateOptions,
   type AutocodeDirectSummaryLanguage,
   type BuildAutocodeDirectCompletionSummaryInput,
   type BuildAutocodeDirectExecutionMetadataInput,

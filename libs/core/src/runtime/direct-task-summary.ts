@@ -31,6 +31,10 @@ export interface AutocodeDirectCodingQualityMetrics {
   };
 }
 
+export interface AutocodeDirectQualityGateOptions {
+  requireValidation?: boolean;
+}
+
 export interface BuildAutocodeDirectCompletionSummaryInput {
   specDir: string;
   language?: AutocodeDirectSummaryLanguage;
@@ -71,6 +75,7 @@ export function isAutocodeSuccessfulDirectOutcome(
 
 export function getAutocodeDirectQualityGateFailureReason(
   quality: AutocodeDirectCodingQualityMetrics | undefined,
+  options: AutocodeDirectQualityGateOptions = {},
 ): string | null {
   if (!quality) {
     return null;
@@ -89,13 +94,18 @@ export function getAutocodeDirectQualityGateFailureReason(
     return `Direct validation ${quality.validation.status}: ${quality.validation.reason}`;
   }
 
+  if (options.requireValidation === true && quality.validation.status === 'not_run') {
+    return `Direct validation not_run: ${quality.validation.reason}`;
+  }
+
   return null;
 }
 
 export function isAutocodeDirectQualityGatePassed(
   quality: AutocodeDirectCodingQualityMetrics | undefined,
+  options: AutocodeDirectQualityGateOptions = {},
 ): boolean {
-  return getAutocodeDirectQualityGateFailureReason(quality) === null;
+  return getAutocodeDirectQualityGateFailureReason(quality, options) === null;
 }
 
 export function inferAutocodeDirectValidationEvidence(

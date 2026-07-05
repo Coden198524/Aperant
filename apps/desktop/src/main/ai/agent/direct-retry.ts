@@ -42,7 +42,7 @@ export function buildDirectRetrySessionConfig(
   );
 
   const latestAttempt = attempts[attempts.length - 1];
-  const providerResponseId = latestAttempt?.result.providerResponseId;
+  const providerResponseId = latestAttempt?.result.providerResponseId ?? baseConfig.previousResponseId;
   const transcriptMessages = buildRetryTranscript(baseConfig.initialMessages, latestAttempt);
 
   return {

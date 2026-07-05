@@ -19,11 +19,17 @@ type DirectExecutionRecord = {
 export type DirectFallbackTaskMetadata = {
   category?: unknown;
   sourceType?: unknown;
+  source_type?: unknown;
   ideationType?: unknown;
+  ideation_type?: unknown;
   projectDocumentType?: unknown;
+  project_document_type?: unknown;
   projectDocumentOutputDir?: unknown;
+  project_document_output_dir?: unknown;
   projectDocumentOutputs?: unknown;
+  project_document_outputs?: unknown;
   taskType?: unknown;
+  task_type?: unknown;
   type?: unknown;
 };
 
@@ -162,7 +168,7 @@ export function evaluateDirectCompletionFallback(input: {
 
   if (runResultIsDirect && !runResultIsStale && runResultStatus === 'success' && runResultExitCode === 0) {
     if (iterationStartedAtMs === undefined || runResultUpdatedAtMs !== undefined) {
-      const qualityFailure = getDirectFallbackQualityGateFailureReason(plan, runResult);
+      const qualityFailure = getDirectFallbackQualityGateFailureReason(plan, runResult, !durableSuccessOptional);
       if (qualityFailure) {
         return failDecision(
           input.fallback,
@@ -201,7 +207,7 @@ export function evaluateDirectCompletionFallback(input: {
   if (directOutcome && SUCCESSFUL_DIRECT_OUTCOMES.has(directOutcome)) {
     const completedAtMs = timestampMs(stringValue(plan?.direct_execution?.completed_at));
     if (iterationStartedAtMs === undefined || (completedAtMs !== undefined && completedAtMs >= iterationStartedAtMs)) {
-      const qualityFailure = getDirectFallbackQualityGateFailureReason(plan, runResultIsStale ? null : runResult);
+      const qualityFailure = getDirectFallbackQualityGateFailureReason(plan, runResultIsStale ? null : runResult, !durableSuccessOptional);
       if (qualityFailure) {
         return failDecision(
           input.fallback,
@@ -332,12 +338,13 @@ function buildFallbackQuality(
 function getDirectFallbackQualityGateFailureReason(
   plan: DirectFallbackPlan | null,
   runResult: DirectRunResultFile | null,
+  requireValidation: boolean,
 ): string | null {
   const metrics = directQualityMetricsFromRecord({
     ...recordValue(plan?.direct_execution?.ai_coding_quality),
     ...recordValue(runResult?.quality),
   });
-  return metrics ? getAutocodeDirectQualityGateFailureReason(metrics) : null;
+  return metrics ? getAutocodeDirectQualityGateFailureReason(metrics, { requireValidation }) : null;
 }
 
 function directQualityMetricsFromRecord(record: Record<string, unknown>): AutocodeDirectCodingQualityMetrics | null {
@@ -401,9 +408,9 @@ function isNonImplementationDirectTask(
   }
 
   const metadataCategory = normalizedString(metadata?.category);
-  const metadataSource = normalizedString(metadata?.sourceType);
-  const metadataIdeaType = normalizedString(metadata?.ideationType);
-  const metadataTaskType = normalizedString(metadata?.taskType) || normalizedString(metadata?.type);
+  const metadataSource = normalizedString(metadata?.sourceType) || normalizedString(metadata?.source_type);
+  const metadataIdeaType = normalizedString(metadata?.ideationType) || normalizedString(metadata?.ideation_type);
+  const metadataTaskType = normalizedString(metadata?.taskType) || normalizedString(metadata?.task_type) || normalizedString(metadata?.type);
 
   if (metadataCategory === 'documentation' || metadataSource === 'project_docs') {
     return true;
@@ -416,8 +423,11 @@ function isNonImplementationDirectTask(
   }
   if (
     stringValue(metadata?.projectDocumentType) ||
+    stringValue(metadata?.project_document_type) ||
     stringValue(metadata?.projectDocumentOutputDir) ||
-    Array.isArray(metadata?.projectDocumentOutputs)
+    stringValue(metadata?.project_document_output_dir) ||
+    Array.isArray(metadata?.projectDocumentOutputs) ||
+    Array.isArray(metadata?.project_document_outputs)
   ) {
     return true;
   }

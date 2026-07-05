@@ -128,11 +128,11 @@ describe('Direct validation retry helpers', () => {
     expect(retryConfig.initialMessages[0]?.content).toContain('Do not repeat the same implementation idea blindly');
   });
 
-  it('does not reuse a stale base response id when the latest attempt cannot continue provider state', () => {
+  it('continues from the base provider session when the latest attempt has no new response id', () => {
     const attempt = createAttempt({
       result: createResult({
         outcome: 'error',
-        messages: [{ role: 'assistant', content: 'Validation: npm test failed after a chat fallback.' }],
+        messages: [{ role: 'assistant', content: 'Validation: npm test failed after metadata was unavailable.' }],
         error: {
           code: 'direct_quality_gate_failed',
           message: 'validation failed',
@@ -142,16 +142,17 @@ describe('Direct validation retry helpers', () => {
     });
 
     const retryConfig = buildDirectRetrySessionConfig(
-      createSessionConfig({ previousResponseId: 'resp_stale_original' }),
+      createSessionConfig({ previousResponseId: 'resp_original' }),
       { language: 'en' },
       [attempt],
       2,
     );
 
-    expect(retryConfig.previousResponseId).toBeUndefined();
-    expect(retryConfig.initialMessages.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
-    expect(retryConfig.initialMessages[0]?.content).toBe('Fix the bug.');
-    expect(retryConfig.initialMessages.at(-1)?.content).toContain('Direct Validation Retry (2/3)');
+    expect(retryConfig.previousResponseId).toBe('resp_original');
+    expect(retryConfig.initialMessages).toHaveLength(1);
+    expect(retryConfig.initialMessages[0]?.role).toBe('user');
+    expect(retryConfig.initialMessages[0]?.content).toContain('Direct Validation Retry (2/3)');
+    expect(retryConfig.initialMessages[0]?.content).toContain('metadata was unavailable');
   });
 
   it('does not duplicate the original task when attempt messages already include it', () => {

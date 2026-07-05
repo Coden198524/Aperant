@@ -4251,15 +4251,19 @@ function buildDirectCliSessionResultForQuality(result, quality, finalText, token
 }
 
 async function getDirectCliQualityGateFailureReason(quality) {
+  const options = { requireValidation: isDirectCliValidationRequired() };
   const directSummary = await loadDirectTaskSummaryModule();
   if (directSummary && typeof directSummary.getAutocodeDirectQualityGateFailureReason === 'function') {
     try {
-      return directSummary.getAutocodeDirectQualityGateFailureReason(quality);
+      const sharedReason = directSummary.getAutocodeDirectQualityGateFailureReason(quality, options);
+      if (sharedReason) {
+        return sharedReason;
+      }
     } catch {
       // Use the local fallback below.
     }
   }
-  return getRunnerDirectQualityGateFailureReason(quality);
+  return getRunnerDirectQualityGateFailureReason(quality, options);
 }
 
 async function loadDirectTaskSummaryModule() {
@@ -4272,7 +4276,86 @@ async function loadDirectTaskSummaryModule() {
   return directTaskSummaryModulePromise;
 }
 
-function getRunnerDirectQualityGateFailureReason(quality) {
+function isDirectCliValidationRequired() {
+  return phase === 'direct' && !isDirectCliNonImplementationTask();
+}
+
+function isDirectCliNonImplementationTask() {
+  return isDirectCliNonImplementationContext(readCurrentPlanContextForDirectValidation(), asRecord(taskMetadata) || {});
+}
+
+function readCurrentPlanContextForDirectValidation() {
+  try {
+    const content = readFileSync(join(specDir, artifacts.implementationPlan), 'utf8');
+    const metadata = readPlanMachineMetadata(content);
+    const workflowType = getFirstString(metadata, ['workflow_type', 'workflowType', 'workflow']) || extractPlanWorkflowType(content);
+    return {
+      ...metadata,
+      ...(workflowType ? { workflow_type: workflowType } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function extractPlanWorkflowType(content) {
+  const match = /^Workflow:\s*(.+?)\s*$/mi.exec(String(content || ''));
+  return match && match[1] ? match[1].trim() : '';
+}
+
+function isDirectCliNonImplementationContext(plan, metadata) {
+  const workflowType = normalizeDirectCliContextString(plan.workflow_type) ||
+    normalizeDirectCliContextString(metadata.workflow_type) ||
+    normalizeDirectCliContextString(metadata.workflowType);
+  if (['documentation', 'investigation', 'analysis', 'research'].includes(workflowType)) {
+    return true;
+  }
+
+  const metadataCategory = normalizeDirectCliContextString(metadata.category);
+  const metadataSource = normalizeDirectCliContextString(metadata.sourceType) || normalizeDirectCliContextString(metadata.source_type);
+  const metadataIdeaType = normalizeDirectCliContextString(metadata.ideationType) || normalizeDirectCliContextString(metadata.ideation_type);
+  const metadataTaskType = normalizeDirectCliContextString(metadata.taskType) || normalizeDirectCliContextString(metadata.task_type) || normalizeDirectCliContextString(metadata.type);
+
+  if (metadataCategory === 'documentation' || metadataSource === 'project_docs') {
+    return true;
+  }
+  if (['documentation_gaps', 'documentation', 'analysis', 'investigation', 'research'].includes(metadataIdeaType)) {
+    return true;
+  }
+  if (['documentation', 'analysis', 'investigation', 'research'].includes(metadataTaskType)) {
+    return true;
+  }
+  if (
+    directCliContextString(metadata.projectDocumentType) ||
+    directCliContextString(metadata.project_document_type) ||
+    directCliContextString(metadata.projectDocumentOutputDir) ||
+    directCliContextString(metadata.project_document_output_dir) ||
+    Array.isArray(metadata.projectDocumentOutputs) ||
+    Array.isArray(metadata.project_document_outputs)
+  ) {
+    return true;
+  }
+  if (
+    directCliContextString(plan.documentation_depth) ||
+    directCliContextString(plan.documentation_profile) ||
+    Array.isArray(plan.documentation_focus) ||
+    Object.keys(asRecord(plan.project_documentation) || {}).length > 0
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function directCliContextString(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+function normalizeDirectCliContextString(value) {
+  return directCliContextString(value).toLowerCase();
+}
+
+function getRunnerDirectQualityGateFailureReason(quality, options = {}) {
   if (!quality) {
     return null;
   }
@@ -4284,6 +4367,9 @@ function getRunnerDirectQualityGateFailureReason(quality) {
   }
   if (quality.validation && (quality.validation.status === 'reported_failed' || quality.validation.status === 'reported_mixed')) {
     return 'Direct validation ' + quality.validation.status + ': ' + quality.validation.reason;
+  }
+  if (options.requireValidation === true && quality.validation && quality.validation.status === 'not_run') {
+    return 'Direct validation not_run: ' + quality.validation.reason;
   }
   return null;
 }

@@ -1297,7 +1297,103 @@ function getDirectSessionSubtaskId(session: SerializableSessionConfig): string {
   return session.subtaskId?.trim() || 'direct-implementation';
 }
 
+function shouldRequireDirectValidation(session: SerializableSessionConfig): boolean {
+  return !isNonImplementationDirectSession(session);
+}
+
+function isNonImplementationDirectSession(session: SerializableSessionConfig): boolean {
+  const specDirs = Array.from(new Set([
+    session.specDir,
+    session.sourceSpecDir,
+  ].filter((value): value is string => Boolean(value))));
+
+  return specDirs.some((specDir) => isNonImplementationDirectContext(
+    loadDirectContextPlan(specDir),
+    loadDirectContextMetadata(specDir),
+  ));
+}
+
+function loadDirectContextPlan(specDir: string): Record<string, unknown> {
+  try {
+    return directRecordValue(loadImplementationPlanFromFilesSync(specDir));
+  } catch {
+    return {};
+  }
+}
+
+function loadDirectContextMetadata(specDir: string): Record<string, unknown> {
+  const metadataPath = join(specDir, 'task_metadata.json');
+  if (!existsSync(metadataPath)) {
+    return {};
+  }
+  try {
+    return directRecordValue(JSON.parse(readFileSync(metadataPath, 'utf-8')));
+  } catch {
+    return {};
+  }
+}
+
+function isNonImplementationDirectContext(
+  plan: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+): boolean {
+  const workflowType = directNormalizedString(plan.workflow_type) ||
+    directNormalizedString(metadata.workflow_type) ||
+    directNormalizedString(metadata.workflowType);
+  if (['documentation', 'investigation', 'analysis', 'research'].includes(workflowType)) {
+    return true;
+  }
+
+  const metadataCategory = directNormalizedString(metadata.category);
+  const metadataSource = directNormalizedString(metadata.sourceType) || directNormalizedString(metadata.source_type);
+  const metadataIdeaType = directNormalizedString(metadata.ideationType) || directNormalizedString(metadata.ideation_type);
+  const metadataTaskType = directNormalizedString(metadata.taskType) || directNormalizedString(metadata.task_type) || directNormalizedString(metadata.type);
+
+  if (metadataCategory === 'documentation' || metadataSource === 'project_docs') {
+    return true;
+  }
+  if (['documentation_gaps', 'documentation', 'analysis', 'investigation', 'research'].includes(metadataIdeaType)) {
+    return true;
+  }
+  if (['documentation', 'analysis', 'investigation', 'research'].includes(metadataTaskType)) {
+    return true;
+  }
+  if (
+    directStringValue(metadata.projectDocumentType) ||
+    directStringValue(metadata.project_document_type) ||
+    directStringValue(metadata.projectDocumentOutputDir) ||
+    directStringValue(metadata.project_document_output_dir) ||
+    Array.isArray(metadata.projectDocumentOutputs) ||
+    Array.isArray(metadata.project_document_outputs)
+  ) {
+    return true;
+  }
+  if (
+    directStringValue(plan.documentation_depth) ||
+    directStringValue(plan.documentation_profile) ||
+    Array.isArray(plan.documentation_focus) ||
+    Object.keys(directRecordValue(plan.project_documentation)).length > 0
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function directRecordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function directStringValue(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+function directNormalizedString(value: unknown): string {
+  return directStringValue(value).toLowerCase();
+}
+
 function applyDirectQualityGateToResult(
+  session: SerializableSessionConfig,
   result: SessionResult | undefined,
   quality: DirectCodingQualityMetrics,
 ): SessionResult | undefined {
@@ -1305,7 +1401,9 @@ function applyDirectQualityGateToResult(
     return result;
   }
 
-  const failureReason = getAutocodeDirectQualityGateFailureReason(quality);
+  const failureReason = getAutocodeDirectQualityGateFailureReason(quality, {
+    requireValidation: shouldRequireDirectValidation(session),
+  });
   if (!failureReason) {
     return result;
   }
@@ -1532,7 +1630,7 @@ async function runDirectSessionWithValidationRetries(input: {
       modifiedFiles,
       trace.streamedText,
     );
-    const gatedResult = applyDirectQualityGateToResult(attemptResult, quality) ?? attemptResult;
+    const gatedResult = applyDirectQualityGateToResult(input.session, attemptResult, quality) ?? attemptResult;
     const feedback: DirectValidationAttemptFeedback = {
       attempt,
       result: gatedResult,
@@ -1878,7 +1976,7 @@ async function runDefaultSession(
       finalStreamedText,
     );
     if (!directExecutionOutcome) {
-      result = applyDirectQualityGateToResult(result, directQuality);
+      result = applyDirectQualityGateToResult(session, result, directQuality);
     }
     persistDirectTaskCompletion(session, result, finalStreamedText, modifiedFiles, directQuality);
     await learnFromDirectTaskSession(session, result, modifiedFiles);

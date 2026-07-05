@@ -129,6 +129,21 @@ describe('direct task summary helpers', () => {
       },
     })).toBe(true);
 
+    const missingValidationQuality = {
+      ...baseQuality,
+      validation: {
+        status: 'not_run',
+        reason: 'No validation command was reported.',
+      },
+    };
+    expect(getAutocodeDirectQualityGateFailureReason(missingValidationQuality)).toBeNull();
+    expect(getAutocodeDirectQualityGateFailureReason(missingValidationQuality, {
+      requireValidation: true,
+    })).toContain('Direct validation not_run');
+    expect(isAutocodeDirectQualityGatePassed(missingValidationQuality, {
+      requireValidation: true,
+    })).toBe(false);
+
     const failedCritiqueReason = getAutocodeDirectQualityGateFailureReason({
       ...baseQuality,
       selfCritique: {

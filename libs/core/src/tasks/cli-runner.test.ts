@@ -822,7 +822,7 @@ describe('Autocode CLI runner prompt', () => {
       "let input = '';",
       "process.stdin.setEncoding('utf8');",
       "process.stdin.on('data', (chunk) => { input += chunk; });",
-      "process.stdin.on('end', () => { writeFileSync(process.argv[2], input, 'utf8'); });",
+      "process.stdin.on('end', () => { writeFileSync(process.argv[2], input, 'utf8'); process.stdout.write('Validation: prompt capture passed.\\n'); });",
     ].join('\n'), 'utf8');
 
     const plan = createAutocodeTaskRunPlan({
@@ -1168,6 +1168,7 @@ describe('Autocode CLI runner prompt', () => {
     writeFakeCodexJsonCommand(projectRoot, [
       { type: 'usage', session_id: 'codex-session', usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 } },
       { type: 'usage_update', session_id: 'codex-session', usage: { input_tokens: 180, output_tokens: 40, total_tokens: 220 } },
+      { type: 'agent_message', session_id: 'codex-session', message: 'Validation: npm test passed.' },
     ]);
 
     const plan = createAutocodeTaskRunPlan({
@@ -1213,7 +1214,7 @@ describe('Autocode CLI runner prompt', () => {
     } | undefined;
     expect(directExecution?.outcome).toBe('completed');
     expect(directExecution?.ai_coding_quality?.mode).toBe('direct');
-    expect(directExecution?.ai_coding_quality?.validation?.status).toBe('not_run');
+    expect(directExecution?.ai_coding_quality?.validation?.status).toBe('reported_passed');
     expect(directExecution?.ai_coding_quality?.stepsExecuted).toBe(1);
     const directSubtask = implementationPlan?.phases?.[0]?.subtasks?.[0];
     expect(directSubtask?.id).toBe('direct-implementation');
@@ -1221,9 +1222,9 @@ describe('Autocode CLI runner prompt', () => {
     expect(directSubtask?.completion_summary).toContain('Autocode CLI run completed');
     expect(directSession.sessionId).toBe('codex-session');
     expect(directSession.iteration).toBe(1);
-    expect(directSession.latestSummary).toContain('Autocode CLI run completed');
+    expect(directSession.latestSummary).toContain('Validation: npm test passed');
     expect(directSession.lastOutcome).toBe('success');
-    expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).toContain('Autocode CLI run completed');
+    expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).toContain('Validation: npm test passed');
     expect(stdout).toContain('__TASK_EVENT__:');
     expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
     expect(stdout).toContain('"quality":{"mode":"direct"');
@@ -1360,6 +1361,122 @@ describe('Autocode CLI runner prompt', () => {
     expect(result.quality?.validation?.reason).toContain('npm test passed');
     expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).toContain('Attempt 2 summary');
     expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).not.toContain('Attempt 1 summary');
+  });
+  it('allows documentation Direct CLI runs without validation evidence', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-doc-validation-optional',
+      title: 'Write Direct documentation summary',
+      description: 'Direct CLI documentation work should not require code validation evidence.',
+      metadata: { developmentMode: 'direct', category: 'documentation' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-doc-validation-optional' });
+    const fakeCliPath = join(projectRoot, 'direct-doc-validation-optional-cli.cjs');
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const specDir = '${specDir.replace(/\\/g, '\\\\')}';`,
+      "mkdirSync(specDir, { recursive: true });",
+      "writeFileSync(join(specDir, 'direct_summary.md'), 'Documentation summary completed.\\n', 'utf8');",
+      "process.stdout.write('Documentation summary completed.\\n');",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-doc-validation-optional',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      attemptCount?: number;
+      quality?: { validation?: { status?: string } };
+    };
+    expect(result.status).toBe('success');
+    expect(result.attemptCount).toBe(1);
+    expect(result.quality?.validation?.status).toBe('not_run');
+  });
+  it('retries Direct CLI implementation runs that report no validation evidence', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-required',
+      title: 'Require Direct validation evidence',
+      description: 'Direct CLI should retry implementation runs that do not report validation.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-required' });
+    const fakeCliPath = join(projectRoot, 'direct-validation-required-cli.cjs');
+    const attemptPath = join(projectRoot, 'direct-validation-required-attempt.txt');
+    const promptPath = join(projectRoot, 'direct-validation-required-prompt.txt');
+    const escapedSpecDir = specDir.replace(/\\/g, '\\\\');
+    const escapedAttemptPath = attemptPath.replace(/\\/g, '\\\\');
+    const escapedPromptPath = promptPath.replace(/\\/g, '\\\\');
+    writeFileSync(fakeCliPath, [
+      "const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const promptPath = '${escapedPromptPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  writeFileSync(promptPath, stdin, 'utf8');",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt === 1) {",
+      "    writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 1 summary.\\n', 'utf8');",
+      "    process.stdout.write('Implemented the first idea.\\n');",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 2 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write('Added missing verification evidence.\\nValidation: npm test passed.\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-required',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(readFileSync(attemptPath, 'utf8')).toBe('2');
+    const retryPrompt = readFileSync(promptPath, 'utf8');
+    expect(retryPrompt).toContain('Direct Validation Retry (2/3)');
+    expect(retryPrompt).toContain('Validation: not_run');
+    expect(stdout).toContain('Direct CLI output failed validation/quality gate');
+    expect(stdout).toContain('Direct validation not_run');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      attemptCount?: number;
+      quality?: { validation?: { status?: string } };
+    };
+    expect(result.status).toBe('success');
+    expect(result.attemptCount).toBe(2);
+    expect(result.quality?.validation?.status).toBe('reported_passed');
   });
   it('resumes the same Codex exec session when retrying Direct quality failures', () => {
     createAutocodeTask({
@@ -1593,7 +1710,7 @@ function installFakeCodexCommand(projectRoot: string): void {
     "const outputPath = process.argv[2];",
     "const input = readFileSync(0, 'utf8');",
     "writeFileSync(outputPath, input, 'utf8');",
-    "process.stdout.write('fake codex completed\\n');",
+    "process.stdout.write('fake codex completed\\nValidation: prompt capture passed.\\n');",
   ].join('\n'), 'utf8');
 
   if (process.platform === 'win32') {

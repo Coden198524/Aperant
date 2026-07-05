@@ -363,6 +363,63 @@ describe('evaluateDirectCompletionFallback', () => {
       },
     });
   });
+  it('fails implementation Direct success evidence when validation was not reported', () => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'clean-exit',
+      plan: currentIterationPlan(),
+      runResult: {
+        phase: 'direct',
+        status: 'success',
+        exitCode: 0,
+        message: 'Direct CLI run completed.',
+        updatedAt: '2026-07-01T01:01:02.000Z',
+        quality: {
+          mode: 'direct',
+          outcome: 'completed',
+          validation: {
+            status: 'not_run',
+            reason: 'No validation command was reported.',
+          },
+        },
+      },
+    });
+
+    expect(decision).toMatchObject({
+      action: 'fail',
+      reason: 'quality-gate-failed-run-result',
+      error: 'Direct validation not_run: No validation command was reported.',
+    });
+  });
+
+  it('allows documentation Direct success evidence without validation', () => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'clean-exit',
+      plan: currentIterationPlan(),
+      runResult: {
+        phase: 'direct',
+        status: 'success',
+        exitCode: 0,
+        message: 'Documentation summary completed.',
+        updatedAt: '2026-07-01T01:01:02.000Z',
+        quality: {
+          mode: 'direct',
+          outcome: 'completed',
+          validation: {
+            status: 'not_run',
+            reason: 'Documentation-only task did not run code validation.',
+          },
+        },
+      },
+      taskMetadata: { category: 'documentation' },
+    });
+
+    expect(decision).toMatchObject({
+      action: 'complete',
+      reason: 'fresh-successful-run-result',
+    });
+  });
   it('completes documentation tasks on clean exit without durable success evidence', () => {
     const decision = evaluateDirectCompletionFallback({
       exitCode: 0,
