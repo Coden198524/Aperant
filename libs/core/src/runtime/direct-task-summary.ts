@@ -94,11 +94,20 @@ export function getAutocodeDirectQualityGateFailureReason(
     return `Direct validation ${quality.validation.status}: ${quality.validation.reason}`;
   }
 
-  if (options.requireValidation === true && quality.validation.status === 'not_run') {
-    return `Direct validation not_run: ${quality.validation.reason}`;
+  if (options.requireValidation === true && !isAutocodeDirectValidationPassed(quality.validation.status)) {
+    return `Direct validation ${quality.validation.status}: ${quality.validation.reason}`;
   }
 
   return null;
+}
+
+function isAutocodeDirectValidationPassed(status: string): boolean {
+  const normalized = status.trim().toLowerCase();
+  return normalized === 'reported_passed' ||
+    normalized === 'passed' ||
+    normalized === 'pass' ||
+    normalized === 'success' ||
+    normalized === 'succeeded';
 }
 
 export function isAutocodeDirectQualityGatePassed(
@@ -129,7 +138,6 @@ export function inferAutocodeDirectValidationEvidence(
     || /(?:失败|未通过|报错|错误|异常)/u.test(validationText);
   const hasSkip = /\b(?:not run|not executed|skipped|manual only|not required|n\/a)\b/i.test(validationText)
     || /(?:未运行|未执行|跳过|未验证|无需验证|手动验证)/u.test(validationText);
-
   const reason = compactAutocodeDirectValidationReason(validationText);
   if (hasPass && hasFail) {
     return { status: 'reported_mixed', reason };

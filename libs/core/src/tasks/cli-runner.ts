@@ -4368,10 +4368,19 @@ function getRunnerDirectQualityGateFailureReason(quality, options = {}) {
   if (quality.validation && (quality.validation.status === 'reported_failed' || quality.validation.status === 'reported_mixed')) {
     return 'Direct validation ' + quality.validation.status + ': ' + quality.validation.reason;
   }
-  if (options.requireValidation === true && quality.validation && quality.validation.status === 'not_run') {
-    return 'Direct validation not_run: ' + quality.validation.reason;
+  if (options.requireValidation === true && quality.validation && !isRunnerDirectValidationPassed(quality.validation.status)) {
+    return 'Direct validation ' + quality.validation.status + ': ' + quality.validation.reason;
   }
   return null;
+}
+
+function isRunnerDirectValidationPassed(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  return normalized === 'reported_passed' ||
+    normalized === 'passed' ||
+    normalized === 'pass' ||
+    normalized === 'success' ||
+    normalized === 'succeeded';
 }
 
 function inferRunnerDirectValidationEvidence(finalText) {
@@ -4383,9 +4392,9 @@ function inferRunnerDirectValidationEvidence(finalText) {
     };
   }
 
-  const hasPass = /\\b(?:passed|pass|succeeded|success|green|ok)\\b/i.test(validationText);
-  const hasFail = /\\b(?:failed|failing|failure|error|errors|exception|red)\\b/i.test(validationText);
-  const hasSkip = /\\b(?:not run|not executed|skipped|manual only|not required|n\\/a)\\b/i.test(validationText);
+  const hasPass = /\\b(?:passed|pass|succeeded|success|green|ok)\\b/i.test(validationText) || /(?:通过|成功|正常|无异常)/u.test(validationText);
+  const hasFail = /\\b(?:failed|failing|failure|error|errors|exception|red)\\b/i.test(validationText) || /(?:失败|未通过|报错|错误|异常)/u.test(validationText);
+  const hasSkip = /\\b(?:not run|not executed|skipped|manual only|not required|n\\/a)\\b/i.test(validationText) || /(?:未运行|未执行|跳过|未验证|无需验证|手动验证)/u.test(validationText);
   const reason = compactRunnerDirectValidationReason(validationText);
   if (hasPass && hasFail) {
     return { status: 'reported_mixed', reason };

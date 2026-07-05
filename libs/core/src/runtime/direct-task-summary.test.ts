@@ -46,6 +46,15 @@ describe('direct task summary helpers', () => {
       outcome: 'completed',
       stepsExecuted: 2,
       usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: '验证：npm test 通过。' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    })).toMatchObject({ status: 'reported_passed' });
+
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
       messages: [{ role: 'assistant', content: 'Verification: npm test failed with 2 assertion errors.' }],
       durationMs: 1,
       toolCallCount: 1,
@@ -143,6 +152,18 @@ describe('direct task summary helpers', () => {
     expect(isAutocodeDirectQualityGatePassed(missingValidationQuality, {
       requireValidation: true,
     })).toBe(false);
+
+    const ambiguousValidationQuality = {
+      ...baseQuality,
+      validation: {
+        status: 'reported',
+        reason: 'Validation: npm test was mentioned without a pass/fail result.',
+      },
+    };
+    expect(getAutocodeDirectQualityGateFailureReason(ambiguousValidationQuality)).toBeNull();
+    expect(getAutocodeDirectQualityGateFailureReason(ambiguousValidationQuality, {
+      requireValidation: true,
+    })).toContain('Direct validation reported');
 
     const failedCritiqueReason = getAutocodeDirectQualityGateFailureReason({
       ...baseQuality,

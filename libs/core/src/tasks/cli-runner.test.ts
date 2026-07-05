@@ -871,6 +871,7 @@ describe('Autocode CLI runner prompt', () => {
       "  '- [decision] Keep focused validation before broader checks.',",
       "  '- [module_insight] keep   focused validation before broader checks.',",
       "  '- [module_insight] High token usage per step - may need more focused approach',",
+      "  'Validation: memory notes extraction passed.',",
       "].join('\\n'));",
     ].join('\n'), 'utf8');
 
@@ -1406,6 +1407,77 @@ describe('Autocode CLI runner prompt', () => {
     expect(result.status).toBe('success');
     expect(result.attemptCount).toBe(1);
     expect(result.quality?.validation?.status).toBe('not_run');
+  });
+  it('retries Direct CLI implementation runs with ambiguous validation evidence', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-ambiguous',
+      title: 'Require conclusive Direct validation evidence',
+      description: 'Direct CLI should retry implementation runs that only mention validation without a result.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-ambiguous' });
+    const fakeCliPath = join(projectRoot, 'direct-validation-ambiguous-cli.cjs');
+    const attemptPath = join(projectRoot, 'direct-validation-ambiguous-attempt.txt');
+    const promptPath = join(projectRoot, 'direct-validation-ambiguous-prompt.txt');
+    const escapedSpecDir = specDir.replace(/\\/g, '\\\\');
+    const escapedAttemptPath = attemptPath.replace(/\\/g, '\\\\');
+    const escapedPromptPath = promptPath.replace(/\\/g, '\\\\');
+    writeFileSync(fakeCliPath, [
+      "const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const promptPath = '${escapedPromptPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  writeFileSync(promptPath, stdin, 'utf8');",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt === 1) {",
+      "    writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 1 summary. Validation: npm test.\\n', 'utf8');",
+      "    process.stdout.write('Implemented the first idea.\\nValidation: npm test.\\n');",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 2 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write('Added conclusive verification evidence.\\nValidation: npm test passed.\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-ambiguous',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(readFileSync(attemptPath, 'utf8')).toBe('2');
+    const retryPrompt = readFileSync(promptPath, 'utf8');
+    expect(retryPrompt).toContain('Direct Validation Retry (2/3)');
+    expect(retryPrompt).toContain('Validation: reported');
+    expect(stdout).toContain('Direct CLI output failed validation/quality gate');
+    expect(stdout).toContain('Direct validation reported');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      attemptCount?: number;
+      quality?: { validation?: { status?: string } };
+    };
+    expect(result.status).toBe('success');
+    expect(result.attemptCount).toBe(2);
+    expect(result.quality?.validation?.status).toBe('reported_passed');
   });
   it('retries Direct CLI implementation runs that report no validation evidence', () => {
     createAutocodeTask({

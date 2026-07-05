@@ -392,6 +392,34 @@ describe('evaluateDirectCompletionFallback', () => {
     });
   });
 
+  it('fails implementation Direct success evidence when validation is ambiguous', () => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'clean-exit',
+      plan: currentIterationPlan(),
+      runResult: {
+        phase: 'direct',
+        status: 'success',
+        exitCode: 0,
+        message: 'Direct CLI run completed.',
+        updatedAt: '2026-07-01T01:01:02.000Z',
+        quality: {
+          mode: 'direct',
+          outcome: 'completed',
+          validation: {
+            status: 'reported',
+            reason: 'Validation: npm test was mentioned without pass/fail output.',
+          },
+        },
+      },
+    });
+
+    expect(decision).toMatchObject({
+      action: 'fail',
+      reason: 'quality-gate-failed-run-result',
+      error: 'Direct validation reported: Validation: npm test was mentioned without pass/fail output.',
+    });
+  });
   it('allows documentation Direct success evidence without validation', () => {
     const decision = evaluateDirectCompletionFallback({
       exitCode: 0,
