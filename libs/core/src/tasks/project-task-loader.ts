@@ -906,7 +906,7 @@ function getFreshestDirectCompletionEvidenceMs(
 
 function isSuccessfulDirectOutcome(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
-  return normalized === 'success' || normalized === 'completed' || normalized === 'done' || normalized === 'max_steps';
+  return normalized === 'success' || normalized === 'completed' || normalized === 'done';
 }
 
 function getCurrentDirectIterationStartedAtMs(plan: ImplementationPlanFile | null): number | undefined {

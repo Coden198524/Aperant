@@ -13,9 +13,17 @@ import {
 } from './direct-task-summary.js';
 
 describe('direct task summary helpers', () => {
-  it('does not treat context window exhaustion as Direct completion', () => {
+  it('does not treat context window or step exhaustion as Direct completion', () => {
     expect(isAutocodeSuccessfulDirectOutcome({
       outcome: 'context_window',
+      stepsExecuted: 12,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [],
+      durationMs: 1,
+      toolCallCount: 0,
+    })).toBe(false);
+    expect(isAutocodeSuccessfulDirectOutcome({
+      outcome: 'max_steps',
       stepsExecuted: 12,
       usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
       messages: [],

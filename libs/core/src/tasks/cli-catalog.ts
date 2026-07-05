@@ -10,16 +10,71 @@ export const SUPPORTED_AUTOCODE_CLIS = [
 
 export type AutocodeCli = (typeof SUPPORTED_AUTOCODE_CLIS)[number];
 
+type BuiltinAutocodeCli = Exclude<AutocodeCli, 'custom'>;
+
 export const DEFAULT_AUTOCODE_CLI: AutocodeCli = 'claude-code';
 
-export const AUTOCODE_CLI_COMMANDS: Readonly<Record<Exclude<AutocodeCli, 'custom'>, string>> = {
-  'claude-code': 'claude',
-  gemini: 'gemini',
-  opencode: 'opencode',
-  kilocode: 'kilocode',
-  codex: 'codex',
-  deepseek: 'deepseek',
+export type AutocodeCliJsonEventParserType = 'codex-json';
+
+export interface AutocodeCliJsonEventParser {
+  type: AutocodeCliJsonEventParserType;
+  displayName: string;
+  commandNames: string[];
+  requiredArgs?: string[];
+}
+
+export interface AutocodeCliTaskRunStrategy {
+  args?: string[];
+  modelFlag?: string;
+  promptStdinArg?: string;
+}
+
+export interface AutocodeCliDefinition {
+  command: string;
+  permissionBypassArgs?: string[];
+  taskRunStrategy?: AutocodeCliTaskRunStrategy;
+}
+
+export const AUTOCODE_CLI_DEFINITIONS: Readonly<Record<BuiltinAutocodeCli, AutocodeCliDefinition>> = {
+  'claude-code': {
+    command: 'claude',
+    permissionBypassArgs: ['--dangerously-skip-permissions'],
+  },
+  gemini: {
+    command: 'gemini',
+  },
+  opencode: {
+    command: 'opencode',
+  },
+  kilocode: {
+    command: 'kilocode',
+  },
+  codex: {
+    command: 'codex',
+    permissionBypassArgs: ['--dangerously-bypass-approvals-and-sandbox'],
+    taskRunStrategy: {
+      args: ['exec', '--json'],
+      modelFlag: '-m',
+      promptStdinArg: '-',
+    },
+  },
+  deepseek: {
+    command: 'deepseek',
+  },
 };
+
+export const AUTOCODE_CLI_COMMANDS: Readonly<Record<BuiltinAutocodeCli, string>> = Object.fromEntries(
+  Object.entries(AUTOCODE_CLI_DEFINITIONS).map(([cli, definition]) => [cli, definition.command]),
+) as Readonly<Record<BuiltinAutocodeCli, string>>;
+
+export const AUTOCODE_CLI_JSON_EVENT_PARSERS: readonly AutocodeCliJsonEventParser[] = [
+  {
+    type: 'codex-json',
+    displayName: 'Codex',
+    commandNames: ['codex'],
+    requiredArgs: ['--json'],
+  },
+] as const;
 
 export type AutocodeCliContinuationStrategyType = 'exec-resume-session' | 'append-continuation-flag';
 export type AutocodeCliContinuationSessionIdSource = 'json-event-session' | 'latest';
@@ -29,6 +84,11 @@ export interface AutocodeCliContinuationStrategy {
   type: AutocodeCliContinuationStrategyType;
   commandNames: string[];
   requiresJsonMode?: boolean;
+  jsonEventParser?: AutocodeCliJsonEventParserType;
+  execCommand?: string;
+  resumeArgs?: string[];
+  requiredArgs?: string[];
+  promptStdinArg?: string;
   continuationFlag?: string;
   existingContinuationFlags?: string[];
   sessionIdSource?: AutocodeCliContinuationSessionIdSource;
@@ -40,6 +100,11 @@ export const AUTOCODE_CLI_CONTINUATION_STRATEGIES: Readonly<Partial<Record<Autoc
     type: 'exec-resume-session',
     commandNames: ['codex'],
     requiresJsonMode: true,
+    jsonEventParser: 'codex-json',
+    execCommand: 'exec',
+    resumeArgs: ['exec', 'resume'],
+    requiredArgs: ['--json'],
+    promptStdinArg: '-',
     sessionIdSource: 'json-event-session',
   },
   'claude-code': {
@@ -63,10 +128,24 @@ export function getAutocodeCliContinuationStrategy(
     ...strategy,
     commandNames: [...strategy.commandNames],
   };
+  if (strategy.resumeArgs) {
+    copy.resumeArgs = [...strategy.resumeArgs];
+  }
+  if (strategy.requiredArgs) {
+    copy.requiredArgs = [...strategy.requiredArgs];
+  }
   if (strategy.existingContinuationFlags) {
     copy.existingContinuationFlags = [...strategy.existingContinuationFlags];
   }
   return copy;
+}
+
+export function getAutocodeCliJsonEventParsers(): AutocodeCliJsonEventParser[] {
+  return AUTOCODE_CLI_JSON_EVENT_PARSERS.map((parser) => ({
+    ...parser,
+    commandNames: [...parser.commandNames],
+    ...(parser.requiredArgs ? { requiredArgs: [...parser.requiredArgs] } : {}),
+  }));
 }
 
 export function isAutocodeCli(value: unknown): value is AutocodeCli {
@@ -91,7 +170,7 @@ export function getAutocodeCliCommandName(cli: AutocodeCli, customCommand?: stri
     }
     return parts[0];
   }
-  return AUTOCODE_CLI_COMMANDS[cli];
+  return AUTOCODE_CLI_DEFINITIONS[cli].command;
 }
 
 export function resolveAutocodeCliInvocation(
@@ -106,20 +185,52 @@ export function resolveAutocodeCliInvocation(
     return { command: parts[0], args: parts.slice(1) };
   }
 
-  return { command: AUTOCODE_CLI_COMMANDS[cli], args: [] };
+  return { command: AUTOCODE_CLI_DEFINITIONS[cli].command, args: [] };
+}
+
+export function resolveAutocodeCliTaskRunInvocation(input: {
+  cli: AutocodeCli;
+  customCommand?: string;
+  model?: string;
+  bypassPermissions: boolean;
+}): { command: string; args: string[] } {
+  const invocation = resolveAutocodeCliInvocation(input.cli, input.customCommand);
+  const permissionArgs = getAutocodeCliPermissionArgs(input.cli, input.bypassPermissions);
+
+  if (input.cli === 'custom') {
+    return {
+      command: invocation.command,
+      args: [...invocation.args, ...permissionArgs],
+    };
+  }
+
+  const strategy = AUTOCODE_CLI_DEFINITIONS[input.cli].taskRunStrategy;
+  if (!strategy) {
+    return {
+      command: invocation.command,
+      args: [...invocation.args, ...permissionArgs],
+    };
+  }
+
+  const modelArgs = strategy.modelFlag && input.model
+    ? [strategy.modelFlag, input.model]
+    : [];
+  return {
+    command: invocation.command,
+    args: [
+      ...(strategy.args ?? []),
+      ...modelArgs,
+      ...permissionArgs,
+      ...(strategy.promptStdinArg ? [strategy.promptStdinArg] : []),
+    ],
+  };
 }
 
 export function getAutocodeCliPermissionArgs(cli: AutocodeCli, bypassPermissions: boolean): string[] {
-  if (!bypassPermissions) {
+  if (!bypassPermissions || cli === 'custom') {
     return [];
   }
-  if (cli === 'claude-code') {
-    return ['--dangerously-skip-permissions'];
-  }
-  if (cli === 'codex') {
-    return ['--dangerously-bypass-approvals-and-sandbox'];
-  }
-  return [];
+  return [...(AUTOCODE_CLI_DEFINITIONS[cli].permissionBypassArgs ?? [])];
 }
 
 export function getAutocodeCliPermissionBypassFlag(cli: AutocodeCli, bypassPermissions: boolean): string {

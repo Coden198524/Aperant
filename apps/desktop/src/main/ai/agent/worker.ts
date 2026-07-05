@@ -116,7 +116,6 @@ import {
 import { buildAggressiveCoderPrompt } from './aggressive-coder-prompt';
 import {
   AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
-  applyDirectProviderSessionPersistence,
   buildDirectRetrySessionConfig,
   mergeDirectValidationAttemptResults,
   shouldRetryDirectValidationAttempt,
@@ -1835,9 +1834,7 @@ async function runDefaultSession(
     responsePersistence: session.responsePersistence,
     previousResponseId: session.previousResponseId,
   };
-  const sessionConfig = isDirectTaskSession(session)
-    ? applyDirectProviderSessionPersistence(baseSessionConfig)
-    : baseSessionConfig;
+  const sessionConfig = baseSessionConfig;
 
   // Start phase logging for default session
   if (logWriter) {

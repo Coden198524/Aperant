@@ -215,7 +215,9 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('function stripUtf8BomFromFile(filePath)');
     expect(runner).toContain('Removed UTF-8 BOM from Codex rules file');
     expect(runner).toContain('Codex rules file starts with a UTF-8 BOM');
-    expect(runner).toContain("return isCodexCommand(command) && Array.isArray(args) && args.includes('--json');");
+    expect(runner).toContain('const cliJsonEventParsers = [{');
+    expect(runner).toContain('"type":"codex-json"');
+    expect(runner).toContain('function resolveCliJsonEventParser(command, args)');
   });
 
   it('resolves packaged work package helpers from Electron resources', () => {
@@ -740,7 +742,7 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('stripCliLowValueMemoryText(note && note.content)');
     expect(runner).toContain('function normalizeCliMemoryNoteKey(value)');
     expect(runner).toContain('function appendPlainCliMessageText(previous, next)');
-    expect(runner).toContain('state.lastCodexMessageText = appendPlainCliMessageText');
+    expect(runner).toContain('state.lastCliMessageText = appendPlainCliMessageText');
     expect(runner).toContain('function compactCliLocalSessionMemoryContent(insight)');
     expect(runner).toContain('function buildCliLocalSessionMemoryParts(insight)');
     expect(runner).toContain('foldRepeatedRunnerPromptLines(cleanLogText(part))');

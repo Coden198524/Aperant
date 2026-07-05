@@ -24,7 +24,7 @@ import {
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
   inferAutocodePinnedProviderFromModel,
   isAutocodeCommonBaseBranch,
-  isAutocodeOpenAIResponsesTransport,
+  resolveAutocodeDirectProviderContinuationCapability,
   loadAutocodeImplementationPlanSync,
   loadAutocodeTaskRuntimeMetadataConfig,
   normalizeAutocodeBaseBranch,
@@ -262,30 +262,6 @@ function captureDirectWorkspaceBaseline(projectPath: string, specDir: string): v
   } catch (error) {
     console.warn('[AgentManager] Failed to capture direct workspace baseline:', error);
   }
-}
-
-interface DirectProviderContinuationCapability {
-  id: string;
-  mode: 'provider';
-  supports(input: { provider: unknown; modelId: string }): boolean;
-}
-
-const DIRECT_PROVIDER_CONTINUATION_CAPABILITIES: DirectProviderContinuationCapability[] = [
-  {
-    id: 'responses-previous-response',
-    mode: 'provider',
-    supports: ({ provider, modelId }) => isAutocodeOpenAIResponsesTransport(
-      typeof provider === 'string' ? provider : undefined,
-      modelId,
-    ),
-  },
-];
-
-function resolveDirectProviderContinuationCapability(input: {
-  provider: unknown;
-  modelId: string;
-}): DirectProviderContinuationCapability | null {
-  return DIRECT_PROVIDER_CONTINUATION_CAPABILITIES.find((capability) => capability.supports(input)) ?? null;
 }
 
 function resolveDirectRuntimeSubtaskId(specDir: string, requestedSubtaskId?: string): string {
@@ -1196,7 +1172,7 @@ export class AgentManager extends EventEmitter {
     const effectiveProjectDir = worktreePath ?? projectPath;
     const directSubtaskId = resolveDirectRuntimeSubtaskId(worktreeSpecDir, options.directSubtaskId);
     const directSessionState = resolveAutocodeDirectSessionState(worktreeSpecDir, specDir);
-    const providerContinuationCapability = resolveDirectProviderContinuationCapability({
+    const providerContinuationCapability = resolveAutocodeDirectProviderContinuationCapability({
       provider: resolved.provider,
       modelId: resolved.modelId,
     });

@@ -196,6 +196,57 @@ describe('project task loading', () => {
     }
   });
 
+  it('does not repair Direct max_steps outcomes as completed', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
+    try {
+      const specDir = join(projectRoot, '.autocode', 'specs', '008-direct-max-steps');
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, 'task_metadata.json'), JSON.stringify({
+        developmentMode: 'direct',
+        workflowMode: 'off',
+        taskTitle: 'Direct task',
+      }, null, 2), 'utf8');
+      writeFileSync(join(specDir, 'autocode-run-result.json'), JSON.stringify({
+        phase: 'direct',
+        exitCode: 0,
+        status: 'max_steps',
+        message: 'Direct session reached max steps.',
+        updatedAt: '2026-07-01T06:05:24.493Z',
+      }, null, 2), 'utf8');
+      writeFileSync(join(specDir, 'implementation_plan.md'), [
+        '# Implementation Plan',
+        'Feature: Direct task',
+        'Workflow: direct',
+        'Status: coding',
+        'Execution Phase: coding',
+        'Created: 2026-06-20T00:00:00.000Z',
+        'Updated: 2026-07-01T06:05:28.090Z',
+        '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"max_steps","completed_at":"2026-07-01T06:05:24.493Z","current_subtask_id":"direct-implementation","summary_file":"direct_summary.md"}} -->',
+        '',
+        '- [ ] direct. Direct execution',
+        '  - [ ] direct-implementation Direct model execution',
+        '    - Implement the task directly.',
+        '',
+      ].join('\n'), 'utf8');
+
+      const [task] = loadAutocodeProjectTasks({
+        projectRoot,
+        dataDirName: '.autocode',
+      });
+
+      expect(task.status).toBe('in_progress');
+      expect(task.reviewReason).toBeUndefined();
+      expect(task.executionProgress?.phase).toBe('coding');
+      expect(task.subtasks[0]?.status).toBe('pending');
+      const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+      expect(rawPlan).toContain('Status: coding');
+      expect(rawPlan).toContain('"outcome":"max_steps"');
+      expect(rawPlan).not.toContain('Status: human_review');
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('does not complete a newer direct Request Changes node with an older run result', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
     try {

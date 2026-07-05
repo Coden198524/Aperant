@@ -326,6 +326,24 @@ describe('evaluateDirectCompletionFallback', () => {
     });
   });
 
+  it('fails when Direct plan outcome exhausted max steps', () => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'stuck-clean-exit',
+      plan: currentIterationPlan({
+        outcome: 'max_steps',
+        completed_at: '2026-07-01T01:01:05.000Z',
+      }),
+      runResult: null,
+    });
+
+    expect(decision).toMatchObject({
+      action: 'fail',
+      reason: 'failed-plan-outcome',
+      error: 'Direct plan outcome is max_steps.',
+    });
+  });
+
   it('fails when a completed Direct plan contains failed self-critique evidence', () => {
     const decision = evaluateDirectCompletionFallback({
       exitCode: 0,

@@ -586,6 +586,13 @@ export {
 } from './runtime/agent-messages.js';
 
 export {
+  AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES,
+  resolveAutocodeDirectProviderContinuationCapability,
+  supportsAutocodeDirectProviderContinuation,
+  type AutocodeDirectProviderContinuationCapability,
+  type AutocodeDirectProviderContinuationMode,
+} from './runtime/direct-provider-capabilities.js';
+export {
   AUTOCODE_DIRECT_SESSION_STATE_FILE,
   AUTOCODE_DIRECT_SESSION_STATE_VERSION,
   getAutocodeDirectSessionStatePath,
@@ -1504,17 +1511,28 @@ export {
 
 export {
   AUTOCODE_CLI_COMMANDS,
+  AUTOCODE_CLI_DEFINITIONS,
+  AUTOCODE_CLI_JSON_EVENT_PARSERS,
   DEFAULT_AUTOCODE_CLI,
   SUPPORTED_AUTOCODE_CLIS,
   buildAutocodeCliCommand,
   getAutocodeCliCommandName,
+  getAutocodeCliContinuationStrategy,
+  getAutocodeCliJsonEventParsers,
   getAutocodeCliPermissionArgs,
   getAutocodeCliPermissionBypassFlag,
   isAutocodeCli,
   resolveAutocodeCli,
   resolveAutocodeCliInvocation,
+  resolveAutocodeCliTaskRunInvocation,
   splitAutocodeCliCommandLine,
   type AutocodeCli,
+  type AutocodeCliContinuationStrategy,
+  type AutocodeCliContinuationStrategyType,
+  type AutocodeCliDefinition,
+  type AutocodeCliJsonEventParser,
+  type AutocodeCliJsonEventParserType,
+  type AutocodeCliTaskRunStrategy,
 } from './tasks/cli-catalog.js';
 
 export {

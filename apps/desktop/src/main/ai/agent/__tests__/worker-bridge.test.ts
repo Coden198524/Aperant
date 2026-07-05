@@ -1289,6 +1289,24 @@ describe('WorkerBridge', () => {
       expect(exitHandler).toHaveBeenCalledWith('task-123', 1, 'task-execution', undefined);
     });
 
+    it('maps Direct max_steps outcome to exit code 1', () => {
+      const exitHandler = vi.fn();
+      bridge.on('exit', exitHandler);
+      const baseConfig = createConfig();
+      bridge.spawn(createConfig({
+        session: {
+          ...baseConfig.session,
+          agentType: 'direct_task',
+          workflowMode: 'off',
+        },
+      }));
+
+      const result = createSessionResult({ outcome: 'max_steps' });
+      getWorker().emit('message', { type: 'result', taskId: 'task-123', data: result });
+
+      expect(exitHandler).toHaveBeenCalledWith('task-123', 1, 'task-execution', undefined);
+    });
+
     it('maps error outcome to exit code 1', () => {
       const exitHandler = vi.fn();
       bridge.on('exit', exitHandler);

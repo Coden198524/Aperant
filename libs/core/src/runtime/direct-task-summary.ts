@@ -70,7 +70,7 @@ export function buildAutocodeDirectExecutionMetadata(
 export function isAutocodeSuccessfulDirectOutcome(
   result: AutocodeSessionResult | undefined,
 ): boolean {
-  return result?.outcome === 'completed' || result?.outcome === 'max_steps';
+  return result?.outcome === 'completed';
 }
 
 export function getAutocodeDirectQualityGateFailureReason(

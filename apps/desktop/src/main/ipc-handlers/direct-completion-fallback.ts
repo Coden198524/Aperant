@@ -87,13 +87,14 @@ export type DirectCompletionFallbackDecision =
       reason: string;
     };
 
-const SUCCESSFUL_DIRECT_OUTCOMES = new Set(['completed', 'success', 'done', 'max_steps']);
+const SUCCESSFUL_DIRECT_OUTCOMES = new Set(['completed', 'success', 'done']);
 const FAILED_DIRECT_OUTCOMES = new Set([
   'error',
   'failed',
   'failure',
   'rate_limited',
   'context_window',
+  'max_steps',
   'timeout',
   'cancelled',
   'canceled',

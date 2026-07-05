@@ -25,8 +25,8 @@ import {
   type AutocodeCli,
   type AutocodeCliContinuationStrategy,
   getAutocodeCliContinuationStrategy,
-  getAutocodeCliPermissionArgs,
-  resolveAutocodeCliInvocation,
+  getAutocodeCliJsonEventParsers,
+  resolveAutocodeCliTaskRunInvocation,
 } from './cli-catalog.js';
 import { loadAutocodeImplementationPlanSync } from './plan-store.js';
 import {
@@ -100,7 +100,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
   });
   const promptFilePath = join(specDir, PROMPT_FILE_NAME);
   const runnerFilePath = join(specDir, RUNNER_FILE_NAME);
-  const cliInvocation = resolveTaskRunnerCliInvocation({
+  const cliInvocation = resolveAutocodeCliTaskRunInvocation({
     cli: input.cli,
     customCommand: input.customCommand,
     model: input.model,
@@ -156,28 +156,6 @@ export function mapAutocodeAgentRuntimeModeToTaskRunPhase(
   return mode;
 }
 
-function resolveTaskRunnerCliInvocation(input: {
-  cli: AutocodeCli;
-  customCommand?: string;
-  model?: string;
-  bypassPermissions: boolean;
-}): { command: string; args: string[] } {
-  const invocation = resolveAutocodeCliInvocation(input.cli, input.customCommand);
-  const permissionArgs = getAutocodeCliPermissionArgs(input.cli, input.bypassPermissions);
-
-  if (input.cli === 'codex') {
-    const modelArgs = input.model ? ['-m', input.model] : [];
-    return {
-      command: invocation.command,
-      args: ['exec', '--json', ...modelArgs, ...permissionArgs, '-'],
-    };
-  }
-
-  return {
-    command: invocation.command,
-    args: [...invocation.args, ...permissionArgs],
-  };
-}
 
 function resolveTask(projectRoot: string, dataDirName: string, taskId: string): AutocodeTask | null {
   return listAutocodeTasks({ projectRoot, dataDirName })
@@ -807,6 +785,7 @@ const command = ${JSON.stringify(input.command)};
 const args = ${JSON.stringify(input.args)};
 const cli = ${JSON.stringify(input.cli)};
 const directCliContinuationStrategy = ${JSON.stringify(input.directCliContinuationStrategy ?? null)};
+const cliJsonEventParsers = ${JSON.stringify(getAutocodeCliJsonEventParsers())};
 const iconvLiteModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('iconv-lite'))};
 const workPackagesModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/work-packages') ?? resolveOptionalRunnerDependency('./work-packages.js'))};
 const planQualityModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/plan-quality') ?? resolveOptionalRunnerDependency('./plan-quality.js'))};
@@ -830,7 +809,8 @@ const iconvLite = loadIconvLite();
 const prompt = readFileSync(promptFilePath, 'utf8');
 const logPhase = phase === 'coding' || phase === 'direct' ? 'coding' : 'planning';
 const executionPhase = logPhase === 'coding' ? 'coding' : 'planning';
-const codexJsonMode = isCodexJsonInvocation(command, args);
+const activeCliJsonEventParser = resolveCliJsonEventParser(command, args);
+const cliJsonMode = Boolean(activeCliJsonEventParser);
 const activeFileWriteLockDirs = new Set();
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
 const maxDirectQualityRetries = phase === 'direct' ? 2 : 0;
@@ -1610,10 +1590,10 @@ function startAttempt(attemptPrompt, subtaskId) {
 }
 
 function resetMainAttemptStateForRetry(state) {
-  state.lastCodexMessageText = '';
+  state.lastCliMessageText = '';
   state.pendingModelOutput = '';
   state.completionSummaryDetected = false;
-  state.codexJsonLineBuffer = '';
+  state.cliJsonLineBuffer = '';
   state.recentErrorLines = [];
   state.toolCallCount = 0;
   state.finalizing = false;
@@ -1708,27 +1688,56 @@ function buildDirectCliContinuationInvocation(strategy) {
 }
 
 function buildDirectCliExecResumeArgs(strategy) {
+  const execCommand = typeof strategy.execCommand === 'string' && strategy.execCommand.trim()
+    ? strategy.execCommand.trim()
+    : Array.isArray(args)
+      ? args[0]
+      : '';
   if (
     !strategy.resumeSessionId ||
-    (strategy.requiresJsonMode && !codexJsonMode) ||
+    (strategy.requiresJsonMode && !isDirectCliJsonModeForStrategy(strategy)) ||
     !Array.isArray(args) ||
-    args[0] !== 'exec'
+    !execCommand ||
+    args[0] !== execCommand
   ) {
     return null;
   }
 
+  const promptStdinArg = typeof strategy.promptStdinArg === 'string' && strategy.promptStdinArg.trim()
+    ? strategy.promptStdinArg.trim()
+    : '-';
   const passthrough = [];
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === '-' && index === args.length - 1) {
+    if (arg === promptStdinArg && index === args.length - 1) {
       continue;
     }
     passthrough.push(arg);
   }
-  if (strategy.requiresJsonMode && !passthrough.includes('--json')) {
-    passthrough.unshift('--json');
+  const requiredArgs = Array.isArray(strategy.requiredArgs)
+    ? strategy.requiredArgs
+    : strategy.requiresJsonMode
+      ? ['--json']
+      : [];
+  for (const requiredArg of requiredArgs.slice().reverse()) {
+    if (requiredArg && !passthrough.includes(requiredArg)) {
+      passthrough.unshift(requiredArg);
+    }
   }
-  return ['exec', 'resume', ...passthrough, strategy.resumeSessionId, '-'];
+  const resumeArgs = Array.isArray(strategy.resumeArgs) && strategy.resumeArgs.length > 0
+    ? strategy.resumeArgs
+    : [execCommand, 'resume'];
+  return [...resumeArgs, ...passthrough, strategy.resumeSessionId, promptStdinArg];
+}
+
+function isDirectCliJsonModeForStrategy(strategy) {
+  if (!cliJsonMode) {
+    return false;
+  }
+  if (!strategy.jsonEventParser) {
+    return true;
+  }
+  return activeCliJsonEventParser && activeCliJsonEventParser.type === strategy.jsonEventParser;
 }
 
 function buildDirectCliFlagContinuationArgs(strategy) {
@@ -1757,7 +1766,7 @@ function formatDirectRetryContinuationLog(invocation) {
 
 async function finalize(currentAttemptId, exitCode, signal, explicitError) {
   if (finalized || currentAttemptId !== attemptId) return;
-  flushCodexJsonOutput(defaultAttemptState);
+  flushCliJsonOutput(defaultAttemptState);
   flushModelOutput(defaultAttemptState);
 
   const validationError = exitCode === 0 ? await validateExpectedArtifacts() : undefined;
@@ -1772,7 +1781,7 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
     updateTaskLogs(logPhase, 'active', retryMessage);
     updatePlanRunningState();
     emitPhase(executionPhase, retryMessage, 0);
-    defaultAttemptState.lastCodexMessageText = '';
+    defaultAttemptState.lastCliMessageText = '';
     defaultAttemptState.completionSummaryDetected = false;
     startAttempt(buildPromptWithMemoryContext(buildArtifactValidationRetryPrompt(validationError)));
     return;
@@ -1829,7 +1838,7 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
             attempt: directQualityRetryCount,
             maxRetries: maxDirectQualityRetries,
             finalText: readDirectCompletionSummary(result, currentAttemptStartedAt),
-            attemptTranscript: defaultAttemptState.lastCodexMessageText,
+            attemptTranscript: defaultAttemptState.lastCliMessageText,
           })));
           return;
         }
@@ -1845,7 +1854,7 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
   result.attemptCount = phase === 'direct' ? directQualityRetryCount + 1 : attemptId;
 
   if (phase === 'direct' || (!failed && phase === 'coding')) {
-    const finalText = defaultAttemptState.lastCodexMessageText || result.message;
+    const finalText = defaultAttemptState.lastCliMessageText || result.message;
     const memoryNotes = extractCliMemoryNotes(finalText);
     recordCliWorkItemMemory({
       id: phase === 'direct' ? 'direct-implementation' : 'task-execution',
@@ -1893,8 +1902,8 @@ function createAttemptState(label, subtaskId) {
     inactivityWarningLogged: false,
     completionGraceTimer: null,
     completionSummaryDetected: false,
-    codexJsonLineBuffer: '',
-    lastCodexMessageText: '',
+    cliJsonLineBuffer: '',
+    lastCliMessageText: '',
     recentErrorLines: [],
     toolCallCount: 0,
     finalizing: false,
@@ -1990,7 +1999,7 @@ function getNextAttemptInactivityDelay(state) {
 }
 
 function scheduleAttemptCompletionGrace(state) {
-  if (!isCodingWorkerAttempt(state) || state.completionGraceTimer || state.finalizing || !state.lastCodexMessageText) {
+  if (!isCodingWorkerAttempt(state) || state.completionGraceTimer || state.finalizing || !state.lastCliMessageText) {
     return;
   }
   state.completionGraceTimer = setTimeout(() => {
@@ -2191,7 +2200,7 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
   clearAttemptTimers(attempt.state);
   activeCodingAttempts.delete(currentAttemptId);
   activeCodingSubtaskIds.delete(attempt.subtask.id);
-  flushCodexJsonOutput(attempt.state);
+  flushCliJsonOutput(attempt.state);
   flushModelOutput(attempt.state);
 
   if (exitCode !== 0 || explicitError) {
@@ -2201,7 +2210,7 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
       signal,
       'CLI work item run failed.',
     );
-    const memoryNotes = extractCliMemoryNotes(attempt.state.lastCodexMessageText);
+    const memoryNotes = extractCliMemoryNotes(attempt.state.lastCliMessageText);
     failedCodingSubtaskIds.add(attempt.subtask.id);
     codingFailures.push(attempt.subtask.id + ': ' + reason);
     appendTaskLogEntry(
@@ -2214,7 +2223,7 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
     markPlanSubtaskStatus(attempt.subtask.id, 'failed', reason);
     recordCliWorkItemMemory(attempt.subtask, 'failure', reason, memoryNotes);
   } else {
-    const memoryNotes = extractCliMemoryNotes(attempt.state.lastCodexMessageText);
+    const memoryNotes = extractCliMemoryNotes(attempt.state.lastCliMessageText);
     completedCodingSubtaskIds.add(attempt.subtask.id);
     appendTaskLogEntry(
       'coding',
@@ -3112,8 +3121,8 @@ function handleChildOutput(stream, data, state = defaultAttemptState) {
   if (!text) return;
   refreshAttemptActivity(state);
   captureCliFailureSignals(text, state);
-  if (codexJsonMode && stream === 'stdout') {
-    processCodexJsonOutput(text, state);
+  if (cliJsonMode && stream === 'stdout') {
+    processCliJsonOutput(text, state);
     return;
   }
   if (stream === 'stderr') {
@@ -3460,12 +3469,12 @@ function queueModelOutput(text, state = defaultAttemptState) {
     return;
   }
 
-  if (!codexJsonMode) {
-    state.lastCodexMessageText = appendPlainCliMessageText(
-      state.lastCodexMessageText,
+  if (!cliJsonMode) {
+    state.lastCliMessageText = appendPlainCliMessageText(
+      state.lastCliMessageText,
       cleaned,
     );
-    maybeScheduleAttemptCompletionFromModelText(state, state.lastCodexMessageText);
+    maybeScheduleAttemptCompletionFromModelText(state, state.lastCliMessageText);
   }
   state.pendingModelOutput += cleaned;
   if (state.pendingModelOutput.length >= MODEL_OUTPUT_MAX_CHARS || cleaned.includes('\\n')) {
@@ -3504,26 +3513,26 @@ function appendPlainCliMessageText(previous, next) {
     : combined;
 }
 
-function processCodexJsonOutput(text, state = defaultAttemptState) {
-  state.codexJsonLineBuffer += text.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
-  const lines = state.codexJsonLineBuffer.split('\\n');
-  state.codexJsonLineBuffer = lines.pop() || '';
+function processCliJsonOutput(text, state = defaultAttemptState) {
+  state.cliJsonLineBuffer += text.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+  const lines = state.cliJsonLineBuffer.split('\\n');
+  state.cliJsonLineBuffer = lines.pop() || '';
 
   for (const line of lines) {
-    processCodexJsonLine(line, state);
+    processCliJsonLine(line, state);
   }
 }
 
-function flushCodexJsonOutput(state = defaultAttemptState) {
-  if (!state.codexJsonLineBuffer.trim()) {
-    state.codexJsonLineBuffer = '';
+function flushCliJsonOutput(state = defaultAttemptState) {
+  if (!state.cliJsonLineBuffer.trim()) {
+    state.cliJsonLineBuffer = '';
     return;
   }
-  processCodexJsonLine(state.codexJsonLineBuffer, state);
-  state.codexJsonLineBuffer = '';
+  processCliJsonLine(state.cliJsonLineBuffer, state);
+  state.cliJsonLineBuffer = '';
 }
 
-function processCodexJsonLine(line, state = defaultAttemptState) {
+function processCliJsonLine(line, state = defaultAttemptState) {
   const trimmed = String(line ?? '').trim();
   if (!trimmed) {
     return;
@@ -3543,12 +3552,12 @@ function processCodexJsonLine(line, state = defaultAttemptState) {
     return;
   }
 
-  if (!handleCodexJsonEvent(event, state)) {
+  if (!handleCliJsonEvent(event, state)) {
     if (process.env.AUTOCODE_DEBUG_CLI_JSON === '1') {
       appendTaskLogEntry(
         logPhase,
         'info',
-        'Unhandled Codex JSON event: ' + limitLogText(trimmed, 800),
+        'Unhandled ' + getActiveCliJsonEventParserDisplayName() + ' JSON event: ' + limitLogText(trimmed, 800),
         trimmed,
         buildAttemptLogExtra(state),
       );
@@ -3558,8 +3567,24 @@ function processCodexJsonLine(line, state = defaultAttemptState) {
 
 function rememberCliJsonSessionId(sessionId) {
   const normalized = typeof sessionId === 'string' ? sessionId.trim() : '';
-  if (phase === 'direct' && codexJsonMode && normalized) {
+  if (phase === 'direct' && cliJsonMode && normalized) {
     activeCliJsonSessionId = normalized;
+  }
+}
+
+function getActiveCliJsonEventParserDisplayName() {
+  return activeCliJsonEventParser?.displayName || 'CLI';
+}
+
+function handleCliJsonEvent(event, state = defaultAttemptState) {
+  if (!activeCliJsonEventParser) {
+    return false;
+  }
+  switch (activeCliJsonEventParser.type) {
+    case 'codex-json':
+      return handleCodexJsonEvent(event, state);
+    default:
+      return false;
   }
 }
 
@@ -3798,10 +3823,10 @@ function handleCodexCompletionEvent(payloadType, state) {
 
 function appendCodexMessageLog(message, state = defaultAttemptState) {
   const cleanMessage = cleanLogText(message).trim();
-  if (!cleanMessage || cleanMessage === state.lastCodexMessageText) {
+  if (!cleanMessage || cleanMessage === state.lastCliMessageText) {
     return;
   }
-  state.lastCodexMessageText = cleanMessage;
+  state.lastCliMessageText = cleanMessage;
   maybeScheduleAttemptCompletionFromModelText(state, cleanMessage);
   const content = limitLogText(cleanMessage, MODEL_OUTPUT_MAX_CHARS);
   process.stdout.write(content + '\\n');
@@ -4268,7 +4293,7 @@ function readDirectCompletionSummary(result, minMtimeMs = runStartedAt) {
   const summaryPath = join(specDir, artifacts.directSummary);
   const liveText = (result.status && result.status !== 'success'
     ? result.message
-    : defaultAttemptState.lastCodexMessageText || result.message || '').trim();
+    : defaultAttemptState.lastCliMessageText || result.message || '').trim();
   try {
     const summaryStats = statSync(summaryPath);
     const content = readFileSync(summaryPath, 'utf8').trim();
@@ -5428,16 +5453,24 @@ function hasTaskLogRecords(logsPath) {
   }
 }
 
-function isCodexJsonInvocation(command, args) {
-  return isCodexCommand(command) && Array.isArray(args) && args.includes('--json');
+function resolveCliJsonEventParser(command, args) {
+  return (Array.isArray(cliJsonEventParsers) ? cliJsonEventParsers : []).find((parser) => {
+    if (!parser || !isCliCommandOneOf(command, parser.commandNames)) {
+      return false;
+    }
+    const requiredArgs = Array.isArray(parser.requiredArgs) ? parser.requiredArgs : [];
+    return requiredArgs.every((arg) => Array.isArray(args) && args.includes(arg));
+  }) || null;
 }
 
-function isCodexExecInvocation(command, args) {
-  return isCodexCommand(command) && Array.isArray(args) && args[0] === 'exec';
+function getCliJsonEventParserCommandNames(type) {
+  const parser = (Array.isArray(cliJsonEventParsers) ? cliJsonEventParsers : [])
+    .find((item) => item && item.type === type);
+  return Array.isArray(parser?.commandNames) ? parser.commandNames : [];
 }
 
 function isCodexCommand(command) {
-  return isCliCommandOneOf(command, ['codex']);
+  return isCliCommandOneOf(command, getCliJsonEventParserCommandNames('codex-json'));
 }
 
 function isCliCommandOneOf(command, names) {
