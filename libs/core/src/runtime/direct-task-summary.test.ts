@@ -4,8 +4,11 @@ import {
   AUTOCODE_DIRECT_FINAL_TEXT_MAX_CHARS,
   AUTOCODE_DIRECT_TASK_DESCRIPTION_MAX_CHARS,
   buildAutocodeDirectCompletionSummary,
+  buildAutocodeDirectExecutionMetadata,
   extractAutocodeDirectTaskDescription,
+  getAutocodeDirectQualityGateFailureReason,
   inferAutocodeDirectValidationEvidence,
+  isAutocodeDirectQualityGatePassed,
   isAutocodeSuccessfulDirectOutcome,
 } from './direct-task-summary.js';
 
@@ -56,6 +59,103 @@ describe('direct task summary helpers', () => {
       durationMs: 1,
       toolCallCount: 0,
     })).toMatchObject({ status: 'not_run' });
+  });
+
+  it('preserves Direct change request metadata when completing an iteration', () => {
+    const metadata = buildAutocodeDirectExecutionMetadata({
+      existing: {
+        enabled: true,
+        outcome: 'running',
+        current_subtask_id: 'direct-cr-20260701074920826',
+        change_request_id: 'cr-20260701074920826',
+        summary_file: 'direct_summary.md',
+      },
+      outcome: 'completed',
+      completedAt: '2026-07-01T07:50:11.417Z',
+      currentSubtaskId: 'direct-cr-20260701074920826',
+      quality: {
+        mode: 'direct',
+        outcome: 'completed',
+        changedFiles: ['src/direct.ts'],
+        filesChanged: 1,
+        stepsExecuted: 2,
+        toolCallCount: 1,
+        durationMs: 10,
+        recordedAt: '2026-07-01T07:50:11.417Z',
+        validation: {
+          status: 'reported_passed',
+          reason: 'npm test passed',
+        },
+      },
+    });
+
+    expect(metadata).toMatchObject({
+      enabled: true,
+      outcome: 'completed',
+      completed_at: '2026-07-01T07:50:11.417Z',
+      current_subtask_id: 'direct-cr-20260701074920826',
+      change_request_id: 'cr-20260701074920826',
+      summary_file: 'direct_summary.md',
+    });
+    expect(metadata.ai_coding_quality).toMatchObject({
+      mode: 'direct',
+      filesChanged: 1,
+    });
+  });
+
+  it('fails the Direct quality gate for failed validation or self-critique', () => {
+    const baseQuality = {
+      mode: 'direct' as const,
+      outcome: 'completed',
+      changedFiles: ['src/direct.ts'],
+      filesChanged: 1,
+      stepsExecuted: 2,
+      toolCallCount: 1,
+      durationMs: 10,
+      recordedAt: '2026-01-01T00:00:00.000Z',
+      validation: {
+        status: 'reported_passed',
+        reason: 'npm test passed',
+      },
+    };
+
+    expect(isAutocodeDirectQualityGatePassed({
+      ...baseQuality,
+      selfCritique: {
+        status: 'passed',
+        score: 0.9,
+        filesReviewed: 1,
+        improvements: [],
+      },
+    })).toBe(true);
+
+    const failedCritiqueReason = getAutocodeDirectQualityGateFailureReason({
+      ...baseQuality,
+      selfCritique: {
+        status: 'failed',
+        score: 0.5,
+        filesReviewed: 1,
+        improvements: ['Handle null input', 'Add regression test'],
+      },
+    });
+    expect(failedCritiqueReason).toContain('Direct self-critique failed');
+    expect(failedCritiqueReason).toContain('Handle null input');
+
+    expect(getAutocodeDirectQualityGateFailureReason({
+      ...baseQuality,
+      validation: {
+        status: 'reported_failed',
+        reason: 'npm test failed with 1 assertion error',
+      },
+    })).toContain('reported_failed');
+
+    expect(isAutocodeDirectQualityGatePassed({
+      ...baseQuality,
+      validation: {
+        status: 'reported_mixed',
+        reason: 'typecheck passed but smoke test failed',
+      },
+    })).toBe(false);
   });
 
   it('keeps both ends of oversized direct task descriptions', () => {

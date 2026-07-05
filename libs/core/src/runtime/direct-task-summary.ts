@@ -39,10 +39,63 @@ export interface BuildAutocodeDirectCompletionSummaryInput {
   quality?: AutocodeDirectCodingQualityMetrics;
 }
 
+export interface BuildAutocodeDirectExecutionMetadataInput {
+  existing?: Record<string, unknown> | null;
+  outcome: string;
+  completedAt: string;
+  summaryFile?: string;
+  currentSubtaskId: string;
+  quality?: AutocodeDirectCodingQualityMetrics;
+}
+
+export function buildAutocodeDirectExecutionMetadata(
+  input: BuildAutocodeDirectExecutionMetadataInput,
+): Record<string, unknown> {
+  return {
+    ...(input.existing ?? {}),
+    enabled: true,
+    outcome: input.outcome,
+    completed_at: input.completedAt,
+    summary_file: input.summaryFile ?? 'direct_summary.md',
+    current_subtask_id: input.currentSubtaskId,
+    ai_coding_quality: input.quality,
+  };
+}
+
+
 export function isAutocodeSuccessfulDirectOutcome(
   result: AutocodeSessionResult | undefined,
 ): boolean {
   return result?.outcome === 'completed' || result?.outcome === 'max_steps';
+}
+
+export function getAutocodeDirectQualityGateFailureReason(
+  quality: AutocodeDirectCodingQualityMetrics | undefined,
+): string | null {
+  if (!quality) {
+    return null;
+  }
+
+  if (quality.selfCritique?.status === 'failed') {
+    const improvements = quality.selfCritique.improvements
+      .slice(0, 3)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join('; ');
+    return `Direct self-critique failed${improvements ? `: ${improvements}` : ': quality score below threshold'}`;
+  }
+
+  if (quality.validation.status === 'reported_failed' || quality.validation.status === 'reported_mixed') {
+    return `Direct validation ${quality.validation.status}: ${quality.validation.reason}`;
+  }
+
+  return null;
+}
+
+export function isAutocodeDirectQualityGatePassed(
+  quality: AutocodeDirectCodingQualityMetrics | undefined,
+): boolean {
+  return getAutocodeDirectQualityGateFailureReason(quality) === null;
 }
 
 export function inferAutocodeDirectValidationEvidence(

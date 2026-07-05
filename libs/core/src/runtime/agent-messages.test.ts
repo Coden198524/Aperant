@@ -228,6 +228,65 @@ describe('Autocode runtime agent messages', () => {
     expect(message.content.length).toBeLessThan(9_000);
   });
 
+  it('keeps project docs reference compact in direct task messages', () => {
+    const docsDir = join(tempRoot, '.autocode', 'project-docs');
+    mkdirSync(docsDir, { recursive: true });
+    writeFileSync(
+      join(docsDir, 'index.md'),
+      '# Project Docs\n\n- Architecture: architecture.md\n- Technical: technical.md\n',
+      'utf-8',
+    );
+    writeFileSync(
+      join(docsDir, 'architecture.md'),
+      [
+        '# Architecture',
+        '',
+        '## Boundaries',
+        '',
+        '- Renderer owns UI state.',
+        '- Main process owns provider credentials.',
+        ...Array.from(
+          { length: 180 },
+          (_, index) => `- Architecture deep detail ${index}: ${'runtime boundary evidence '.repeat(8)}`,
+        ),
+      ].join('\n'),
+      'utf-8',
+    );
+    writeFileSync(
+      join(docsDir, 'technical.md'),
+      [
+        '# Technical',
+        '',
+        '## Commands',
+        '',
+        '- Run npm run build for release verification.',
+        ...Array.from(
+          { length: 180 },
+          (_, index) => `- Technical deep detail ${index}: ${'toolchain command evidence '.repeat(8)}`,
+        ),
+      ].join('\n'),
+      'utf-8',
+    );
+
+    saveAutocodeTaskRequirementsSync(specDir, {
+      task_description: 'Make a focused Direct-mode change that should use project conventions only as needed.',
+      workflow_type: 'direct',
+    });
+
+    const [message] = buildAutocodeDirectTaskExecutionMessages({
+      specDir,
+      specId: '001-task',
+      projectRoot: tempRoot,
+      dataDirName: '.autocode',
+    });
+
+    expect(message.content).toContain('Project Documentation Reference');
+    expect(message.content).toContain('Available documents:');
+    expect(message.content).toContain('Renderer owns UI state');
+    expect(message.content).not.toContain('Architecture deep detail 90');
+    expect(Buffer.byteLength(message.content, 'utf8')).toBeLessThan(5_500);
+  });
+
   it('folds repeated direct task request lines before prompt compaction', () => {
     const repeatedLine = 'REPEATED_DIRECT_LOG: renderer printed the same warning without new evidence.';
     const longRequest = [

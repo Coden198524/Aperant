@@ -54,8 +54,10 @@ import {
 } from '@autocode/core/runtime/agent-execution-plan';
 import {
   buildAutocodeDirectCompletionSummaryV2,
+  buildAutocodeDirectExecutionMetadata,
   extractAutocodeDirectFilePathFromToolArgs,
   extractAutocodeDirectTaskDescription,
+  getAutocodeDirectQualityGateFailureReason,
   inferAutocodeDirectValidationEvidence,
   isAutocodeSuccessfulDirectOutcome,
   shouldTrackAutocodeDirectModifiedFile,
@@ -139,6 +141,7 @@ if (!parentPort) {
 }
 
 const config = workerData as WorkerConfig;
+const AUTOCODE_DIRECT_CONTEXT_WINDOW_CONTINUATIONS = 1;
 if (!config?.taskId || !config?.session) {
   throw new Error('worker.ts requires valid WorkerConfig via workerData');
 }
@@ -635,11 +638,12 @@ async function runContinuableSessionWithGatewayFallback(
 
 async function runDirectSessionWithGatewayFallback(
   sessionConfig: SessionConfig,
-  runnerOptions: Parameters<typeof runAgentSession>[1],
+  runnerOptions: Parameters<typeof runContinuableSession>[1],
+  continuationOptions: Parameters<typeof runContinuableSession>[2],
   session: SerializableSessionConfig,
   modelId: string,
 ): Promise<SessionResult> {
-  const firstResult = await runAgentSession(sessionConfig, runnerOptions);
+  const firstResult = await runContinuableSession(sessionConfig, runnerOptions, continuationOptions);
 
   if (!supportsChatFallbackTransport(session) || !shouldFallbackForResponsesPersistenceError(firstResult)) {
     return firstResult;
@@ -654,13 +658,13 @@ async function runDirectSessionWithGatewayFallback(
     `[GatewayFallback] Direct Responses continuation is not supported for provider=${session.provider}, baseURL=${session.baseURL ?? 'unknown baseURL'}; retrying without provider session persistence.`,
   );
 
-  return runAgentSession({
+  return runContinuableSession({
     ...sessionConfig,
     model: createForcedChatModel(session, modelId),
     initialMessages: buildDirectSummaryFallbackMessages(session, sessionConfig.initialMessages),
     responsePersistence: false,
     previousResponseId: undefined,
-  }, runnerOptions);
+  }, runnerOptions, continuationOptions);
 }
 
 function buildDirectSummaryFallbackMessages(
@@ -1286,6 +1290,30 @@ function getDirectSessionSubtaskId(session: SerializableSessionConfig): string {
   return session.subtaskId?.trim() || 'direct-implementation';
 }
 
+function applyDirectQualityGateToResult(
+  result: SessionResult | undefined,
+  quality: DirectCodingQualityMetrics,
+): SessionResult | undefined {
+  if (!result || !isSuccessfulDirectOutcome(result)) {
+    return result;
+  }
+
+  const failureReason = getAutocodeDirectQualityGateFailureReason(quality);
+  if (!failureReason) {
+    return result;
+  }
+
+  return {
+    ...result,
+    outcome: 'error',
+    error: {
+      code: 'direct_quality_gate_failed',
+      message: failureReason,
+      retryable: true,
+    },
+  };
+}
+
 function ensureDirectPlanPhase(plan: ShardableImplementationPlan): {
   phase?: number;
   id?: string;
@@ -1363,14 +1391,15 @@ function persistDirectTaskCompletion(
       plan.reviewReason = success ? 'completed' : 'errors';
       plan.xstateState = success ? 'human_review' : 'error';
       plan.executionPhase = success ? 'complete' : 'failed';
-      plan.direct_execution = {
-        enabled: true,
+      plan.direct_execution = buildAutocodeDirectExecutionMetadata({
+        existing: typeof plan.direct_execution === 'object' && plan.direct_execution !== null
+          ? plan.direct_execution as Record<string, unknown>
+          : null,
         outcome: result?.outcome ?? 'unknown',
-        completed_at: now,
-        summary_file: 'direct_summary.md',
-        current_subtask_id: directSubtaskId,
-        ai_coding_quality: quality,
-      };
+        completedAt: now,
+        currentSubtaskId: directSubtaskId,
+        quality,
+      });
       plan.updated_at = now;
       if (!plan.created_at) {
         plan.created_at = now;
@@ -1593,11 +1622,12 @@ async function runDefaultSession(
       apiKey: session.apiKey,
       baseURL: session.baseURL,
       oauthTokenFilePath: session.oauthTokenFilePath,
-      maxContinuations: isDirectTaskSession(session) ? 0 : undefined,
+      maxContinuations: isDirectTaskSession(session) ? AUTOCODE_DIRECT_CONTEXT_WINDOW_CONTINUATIONS : undefined,
+      contextWindowExhaustedOutcome: isDirectTaskSession(session) ? 'context_window' as const : undefined,
     };
 
     result = isDirectTaskSession(session)
-      ? await runDirectSessionWithGatewayFallback(sessionConfig, runnerOptions, session, session.modelId)
+      ? await runDirectSessionWithGatewayFallback(sessionConfig, runnerOptions, continuationOptions, session, session.modelId)
       : await runContinuableSessionWithGatewayFallback(
           sessionConfig,
           runnerOptions,
@@ -1626,7 +1656,9 @@ async function runDefaultSession(
     postError(`Direct task session failed: ${message}`);
   } finally {
     if (logWriter) {
-      const success = result?.outcome === 'completed' || result?.outcome === 'max_steps' || result?.outcome === 'context_window';
+      const success = isDirectTaskSession(session)
+        ? isSuccessfulDirectOutcome(result)
+        : result?.outcome === 'completed' || result?.outcome === 'max_steps' || result?.outcome === 'context_window';
       logWriter.endPhase(defaultPhase, success ?? false);
       logWriter.setSubtask(undefined);
     }
@@ -1637,6 +1669,7 @@ async function runDefaultSession(
       ? await collectFilesChangedSinceBaseline(session.projectDir, directChangedFileBaseline, [...directModifiedFiles])
       : [...directModifiedFiles];
     const directQuality = await evaluateDirectCodingQuality(session, result, modifiedFiles, streamedText);
+    result = applyDirectQualityGateToResult(result, directQuality);
     persistDirectTaskCompletion(session, result, streamedText, modifiedFiles, directQuality);
     await learnFromDirectTaskSession(session, result, modifiedFiles);
     if (isSuccessfulDirectOutcome(result)) {

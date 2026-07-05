@@ -25,6 +25,8 @@ export interface ContinuationConfig {
   maxContinuations?: number;
   /** Context window limit in tokens (from model metadata) */
   contextWindowLimit: number;
+  /** Outcome to report when context-window continuation budget is exhausted. */
+  contextWindowExhaustedOutcome?: SessionResult['outcome'];
   /** API key for creating the summarization model */
   apiKey?: string;
   /** Base URL for the summarization model */
@@ -48,7 +50,10 @@ export async function runContinuableSession(
   return runAutocodeContinuableSession(
     config,
     options,
-    { maxContinuations: continuationConfig.maxContinuations },
+    {
+      maxContinuations: continuationConfig.maxContinuations,
+      contextWindowExhaustedOutcome: continuationConfig.contextWindowExhaustedOutcome,
+    },
     {
       runSession: runAgentSession,
       summarizeMessages: (messages) => compactSessionMessages(

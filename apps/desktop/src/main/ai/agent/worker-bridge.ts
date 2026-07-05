@@ -16,6 +16,8 @@ import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { app } from 'electron';
 import {
+  isAutocodeDirectTaskExecution,
+  isAutocodeSuccessfulDirectOutcome,
   repairAutocodeChineseMojibakeText,
   toAutocodeMemoryRuntimeRecentContext,
   type AutocodeMemoryRuntimeIpcResponse,
@@ -113,6 +115,7 @@ export class WorkerBridge extends EventEmitter {
   private tokenUsageSessionBaseline: TokenUsage | null = null;
   private memoryObserver: MemoryObserver | null = null;
   private memorySessionType: SessionType = 'build';
+  private directTaskSession = false;
 
   /**
    * Spawn a worker thread with the given configuration.
@@ -142,6 +145,7 @@ export class WorkerBridge extends EventEmitter {
     this.lastTokenUsage = initialTokenUsage ?? null;
     this.activeTokenUsageSessionId = undefined;
     this.tokenUsageSessionBaseline = null;
+    this.directTaskSession = isAutocodeDirectTaskExecution(config.session);
 
     const workerConfig: WorkerConfig = {
       taskId: config.taskId,
@@ -553,7 +557,7 @@ export class WorkerBridge extends EventEmitter {
    */
   private handleResult(taskId: string, result: SessionResult, projectId?: string): void {
     // Map outcome to exit code
-    const exitCode = result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window' ? 0 : 1;
+    const exitCode = mapWorkerBridgeSessionResultExitCode(result, this.directTaskSession);
 
     // Merge stepsExecuted into usage for frontend display
     const shouldAttachResultSteps = shouldUseResultStepsForTokenUsage(result.usage);
@@ -688,6 +692,7 @@ export class WorkerBridge extends EventEmitter {
     this.activeTokenUsageSessionId = undefined;
     this.tokenUsageSessionBaseline = null;
     this.memoryObserver = null;
+    this.directTaskSession = false;
   }
 
   private mergeIncomingTokenUsage(
@@ -713,6 +718,13 @@ export class WorkerBridge extends EventEmitter {
       ? authoritativeTokenUsageSnapshot(this.lastTokenUsage, cumulativeForSession)
       : maxTokenUsage(this.lastTokenUsage, cumulativeForSession);
   }
+}
+
+function mapWorkerBridgeSessionResultExitCode(result: SessionResult, directTaskSession: boolean): number {
+  if (directTaskSession) {
+    return isAutocodeSuccessfulDirectOutcome(result) ? 0 : 1;
+  }
+  return result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window' ? 0 : 1;
 }
 
 function shouldEnableWorkerMemory(config: AgentExecutorConfig): boolean {

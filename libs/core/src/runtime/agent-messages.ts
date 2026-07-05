@@ -42,6 +42,7 @@ export interface BuildAutocodeRuntimeMessagesInput {
 }
 
 const DIRECT_TASK_TEXT_LIMIT = 6000;
+const DIRECT_PROJECT_DOCS_REFERENCE_MAX_BYTES = 1_800;
 const DIRECT_TASK_REFERENCE_LIMIT = 25;
 const DIRECT_TASK_ATTACHMENT_LIMIT = 10;
 export const AUTOCODE_DEFAULT_SPEC_TASK_DESCRIPTION_MAX_CHARS = 4_000;
@@ -206,7 +207,9 @@ export function buildAutocodeDirectTaskExecutionMessages(
   parts.push('Read metadata, plans, previous specs, or broad listings only if the request is ambiguous.');
   parts.push('For obvious single-file/documentation tasks, edit directly and run at most one useful check.');
   parts.push('');
-  appendProjectDocsReference(parts, input.projectRoot, input.dataDirName);
+  appendProjectDocsReference(parts, input.projectRoot, input.dataDirName, {
+    maxBytes: DIRECT_PROJECT_DOCS_REFERENCE_MAX_BYTES,
+  });
 
   const plan = readJson<{
     feature?: string;
@@ -815,8 +818,17 @@ function limitText(value: string, maxLength: number, suffix = '\n...[truncated]'
   return `${value.slice(0, Math.max(0, maxLength - suffix.length)).trimEnd()}${suffix}`;
 }
 
-function appendProjectDocsReference(parts: string[], projectRoot: string, dataDirName?: string): void {
-  const reference = buildAutocodeProjectDocsReferencePrompt({ projectRoot, dataDirName });
+function appendProjectDocsReference(
+  parts: string[],
+  projectRoot: string,
+  dataDirName?: string,
+  options: { maxBytes?: number } = {},
+): void {
+  const reference = buildAutocodeProjectDocsReferencePrompt({
+    projectRoot,
+    dataDirName,
+    maxBytes: options.maxBytes,
+  });
   if (!reference) {
     return;
   }

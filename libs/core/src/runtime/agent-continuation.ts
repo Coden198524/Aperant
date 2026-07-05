@@ -24,6 +24,7 @@ export interface AutocodeContinuableSessionConfig {
 
 export interface AutocodeContinuationConfig {
   maxContinuations?: number;
+  contextWindowExhaustedOutcome?: AutocodeSessionResult['outcome'];
 }
 
 export interface AutocodeContinuationContext {
@@ -58,6 +59,7 @@ export async function runAutocodeContinuableSession<
   runner: AutocodeContinuationRunner<Config, Options, Result>,
 ): Promise<Result & AutocodeContinuationResult> {
   const maxContinuations = continuationConfig.maxContinuations ?? AUTOCODE_DEFAULT_MAX_CONTINUATIONS;
+  const contextWindowExhaustedOutcome = continuationConfig.contextWindowExhaustedOutcome ?? 'completed';
   let currentConfig = config;
   let continuationCount = 0;
   let totalStepsExecuted = 0;
@@ -92,7 +94,7 @@ export async function runAutocodeContinuableSession<
     }
 
     if (i >= maxContinuations) {
-      return mergeAutocodeContinuationResult({ ...result, outcome: 'completed' }, {
+      return mergeAutocodeContinuationResult({ ...result, outcome: contextWindowExhaustedOutcome }, {
         totalStepsExecuted,
         totalToolCallCount,
         totalDurationMs,

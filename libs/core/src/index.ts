@@ -610,20 +610,24 @@ export {
 export {
   buildAutocodeDirectCompletionSummary,
   buildAutocodeDirectCompletionSummaryV2,
+  buildAutocodeDirectExecutionMetadata,
   escapeAutocodeMarkdownTableCell,
   extractAutocodeDirectFilePathFromToolArgs,
   extractAutocodeDirectTaskDescription,
   formatAutocodeChangedFilesForSummary,
   formatAutocodeDirectQualityAppendix,
   formatAutocodeDirectQualityLine,
+  getAutocodeDirectQualityGateFailureReason,
   getAutocodeDirectSummaryLabels,
   getAutocodeFinalAssistantText,
+  isAutocodeDirectQualityGatePassed,
   isAutocodeSuccessfulDirectOutcome,
   localizeAutocodeDirectSummaryText,
   shouldTrackAutocodeDirectModifiedFile,
   type AutocodeDirectCodingQualityMetrics,
   type AutocodeDirectSummaryLanguage,
   type BuildAutocodeDirectCompletionSummaryInput,
+  type BuildAutocodeDirectExecutionMetadataInput,
 } from './runtime/direct-task-summary.js';
 
 export {

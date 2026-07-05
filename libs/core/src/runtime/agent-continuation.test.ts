@@ -204,6 +204,52 @@ describe('Autocode agent continuation compaction', () => {
     expect(prompt.length).toBeLessThan(summary.length);
   });
 
+  it('can preserve context_window when the continuation budget is exhausted', async () => {
+    const contextWindowResult: AutocodeSessionResult = {
+      outcome: 'context_window',
+      stepsExecuted: 8,
+      usage: { promptTokens: 1_000, completionTokens: 200, totalTokens: 1_200 },
+      messages: [{ role: 'assistant', content: 'Partial result before context window.' }],
+      durationMs: 100,
+      toolCallCount: 4,
+    };
+
+    const defaultResult = await runAutocodeContinuableSession(
+      { initialMessages: [{ role: 'user', content: 'Start implementation.' }] },
+      undefined,
+      { maxContinuations: 0 },
+      {
+        runSession: async () => contextWindowResult,
+        summarizeMessages: async () => {
+          throw new Error('summarization should not run when no continuation remains');
+        },
+      },
+    );
+
+    expect(defaultResult.outcome).toBe('completed');
+    expect(defaultResult.continuationCount).toBe(0);
+
+    const strictResult = await runAutocodeContinuableSession(
+      { initialMessages: [{ role: 'user', content: 'Start direct implementation.' }] },
+      undefined,
+      {
+        maxContinuations: 0,
+        contextWindowExhaustedOutcome: 'context_window',
+      },
+      {
+        runSession: async () => contextWindowResult,
+        summarizeMessages: async () => {
+          throw new Error('summarization should not run when no continuation remains');
+        },
+      },
+    );
+
+    expect(strictResult.outcome).toBe('context_window');
+    expect(strictResult.stepsExecuted).toBe(8);
+    expect(strictResult.toolCallCount).toBe(4);
+    expect(strictResult.usage.totalTokens).toBe(1_200);
+    expect(strictResult.continuationCount).toBe(0);
+  });
   it('aggregates token usage across continuation sessions', async () => {
     const results: AutocodeSessionResult[] = [
       {
