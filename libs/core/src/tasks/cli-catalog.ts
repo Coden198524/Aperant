@@ -50,6 +50,7 @@ export interface AutocodeCliRuntimeRoute {
   displayName: string;
   cli: AutocodeCli;
   condition: AutocodeCliRuntimeRouteCondition;
+  customCommand?: string;
 }
 
 export interface ResolveAutocodeCliRuntimeRouteInput {
@@ -387,11 +388,12 @@ function parseAutocodeCliRuntimeRoute(value: unknown): AutocodeCliRuntimeRoute |
   const displayName = parseRuntimeRouteString(record.displayName) ?? parseRuntimeRouteString(record.display_name);
   const cli = parseRuntimeRouteString(record.cli);
   const condition = parseAutocodeCliRuntimeRouteCondition(record.condition);
-  if (!id || !displayName || !cli || !isAutocodeCli(cli) || !condition) {
+  const customCommand = parseRuntimeRouteString(record.customCommand) ?? parseRuntimeRouteString(record.custom_command);
+  if (!id || !displayName || !cli || !isAutocodeCli(cli) || !condition || (cli === 'custom' && !customCommand)) {
     return null;
   }
 
-  return { id, displayName, cli, condition };
+  return { id, displayName, cli, condition, ...(customCommand ? { customCommand } : {}) };
 }
 
 function parseAutocodeCliRuntimeRouteCondition(value: unknown): AutocodeCliRuntimeRouteCondition | null {

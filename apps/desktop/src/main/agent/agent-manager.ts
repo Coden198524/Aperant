@@ -785,6 +785,7 @@ export class AgentManager extends EventEmitter {
         metadata,
         baseBranch,
         cli: cliRuntimeRoute.cli,
+        customCommand: this.resolveCliRuntimeCustomCommand(cliRuntimeRoute, resolved),
         routeId: cliRuntimeRoute.id,
         routeDisplayName: cliRuntimeRoute.displayName,
       });
@@ -1002,6 +1003,7 @@ export class AgentManager extends EventEmitter {
         projectId,
         specDir: worktreeSpecDir,
         cli: cliRuntimeRoute.cli,
+        customCommand: this.resolveCliRuntimeCustomCommand(cliRuntimeRoute, resolved),
         routeId: cliRuntimeRoute.id,
         routeDisplayName: cliRuntimeRoute.displayName,
       });
@@ -1219,6 +1221,7 @@ export class AgentManager extends EventEmitter {
         direct: true,
         specDir: worktreeSpecDir,
         cli: cliRuntimeRoute.cli,
+        customCommand: this.resolveCliRuntimeCustomCommand(cliRuntimeRoute, resolved),
         routeId: cliRuntimeRoute.id,
         routeDisplayName: cliRuntimeRoute.displayName,
       });
@@ -1832,6 +1835,26 @@ export class AgentManager extends EventEmitter {
     });
   }
 
+  private resolveCliRuntimeCustomCommand(route: AutocodeCliRuntimeRoute, resolved: {
+    provider: string;
+    modelId: string;
+    auth: { source?: string; oauthTokenFilePath?: string } | null;
+  }): string | undefined {
+    const command = route.customCommand?.trim();
+    if (!command) {
+      return undefined;
+    }
+
+    const replacements: Record<string, string> = {
+      provider: resolved.provider,
+      model: resolved.modelId,
+      modelId: resolved.modelId,
+      authSource: resolved.auth?.source ?? '',
+    };
+    return command.replace(/\$\{(provider|model|modelId|authSource)\}|\{(provider|model|modelId|authSource)\}/g, (_match, shellKey: string | undefined, braceKey: string | undefined) =>
+      replacements[shellKey ?? braceKey ?? ''] ?? '',
+    );
+  }
   private resolveConfiguredCliRuntimeRoutes(settings?: Record<string, unknown>): AutocodeCliRuntimeRoute[] {
     return [
       ...parseAutocodeCliRuntimeRoutes(settings?.autocodeCliRuntimeRoutes),
@@ -1870,6 +1893,7 @@ export class AgentManager extends EventEmitter {
     baseBranch?: string;
     direct?: boolean;
     cli: AutocodeCli;
+    customCommand?: string;
     routeId: string;
     routeDisplayName?: string;
   }): Promise<void> {
@@ -1885,6 +1909,7 @@ export class AgentManager extends EventEmitter {
       taskId: input.specId || input.taskId,
       projectId: input.projectId,
       cli: input.cli,
+      customCommand: input.customCommand,
       model: input.modelId,
       bypassPermissions: settings?.dangerouslySkipPermissions === true,
       language: this.resolveAppLanguage(),

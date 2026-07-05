@@ -17,7 +17,7 @@ const createStartedAutocodeAgentRuntimeMock = vi.fn((_input?: unknown) => ({
   },
 }));
 const resolveAutocodeDirectSessionStateMock = vi.fn((..._args: unknown[]): unknown => null);
-const emitSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+const emitSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
 const originalCliRuntimeRoutesEnv = {
   json: process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON,
   routes: process.env.AUTOCODE_CLI_RUNTIME_ROUTES,
@@ -530,6 +530,68 @@ describe('AgentManager worktree execution', () => {
     expect(createStartedAutocodeAgentRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
       cli: 'deepseek',
       model: 'deepseek-v4-flash',
+    }));
+    expect(spawnProcessMock).toHaveBeenCalled();
+  });
+  it('routes Direct CLI runtime through configured custom command templates', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'future-1', provider: 'future-ai' }],
+      globalPriorityOrder: ['future-1'],
+      autocodeCliRuntimeRoutes: [
+        {
+          id: 'future-direct-cli',
+          displayName: 'Future CLI',
+          cli: 'custom',
+          customCommand: 'future-code --provider {provider} --model {modelId} run',
+          condition: {
+            provider: 'future-ai',
+            modelIdPrefix: 'future-',
+          },
+        },
+      ],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'future-1',
+      resolvedProvider: 'future-ai',
+      resolvedModelId: 'future-large',
+      apiKey: 'future-key',
+      source: 'api-key',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json') || filePath.endsWith('implementation_plan.md')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+      if (filePath.endsWith('implementation_plan.md')) {
+        return [
+          '# Implementation Plan',
+          'Feature: Direct task',
+          'Workflow: direct',
+          'Status: coding',
+          'Execution Phase: coding',
+          '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"running","current_subtask_id":"direct-implementation","summary_file":"direct_summary.md"}} -->',
+          '',
+          '- [/] direct. Direct execution',
+          '  - [/] direct-implementation Direct model execution',
+          '',
+        ].join('\n');
+      }
+      return JSON.stringify({ workflowMode: 'off', model: 'future-large' });
+    });
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
+    expect(createStartedAutocodeAgentRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      cli: 'custom',
+      customCommand: 'future-code --provider future-ai --model future-large run',
+      model: 'future-large',
     }));
     expect(spawnProcessMock).toHaveBeenCalled();
   });

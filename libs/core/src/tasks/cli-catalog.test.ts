@@ -84,6 +84,48 @@ describe('Autocode CLI catalog', () => {
     expect(getAutocodeCliRuntimeRoutes({ routes })[0].id).toBe('deepseek-direct-cli');
   });
 
+  it('parses custom-command CLI runtime routes for future providers', () => {
+    const routes = parseAutocodeCliRuntimeRoutes([
+      {
+        id: 'future-custom-cli',
+        displayName: 'Future Custom CLI',
+        cli: 'custom',
+        customCommand: 'future-code --model {modelId} run',
+        condition: {
+          provider: 'future-ai',
+          modelIdPrefix: 'future-',
+        },
+      },
+      {
+        id: 'missing-custom-command',
+        displayName: 'Missing Custom Command',
+        cli: 'custom',
+        condition: { provider: 'future-ai' },
+      },
+    ]);
+
+    expect(routes).toEqual([
+      {
+        id: 'future-custom-cli',
+        displayName: 'Future Custom CLI',
+        cli: 'custom',
+        customCommand: 'future-code --model {modelId} run',
+        condition: {
+          provider: 'future-ai',
+          modelIdPrefix: 'future-',
+        },
+      },
+    ]);
+    expect(resolveAutocodeCliRuntimeRoute({
+      provider: 'future-ai',
+      modelId: 'future-large',
+      routes,
+    })).toMatchObject({
+      id: 'future-custom-cli',
+      cli: 'custom',
+      customCommand: 'future-code --model {modelId} run',
+    });
+  });
   it('lets external CLI runtime routes override built-in routes', () => {
     const routes = parseAutocodeCliRuntimeRoutes([
       {
