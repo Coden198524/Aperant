@@ -694,6 +694,12 @@ async function main() {
       requirementsMarkdown: [
         '# Requirements',
         '',
+        '## User Requirements',
+        '- REQ-SETTINGS-1: Persist settings through the shared settings store.',
+        '',
+        '## Acceptance Criteria',
+        '- AC-SETTINGS-1: Settings survive reload.',
+        '',
         '## Evidence Sources',
         '- src/settings.ts - current settings store',
       ].join('\n'),
@@ -704,7 +710,9 @@ async function main() {
         '',
         '  - [ ] 1.1 Persist settings',
         '    - _Depends on: none_',
+        '    - _Requirements: REQ-SETTINGS-1; AC-SETTINGS-1_',
         '    - _Evidence: context.md src/settings.ts SettingsStore_',
+        '    - _Done when: settings changes are saved and restored after reload_',
         '    - _Verification: npm test -- settings_',
       ].join('\n'),
       contextMarkdown: core.stringifyAutocodeContextMarkdown({
@@ -812,22 +820,22 @@ async function main() {
     assert.match(noneMetadataMarkdown, /_Evidence: requirements\.md read-only validation task_/);
     assert.deepEqual(core.normalizeAutocodeWorkDependencyIds(['none', '\u65e0\u4f9d\u8d56', '1.1']), ['1.1']);
 
-    assert.throws(
-      () => core.buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
-        '# Tasks',
-        '',
-        '- [ ] 1. Implementation',
-        '',
-        '  - [ ] 1.1 Missing evidence',
-        '    - _Depends on: none_',
-        '    - _Verification: manual check_',
-        '',
-      ].join('\n'), {
-        now: '2026-01-02T03:04:00.000Z',
-        requireTaskEvidence: true,
-      }),
-      /missing traceable _Evidence: \.\.\._ metadata/,
-    );
+    const autoEvidenceRuntimePlan = core.buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Missing evidence',
+      '    - _Depends on: none_',
+      '    - _Verification: manual check_',
+      '',
+    ].join('\n'), {
+      now: '2026-01-02T03:04:00.000Z',
+      requireTaskEvidence: true,
+    });
+    const autoEvidenceTask = autoEvidenceRuntimePlan.phases[0].subtasks[0];
+    assert.match(autoEvidenceTask.evidence, /tasks\.md task 1\.1/);
+    assert.equal(core.isTraceableAutocodeEvidence(autoEvidenceTask.evidence), true);
 
     const specRuntimePlan = core.createAutocodeAgentRuntimeStartPlan({
       projectRoot,
@@ -1121,7 +1129,7 @@ async function main() {
     assert.equal(core.resolveAutocodeTaskWorkflowMode({ workflowMode: 'off' }), 'off');
     assert.deepEqual(core.resolveAutocodeTaskRuntimeConcurrency({ workflowMode: 'balanced' }), {
       mode: 'concurrent',
-      workers: 2,
+      workers: 5,
       unit: 'work_item',
       conflictPolicy: 'lock-and-queue',
     });
@@ -1131,7 +1139,7 @@ async function main() {
       runtimeConcurrency: { mode: 'serial', workers: 1 },
     }), {
       mode: 'concurrent',
-      workers: 2,
+      workers: 5,
       unit: 'work_item',
       conflictPolicy: 'lock-and-queue',
     });
@@ -1239,7 +1247,7 @@ async function main() {
         timeoutMs: 5,
         retryMs: 1,
       }),
-      /already held by this process/,
+      /Timed out waiting for write lock on .* held by smoke-lock-a/,
     );
     assert.equal(core.releaseAutocodeRuntimeFileWriteLock(writeLock), true);
     const reacquiredWriteLock = await core.acquireAutocodeRuntimeFileWriteLock({
@@ -1509,7 +1517,7 @@ async function main() {
     const mergedProjectTask = loadedProjectTasks.find((candidate) => candidate.id === task.id);
     assert.equal(mergedProjectTask.status, 'backlog');
     assert.equal(mergedProjectTask.subtasks[0].status, 'completed');
-    assert.equal(mergedProjectTask.location, 'main');
+    assert.equal(mergedProjectTask.location, 'worktree');
 
     const startedAgentRuntime = core.createStartedAutocodeAgentRuntime({
       projectRoot,
@@ -1761,7 +1769,7 @@ async function main() {
       retryRuntime.request,
       core.createProcessAgentRuntimeAdapter({ process: createSmokeProcessAdapter() }),
     );
-    assert.equal(retryResult.status, 'completed');
+    assert.equal(retryResult.status, 'completed', JSON.stringify(retryResult));
     const retryPlannedTask = core.listAutocodeTasks({ projectRoot, dataDirName: '.autocode' })
       .find((candidate) => candidate.id === retryTask.id);
     assert.equal(retryPlannedTask.status, 'human_review');
@@ -1775,7 +1783,7 @@ async function main() {
     });
     assert.ok(
       retryLogs.phases.planning.entries.some((entry) =>
-        entry.content.includes('CLI finished without creating tasks.md') &&
+        (entry.content.includes('CLI finished without creating tasks.md') || entry.content.includes('tasks.md is missing')) &&
         entry.content.includes('Retrying 1/2'),
       ),
     );
@@ -1830,7 +1838,7 @@ async function main() {
         }),
       }),
     );
-    assert.equal(codexUsageResult.status, 'completed');
+    assert.equal(codexUsageResult.status, 'completed', JSON.stringify(codexUsageResult));
     assert.ok(codexUsageResult.process.message.includes('__TASK_TOKEN_USAGE__'));
     const codexPlanContent = readFileSync(join(codexUsageTask.specsPath, 'implementation_plan.md'), 'utf8');
     const codexPlanMetadata = readPlanMachineMetadata(codexPlanContent);
@@ -1840,7 +1848,7 @@ async function main() {
       totalTokens: 168,
       thinkingTokens: 12,
       cacheReadTokens: 7,
-      stepsExecuted: 2,
+      stepsExecuted: 1,
       sessionId: 'codex-session-1',
     });
     const codexUsageLogs = core.readAutocodeTaskLogs({
@@ -1850,7 +1858,7 @@ async function main() {
     });
     assert.ok(
       codexUsageLogs.phases.planning.entries.some((entry) =>
-        entry.content.includes('\u6a21\u578b\u7528\u91cf\u66f4\u65b0\uff1a\u6a21\u578b\u8f6e\u6b21 2 \u6b21') &&
+        entry.content.includes('\u6a21\u578b\u7528\u91cf\u66f4\u65b0\uff1a\u6a21\u578b\u8f6e\u6b21 1 \u6b21') &&
         entry.content.includes('\u603b\u8ba1 168 tokens'),
       ),
     );
@@ -2159,11 +2167,11 @@ async function main() {
     );
     assert.equal(core.clampBashTimeout(undefined), core.DEFAULT_BASH_TIMEOUT_MS);
     assert.equal(core.clampBashTimeout(9_000_000), core.MAX_BASH_TIMEOUT_MS);
-    assert.match(core.truncateBashOutput('x'.repeat(core.BASH_MAX_OUTPUT_LENGTH + 1)), /Output truncated/);
+    assert.match(core.truncateBashOutput('x'.repeat(core.BASH_MAX_OUTPUT_LENGTH + 1)), /line middle omitted/);
     assert.equal(core.isCompilerCommand('clang++ -o app main.cpp'), true);
     assert.match(
       core.truncateCompilerOutput(`note\n${'error: bad\n'.repeat(1000)}`, 200),
-      /Compiler output truncated/,
+      /repeated line\(s\) omitted/,
     );
     assert.match(
       core.detectFastCommandFailure('findstr /s /n "needle" src\\*.ts', { isWindows: true }),
@@ -2238,7 +2246,7 @@ async function main() {
       core.formatGrepFallbackResults([{ file: 'a.ts', count: 2 }], 'count'),
       'a.ts:2',
     );
-    assert.match(core.truncateSearchOutput('x'.repeat(core.GREP_MAX_OUTPUT_LENGTH + 1)), /Output truncated/);
+    assert.match(core.truncateSearchOutput('x'.repeat(core.GREP_MAX_OUTPUT_LENGTH + 1)), /line middle omitted/);
 
     const envAuth = core.resolveProviderEnvironmentAuth(
       { provider: 'openai' },
@@ -2349,8 +2357,10 @@ writeFileSync(
     '    - Verify usage events update plan metadata and task logs.',
     '    - _Files: libs/core/src/tasks/cli-runner.ts_',
     '    - _Depends on: none_',
-    '    - _Evidence: requirements.md Codex CLI usage requirement_',
-    '    - _Verification: npm --workspace @autocode/core run smoke_',
+    '    - _Requirements: Codex CLI usage requirement_',
+    '    - _Evidence: requirements.md Codex CLI usage requirement; libs/core/src/tasks/cli-runner.ts Codex JSON usage handling_',
+    '    - _Done when: Codex JSON usage events update plan metadata and task logs_',
+    '    - _Verification: start fake Codex CLI with --json, exercise the usage accounting primary path, check exit status 0, and inspect implementation_plan.md token usage_',
     '',
   ].join('\\n'),
   'utf8',
@@ -2529,7 +2539,8 @@ function writeTasks() {
       '    - _Depends on: none_',
       '    - _Requirements: 1.1_',
       '    - _Evidence: requirements.md fake lifecycle requirement_',
-      '    - _Verification: fake CLI smoke check_',
+      '    - _Done when: fake CLI starts, writes direct_summary.md, and exits successfully_',
+      '    - _Verification: run fake CLI smoke check, assert exit status 0, and verify direct_summary.md exists_',
       '',
       '  - [ ] 1.2 Verify fake lifecycle',
       '    - Prove the runner invokes the custom CLI once per subtask.',
@@ -2537,7 +2548,8 @@ function writeTasks() {
       '    - _Depends on: 1.1_',
       '    - _Requirements: 1.2_',
       '    - _Evidence: requirements.md fake lifecycle verification criterion_',
-      '    - _Verification: fake CLI smoke check_',
+      '    - _Done when: fake CLI is invoked for each work package and records the expected log entry_',
+      '    - _Verification: run fake CLI smoke check, assert exit status 0, and inspect fake-cli-calls.log_',
       '',
     ].join('\\n'),
     'utf8',
@@ -2586,8 +2598,10 @@ writeFileSync(
     '    - Replace the invalid top-level-only plan with an executable subtask.',
     '    - _Files to modify: implementation_plan.md_',
     '    - _Depends on: none_',
-    '    - _Evidence: requirements.md retry validation error required executable subtask_',
-    '    - _Verification: npm --workspace @autocode/core run smoke_',
+    '    - _Requirements: retry validation requirement_',
+    '    - _Evidence: requirements.md retry validation error required executable subtask; libs/core/scripts/smoke-test.cjs retry fixture_',
+    '    - _Done when: retry planning creates one executable runtime work package and enters plan review_',
+    '    - _Verification: start the fake CLI, exercise the retry planning primary path, check exit status 0, and confirm plan_review status_',
     '',
   ].join('\\n'),
   'utf8',

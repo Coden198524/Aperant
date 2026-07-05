@@ -5,9 +5,59 @@ import {
   AUTOCODE_DIRECT_TASK_DESCRIPTION_MAX_CHARS,
   buildAutocodeDirectCompletionSummary,
   extractAutocodeDirectTaskDescription,
+  inferAutocodeDirectValidationEvidence,
+  isAutocodeSuccessfulDirectOutcome,
 } from './direct-task-summary.js';
 
 describe('direct task summary helpers', () => {
+  it('does not treat context window exhaustion as Direct completion', () => {
+    expect(isAutocodeSuccessfulDirectOutcome({
+      outcome: 'context_window',
+      stepsExecuted: 12,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [],
+      durationMs: 1,
+      toolCallCount: 0,
+    })).toBe(false);
+    expect(isAutocodeSuccessfulDirectOutcome({
+      outcome: 'completed',
+      stepsExecuted: 12,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [],
+      durationMs: 1,
+      toolCallCount: 0,
+    })).toBe(true);
+  });
+
+  it('infers reported Direct validation results from the final response', () => {
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: '| Verification | npm test -- direct-task-summary.test.ts passed |' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    })).toMatchObject({ status: 'reported_passed' });
+
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: 'Verification: npm test failed with 2 assertion errors.' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    })).toMatchObject({ status: 'reported_failed' });
+
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 1,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: 'What changed: answered the question directly.' }],
+      durationMs: 1,
+      toolCallCount: 0,
+    })).toMatchObject({ status: 'not_run' });
+  });
+
   it('keeps both ends of oversized direct task descriptions', () => {
     const longTask = [
       'Opening direct rule: keep configuration tables as JSON.',

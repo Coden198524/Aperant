@@ -50,17 +50,16 @@ import {
 } from '@autocode/core/runtime/agent-kickoff';
 import {
   isAutocodeDirectTaskExecution,
-  isAutocodeSuccessfulAgentSessionOutcome,
   resolveAutocodeAgentExecutionPlan,
 } from '@autocode/core/runtime/agent-execution-plan';
 import {
-  buildAutocodeDirectCompletionSummary,
   buildAutocodeDirectCompletionSummaryV2,
   extractAutocodeDirectFilePathFromToolArgs,
   extractAutocodeDirectTaskDescription,
-  formatAutocodeDirectQualityAppendix,
-  getAutocodeFinalAssistantText,
+  inferAutocodeDirectValidationEvidence,
+  isAutocodeSuccessfulDirectOutcome,
   shouldTrackAutocodeDirectModifiedFile,
+  type AutocodeDirectCodingQualityMetrics,
 } from '@autocode/core/runtime/direct-task-summary';
 import {
   buildAutocodeSessionQualityConfig,
@@ -1180,98 +1179,10 @@ function isDirectTaskSession(session: SerializableSessionConfig): boolean {
 }
 
 function isSuccessfulDirectOutcome(result: SessionResult | undefined): boolean {
-  return isAutocodeSuccessfulAgentSessionOutcome(result?.outcome);
+  return isAutocodeSuccessfulDirectOutcome(result);
 }
 
-function getFinalAssistantText(result: SessionResult | undefined, streamedText: string): string {
-  return getAutocodeFinalAssistantText(result, streamedText);
-}
-
-function escapeTableCell(value: string): string {
-  return value
-    .trim()
-    .replace(/\|/g, '\\|')
-    .replace(/\r?\n/g, '<br>');
-}
-
-function buildDirectCompletionSummary(
-  session: SerializableSessionConfig,
-  result: SessionResult | undefined,
-  streamedText: string,
-): string {
-  return buildAutocodeDirectCompletionSummary({
-    specDir: session.specDir,
-    language: session.language,
-    result,
-    streamedText,
-  });
-}
-
-function localizeDirectSummaryText(
-  language: SerializableSessionConfig['language'],
-  en: string,
-  zh: string,
-  fr: string,
-): string {
-  if (language === 'zh-CN') return zh;
-  if (language === 'fr') return fr;
-  return en;
-}
-
-function getDirectSummaryLabels(language: SerializableSessionConfig['language']): {
-  item: string;
-  details: string;
-  whatChanged: string;
-  verification: string;
-  reviewNotes: string;
-} {
-  if (language === 'zh-CN') {
-    return {
-      item: '项目',
-      details: '内容',
-      whatChanged: '修改内容',
-      verification: '验证结果',
-      reviewNotes: '审核要点',
-    };
-  }
-  if (language === 'fr') {
-    return {
-      item: 'Element',
-      details: 'Details',
-      whatChanged: 'Changements',
-      verification: 'Verification',
-      reviewNotes: 'Notes de revue',
-    };
-  }
-  return {
-    item: 'Item',
-    details: 'Details',
-    whatChanged: 'What changed',
-    verification: 'Verification',
-    reviewNotes: 'Review notes',
-  };
-}
-
-interface DirectCodingQualityMetrics {
-  mode: 'direct';
-  outcome: string;
-  changedFiles: string[];
-  filesChanged: number;
-  stepsExecuted: number;
-  toolCallCount: number;
-  durationMs: number;
-  recordedAt: string;
-  selfCritique?: {
-    status: 'passed' | 'failed' | 'skipped';
-    score?: number;
-    filesReviewed: number;
-    improvements: string[];
-  };
-  validation: {
-    status: 'not_run';
-    reason: string;
-  };
-}
+type DirectCodingQualityMetrics = AutocodeDirectCodingQualityMetrics;
 
 function buildDirectCompletionSummaryV2(
   session: SerializableSessionConfig,
@@ -1292,6 +1203,7 @@ async function evaluateDirectCodingQuality(
   session: SerializableSessionConfig,
   result: SessionResult | undefined,
   changedFiles: string[],
+  streamedText = '',
 ): Promise<DirectCodingQualityMetrics> {
   const metrics: DirectCodingQualityMetrics = {
     mode: 'direct',
@@ -1302,10 +1214,7 @@ async function evaluateDirectCodingQuality(
     toolCallCount: result?.toolCallCount ?? 0,
     durationMs: result?.durationMs ?? 0,
     recordedAt: new Date().toISOString(),
-    validation: {
-      status: 'not_run',
-      reason: 'Direct mode does not run staged QA; rely on model-reported verification and manual review.',
-    },
+    validation: inferAutocodeDirectValidationEvidence(result, streamedText),
   };
 
   if (!isSuccessfulDirectOutcome(result) || changedFiles.length === 0) {
@@ -1356,81 +1265,6 @@ async function evaluateDirectCodingQuality(
   }
 
   return metrics;
-}
-
-function formatDirectQualityAppendix(
-  language: SerializableSessionConfig['language'],
-  quality?: DirectCodingQualityMetrics,
-): string {
-  return formatAutocodeDirectQualityAppendix(language, quality);
-}
-
-function formatChangedFilesForSummary(files: string[]): string {
-  if (files.length === 0) {
-    return 'No changed files detected.';
-  }
-  const preview = files.slice(0, 12).join('<br>');
-  return files.length > 12 ? `${preview}<br>...and ${files.length - 12} more` : preview;
-}
-
-function formatDirectQualityLine(
-  language: SerializableSessionConfig['language'],
-  quality?: DirectCodingQualityMetrics,
-): string {
-  if (!quality) {
-    return localizeDirectSummaryText(language, 'Quality metrics unavailable.', '质量指标不可用。', 'Metriques qualite indisponibles.');
-  }
-  const selfCritique = quality.selfCritique
-    ? `${quality.selfCritique.status}${typeof quality.selfCritique.score === 'number' ? ` (${Math.round(quality.selfCritique.score * 100)}%)` : ''}, files reviewed: ${quality.selfCritique.filesReviewed}`
-    : 'not run';
-  return localizeDirectSummaryText(
-    language,
-    `Files changed: ${quality.filesChanged}. Self-critique: ${selfCritique}. Validation: ${quality.validation.status} (${quality.validation.reason}).`,
-    `变更文件：${quality.filesChanged}。自检：${selfCritique}。验证：${quality.validation.status}（${quality.validation.reason}）。`,
-    `Fichiers modifies : ${quality.filesChanged}. Auto-critique : ${selfCritique}. Validation : ${quality.validation.status} (${quality.validation.reason}).`,
-  );
-}
-
-function getDirectSummaryLabelsV2(language: SerializableSessionConfig['language']): {
-  item: string;
-  details: string;
-  whatChanged: string;
-  verification: string;
-  reviewNotes: string;
-  changedFiles: string;
-  quality: string;
-} {
-  if (language === 'zh-CN') {
-    return {
-      item: '项目',
-      details: '内容',
-      whatChanged: '修改内容',
-      verification: '验证结果',
-      reviewNotes: '审核要点',
-      changedFiles: '变更文件',
-      quality: 'AI 编码质量',
-    };
-  }
-  if (language === 'fr') {
-    return {
-      item: 'Element',
-      details: 'Details',
-      whatChanged: 'Changements',
-      verification: 'Verification',
-      reviewNotes: 'Notes de revue',
-      changedFiles: 'Fichiers modifies',
-      quality: 'Qualite du codage IA',
-    };
-  }
-  return {
-    item: 'Item',
-    details: 'Details',
-    whatChanged: 'What changed',
-    verification: 'Verification',
-    reviewNotes: 'Review notes',
-    changedFiles: 'Changed files',
-    quality: 'AI coding quality',
-  };
 }
 
 function extractDirectTaskDescription(session: SerializableSessionConfig): string {
@@ -1802,7 +1636,7 @@ async function runDefaultSession(
     const modifiedFiles = directChangedFileBaseline
       ? await collectFilesChangedSinceBaseline(session.projectDir, directChangedFileBaseline, [...directModifiedFiles])
       : [...directModifiedFiles];
-    const directQuality = await evaluateDirectCodingQuality(session, result, modifiedFiles);
+    const directQuality = await evaluateDirectCodingQuality(session, result, modifiedFiles, streamedText);
     persistDirectTaskCompletion(session, result, streamedText, modifiedFiles, directQuality);
     await learnFromDirectTaskSession(session, result, modifiedFiles);
     if (isSuccessfulDirectOutcome(result)) {

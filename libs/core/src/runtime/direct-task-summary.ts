@@ -45,6 +45,44 @@ export function isAutocodeSuccessfulDirectOutcome(
   return result?.outcome === 'completed' || result?.outcome === 'max_steps';
 }
 
+export function inferAutocodeDirectValidationEvidence(
+  result: AutocodeSessionResult | undefined,
+  streamedText = '',
+): AutocodeDirectCodingQualityMetrics['validation'] {
+  const validationText = extractAutocodeDirectValidationText(
+    getAutocodeFinalAssistantText(result, streamedText),
+  );
+
+  if (!validationText) {
+    return {
+      status: 'not_run',
+      reason: 'No validation command or result was reported in the Direct final response.',
+    };
+  }
+
+  const hasPass = /\b(?:passed|pass|succeeded|success|green|ok)\b/i.test(validationText)
+    || /(?:通过|成功|正常|无异常)/u.test(validationText);
+  const hasFail = /\b(?:failed|failing|failure|error|errors|exception|red)\b/i.test(validationText)
+    || /(?:失败|未通过|报错|错误|异常)/u.test(validationText);
+  const hasSkip = /\b(?:not run|not executed|skipped|manual only|not required|n\/a)\b/i.test(validationText)
+    || /(?:未运行|未执行|跳过|未验证|无需验证|手动验证)/u.test(validationText);
+
+  const reason = compactAutocodeDirectValidationReason(validationText);
+  if (hasPass && hasFail) {
+    return { status: 'reported_mixed', reason };
+  }
+  if (hasFail) {
+    return { status: 'reported_failed', reason };
+  }
+  if (hasPass) {
+    return { status: 'reported_passed', reason };
+  }
+  if (hasSkip) {
+    return { status: 'not_run', reason };
+  }
+  return { status: 'reported', reason };
+}
+
 export function getAutocodeFinalAssistantText(
   result: AutocodeSessionResult | undefined,
   streamedText: string,
@@ -291,6 +329,40 @@ function normalizeAutocodeDirectSummaryText(value: string): string {
     .replace(/\n{4,}/g, '\n\n\n')
     .trim();
   return foldRepeatedAutocodePromptLines(normalized).trim();
+}
+
+function extractAutocodeDirectValidationText(value: string): string {
+  const normalized = normalizeAutocodeDirectSummaryText(value);
+  if (!normalized) {
+    return '';
+  }
+
+  const relevantLines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && isAutocodeDirectValidationLine(line));
+
+  if (relevantLines.length === 0) {
+    return '';
+  }
+
+  return relevantLines.slice(-4).join('\n');
+}
+
+function isAutocodeDirectValidationLine(line: string): boolean {
+  return /\b(?:verification|validation|verified|test(?:ed|s)?|build|typecheck|tsc|lint|compile|check|pytest|vitest|jest|npm|pnpm|yarn|dotnet|cargo|go test)\b/i.test(line)
+    || /(?:验证|测试|构建|编译|检查|通过|失败|未运行|未执行|未验证)/u.test(line);
+}
+
+function compactAutocodeDirectValidationReason(value: string): string {
+  const compact = value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' | ');
+  return compact.length > 500 ? `${compact.slice(0, 497)}...` : compact;
 }
 
 export function extractAutocodeDirectFilePathFromToolArgs(
