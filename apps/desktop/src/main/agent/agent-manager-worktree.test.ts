@@ -22,8 +22,25 @@ const originalCliRuntimeRoutesEnv = {
   json: process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON,
   routes: process.env.AUTOCODE_CLI_RUNTIME_ROUTES,
 };
+const originalDirectProviderContinuationCapabilitiesEnv = {
+  json: process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES_JSON,
+  capabilities: process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES,
+};
+const originalDirectProviderFallbackCapabilitiesEnv = {
+  json: process.env.AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES_JSON,
+  capabilities: process.env.AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES,
+};
+const originalModelProviderRoutesEnv = {
+  json: process.env.AUTOCODE_MODEL_PROVIDER_ROUTES_JSON,
+  routes: process.env.AUTOCODE_MODEL_PROVIDER_ROUTES,
+};
 
+const originalProviderModelInvocationRoutesEnv = {
+  json: process.env.AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES_JSON,
+  routes: process.env.AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES,
+};
 const writeFileSyncMock = vi.fn();
+const readSettingsFileMock = vi.fn(() => ({}));
 const initializeClaudeProfileManagerMock = vi.fn(async (): Promise<{ hasValidAuth: () => boolean }> => ({ hasValidAuth: () => true }));
 
 vi.mock('fs', async (importOriginal) => {
@@ -68,8 +85,145 @@ vi.mock('child_process', () => ({
 
 vi.mock('@autocode/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@autocode/core')>();
+  const parseDirectCapabilities = (value: unknown) => {
+    const items = Array.isArray(value) ? value : value ? [value] : [];
+    return items.map((item) => {
+      const record = item as {
+        id?: string;
+        mode?: 'provider';
+        condition?: {
+          provider?: string;
+          providerPrefix?: string;
+          provider_prefix?: string;
+          modelIdPrefix?: string;
+          model_id_prefix?: string;
+          transport?: string;
+          providerTransport?: string;
+          provider_transport?: string;
+          transportPrefix?: string;
+          transport_prefix?: string;
+        };
+        providerOptions?: Record<string, Record<string, unknown>>;
+        continuationProviderOptions?: Record<string, Record<string, unknown>>;
+        providerResponseIdFields?: string[];
+      };
+      return {
+        id: record.id ?? 'configured-provider-continuation',
+        mode: record.mode ?? 'provider',
+        providerOptions: record.providerOptions,
+        continuationProviderOptions: record.continuationProviderOptions,
+        providerResponseIdFields: record.providerResponseIdFields,
+        supports: ({ provider, modelId, transport }: { provider: unknown; modelId: string; transport?: unknown }) => {
+          const condition = record.condition ?? {};
+          const providerText = String(provider ?? '');
+          const transportText = String(transport ?? provider ?? '');
+          const providerPrefix = condition.providerPrefix ?? condition.provider_prefix;
+          const modelIdPrefix = condition.modelIdPrefix ?? condition.model_id_prefix;
+          const exactTransport = condition.transport ?? condition.providerTransport ?? condition.provider_transport;
+          const transportPrefix = condition.transportPrefix ?? condition.transport_prefix;
+          if (condition.provider && providerText !== condition.provider) return false;
+          if (providerPrefix && !providerText.startsWith(providerPrefix)) return false;
+          if (modelIdPrefix && !modelId.startsWith(modelIdPrefix)) return false;
+          if (exactTransport && transportText !== exactTransport && providerText !== exactTransport) return false;
+          if (transportPrefix && !transportText.startsWith(transportPrefix) && !providerText.startsWith(transportPrefix)) return false;
+          return true;
+        },
+      };
+    });
+  };
+  const parseFallbackCapabilities = (value: unknown) => {
+    const items = Array.isArray(value) ? value : value ? [value] : [];
+    return items.map((item) => {
+      const record = item as {
+        id?: string;
+        condition?: {
+          provider?: string;
+          providerPrefix?: string;
+          provider_prefix?: string;
+          modelIdPrefix?: string;
+          model_id_prefix?: string;
+          transport?: string;
+          providerTransport?: string;
+          provider_transport?: string;
+          transportIncludes?: string;
+          transport_includes?: string;
+          providerTransportIncludes?: string;
+          provider_transport_includes?: string;
+        };
+        fallbackInvocationMethod?: 'call' | 'chat' | 'responses' | 'chatModel';
+        fallback_invocation_method?: 'call' | 'chat' | 'responses' | 'chatModel';
+        fallbackProviderTransport?: string;
+        fallback_provider_transport?: string;
+        errorMatchers?: Array<{ messageIncludes?: string[]; message_includes?: string[] }>;
+        error_matchers?: Array<{ messageIncludes?: string[]; message_includes?: string[] }>;
+        resetProviderPersistence?: boolean;
+        reset_provider_persistence?: boolean;
+      };
+      const fallbackInvocationMethod = record.fallbackInvocationMethod ?? record.fallback_invocation_method ?? 'chatModel';
+      const fallbackProviderTransport = record.fallbackProviderTransport ?? record.fallback_provider_transport;
+      const errorMatchers = (record.errorMatchers ?? record.error_matchers ?? [])
+        .map((matcher) => ({ messageIncludes: matcher.messageIncludes ?? matcher.message_includes ?? [] }))
+        .filter((matcher) => matcher.messageIncludes.length > 0);
+      return {
+        id: record.id ?? 'configured-provider-fallback',
+        fallbackInvocationMethod,
+        ...(fallbackProviderTransport ? { fallbackProviderTransport } : {}),
+        errorMatchers,
+        resetProviderPersistence: record.resetProviderPersistence ?? record.reset_provider_persistence ?? true,
+        supports: ({ provider, modelId, transport }: { provider: unknown; modelId: string; transport?: unknown }) => {
+          const condition = record.condition ?? {};
+          const providerText = String(provider ?? '');
+          const transportText = String(transport ?? provider ?? '');
+          const providerPrefix = condition.providerPrefix ?? condition.provider_prefix;
+          const modelIdPrefix = condition.modelIdPrefix ?? condition.model_id_prefix;
+          const exactTransport = condition.transport ?? condition.providerTransport ?? condition.provider_transport;
+          const transportIncludes = condition.transportIncludes ?? condition.transport_includes ?? condition.providerTransportIncludes ?? condition.provider_transport_includes;
+          if (condition.provider && providerText !== condition.provider) return false;
+          if (providerPrefix && !providerText.startsWith(providerPrefix)) return false;
+          if (modelIdPrefix && !modelId.startsWith(modelIdPrefix)) return false;
+          if (exactTransport && transportText !== exactTransport && providerText !== exactTransport) return false;
+          if (transportIncludes && !transportText.includes(transportIncludes) && !providerText.includes(transportIncludes)) return false;
+          return true;
+        },
+      };
+    });
+  };
+  const openaiDirectCapability = {
+    id: 'responses-previous-response',
+    mode: 'provider' as const,
+    providerOptions: { openai: { store: true } },
+    continuationProviderOptions: { openai: { store: true, previousResponseId: '{providerResponseId}' } },
+    providerResponseIdFields: ['openai.responseId'],
+    supports: ({ provider, transport }: { provider: unknown; modelId: string; transport?: unknown }) => {
+      const candidates = [provider, transport].map((value) => String(value ?? '').toLowerCase());
+      return candidates.some((value) => value === 'openai.responses' || value === 'openai-responses' || value === 'responses');
+    },
+  };
+  const buildDirectRuntime = (input: { capability: typeof openaiDirectCapability; providerResponseId?: string }) => ({
+    capabilityId: input.capability.id,
+    mode: input.capability.mode,
+    providerOptions: input.capability.providerOptions,
+    continuationProviderOptions: input.capability.continuationProviderOptions,
+    providerResponseIdFields: input.capability.providerResponseIdFields,
+    ...(input.providerResponseId ? { providerResponseId: input.providerResponseId } : {}),
+  });
   return {
     ...actual,
+    buildAutocodeDirectProviderContinuationRuntime: buildDirectRuntime,
+    buildAutocodeDirectProviderFallbackRuntime: (input: { capability: { id: string; fallbackInvocationMethod: string; fallbackProviderTransport?: string; errorMatchers: Array<{ messageIncludes: string[] }>; resetProviderPersistence: boolean } }) => ({
+      capabilityId: input.capability.id,
+      fallbackInvocationMethod: input.capability.fallbackInvocationMethod,
+      ...(input.capability.fallbackProviderTransport ? { fallbackProviderTransport: input.capability.fallbackProviderTransport } : {}),
+      errorMatchers: input.capability.errorMatchers,
+      resetProviderPersistence: input.capability.resetProviderPersistence,
+    }),
+    parseAutocodeDirectProviderContinuationCapabilities: parseDirectCapabilities,
+    parseAutocodeDirectProviderFallbackCapabilities: parseFallbackCapabilities,
+    resolveAutocodeDirectProviderContinuationCapability: (input: { provider: unknown; modelId: string; transport?: unknown; capabilities?: Array<{ supports: (input: { provider: unknown; modelId: string; transport?: unknown }) => boolean }> }) =>
+      input.capabilities?.find((capability) => capability.supports(input)) ??
+      (openaiDirectCapability.supports(input) ? openaiDirectCapability : null),
+    resolveAutocodeDirectProviderFallbackCapability: (input: { provider: unknown; modelId: string; transport?: unknown; capabilities?: Array<{ supports: (input: { provider: unknown; modelId: string; transport?: unknown }) => boolean }> }) =>
+      input.capabilities?.find((capability) => capability.supports(input)) ?? null,
     createStartedAutocodeAgentRuntime: (input: unknown) =>
       createStartedAutocodeAgentRuntimeMock(input),
     resolveAutocodeCliRuntimeRoute: (input: Parameters<typeof actual.resolveAutocodeCliRuntimeRoute>[0]) =>
@@ -85,7 +239,7 @@ vi.mock('@autocode/core', async (importOriginal) => {
           role: 'user',
           content: [
             `Provider continuation: ${input.directSessionState.providerResponseId ?? 'summary'}`,
-            '继续修复按钮无反应的问题。',
+            'Continue fixing the button.',
           ].join('\n'),
         }];
       }
@@ -122,7 +276,7 @@ vi.mock('../project-store', () => ({
 }));
 
 vi.mock('../settings-utils', () => ({
-  readSettingsFile: vi.fn(() => ({})),
+  readSettingsFile: readSettingsFileMock,
 }));
 
 vi.mock('../ai/auth/resolver', () => ({
@@ -181,7 +335,17 @@ describe('AgentManager worktree execution', () => {
   beforeEach(() => {
     delete process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON;
     delete process.env.AUTOCODE_CLI_RUNTIME_ROUTES;
+    delete process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES_JSON;
+    delete process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES;
+    delete process.env.AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES_JSON;
+    delete process.env.AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES;
+    delete process.env.AUTOCODE_MODEL_PROVIDER_ROUTES_JSON;
+    delete process.env.AUTOCODE_MODEL_PROVIDER_ROUTES;
+    delete process.env.AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES_JSON;
+    delete process.env.AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES;
     vi.clearAllMocks();
+    readSettingsFileMock.mockReset();
+    readSettingsFileMock.mockReturnValue({});
     writeFileSyncMock.mockReset();
     spawnProcessMock.mockReset();
     invalidateTasksCacheMock.mockReset();
@@ -238,6 +402,7 @@ describe('AgentManager worktree execution', () => {
     expect(content).not.toContain('Large spec creation context 160');
     expect(content).not.toContain('Project Documentation Reference');
     expect(content).toContain('Project directory: E:/repo');
+    expect(executorConfig.session.workflowMode).toBe('balanced');
   });
 
   it('captures the baseline commit when running in the current project workspace', async () => {
@@ -354,6 +519,66 @@ describe('AgentManager worktree execution', () => {
     expect(executorConfig.session.projectDir).toBe('E:/repo');
   });
 
+  it('uses configured model provider routes when resolving Direct task provider preference', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{
+        id: 'compatible-1',
+        provider: 'openai-compatible',
+        name: 'Compatible Endpoint',
+        authType: 'api-key',
+        billingModel: 'pay-per-use',
+        apiKey: 'sk-compatible',
+        createdAt: 0,
+        updatedAt: 0,
+      }],
+      globalPriorityOrder: ['compatible-1'],
+      autocodeModelProviderRoutes: [
+        { provider: 'openai-compatible', modelIdPrefix: 'future-' },
+      ],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'compatible-1',
+      resolvedProvider: 'openai-compatible',
+      resolvedModelId: 'future-large',
+      apiKey: 'sk-compatible',
+      source: 'api-key',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      JSON.stringify({ workflowMode: 'off', model: 'future-large' })
+    );
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(authResolver.resolveAuthFromQueue).toHaveBeenCalledWith(
+      'future-large',
+      expect.any(Array),
+      expect.objectContaining({
+        executionMode: 'agentic',
+        requestedProvider: 'openai-compatible',
+        modelProviderRoutes: expect.arrayContaining([
+          expect.objectContaining({
+            provider: 'openai-compatible',
+            modelIdPrefix: ['future-'],
+          }),
+        ]),
+      }),
+    );
+    expect(spawnWorkerProcessMock).toHaveBeenCalled();
+    const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
+    expect(executorConfig.session.provider).toBe('openai-compatible');
+    expect(executorConfig.session.modelId).toBe('future-large');
+  });
+
   it('emits early auth errors with project scope for every task start path', async () => {
     initializeClaudeProfileManagerMock.mockResolvedValue({ hasValidAuth: () => false });
     const { AgentManager } = await import('./agent-manager');
@@ -412,10 +637,10 @@ describe('AgentManager worktree execution', () => {
     );
     (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
       if (filePath.endsWith('HUMAN_INPUT.md')) {
-        return '继续修复按钮无反应的问题。';
+        return 'Continue fixing the button.';
       }
       if (filePath.endsWith('change_requests.jsonl')) {
-        return JSON.stringify({ feedback: '继续修复按钮无反应的问题。' });
+        return JSON.stringify({ feedback: 'Continue fixing the button.' });
       }
       return JSON.stringify({ workflowMode: 'off', model: 'gpt-5.3-codex' });
     });
@@ -428,12 +653,324 @@ describe('AgentManager worktree execution', () => {
     expect(spawnWorkerProcessMock).toHaveBeenCalled();
     const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
     expect(executorConfig.session.sessionId).toBe('direct-session-1');
-    expect(executorConfig.session.previousResponseId).toBe('resp_prev');
+    expect(executorConfig.session.previousResponseId).toBeUndefined();
     expect(executorConfig.session.responsePersistence).toBe(true);
+    expect(executorConfig.session.providerResponsePersistence).toMatchObject({
+      capabilityId: 'responses-previous-response',
+      providerResponseId: 'resp_prev',
+      continuationProviderOptions: {
+        openai: { previousResponseId: '{providerResponseId}' },
+      },
+    });
+    expect(executorConfig.session.providerResponseIdFields).toContain('openai.responseId');
     expect(executorConfig.session.directProviderContinuation).toBe(true);
     expect(executorConfig.session.initialMessages[0].content).toContain('Provider continuation');
-    expect(executorConfig.session.initialMessages[0].content).toContain('继续修复按钮无反应的问题。');
+    expect(executorConfig.session.initialMessages[0].content).toContain('Continue fixing the button.');
     expect(executorConfig.session.initialMessages[0].content).not.toContain('Prior Direct Session Summary');
+  });
+
+  it('continues direct tasks through configured provider-native persistence', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'future-1', provider: 'future-ai' }],
+      globalPriorityOrder: ['future-1'],
+      autocodeDirectProviderContinuationCapabilities: [
+        {
+          id: 'future-response-state',
+          mode: 'provider',
+          condition: {
+            provider: 'future-ai',
+            modelIdPrefix: 'future-',
+          },
+          providerOptions: {
+            future: { store: true },
+          },
+          continuationProviderOptions: {
+            future: {
+              store: true,
+              previousStateId: '{providerResponseId}',
+            },
+          },
+          providerResponseIdFields: ['future.stateId'],
+        },
+      ],
+      autocodeDirectProviderFallbackCapabilities: [
+        {
+          id: 'future-state-fallback',
+          condition: {
+            provider: 'future-ai',
+          },
+          fallbackInvocationMethod: 'chat',
+          fallbackProviderTransport: '{provider}.chat',
+          errorMatchers: [
+            { messageIncludes: ['state id', 'not found'] },
+          ],
+        },
+      ],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'future-1',
+      resolvedProvider: 'future-ai',
+      resolvedModelId: 'future-large',
+      apiKey: 'future-key',
+    });
+    resolveAutocodeDirectSessionStateMock.mockReturnValue({
+      version: 1,
+      sessionId: 'direct-session-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      iteration: 1,
+      provider: 'future-ai',
+      modelId: 'future-large',
+      providerResponseId: 'state_prev',
+      latestSummary: 'Old direct summary.',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      JSON.stringify({ workflowMode: 'off', model: 'future-large' })
+    );
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).toHaveBeenCalled();
+    const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
+    expect(executorConfig.session.responsePersistence).toBe(true);
+    expect(executorConfig.session.providerResponsePersistence).toMatchObject({
+      capabilityId: 'future-response-state',
+      providerResponseId: 'state_prev',
+      providerResponseIdFields: ['future.stateId'],
+      continuationProviderOptions: {
+        future: { previousStateId: '{providerResponseId}' },
+      },
+    });
+    expect(executorConfig.session.providerFallback).toMatchObject({
+      capabilityId: 'future-state-fallback',
+      fallbackInvocationMethod: 'chat',
+      fallbackProviderTransport: '{provider}.chat',
+    });
+    expect(executorConfig.session.directProviderContinuation).toBe(true);
+  });
+
+  it('continues direct tasks through environment-defined provider-native persistence', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES = JSON.stringify([
+      {
+        id: 'env-future-response-state',
+        mode: 'provider',
+        condition: {
+          providerPrefix: 'future-',
+          modelIdPrefix: 'future-',
+        },
+        providerOptions: {
+          future: { store: true },
+        },
+        continuationProviderOptions: {
+          future: {
+            store: true,
+            previousStateId: '{providerResponseId}',
+          },
+        },
+        providerResponseIdFields: ['future.stateId'],
+      },
+    ]);
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'future-1', provider: 'future-ai' }],
+      globalPriorityOrder: ['future-1'],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'future-1',
+      resolvedProvider: 'future-ai',
+      resolvedModelId: 'future-large',
+      apiKey: 'future-key',
+    });
+    resolveAutocodeDirectSessionStateMock.mockReturnValue({
+      version: 1,
+      sessionId: 'direct-session-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      iteration: 1,
+      provider: 'future-ai',
+      modelId: 'future-large',
+      providerResponseId: 'state_prev',
+      latestSummary: 'Old direct summary.',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      JSON.stringify({ workflowMode: 'off', model: 'future-large' })
+    );
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).toHaveBeenCalled();
+    const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
+    expect(executorConfig.session.responsePersistence).toBe(true);
+    expect(executorConfig.session.providerResponsePersistence).toMatchObject({
+      capabilityId: 'env-future-response-state',
+      providerResponseId: 'state_prev',
+      providerResponseIdFields: ['future.stateId'],
+      continuationProviderOptions: {
+        future: { previousStateId: '{providerResponseId}' },
+      },
+    });
+    expect(executorConfig.session.directProviderContinuation).toBe(true);
+  });
+  it('matches direct provider persistence by inferred provider transport', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'openai-1', provider: 'openai' }],
+      globalPriorityOrder: ['openai-1'],
+      autocodeDirectProviderContinuationCapabilities: [
+        {
+          id: 'configured-openai-responses-state',
+          mode: 'provider',
+          condition: {
+            providerTransport: 'openai.responses',
+          },
+          providerOptions: {
+            openai: { store: true },
+          },
+          continuationProviderOptions: {
+            openai: {
+              store: true,
+              previousResponseId: '{providerResponseId}',
+            },
+          },
+          providerResponseIdFields: ['openai.responseId'],
+        },
+      ],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'openai-1',
+      resolvedProvider: 'openai',
+      resolvedModelId: 'gpt-5.3-codex',
+      apiKey: 'openai-key',
+      source: 'api-key',
+    });
+    resolveAutocodeDirectSessionStateMock.mockReturnValue({
+      version: 1,
+      sessionId: 'direct-session-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      iteration: 1,
+      provider: 'openai',
+      modelId: 'gpt-5.3-codex',
+      providerResponseId: 'resp_prev',
+      latestSummary: 'Old direct summary.',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      JSON.stringify({ workflowMode: 'off', model: 'gpt-5.3-codex' })
+    );
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).toHaveBeenCalled();
+    const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
+    expect(executorConfig.session.providerResponsePersistence).toMatchObject({
+      capabilityId: 'configured-openai-responses-state',
+      providerResponseId: 'resp_prev',
+    });
+    expect(executorConfig.session.directProviderContinuation).toBe(true);
+  });
+
+
+  it('matches direct provider persistence through configured provider model invocation routes', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    const invocationRoute = {
+      provider: 'openai',
+      modelIdPrefix: 'future-resp-',
+      method: 'responses' as const,
+    };
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'openai-1', provider: 'openai' }],
+      globalPriorityOrder: ['openai-1'],
+      autocodeProviderModelInvocationRoutes: [invocationRoute],
+      autocodeDirectProviderContinuationCapabilities: [
+        {
+          id: 'configured-future-openai-responses-state',
+          mode: 'provider',
+          condition: {
+            providerTransport: 'openai.responses',
+          },
+          providerOptions: {
+            openai: { store: true },
+          },
+          continuationProviderOptions: {
+            openai: {
+              store: true,
+              previousResponseId: '{providerResponseId}',
+            },
+          },
+          providerResponseIdFields: ['openai.responseId'],
+        },
+      ],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'openai-1',
+      resolvedProvider: 'openai',
+      resolvedModelId: 'future-resp-large',
+      apiKey: 'openai-key',
+      source: 'api-key',
+    });
+    resolveAutocodeDirectSessionStateMock.mockReturnValue({
+      version: 1,
+      sessionId: 'direct-session-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      iteration: 1,
+      provider: 'openai',
+      modelId: 'future-resp-large',
+      providerResponseId: 'resp_prev',
+      latestSummary: 'Old direct summary.',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      JSON.stringify({ workflowMode: 'off', model: 'future-resp-large' })
+    );
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).toHaveBeenCalled();
+    const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
+    expect(executorConfig.session.providerModelInvocationRoutes).toEqual([invocationRoute]);
+    expect(executorConfig.session.providerTransport).toBe('openai.responses');
+    expect(executorConfig.session.providerResponsePersistence).toMatchObject({
+      capabilityId: 'configured-future-openai-responses-state',
+      providerResponseId: 'resp_prev',
+    });
+    expect(executorConfig.session.directProviderContinuation).toBe(true);
   });
 
   it('binds direct execution to current direct metadata before stale pending nodes', async () => {
@@ -533,6 +1070,224 @@ describe('AgentManager worktree execution', () => {
     }));
     expect(spawnProcessMock).toHaveBeenCalled();
   });
+  it('routes Direct CLI runtime from task metadata-defined routes', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'future-1', provider: 'future-ai' }],
+      globalPriorityOrder: ['future-1'],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'future-1',
+      resolvedProvider: 'future-ai',
+      resolvedModelId: 'future-large',
+      apiKey: 'future-key',
+      source: 'api-key',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json') || filePath.endsWith('implementation_plan.md')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+      if (filePath.endsWith('implementation_plan.md')) {
+        return [
+          '# Implementation Plan',
+          'Feature: Direct task',
+          'Workflow: direct',
+          'Status: coding',
+          'Execution Phase: coding',
+          '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"running","current_subtask_id":"direct-implementation","summary_file":"direct_summary.md"}} -->',
+          '',
+          '- [/] direct. Direct execution',
+          '  - [/] direct-implementation Direct model execution',
+          '',
+        ].join('\n');
+      }
+      return JSON.stringify({
+        workflowMode: 'off',
+        model: 'future-large',
+        autocodeCliRuntimeRoutes: [
+          {
+            id: 'metadata-future-direct-cli',
+            displayName: 'Metadata Future CLI',
+            cli: 'future-code',
+            taskRunStrategy: {
+              args: ['run', '--json'],
+              modelFlag: '--model',
+              promptStdinArg: '--stdin',
+            },
+            condition: {
+              provider: 'future-ai',
+              modelIdPrefix: 'future-',
+            },
+          },
+        ],
+      });
+    });
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
+    expect(createStartedAutocodeAgentRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      cli: 'future-code',
+      directCliRuntimeRouteId: 'metadata-future-direct-cli',
+      directCliRuntimeRouteDisplayName: 'Metadata Future CLI',
+      directCliTaskRunStrategy: {
+        args: ['run', '--json'],
+        modelFlag: '--model',
+        promptStdinArg: '--stdin',
+      },
+      model: 'future-large',
+    }));
+    expect(spawnProcessMock).toHaveBeenCalled();
+  });
+
+  it('routes Direct CLI runtime through configured external CLI identifiers', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'future-1', provider: 'future-ai' }],
+      globalPriorityOrder: ['future-1'],
+      autocodeCliRuntimeRoutes: [
+        {
+          id: 'future-code-direct-cli',
+          displayName: 'Future Code',
+          cli: 'future-code',
+          taskRunStrategy: {
+            args: ['run', '--json'],
+            modelFlag: '--model',
+            promptStdinArg: '--stdin',
+          },
+          condition: {
+            provider: 'future-ai',
+            modelIdPrefix: 'future-',
+          },
+        },
+      ],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'future-1',
+      resolvedProvider: 'future-ai',
+      resolvedModelId: 'future-large',
+      apiKey: 'future-key',
+      source: 'api-key',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json') || filePath.endsWith('implementation_plan.md')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+      if (filePath.endsWith('implementation_plan.md')) {
+        return [
+          '# Implementation Plan',
+          'Feature: Direct task',
+          'Workflow: direct',
+          'Status: coding',
+          'Execution Phase: coding',
+          '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"running","current_subtask_id":"direct-implementation","summary_file":"direct_summary.md"}} -->',
+          '',
+          '- [/] direct. Direct execution',
+          '  - [/] direct-implementation Direct model execution',
+          '',
+        ].join('\n');
+      }
+      return JSON.stringify({ workflowMode: 'off', model: 'future-large' });
+    });
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
+    expect(createStartedAutocodeAgentRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      cli: 'future-code',
+      customCommand: undefined,
+      directCliRuntimeRouteId: 'future-code-direct-cli',
+      directCliRuntimeRouteDisplayName: 'Future Code',
+      directCliTaskRunStrategy: {
+        args: ['run', '--json'],
+        modelFlag: '--model',
+        promptStdinArg: '--stdin',
+      },
+      model: 'future-large',
+    }));
+    expect(spawnProcessMock).toHaveBeenCalled();
+  });
+  it('starts configured future Direct CLI routes without built-in provider auth mapping', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    initializeClaudeProfileManagerMock.mockResolvedValue({ hasValidAuth: () => false });
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [],
+      autocodeModelProviderRoutes: [
+        { provider: 'future-ai', modelIdPrefix: 'future-' },
+      ],
+      autocodeCliRuntimeRoutes: [
+        {
+          id: 'future-code-direct-cli',
+          displayName: 'Future Code',
+          cli: 'future-code',
+          taskRunStrategy: {
+            args: ['run', '--json'],
+            modelFlag: '--model',
+            promptStdinArg: '--stdin',
+          },
+          condition: {
+            provider: 'future-ai',
+            modelIdPrefix: 'future-',
+          },
+        },
+      ],
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json') || filePath.endsWith('implementation_plan.md')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+      if (filePath.endsWith('implementation_plan.md')) {
+        return [
+          '# Implementation Plan',
+          'Feature: Direct task',
+          'Workflow: direct',
+          'Status: coding',
+          'Execution Phase: coding',
+          '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"running","current_subtask_id":"direct-implementation","summary_file":"direct_summary.md"}} -->',
+          '',
+          '- [/] direct. Direct execution',
+          '  - [/] direct-implementation Direct model execution',
+          '',
+        ].join('\n');
+      }
+      return JSON.stringify({ workflowMode: 'off', model: 'future-large' });
+    });
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(authResolver.resolveAuthFromQueue).not.toHaveBeenCalled();
+    expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
+    expect(createStartedAutocodeAgentRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      cli: 'future-code',
+      directCliRuntimeRouteId: 'future-code-direct-cli',
+      directCliRuntimeRouteDisplayName: 'Future Code',
+      directCliTaskRunStrategy: {
+        args: ['run', '--json'],
+        modelFlag: '--model',
+        promptStdinArg: '--stdin',
+      },
+      model: 'future-large',
+    }));
+    expect(spawnProcessMock).toHaveBeenCalled();
+  });
   it('routes Direct CLI runtime through configured custom command templates', async () => {
     const fs = await import('fs');
     const settings = await import('../settings-utils');
@@ -547,6 +1302,19 @@ describe('AgentManager worktree execution', () => {
           displayName: 'Future CLI',
           cli: 'custom',
           customCommand: 'future-code --provider {provider} --model {modelId} run',
+          permissionBypassArgs: ['--future-allow'],
+          taskRunStrategy: {
+            args: ['run', '--json'],
+            modelFlag: '--model',
+            promptStdinArg: '--stdin',
+          },
+          jsonEventParser: {
+            type: 'future-json',
+            displayName: 'Future JSON',
+            commandNames: ['future-code'],
+            sessionIdFields: ['conversation_id'],
+            messageFields: ['message'],
+          },
           continuationStrategy: {
             type: 'append-continuation-flag',
             commandNames: ['future-code'],
@@ -602,6 +1370,92 @@ describe('AgentManager worktree execution', () => {
         commandNames: ['future-code'],
         continuationFlag: '--continue',
       }),
+      directCliJsonEventParser: expect.objectContaining({
+        type: 'future-json',
+        commandNames: ['future-code'],
+        sessionIdFields: ['conversation_id'],
+        messageFields: ['message'],
+      }),
+      directCliRuntimeRouteId: 'future-direct-cli',
+      directCliRuntimeRouteDisplayName: 'Future CLI',
+      directCliPermissionBypassArgs: ['--future-allow'],
+      directCliTaskRunStrategy: {
+        args: ['run', '--json'],
+        modelFlag: '--model',
+        promptStdinArg: '--stdin',
+      },
+      model: 'future-large',
+    }));
+    expect(spawnProcessMock).toHaveBeenCalled();
+  });
+  it('routes Direct CLI runtime from environment-defined provider routes', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON = JSON.stringify([
+      {
+        id: 'env-future-direct-cli',
+        displayName: 'Env Future CLI',
+        cli: 'future-code',
+        taskRunStrategy: {
+          args: ['run', '--json'],
+          modelFlag: '--model',
+          promptStdinArg: '--stdin',
+        },
+        condition: {
+          providerPrefix: 'future-',
+          modelIdPrefix: 'future-',
+        },
+      },
+    ]);
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'future-1', provider: 'future-ai' }],
+      globalPriorityOrder: ['future-1'],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'future-1',
+      resolvedProvider: 'future-ai',
+      resolvedModelId: 'future-large',
+      apiKey: 'future-key',
+      source: 'api-key',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json') || filePath.endsWith('implementation_plan.md')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+      if (filePath.endsWith('implementation_plan.md')) {
+        return [
+          '# Implementation Plan',
+          'Feature: Direct task',
+          'Workflow: direct',
+          'Status: coding',
+          'Execution Phase: coding',
+          '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","direct_execution":{"enabled":true,"outcome":"running","current_subtask_id":"direct-implementation","summary_file":"direct_summary.md"}} -->',
+          '',
+          '- [/] direct. Direct execution',
+          '  - [/] direct-implementation Direct model execution',
+          '',
+        ].join('\n');
+      }
+      return JSON.stringify({ workflowMode: 'off', model: 'future-large' });
+    });
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
+    expect(createStartedAutocodeAgentRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      cli: 'future-code',
+      directCliRuntimeRouteId: 'env-future-direct-cli',
+      directCliRuntimeRouteDisplayName: 'Env Future CLI',
+      directCliTaskRunStrategy: {
+        args: ['run', '--json'],
+        modelFlag: '--model',
+        promptStdinArg: '--stdin',
+      },
       model: 'future-large',
     }));
     expect(spawnProcessMock).toHaveBeenCalled();
@@ -663,6 +1517,46 @@ afterAll(() => {
     delete process.env.AUTOCODE_CLI_RUNTIME_ROUTES;
   } else {
     process.env.AUTOCODE_CLI_RUNTIME_ROUTES = originalCliRuntimeRoutesEnv.routes;
+  }
+  if (originalDirectProviderContinuationCapabilitiesEnv.json === undefined) {
+    delete process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES_JSON;
+  } else {
+    process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES_JSON = originalDirectProviderContinuationCapabilitiesEnv.json;
+  }
+  if (originalDirectProviderContinuationCapabilitiesEnv.capabilities === undefined) {
+    delete process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES;
+  } else {
+    process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES = originalDirectProviderContinuationCapabilitiesEnv.capabilities;
+  }
+  if (originalDirectProviderFallbackCapabilitiesEnv.json === undefined) {
+    delete process.env.AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES_JSON;
+  } else {
+    process.env.AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES_JSON = originalDirectProviderFallbackCapabilitiesEnv.json;
+  }
+  if (originalDirectProviderFallbackCapabilitiesEnv.capabilities === undefined) {
+    delete process.env.AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES;
+  } else {
+    process.env.AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES = originalDirectProviderFallbackCapabilitiesEnv.capabilities;
+  }
+  if (originalModelProviderRoutesEnv.json === undefined) {
+    delete process.env.AUTOCODE_MODEL_PROVIDER_ROUTES_JSON;
+  } else {
+    process.env.AUTOCODE_MODEL_PROVIDER_ROUTES_JSON = originalModelProviderRoutesEnv.json;
+  }
+  if (originalModelProviderRoutesEnv.routes === undefined) {
+    delete process.env.AUTOCODE_MODEL_PROVIDER_ROUTES;
+  } else {
+    process.env.AUTOCODE_MODEL_PROVIDER_ROUTES = originalModelProviderRoutesEnv.routes;
+  }
+  if (originalProviderModelInvocationRoutesEnv.json === undefined) {
+    delete process.env.AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES_JSON;
+  } else {
+    process.env.AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES_JSON = originalProviderModelInvocationRoutesEnv.json;
+  }
+  if (originalProviderModelInvocationRoutesEnv.routes === undefined) {
+    delete process.env.AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES;
+  } else {
+    process.env.AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES = originalProviderModelInvocationRoutesEnv.routes;
   }
   emitSpy.mockRestore();
 });

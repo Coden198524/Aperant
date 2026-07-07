@@ -7,6 +7,7 @@ import type { ChangelogFormat, ChangelogAudience, ChangelogEmojiLevel } from './
 import type { SupportedLanguage } from '../constants/i18n';
 import type { ProviderAccount, BuiltinProvider } from './provider-account';
 import type { ProviderModelSpec } from '../constants/models';
+import type { AutocodeDirectProviderContinuationCapabilityConfig, AutocodeDirectProviderFallbackCapabilityConfig, AutocodeModelProviderRouteConfig, AutocodeProviderModelInvocationRouteConfig } from '@autocode/core';
 import type { AutocodeCli, AutocodeCliRuntimeRoute } from '@autocode/core/tasks/cli-catalog';
 
 // Kept for backwards-compatible persisted settings. The app now exposes one
@@ -343,7 +344,15 @@ export interface AppSettings {
   preferredCLI?: SupportedCLI;
   customCLIPath?: string;
   /** Optional Direct/runtime CLI route extensions. External routes are matched before built-in routes. */
-  autocodeCliRuntimeRoutes?: AutocodeCliRuntimeRoute[];
+  autocodeCliRuntimeRoutes?: AutocodeCliRuntimeRoute | AutocodeCliRuntimeRoute[];
+  /** Optional model-id to provider route extensions. External routes are matched before built-in model prefixes. */
+  autocodeModelProviderRoutes?: AutocodeModelProviderRouteConfig | AutocodeModelProviderRouteConfig[];
+  /** Optional provider/model invocation method extensions. External routes are matched before built-in invocation defaults. */
+  autocodeProviderModelInvocationRoutes?: AutocodeProviderModelInvocationRouteConfig | AutocodeProviderModelInvocationRouteConfig[];
+  /** Optional Direct provider-native continuation extensions. External capabilities are matched before built-ins. */
+  autocodeDirectProviderContinuationCapabilities?: AutocodeDirectProviderContinuationCapabilityConfig | AutocodeDirectProviderContinuationCapabilityConfig[];
+  /** Optional Direct provider-native fallback extensions. External capabilities are matched before built-ins. */
+  autocodeDirectProviderFallbackCapabilities?: AutocodeDirectProviderFallbackCapabilityConfig | AutocodeDirectProviderFallbackCapabilityConfig[];
   // YOLO mode: invoke Claude with --dangerously-skip-permissions flag
   dangerouslySkipPermissions?: boolean;
   // Legacy setting kept for compatibility. Remote error reporting is disabled.

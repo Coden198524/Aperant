@@ -107,6 +107,21 @@ describe('buildAutocodeSpecKickoffMessage', () => {
     expect(message.length).toBeLessThan(14_000);
   });
 
+  it('keeps Standard planner kickoff focused on tasks.md by default', () => {
+    const message = buildAutocodeSpecKickoffMessage({
+      agentType: 'planner',
+      specPhase: 'planning',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+      taskDescription: 'Plan a bounded Standard change.',
+    });
+
+    expect(message).toContain('Create E:/Work/App/.autocode/specs/001-task/tasks.md');
+    expect(message).toContain('Default output is tasks.md only');
+    expect(message).toContain('required by RequestChanges');
+    expect(message).toContain('Do not write implementation_plan.md');
+    expect(message).not.toContain('Use Autocode Standard planning: update E:/Work/App/.autocode/specs/001-task/spec.md');
+  });
   it('folds repeated prior phase output lines before kickoff context injection', () => {
     const repeatedLine = 'KICKOFF PRIOR REPEAT: same evidence line without new signal.';
     const message = buildAutocodeSpecKickoffMessage({
@@ -220,6 +235,19 @@ describe('buildAutocodeSpecKickoffMessage', () => {
     expect(mmoReviewer).toContain('reject static-only verification');
   });
 
+  it('keeps Standard planner agent kickoff focused on tasks.md by default', () => {
+    const message = buildAutocodeAgentKickoffMessage({
+      agentType: 'planner',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+    });
+
+    expect(message).toContain('Create or repair E:/Work/App/.autocode/specs/001-task/tasks.md as the primary output');
+    expect(message).toContain('required by RequestChanges');
+    expect(message).toContain('Do not write E:/Work/App/.autocode/specs/001-task/implementation_plan.md');
+    expect(message).not.toContain('First update E:/Work/App/.autocode/specs/001-task/spec.md');
+    expect(message).not.toContain('Update E:/Work/App/.autocode/specs/001-task/spec.md with Proposal/Goal');
+  });
   it('keeps Request Changes replanning on Standard artifacts instead of runtime plan edits', () => {
     const message = buildAutocodeAgentKickoffMessage({
       agentType: 'planner',

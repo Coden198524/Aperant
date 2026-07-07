@@ -664,10 +664,24 @@ function correctStaleAutocodeTaskStatus(input: {
     return { status: 'in_progress' };
   }
 
+  if (hasFreshTerminalFailedDirectRunResult(input)) {
+    if (input.persist && input.plan) {
+      const now = new Date().toISOString();
+      const correctedPlan = applyFailedDirectRunCorrection(input.plan, input.runResult, now);
+      try {
+        saveAutocodeImplementationPlanSync(input.planPath, correctedPlan as unknown as MutableAutocodePlan);
+        Object.assign(input.plan, correctedPlan);
+      } catch {
+        return { status: 'error' };
+      }
+    }
+    return { status: 'error' };
+  }
+
   if (isCompletedDirectRun(input)) {
     if (input.persist && input.plan) {
       const now = new Date().toISOString();
-      const correctedPlan = applyCompletedDirectRunCorrection(input.plan, now);
+      const correctedPlan = applyCompletedDirectRunCorrection(input.plan, input.runResult, now);
       try {
         saveAutocodeImplementationPlanSync(input.planPath, correctedPlan as unknown as MutableAutocodePlan);
         ensureDirectSessionStateForCompletedRun(input, now);
@@ -757,7 +771,7 @@ function isCompletedDirectRun(input: Parameters<typeof correctStaleAutocodeTaskS
     return false;
   }
 
-  if (hasFreshFailedDirectRunResult(input)) {
+  if (hasFreshNonSuccessfulDirectRunResult(input)) {
     return false;
   }
 
@@ -807,22 +821,53 @@ function isDirectAutocodeTask(input: Parameters<typeof correctStaleAutocodeTaskS
 function hasFreshSuccessfulDirectRunResult(
   input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
 ): boolean {
-  return input.runResult?.phase === 'direct' &&
-    input.runResult.status === 'success' &&
-    input.runResult.exitCode === 0 &&
+  return isSuccessfulDirectRunResult(input.runResult) &&
     isDirectEvidenceFreshForCurrentIteration(input, getDirectRunResultEvidenceMs(input));
 }
 
-function hasFreshFailedDirectRunResult(
+function isSuccessfulDirectRunResult(runResult: AutocodeRunResultFile | undefined): boolean {
+  return runResult?.phase === 'direct' &&
+    runResult.exitCode === 0 &&
+    isSuccessfulDirectOutcome(runResult.status);
+}
+
+function hasFreshNonSuccessfulDirectRunResult(
   input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
 ): boolean {
   if (input.runResult?.phase !== 'direct') {
     return false;
   }
-  if (input.runResult.status === 'success' && input.runResult.exitCode === 0) {
+  if (isSuccessfulDirectRunResult(input.runResult)) {
     return false;
   }
   return isDirectEvidenceFreshForCurrentIteration(input, getDirectRunResultEvidenceMs(input));
+}
+
+function hasFreshTerminalFailedDirectRunResult(
+  input: Parameters<typeof correctStaleAutocodeTaskStatus>[0],
+): boolean {
+  return isTerminalFailedDirectRunResult(input.runResult) &&
+    isDirectEvidenceFreshForCurrentIteration(input, getDirectRunResultEvidenceMs(input));
+}
+
+function isTerminalFailedDirectRunResult(runResult: AutocodeRunResultFile | undefined): boolean {
+  if (runResult?.phase !== 'direct' || isSuccessfulDirectRunResult(runResult)) {
+    return false;
+  }
+  const normalized = runResult.status?.trim().toLowerCase();
+  if (
+    normalized === 'error' ||
+    normalized === 'failed' ||
+    normalized === 'failure' ||
+    normalized === 'auth_failure' ||
+    normalized === 'auth_failed' ||
+    normalized === 'timeout' ||
+    normalized === 'cancelled' ||
+    normalized === 'canceled'
+  ) {
+    return true;
+  }
+  return typeof runResult.exitCode === 'number' && runResult.exitCode !== 0;
 }
 
 function hasFreshCompletedDirectPlanOutcome(
@@ -882,11 +927,7 @@ function getFreshestDirectCompletionEvidenceMs(
       timestamps.push(completedAtMs);
     }
   }
-  if (
-    input.runResult?.phase === 'direct' &&
-    input.runResult.status === 'success' &&
-    input.runResult.exitCode === 0
-  ) {
+  if (isSuccessfulDirectRunResult(input.runResult)) {
     const runResultUpdatedAtMs = getDirectRunResultEvidenceMs(input);
     if (runResultUpdatedAtMs !== undefined) {
       timestamps.push(runResultUpdatedAtMs);
@@ -914,13 +955,14 @@ function getCurrentDirectIterationStartedAtMs(plan: ImplementationPlanFile | nul
     return undefined;
   }
   const directSubtaskId = stringFrom(plan.direct_execution?.current_subtask_id);
+  const encodedIterationStartedAtMs = parseDirectChangeRequestTimestampMs(directSubtaskId)
+    ?? parseDirectChangeRequestTimestampMs(stringFrom(plan.direct_execution?.change_request_id));
+  if (encodedIterationStartedAtMs !== undefined) {
+    return encodedIterationStartedAtMs;
+  }
+
   const currentSubtask = findDirectSubtask(plan, directSubtaskId);
-  const candidates = [
-    timestampMs(stringFrom(currentSubtask?.started_at)),
-    parseDirectChangeRequestTimestampMs(directSubtaskId),
-    parseDirectChangeRequestTimestampMs(stringFrom(plan.direct_execution?.change_request_id)),
-  ].filter((value): value is number => value !== undefined);
-  return candidates.length > 0 ? Math.max(...candidates) : undefined;
+  return timestampMs(stringFrom(currentSubtask?.started_at));
 }
 
 function findDirectSubtask(
@@ -984,9 +1026,13 @@ function timestampMs(value: string | undefined): number | undefined {
   return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
-function applyCompletedDirectRunCorrection(plan: ImplementationPlanFile, now: string): ImplementationPlanFile {
+function applyCompletedDirectRunCorrection(
+  plan: ImplementationPlanFile,
+  runResult: AutocodeRunResultFile | undefined,
+  now: string,
+): ImplementationPlanFile {
   const directSubtaskId = stringFrom(plan.direct_execution?.current_subtask_id);
-  const completionSummary = 'Completed by Autocode Direct CLI run.';
+  const completionSummary = stringFrom(runResult?.message, 'Completed by Autocode Direct CLI run.');
   const phases = (plan.phases ?? []).map((phase) => {
     const phaseIsDirect = phase.type === 'direct';
     const rewriteItems = (items: RawProjectPlanSubtask[] | undefined): RawProjectPlanSubtask[] | undefined => {
@@ -995,15 +1041,16 @@ function applyCompletedDirectRunCorrection(plan: ImplementationPlanFile, now: st
       }
       return items.map((subtask) => {
         const subtaskId = stringFrom(subtask.id);
-        if (!phaseIsDirect && (!directSubtaskId || subtaskId !== directSubtaskId)) {
+        const shouldRewrite = directSubtaskId ? subtaskId === directSubtaskId : phaseIsDirect;
+        if (!shouldRewrite) {
           return subtask;
         }
         return {
           ...subtask,
           status: 'completed',
           completed_at: stringFrom(subtask.completed_at, now),
-          completion_summary: stringFrom(subtask.completion_summary, subtask.notes, completionSummary),
-          notes: stringFrom(subtask.notes, subtask.completion_summary, completionSummary),
+          completion_summary: completionSummary,
+          notes: completionSummary,
         };
       });
     };
@@ -1032,6 +1079,74 @@ function applyCompletedDirectRunCorrection(plan: ImplementationPlanFile, now: st
     },
     phases,
   };
+}
+
+function applyFailedDirectRunCorrection(
+  plan: ImplementationPlanFile,
+  runResult: AutocodeRunResultFile | undefined,
+  now: string,
+): ImplementationPlanFile {
+  const directSubtaskId = stringFrom(plan.direct_execution?.current_subtask_id);
+  const failureOutcome = normalizeFailedDirectRunOutcome(runResult?.status);
+  const failureSummary = stringFrom(runResult?.message, 'Autocode Direct run failed.');
+  const phases = (plan.phases ?? []).map((phase) => {
+    const phaseIsDirect = phase.type === 'direct';
+    const rewriteItems = (items: RawProjectPlanSubtask[] | undefined): RawProjectPlanSubtask[] | undefined => {
+      if (!Array.isArray(items)) {
+        return items;
+      }
+      return items.map((subtask) => {
+        const subtaskId = stringFrom(subtask.id);
+        if (!phaseIsDirect && (!directSubtaskId || subtaskId !== directSubtaskId)) {
+          return subtask;
+        }
+        const rest = { ...subtask } as RawProjectPlanSubtask & { completionSummary?: unknown };
+        delete rest.completed_at;
+        delete rest.completion_summary;
+        delete rest.completionSummary;
+        delete rest.completed_summary;
+        return {
+          ...rest,
+          status: 'failed',
+          updated_at: now,
+          notes: stringFrom(subtask.notes, subtask.actual_output, failureSummary),
+          actual_output: stringFrom(subtask.actual_output, subtask.notes, failureSummary),
+        };
+      });
+    };
+    return {
+      ...phase,
+      subtasks: rewriteItems(phase.subtasks),
+      chunks: rewriteItems(phase.chunks),
+    };
+  });
+
+  const directExecution = {
+    ...(plan.direct_execution ?? {}),
+    enabled: true,
+    outcome: failureOutcome,
+    summary_file: plan.direct_execution?.summary_file || AUTOCODE_TASK_ARTIFACTS.directSummary,
+    ...(directSubtaskId ? { current_subtask_id: directSubtaskId } : {}),
+  };
+  delete directExecution.completed_at;
+
+  const correctedPlan: ImplementationPlanFile = {
+    ...plan,
+    status: 'error',
+    planStatus: 'error',
+    updated_at: now,
+    xstateState: 'error',
+    executionPhase: 'failed',
+    direct_execution: directExecution,
+    phases,
+  };
+  delete correctedPlan.reviewReason;
+  return correctedPlan;
+}
+
+function normalizeFailedDirectRunOutcome(value: string | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || 'failed';
 }
 
 function applyRunningDirectIterationCorrection(plan: ImplementationPlanFile, now: string): ImplementationPlanFile {

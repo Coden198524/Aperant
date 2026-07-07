@@ -22,6 +22,31 @@ export const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
 export const DEFAULT_DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
 export const DEFAULT_ZAI_BASE_URL = 'https://api.z.ai/api/paas/v4';
 
+export type AutocodeModelProviderRouteMatch = string | readonly string[];
+
+export interface AutocodeModelProviderRouteConfig {
+  provider: string;
+  modelId?: AutocodeModelProviderRouteMatch;
+  model_id?: AutocodeModelProviderRouteMatch;
+  model?: AutocodeModelProviderRouteMatch;
+  modelIdPrefix?: AutocodeModelProviderRouteMatch;
+  model_id_prefix?: AutocodeModelProviderRouteMatch;
+  modelPrefix?: AutocodeModelProviderRouteMatch;
+  model_prefix?: AutocodeModelProviderRouteMatch;
+  modelIdIncludes?: AutocodeModelProviderRouteMatch;
+  model_id_includes?: AutocodeModelProviderRouteMatch;
+  modelIncludes?: AutocodeModelProviderRouteMatch;
+  model_includes?: AutocodeModelProviderRouteMatch;
+}
+
+export interface AutocodeModelProviderRoute {
+  provider: string;
+  modelId?: string[];
+  modelIdPrefix?: string[];
+  modelIdIncludes?: string[];
+  supports(modelId: string): boolean;
+}
+
 export type ProviderSdkAdapter =
   | 'anthropic'
   | 'openai'
@@ -44,6 +69,35 @@ export type ProviderModelInvocationMethod =
   | 'chat'
   | 'responses'
   | 'chatModel';
+
+export interface AutocodeProviderModelInvocationRouteConfig {
+  method: ProviderModelInvocationMethod;
+  provider?: AutocodeModelProviderRouteMatch;
+  modelId?: AutocodeModelProviderRouteMatch;
+  model_id?: AutocodeModelProviderRouteMatch;
+  model?: AutocodeModelProviderRouteMatch;
+  modelIdPrefix?: AutocodeModelProviderRouteMatch;
+  model_id_prefix?: AutocodeModelProviderRouteMatch;
+  modelPrefix?: AutocodeModelProviderRouteMatch;
+  model_prefix?: AutocodeModelProviderRouteMatch;
+  modelIdIncludes?: AutocodeModelProviderRouteMatch;
+  model_id_includes?: AutocodeModelProviderRouteMatch;
+  modelIncludes?: AutocodeModelProviderRouteMatch;
+  model_includes?: AutocodeModelProviderRouteMatch;
+}
+
+export interface AutocodeProviderModelInvocationRoute {
+  method: ProviderModelInvocationMethod;
+  provider?: string[];
+  modelId?: string[];
+  modelIdPrefix?: string[];
+  modelIdIncludes?: string[];
+  supports(input: { provider: SupportedProvider; modelId: string }): boolean;
+}
+
+export interface ProviderModelCreationPlanOptions {
+  invocationRoutes?: readonly AutocodeProviderModelInvocationRoute[];
+}
 
 export interface ProviderSdkInstancePlan {
   sourceProvider: SupportedProvider;
@@ -69,17 +123,193 @@ export interface ProviderModelCreationPlan {
   invocation: ProviderModelInvocationPlan;
 }
 
-export function detectProviderFromModel(modelId: string): SupportedProvider | undefined {
-  for (const [prefix, provider] of Object.entries(MODEL_PROVIDER_MAP)) {
-    if (modelId.startsWith(prefix)) {
+export function parseAutocodeModelProviderRoutes(value: unknown): AutocodeModelProviderRoute[] {
+  const items = Array.isArray(value) ? value : value ? [value] : [];
+  return items
+    .map(parseAutocodeModelProviderRoute)
+    .filter((item): item is AutocodeModelProviderRoute => item !== null);
+}
+
+function parseAutocodeModelProviderRoute(value: unknown): AutocodeModelProviderRoute | null {
+  const record = asModelProviderRouteRecord(value);
+  if (!record) {
+    return null;
+  }
+  const provider = readModelProviderRouteProvider(record.provider);
+  const modelId = readModelProviderRouteStringList(record.modelId ?? record.model_id ?? record.model);
+  const modelIdPrefix = readModelProviderRouteStringList(
+    record.modelIdPrefix ?? record.model_id_prefix ?? record.modelPrefix ?? record.model_prefix,
+  );
+  const modelIdIncludes = readModelProviderRouteStringList(
+    record.modelIdIncludes ?? record.model_id_includes ?? record.modelIncludes ?? record.model_includes,
+  );
+  if (!provider || (!modelId && !modelIdPrefix && !modelIdIncludes)) {
+    return null;
+  }
+  return {
+    provider,
+    ...(modelId ? { modelId } : {}),
+    ...(modelIdPrefix ? { modelIdPrefix } : {}),
+    ...(modelIdIncludes ? { modelIdIncludes } : {}),
+    supports: (inputModelId) => matchesModelProviderRoute(inputModelId, { modelId, modelIdPrefix, modelIdIncludes }),
+  };
+}
+
+export function parseAutocodeProviderModelInvocationRoutes(value: unknown): AutocodeProviderModelInvocationRoute[] {
+  const items = Array.isArray(value) ? value : value ? [value] : [];
+  return items
+    .map(parseAutocodeProviderModelInvocationRoute)
+    .filter((item): item is AutocodeProviderModelInvocationRoute => item !== null);
+}
+
+function parseAutocodeProviderModelInvocationRoute(value: unknown): AutocodeProviderModelInvocationRoute | null {
+  const record = asModelProviderRouteRecord(value);
+  if (!record) {
+    return null;
+  }
+  const method = readProviderModelInvocationMethod(record.method ?? record.invocationMethod ?? record.invocation_method);
+  const provider = readModelProviderRouteStringList(record.provider);
+  const modelId = readModelProviderRouteStringList(record.modelId ?? record.model_id ?? record.model);
+  const modelIdPrefix = readModelProviderRouteStringList(
+    record.modelIdPrefix ?? record.model_id_prefix ?? record.modelPrefix ?? record.model_prefix,
+  );
+  const modelIdIncludes = readModelProviderRouteStringList(
+    record.modelIdIncludes ?? record.model_id_includes ?? record.modelIncludes ?? record.model_includes,
+  );
+  if (!method || (!provider && !modelId && !modelIdPrefix && !modelIdIncludes)) {
+    return null;
+  }
+  return {
+    method,
+    ...(provider ? { provider } : {}),
+    ...(modelId ? { modelId } : {}),
+    ...(modelIdPrefix ? { modelIdPrefix } : {}),
+    ...(modelIdIncludes ? { modelIdIncludes } : {}),
+    supports: (input) => matchesProviderModelInvocationRoute(input, { provider, modelId, modelIdPrefix, modelIdIncludes }),
+  };
+}
+
+export function resolveProviderModelInvocationMethod(
+  provider: SupportedProvider,
+  modelId: string,
+  routes: readonly AutocodeProviderModelInvocationRoute[] = [],
+): ProviderModelInvocationMethod | undefined {
+  return routes.find((route) => route.supports({ provider, modelId }))?.method;
+}
+
+export function detectProviderFromModel(
+  modelId: string,
+  routes: readonly AutocodeModelProviderRoute[] = [],
+): string | undefined {
+  const normalizedModelId = normalizeModelProviderRouteString(modelId);
+  if (!normalizedModelId) {
+    return undefined;
+  }
+  return routes.find((route) => route.supports(normalizedModelId))?.provider ??
+    detectBuiltinProviderFromModel(normalizedModelId);
+}
+
+function detectBuiltinProviderFromModel(modelId: string): SupportedProvider | undefined {
+  for (const [match, provider] of Object.entries(MODEL_PROVIDER_MAP)) {
+    const isPrefixMatch = match.endsWith('-') || match.endsWith('/');
+    if (isPrefixMatch ? modelId.startsWith(match) : modelId === match) {
       return provider;
     }
   }
   return undefined;
 }
 
-export function getKnownModelProviderPrefixes(): string[] {
-  return Object.keys(MODEL_PROVIDER_MAP);
+export function getKnownModelProviderPrefixes(routes: readonly AutocodeModelProviderRoute[] = []): string[] {
+  return [
+    ...routes.flatMap((route) => route.modelIdPrefix ?? []),
+    ...Object.keys(MODEL_PROVIDER_MAP),
+  ];
+}
+
+function matchesProviderModelInvocationRoute(
+  input: { provider: SupportedProvider; modelId: string },
+  route: Pick<AutocodeProviderModelInvocationRoute, 'provider' | 'modelId' | 'modelIdPrefix' | 'modelIdIncludes'>,
+): boolean {
+  const hasModelMatch = Boolean(route.modelId || route.modelIdPrefix || route.modelIdIncludes);
+  if (route.provider) {
+    const providerMatches = route.provider.some((item) => normalizeModelProviderRouteString(item) === input.provider);
+    return providerMatches && (!hasModelMatch || matchesModelProviderRoute(input.modelId, route));
+  }
+  return matchesModelProviderRoute(input.modelId, route);
+}
+function matchesModelProviderRoute(
+  modelId: string,
+  route: Pick<AutocodeModelProviderRoute, 'modelId' | 'modelIdPrefix' | 'modelIdIncludes'>,
+): boolean {
+  const normalizedModelId = normalizeModelProviderRouteString(modelId);
+  if (!normalizedModelId) {
+    return false;
+  }
+  if (route.modelId?.some((item) => normalizeModelProviderRouteString(item) === normalizedModelId)) {
+    return true;
+  }
+  if (route.modelIdPrefix?.some((item) => {
+    const normalized = normalizeModelProviderRouteString(item);
+    return Boolean(normalized && normalizedModelId.startsWith(normalized));
+  })) {
+    return true;
+  }
+  return route.modelIdIncludes?.some((item) => {
+    const normalized = normalizeModelProviderRouteString(item);
+    return Boolean(normalized && normalizedModelId.includes(normalized));
+  }) ?? false;
+}
+
+function readProviderModelInvocationMethod(value: unknown): ProviderModelInvocationMethod | undefined {
+  const normalized = normalizeModelProviderRouteString(value);
+  if (
+    normalized === 'call' ||
+    normalized === 'chat' ||
+    normalized === 'responses' ||
+    normalized === 'chatmodel'
+  ) {
+    return normalized === 'chatmodel' ? 'chatModel' : normalized;
+  }
+  return undefined;
+}
+function readSupportedProvider(value: unknown): SupportedProvider | undefined {
+  const normalized = normalizeModelProviderRouteString(value);
+  if (!normalized) {
+    return undefined;
+  }
+  return (Object.values(SupportedProviderValue) as string[]).includes(normalized)
+    ? normalized as SupportedProvider
+    : undefined;
+}
+
+function readModelProviderRouteProvider(value: unknown): string | undefined {
+  return normalizeModelProviderRouteString(value) ?? undefined;
+}
+
+function readModelProviderRouteStringList(value: unknown): string[] | undefined {
+  const single = readModelProviderRouteString(value);
+  if (single) {
+    return [single];
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items = value.map(readModelProviderRouteString).filter((item): item is string => Boolean(item));
+  return items.length > 0 ? items : undefined;
+}
+
+function readModelProviderRouteString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeModelProviderRouteString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
+}
+
+function asModelProviderRouteRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 export function isAnthropicOAuthToken(token: string | undefined): boolean {
@@ -331,6 +561,7 @@ export function buildProviderSdkInstancePlan(config: ProviderConfig): ProviderSd
 export function buildProviderModelCreationPlan(
   config: ProviderConfig,
   modelId: string,
+  options: ProviderModelCreationPlanOptions = {},
 ): ProviderModelCreationPlan {
   switch (config.provider) {
     case SupportedProviderValue.Azure:
@@ -354,10 +585,10 @@ export function buildProviderModelCreationPlan(
       };
 
     case SupportedProviderValue.OpenAI:
-      return buildOpenAIModelCreationPlan(config, modelId);
+      return buildOpenAIModelCreationPlan(config, modelId, options);
 
     case SupportedProviderValue.OpenAICompatible:
-      return buildOpenAICompatibleModelCreationPlan(config, modelId);
+      return buildOpenAICompatibleModelCreationPlan(config, modelId, options);
 
     case SupportedProviderValue.DeepSeek:
       return {
@@ -384,10 +615,12 @@ export function buildProviderModelCreationPlan(
 function buildOpenAIModelCreationPlan(
   config: ProviderConfig,
   modelId: string,
+  options: ProviderModelCreationPlanOptions,
 ): ProviderModelCreationPlan {
   const isOfficialBaseUrl = isOfficialOpenAIBaseUrl(config.baseURL);
+  const routedMethod = resolveProviderModelInvocationMethod(config.provider, modelId, options.invocationRoutes);
 
-  if (config.oauthTokenFilePath && !isOfficialBaseUrl) {
+  if (routedMethod === 'chatModel' || (!routedMethod && config.oauthTokenFilePath && !isOfficialBaseUrl)) {
     return {
       instance: buildOpenAICompatibleChatInstancePlan(config, 'openai-oauth'),
       invocation: {
@@ -398,7 +631,7 @@ function buildOpenAIModelCreationPlan(
     };
   }
 
-  if (config.oauthTokenFilePath || (isResponsesApiModel(modelId) && isOfficialBaseUrl)) {
+  if (routedMethod === 'responses' || (!routedMethod && (config.oauthTokenFilePath || (isResponsesApiModel(modelId) && isOfficialBaseUrl)))) {
     return {
       instance: buildProviderSdkInstancePlan(config),
       invocation: {
@@ -409,7 +642,7 @@ function buildOpenAIModelCreationPlan(
     };
   }
 
-  if (shouldUseOpenAICompatibleChat(config)) {
+  if (!routedMethod && shouldUseOpenAICompatibleChat(config)) {
     return {
       instance: buildOpenAICompatibleChatInstancePlan(config, 'openai-compatible-alternate'),
       invocation: {
@@ -433,8 +666,10 @@ function buildOpenAIModelCreationPlan(
 function buildOpenAICompatibleModelCreationPlan(
   config: ProviderConfig,
   modelId: string,
+  options: ProviderModelCreationPlanOptions,
 ): ProviderModelCreationPlan {
-  if (isResponsesApiModel(modelId) && isOfficialOpenAIBaseUrl(config.baseURL)) {
+  const routedMethod = resolveProviderModelInvocationMethod(config.provider, modelId, options.invocationRoutes);
+  if (routedMethod === 'responses' || (!routedMethod && isResponsesApiModel(modelId) && isOfficialOpenAIBaseUrl(config.baseURL))) {
     return {
       instance: {
         sourceProvider: config.provider,

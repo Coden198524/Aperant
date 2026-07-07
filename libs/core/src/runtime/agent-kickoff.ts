@@ -7,18 +7,18 @@ import {
 } from './agent-language.js';
 import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
 
-const PRIOR_PHASE_CONTEXT_TOTAL_MAX_CHARS = 10_000;
-const PRIOR_PHASE_CONTEXT_FILE_MAX_CHARS = 2_800;
+const PRIOR_PHASE_CONTEXT_TOTAL_MAX_CHARS = 6_000;
+const PRIOR_PHASE_CONTEXT_FILE_MAX_CHARS = 1_800;
 const PRIOR_PHASE_CONTEXT_LINE_MAX_CHARS = 220;
-const PRIOR_PHASE_CONTEXT_HEADING_LIMIT = 10;
-const PRIOR_PHASE_CONTEXT_BULLET_LIMIT = 18;
-const PRIOR_PHASE_CONTEXT_PARAGRAPH_LIMIT = 4;
-const PRIOR_PHASE_CONTEXT_EXCERPT_MAX_CHARS = 900;
-const PROJECT_DOCS_REFERENCE_MAX_CHARS = 6_000;
-const PROJECT_DOCS_REFERENCE_EXCERPT_MAX_CHARS = 1_200;
-const PROJECT_DOCS_REFERENCE_HEADING_LIMIT = 8;
-const PROJECT_DOCS_REFERENCE_BULLET_LIMIT = 16;
-const PROJECT_DOCS_REFERENCE_PARAGRAPH_LIMIT = 4;
+const PRIOR_PHASE_CONTEXT_HEADING_LIMIT = 6;
+const PRIOR_PHASE_CONTEXT_BULLET_LIMIT = 10;
+const PRIOR_PHASE_CONTEXT_PARAGRAPH_LIMIT = 2;
+const PRIOR_PHASE_CONTEXT_EXCERPT_MAX_CHARS = 650;
+const PROJECT_DOCS_REFERENCE_MAX_CHARS = 3_500;
+const PROJECT_DOCS_REFERENCE_EXCERPT_MAX_CHARS = 800;
+const PROJECT_DOCS_REFERENCE_HEADING_LIMIT = 5;
+const PROJECT_DOCS_REFERENCE_BULLET_LIMIT = 10;
+const PROJECT_DOCS_REFERENCE_PARAGRAPH_LIMIT = 2;
 export const AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS = 4_000;
 const TASK_DESCRIPTION_COMPACTION_NOTICE =
   '\n\n...[task description middle omitted for prompt budget; preserve visible requirements and inspect the source task if exact omitted detail is required]...\n\n';
@@ -92,7 +92,7 @@ export function buildAutocodeSpecKickoffMessage(
         baseMessage = [
           `Create ${promptSpecDir}/tasks.md for: ${taskDescription}.`,
           'Use provided phase context first; read only relevant spec.md sections if needed.',
-          `Use Autocode Standard planning: update ${promptSpecDir}/spec.md with proposal/requirements/design/acceptance/risk sections when missing or stale.`,
+          'Default output is tasks.md only; update spec.md or requirements.md only when missing, stale, or required by RequestChanges.',
           'Output concrete Autocode Markdown checklist tasks with source-backed guidance, dependencies, requirement links, evidence notes, and verification commands.',
           `Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it.`,
           `Project root: ${promptProjectDir}.`,
@@ -447,19 +447,13 @@ function buildAutocodeStandardPlanningEvidenceContract(
   return [
     '',
     '',
-    '## STANDARD PLANNING EVIDENCE CONTRACT',
+    '## STANDARD PLANNING CONTRACT',
     '',
-    `- Ground requirements, design notes, and tasks in ${promptProjectDir} source files, generated project docs, existing specs/tasks, package/config files, or verified official/industry references.`,
-    '- Do not invent framework behavior, APIs, product flows, file ownership, or acceptance criteria from general model knowledge.',
-    '- If an external API, SDK, security rule, accessibility rule, protocol, game-networking pattern, or platform behavior matters, use verified official documentation or explicitly mark it as an assumption.',
-    `- Record evidence in ${promptSpecDir}/requirements.md as evidence_sources, standards_references, and assumptions when those files are generated.`,
-    `- In ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.context}, keep project context as concise Markdown and include Evidence Sources bullets with path, optional symbol/lines, what the evidence proves, and confidence.`,
-    '- In spec.md, include Evidence, Standards / References, and Assumptions sections when the task is not trivial; keep it compact as a decision index.',
-    '- In tasks.md, each executable task should cite a source path, project pattern, requirement ID, or standards reference in its guidance or metadata.',
-    '- tasks.md should cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of silently dropping them.',
-    '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
-    '- For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, include runtime-readiness verification: start/open the artifact, exercise the primary path, and check startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures.',
-    '- If evidence is missing after targeted inspection, write an open question or assumption and plan a validation task; never fill the gap with a confident guess.',
+    `- Ground requirements, design notes, and tasks in request text, ${promptProjectDir} source/docs, existing patterns, generated project docs, or verified official/industry references.`,
+    '- If evidence is missing, record an assumption/open question or validation task; do not guess.',
+    `- Keep ${promptSpecDir}/spec.md as a compact decision index and ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.context} as concise evidence notes when generated.`,
+    '- Every executable task in tasks.md needs requirement coverage, evidence, dependency metadata, file write intent, done signal, and verification.',
+    '- Runnable apps/pages/games/tools/CLIs need runtime-readiness verification: start/open, exercise primary path, and check console/log/load/startup/exit failures.',
   ].join('\n');
 }
 
@@ -578,11 +572,12 @@ export function buildAutocodeAgentKickoffMessage(
     switch (input.agentType) {
       case 'planner':
         baseMessage = [
-          `Read the Standard task spec at ${promptSpecDir}/spec.md.`,
-          'Use the Autocode Standard workflow.',
-          `First update ${promptSpecDir}/spec.md with Standard sections when missing or stale: Proposal/Goal, Requirements, Design Decisions, Acceptance Criteria, Risks/Open Questions.`,
-          `Then create ${promptSpecDir}/tasks.md as a concrete Autocode Markdown checklist with executable tasks, dependencies, requirement/scenario coverage, evidence, done signals, and verification notes. For runnable/user-facing deliverables, include runtime-readiness verification that starts/opens the artifact, exercises the primary path, and checks startup, console, load, blank-screen, crash/hang, or non-zero-exit failures.`,
-          `Do not write ${promptSpecDir}/implementation_plan.md; the runtime derives it as work packages from tasks.md.`,
+          `Read ${promptSpecDir}/spec.md and existing ${promptSpecDir}/tasks.md when present.`,
+          `Create or repair ${promptSpecDir}/tasks.md as the primary output.`,
+          `Update ${promptSpecDir}/spec.md or requirements.md only when missing, stale, or required by RequestChanges.`,
+          'Keep tasks executable, evidence-backed, dependency-aware, and small enough for one focused coding session.',
+          'For runnable/user-facing deliverables, include runtime-readiness verification: start/open, exercise the primary path, and check startup, console, load, blank-screen, crash/hang, or non-zero-exit failures.',
+          `Do not write ${promptSpecDir}/implementation_plan.md; the runtime derives it from tasks.md.`,
           `Project root: ${promptProjectDir}`,
         ].join(' ');
         break;
@@ -678,10 +673,11 @@ export function buildAutocodeFallbackPrompt(input: BuildAutocodeFallbackPromptIn
   switch (input.agentType) {
     case 'planner':
       return [
-        `Read ${promptSpecDir}/spec.md and use the Autocode Standard workflow.`,
-        `Update ${promptSpecDir}/spec.md with Proposal/Goal, Requirements, Design Decisions, Acceptance Criteria, and Risks/Open Questions when needed.`,
-        `Create ${promptSpecDir}/tasks.md as an Autocode Markdown checklist with requirement/scenario coverage, evidence, done signals, dependencies, and verification. For runnable/user-facing deliverables, include runtime-readiness verification that starts/opens the artifact and checks startup, console, load, blank-screen, crash/hang, or non-zero-exit failures. Do not write implementation_plan.md; the runtime derives it as work packages.`,
-        'Status markers: [ ] pending, [/] in progress, [x] completed, [-] blocked, [!] failed. Localize user-facing planning text when an app language is set.',
+        `Read ${promptSpecDir}/spec.md and existing tasks when present.`,
+        `Create or repair ${promptSpecDir}/tasks.md as the primary output; update spec.md or requirements.md only when missing, stale, or required by RequestChanges.`,
+        'Use concise executable checklist items with files, dependencies, requirements, evidence, done signals, and verification.',
+        'For runnable/user-facing deliverables, include runtime-readiness verification that starts/opens the artifact and checks startup, console, load, blank-screen, crash/hang, or non-zero-exit failures.',
+        'Do not write implementation_plan.md; the runtime derives it as work packages. Localize user-facing planning text when an app language is set.',
       ].join(' ');
     case 'coder':
       return `Implement the current pending subtask from ${promptSpecDir}/implementation_plan.md in ${promptProjectDir}. For runnable/user-facing deliverables, run actual launch/open/use-path smoke verification before completion. Mark it [x] and add a _Completion_ note when done.`;

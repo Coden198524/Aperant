@@ -1,4 +1,4 @@
-﻿import {
+import {
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -112,55 +112,29 @@ describe('project prompt profile', () => {
     expect(existsSync(join(projectDir, '.autocode', 'prompts', 'spec_quick.md'))).toBe(true);
 
     const plannerOverride = loadProjectPromptOverride(projectDir, 'planner');
-    expect(plannerOverride?.content).toContain('Autocode Markdown checklist format');
-    expect(plannerOverride?.content).toContain('Use the Write tool to create `tasks.md`');
-    expect(plannerOverride?.content).toContain('## Task Writing');
-    expect(plannerOverride?.content).toContain('Do not cap tasks.md by phase or task count');
-    expect(plannerOverride?.content).toContain('make descriptions shorter instead of dropping tasks');
-    expect(plannerOverride?.content).toContain('Cover every requirement, scenario, acceptance criterion');
-    expect(plannerOverride?.content).toContain('## OpenSpec-Style Task Decomposition');
-    expect(plannerOverride?.content).toContain('small behavior slices, clear evidence');
-    expect(plannerOverride?.content).toContain('more than three behaviors');
-    expect(plannerOverride?.content).toContain('startup/open/use-path evidence plus a health check');
-    expect(plannerOverride?.content).toContain('console/resource-load/blank-screen/rendering/primary-path/exit-code');
-    expect(plannerOverride?.content).toContain('Shared files are not a reason to make broad tasks');
-    expect(plannerOverride?.content).toContain('artificial dependency chains');
-    expect(plannerOverride?.content).toContain('runtime file-conflict scheduler');
-    expect(plannerOverride?.content).toContain('small enough for one focused coding session');
-    expect(plannerOverride?.content).toContain('## Request Changes');
-    expect(plannerOverride?.content).toContain('active same-task contract');
-    expect(plannerOverride?.content).toContain('Apply this section only when runtime context provides valid human review feedback');
-    expect(plannerOverride?.content).toContain('ordinary validation repair');
-    expect(plannerOverride?.content).toContain('Edit existing checklist items in place');
+    expect(plannerOverride?.content).toContain('Create or repair one upstream `tasks.md`');
+    expect(plannerOverride?.content).toContain('Update `spec.md` or `requirements.md` only when missing, stale, or required by real Request Changes feedback');
+    expect(plannerOverride?.content).toContain('Every executable task needs precise file metadata, exactly one dependency line');
+    expect(plannerOverride?.content).toContain('runtime file-conflict scheduler queues overlapping writes');
+    expect(plannerOverride?.content).toContain('Add architecture metadata only for cross-boundary, migration, schema/compatibility, or high-risk work');
     expect(plannerOverride?.content).toContain('Never prefix task titles with revision');
-    expect(plannerOverride?.content).toContain('Do not keep the only concrete Requirement Index inside `tasks.md`');
+    expect(plannerOverride?.content).toContain('Omit copied source, long rationale');
+    expect(plannerOverride?.content).not.toContain('OpenSpec');
+    expect(plannerOverride?.content).not.toContain('Do not cap tasks.md by phase or task count');
+    expect(plannerOverride?.content).not.toContain('Architecture Grounding');
     expect(plannerOverride?.content).not.toContain('needs_revision');
-    expect(plannerOverride?.content).toContain('do not split tasks.md into phase files');
-    expect(plannerOverride?.content).toContain('Omit top-level `summary`, `verification_strategy`, `qa_acceptance`');
-    expect(plannerOverride?.content).toContain('PARALLEL EXECUTION PLANNING');
-    expect(plannerOverride?.content).toContain('Every executable subtask MUST include exactly one `_Depends on: ..._` line');
-    expect(plannerOverride?.content).toContain('File metadata is write intent');
-    expect(plannerOverride?.content).toContain('one `_Evidence: ..._` line');
-    expect(plannerOverride?.content).toContain('## Architecture Grounding');
-    expect(plannerOverride?.content).toContain('affected boundary');
-    expect(plannerOverride?.content).toContain('Simple single-boundary tasks can stay direct');
-    expect(plannerOverride?.content).toContain('Complex tasks need visible architecture guidance');
-    expect(plannerOverride?.content).toContain('Architecture And Design Pattern References');
-    expect(plannerOverride?.content).toContain('_Architecture: boundary; strategy; source/reference_');
-    expect(plannerOverride?.content).toContain('keep the key in English');
-    expect(plannerOverride?.content).not.toContain('Chinese tasks may use');
-    expect(plannerOverride?.content).toContain('General guidance');
-    expect(plannerOverride?.content).toContain('## Documentation And Analysis Deliverables');
-    expect(plannerOverride?.content).toContain('Answer the user\'s concrete question before long source evidence');
-    expect(plannerOverride?.content).toContain('Do not add research, rollout, or broad QA tasks');
-    expect(plannerOverride?.content).not.toContain('TASK DETAIL RULES');
-    expect(plannerOverride?.content).not.toContain('OPENSPEC-GRADE TASK DECOMPOSITION');
-    expect(plannerOverride?.content).not.toContain('ARCHITECTURE GROUNDING');
+    expect((plannerOverride?.content.length ?? 0)).toBeLessThan(7_500);
+
     const specQuickOverride = loadProjectPromptOverride(projectDir, 'spec_quick')?.content;
-    expect(specQuickOverride).toContain('OpenSpec-Style Task Decomposition');
+    expect(specQuickOverride).toContain('Write a compact Standard plan');
+    expect(specQuickOverride).toContain('Split only by real behavior, contract, data shape, UI surface, risky error path, or verification scenario');
+    expect(specQuickOverride).toContain('Shared files do not imply dependencies');
     expect(specQuickOverride).toContain('_Done when:');
     expect(specQuickOverride).toContain('Static syntax, unit, lint, typecheck, build, or file-existence checks alone are not enough');
-    expect(specQuickOverride).toContain('startup/open result plus console/resource-load/blank-screen');
+    expect(specQuickOverride).not.toContain('OpenSpec');
+    expect(specQuickOverride).not.toContain('Do not cap task count');
+    expect(specQuickOverride).not.toContain('Architecture Grounding');
+    expect((specQuickOverride?.length ?? 0)).toBeLessThan(7_500);
 
     const qaReviewerOverride = loadProjectPromptOverride(projectDir, 'qa_reviewer');
     expect(qaReviewerOverride?.content).toContain('map requirement/evidence -> changed file/contract -> verification result -> residual risk');

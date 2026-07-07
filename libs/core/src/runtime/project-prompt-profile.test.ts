@@ -33,53 +33,34 @@ describe('project prompt profile formatting', () => {
     expect(full).toContain('- Stack: TypeScript, JavaScript, React, Electron');
   });
 
-  it('grounds generated planner prompts in project architecture instead of generic templates', () => {
+  it('keeps generated Standard planning prompts compact and task-first', () => {
     const prompts = generateAutocodeProjectPromptOverrides(createProfile());
     const planner = prompts.planner;
+    const specQuick = prompts.spec_quick;
 
-    expect(planner).toContain('Architecture Grounding');
-    expect(planner).toContain('affected boundary');
-    expect(planner).toContain('Simple single-boundary tasks can stay direct');
-    expect(planner).toContain('Complex tasks need visible architecture guidance');
-    expect(planner).toContain('Architecture And Design Pattern References');
-    expect(planner).toContain('4-8 useful bullets');
-    expect(planner).toContain('_Architecture: boundary; strategy; source/reference_');
-    expect(planner).toContain('keep the key in English');
-    expect(planner).not.toContain('Chinese tasks may use');
-    expect(planner).toContain('Memory Context or Project Memory');
-    expect(planner).toContain('one targeted discovery/validation task');
-    expect(planner).toContain('Do not cap tasks.md by phase or task count');
-    expect(planner).toContain('Cover every requirement, scenario, acceptance criterion');
-    expect(planner).toContain('Documentation And Analysis Deliverables');
-    expect(planner).toContain('Conclusion Snapshot');
-    expect(planner).toContain('Main Flow');
-    expect(planner).toContain('OpenSpec-Style Task Decomposition');
-    expect(planner).toContain('small behavior slices');
-    expect(planner).toContain('more than three behaviors');
-    expect(planner).toContain('startup/open/use-path evidence');
-    expect(planner).toContain('console/resource-load/blank-screen/rendering/primary-path/exit-code');
-    expect(planner).toContain('Shared files are not a reason to make broad tasks');
-    expect(planner).toContain('artificial dependency chains');
-    expect(planner).toContain('runtime file-conflict scheduler');
-    expect(planner).toContain('small enough for one focused coding session');
+    expect(planner).toContain('Create or repair one upstream `tasks.md`');
+    expect(planner).toContain('Update `spec.md` or `requirements.md` only when missing, stale, or required by real Request Changes feedback');
+    expect(planner).toContain('runtime file-conflict scheduler queues overlapping writes');
+    expect(planner).toContain('Add architecture metadata only for cross-boundary, migration, schema/compatibility, or high-risk work');
+    expect(planner).toContain('Every executable task needs precise file metadata, exactly one dependency line');
     expect(planner).toContain('Request Changes');
-    expect(planner).toContain('active same-task contract');
-    expect(planner).toContain('Apply this section only when runtime context provides valid human review feedback');
-    expect(planner).toContain('ordinary validation repair');
     expect(planner).toContain('Never prefix task titles with revision');
-    expect(planner).toContain('Do not keep the only concrete Requirement Index inside `tasks.md`');
+    expect(planner).not.toContain('OpenSpec');
+    expect(planner).not.toContain('Do not cap tasks.md by phase or task count');
+    expect(planner).not.toContain('Architecture Grounding');
+    expect(planner).not.toContain('First update');
     expect(planner).not.toContain('needs_revision');
-    expect(planner).not.toContain('TASK SIZE LIMITS');
-    expect(planner).not.toContain('about 24 tasks or fewer');
-    expect(prompts.spec_quick).toContain('Do not cap task count');
-    expect(prompts.spec_quick).toContain('OpenSpec-Style Task Decomposition');
-    expect(prompts.spec_quick).toContain('spec.md` must include a non-empty `## Evidence` section');
-    expect(prompts.spec_quick).toContain('_Done when:');
-    expect(prompts.spec_quick).toContain('Documentation And Analysis Deliverables');
-    expect(prompts.spec_quick).toContain('Conclusion Snapshot');
-    expect(prompts.spec_quick).toContain('Static syntax, unit, lint, typecheck, build, or file-existence checks alone are not enough');
-    expect(prompts.spec_quick).toContain('startup/open result plus console/resource-load/blank-screen');
-    expect(prompts.spec_quick).not.toContain('1-4 tasks');
+    expect(planner.length).toBeLessThan(7_000);
+
+    expect(specQuick).toContain('Write a compact Standard plan');
+    expect(specQuick).toContain('Split only by real behavior, contract, data shape, UI surface, risky error path, or verification scenario');
+    expect(specQuick).toContain('Shared files do not imply dependencies');
+    expect(specQuick).toContain('_Done when:');
+    expect(specQuick).toContain('Static syntax, unit, lint, typecheck, build, or file-existence checks alone are not enough');
+    expect(specQuick).not.toContain('OpenSpec');
+    expect(specQuick).not.toContain('Do not cap task count');
+    expect(specQuick).not.toContain('Architecture Grounding');
+    expect(specQuick.length).toBeLessThan(7_000);
   });
 
   it('grounds generated coder prompts in implementation contracts and reviewable summaries', () => {

@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { parseAutocodeModelProviderRoutes } from '@autocode/core';
 
 // Mock token-refresh before importing resolver
 // Path resolution from src/main/ai/auth/__tests__/:
@@ -485,6 +486,31 @@ describe('resolveAuthFromQueue', () => {
     expect(result?.resolvedProvider).toBe('openai-compatible');
     expect(result?.resolvedModelId).toBe('gpt-5.4');
     expect(result?.reasoningConfig).toEqual({ type: 'reasoning_effort', level: 'high' });
+  });
+
+  it('uses configured model provider routes for unknown concrete model IDs', async () => {
+    const openAICompatibleAccount = {
+      ...baseAccount,
+      id: 'acc-openai-compatible',
+      provider: 'openai-compatible' as const,
+      authType: 'api-key' as const,
+      apiKey: 'sk-compatible',
+      baseUrl: 'https://models.example.com/v1',
+    };
+
+    mockResolveModelEquivalent.mockReturnValue(null);
+
+    const result = await resolveAuthFromQueue('future-large', [openAICompatibleAccount], {
+      modelProviderRoutes: parseAutocodeModelProviderRoutes({
+        provider: 'openai-compatible',
+        modelIdPrefix: 'future-',
+      }),
+    });
+
+    expect(result?.accountId).toBe('acc-openai-compatible');
+    expect(result?.resolvedProvider).toBe('openai-compatible');
+    expect(result?.resolvedModelId).toBe('future-large');
+    expect(result?.baseURL).toBe('https://models.example.com/v1');
   });
 
   it('allows OpenAI OAuth accounts for gpt-5.5 agentic models', async () => {

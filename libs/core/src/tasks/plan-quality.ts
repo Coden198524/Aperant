@@ -331,12 +331,12 @@ export function buildAutocodePlanQualityRetryPrompt(errors: string[]): string {
     'Repair only the affected artifacts with the Write/Edit tools.',
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.specFile} as a compact decision index, not a full analysis dump.`,
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.requirements} focused on requirements, acceptance criteria, constraints, evidence sources, standards, and assumptions.`,
-    `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} detailed but compact: split broad work into OpenSpec-grade leaf tasks while keeping each task guidance short.`,
+    `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} detailed but compact: split broad work into focused leaf tasks while keeping each task guidance short.`,
     '- A leaf task should cover one independently reviewable behavior or contract and one focused verification path.',
     '- Split tasks that cover more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files.',
     '- If split tasks touch the same file, keep them as separate leaf tasks and add _Depends on: ..._ only for real data, contract, or verification order; the runtime file-conflict scheduler will queue overlapping writes safely.',
     '- Replace generic task text with concrete behavior, affected project boundary, likely files/APIs, and the existing pattern to follow.',
-    `- If ${AUTOCODE_TASK_ARTIFACTS.specFile} is still a manual Standard planning seed, replace or expand it with concrete task-specific requirements, design decisions, acceptance/success criteria, risks or assumptions, and evidence.`,
+    `- If ${AUTOCODE_TASK_ARTIFACTS.specFile} is still a manual Standard planning seed, replace it with a compact spec: concrete requirements, key decisions or assumptions, evidence, and acceptance/verification notes needed for coding.`,
     `- Generic Standard Evidence scaffolding is not enough by itself; ${AUTOCODE_TASK_ARTIFACTS.specFile} Evidence must cite the user request, concrete requirements, project files/docs, or verified standards that prove scope and acceptance criteria.`,
     '- For complex or high-risk plans only, include a detailed but compact Architecture And Design Pattern References section in spec.md or tasks.md: 4-8 bullets covering affected boundaries/layers, recommended pattern or strategy, source/docs/Project Memory reference or labeled general guidance, and which task IDs/boundaries should apply it.',
     '- For complex or high-risk plans, each non-read-only executable task must include one short _Architecture: boundary; pattern/strategy; source/reference_ line so implementation agents can apply the guidance directly.',
@@ -697,7 +697,7 @@ function validateSpecEvidence(specMarkdown: string): string[] {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} Evidence section is only generic Standard scaffolding; cite the user request, concrete requirements, project files/docs, or verified standards that prove scope and acceptance criteria.`);
   }
   if (isManualStandardSpecSeed(specMarkdown)) {
-    errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} is still the manual Standard planning seed; replace it with a concrete Standard spec that records requirements, design decisions, acceptance/success criteria, risks or assumptions, and evidence before planning.`);
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} is still the manual Standard planning seed; replace it with a compact Standard spec containing concrete requirements, key decisions or assumptions, evidence, and acceptance/verification notes before planning.`);
   }
   if (hasSectionContent(specMarkdown, 'Requirements') && !sectionContainsEvidence(specMarkdown, 'Requirements') && !hasGlobalEvidence) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} Requirements section must cite Evidence for requirements or acceptance criteria.`);
@@ -973,7 +973,7 @@ function validateTaskGranularity(plan: ReturnType<typeof parseAutocodeImplementa
     }
 
     errors.push(
-      `${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} is too broad; split it into OpenSpec-grade leaf tasks by behavior, requirement/acceptance scenario, file or contract boundary, and verification path (${describeTaskGranularityMetrics(metrics)}).`,
+      `${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} is too broad; split it into focused leaf tasks by behavior, requirement/acceptance scenario, file or contract boundary, and verification path (${describeTaskGranularityMetrics(metrics)}).`,
     );
   }
 

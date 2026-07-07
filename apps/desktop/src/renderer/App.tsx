@@ -77,7 +77,10 @@ import { ViewStateProvider } from './contexts/ViewStateContext';
 // Version constant for version-specific warnings (e.g., reauthentication notices)
 const VERSION_WARNING_275 = '2.7.5';
 const PROJECT_SWITCH_TASK_REFRESH_DELAY_MS = 75;
+const STARTUP_TASK_REFRESH_DELAY_MS = 750;
+const STARTUP_CLAUDE_PROFILE_LOAD_DELAY_MS = 10000;
 const PROJECT_SWITCH_TERMINAL_RESTORE_DELAY_MS = 200;
+const SPELLCHECK_STARTUP_SYNC_DELAY_MS = 5000;
 
 // Wrapper component for ProjectTabBar
 interface ProjectTabBarWithContextProps {
@@ -136,9 +139,11 @@ export function App() {
   const reorderTabs = useProjectStore((state) => state.reorderTabs);
   const tasks = useTaskStore((state) => state.tasks);
   const settings = useSettingsStore((state) => state.settings);
+  const providerAccounts = useSettingsStore((state) => state.providerAccounts);
   const settingsLoading = useSettingsStore((state) => state.isLoading);
   const graphInitializedProjectIdsRef = useRef(new Set<string>());
   const graphInitializingProjectIdsRef = useRef(new Set<string>());
+  const hasRequestedInitialTaskLoadRef = useRef(false);
 
   // Wrapper for opening project tabs with graph initialization
   const openProjectTabWithGraph = useCallback((projectId: string) => {
@@ -185,6 +190,7 @@ export function App() {
   const [isOnboardingWizardOpen, setIsOnboardingWizardOpen] = useState(false);
   const [isVersionWarningModalOpen, setIsVersionWarningModalOpen] = useState(false);
   const [isRefreshingTasks, setIsRefreshingTasks] = useState(false);
+  const [claudeProfilesHaveLoaded, setClaudeProfilesHaveLoaded] = useState(false);
 
   // Initialize dialog state
   const [showInitDialog, setShowInitDialog] = useState(false);
@@ -246,7 +252,7 @@ export function App() {
     loadProjects();
     loadSettings();
     loadProfiles();
-    loadClaudeProfiles();
+
     // Initialize global GitHub listeners (PR reviews, etc.) so they persist across navigation
     initializeGitHubListeners();
     // Initialize global download progress listener for Ollama model downloads
@@ -257,7 +263,6 @@ export function App() {
       cleanupGitHubListeners();
     };
   }, []);
-
   // Restore tab state and open tabs for loaded projects
   useEffect(() => {
     debugLog('[App] Tab restore useEffect triggered:', {
@@ -318,6 +323,37 @@ export function App() {
     }
   }, [settingsLoading, settingsHaveLoaded]);
 
+  // Claude profile state is only needed for Anthropic OAuth accounts.
+  useEffect(() => {
+    if (!settingsHaveLoaded) return;
+
+    const accounts = (settings.providerAccounts?.length ? settings.providerAccounts : providerAccounts) ?? [];
+    const claudeProfileAccounts = accounts.filter(
+      account => account.provider === 'anthropic' && account.authType === 'oauth' && account.claudeProfileId
+    );
+    const shouldLoadClaudeProfiles = claudeProfileAccounts.some(Boolean);
+
+    if (!shouldLoadClaudeProfiles) {
+      setClaudeProfilesHaveLoaded(true);
+      return;
+    }
+
+    let disposed = false;
+    setClaudeProfilesHaveLoaded(false);
+
+    const claudeProfilesTimer = window.setTimeout(() => {
+      void loadClaudeProfiles().finally(() => {
+        if (!disposed) {
+          setClaudeProfilesHaveLoaded(true);
+        }
+      });
+    }, STARTUP_CLAUDE_PROFILE_LOAD_DELAY_MS);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(claudeProfilesTimer);
+    };
+  }, [settingsHaveLoaded, settings.providerAccounts, providerAccounts]);
   // First-run detection - show onboarding wizard if not completed
   // Only check AFTER settings have been loaded from disk to avoid race condition
   useEffect(() => {
@@ -329,14 +365,16 @@ export function App() {
     );
     const hasAnyAuth = hasAPIProfileConfigured || hasOAuthConfigured;
 
-    // Only show wizard if onboarding not completed AND no auth is configured
+    // Only show wizard if onboarding not completed AND no auth is configured.
+    // Claude profiles load after startup, so wait for that pass before deciding
+    // an OAuth-only user has no auth configured.
     if (settingsHaveLoaded &&
+        claudeProfilesHaveLoaded &&
         settings.onboardingCompleted === false &&
         !hasAnyAuth) {
       setIsOnboardingWizardOpen(true);
     }
-  }, [settingsHaveLoaded, settings.onboardingCompleted, profiles, claudeProfiles]);
-
+  }, [settingsHaveLoaded, claudeProfilesHaveLoaded, settings.onboardingCompleted, profiles, claudeProfiles]);
   // Version 2.7.5 warning - show once to notify users about reauthentication requirement
   useEffect(() => {
     const checkVersionWarning = async () => {
@@ -381,6 +419,9 @@ export function App() {
 
   // Sync spell check language with i18n language
   useEffect(() => {
+    if (!settingsHaveLoaded) return;
+    if (settings.language && settings.language !== i18n.language) return;
+
     const syncSpellCheck = async () => {
       try {
         const result = await window.electronAPI.setSpellCheckLanguages(i18n.language);
@@ -392,8 +433,9 @@ export function App() {
       }
     };
 
-    syncSpellCheck();
-  }, [i18n.language]);
+    const timer = window.setTimeout(syncSpellCheck, SPELLCHECK_STARTUP_SYNC_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [settingsHaveLoaded, settings.language, i18n.language]);
 
   // Listen for open-app-settings events (e.g., from project settings)
   useEffect(() => {
@@ -494,10 +536,13 @@ export function App() {
   useEffect(() => {
     const currentProjectId = activeProjectId || selectedProjectId;
     if (currentProjectId) {
+      const isInitialTaskLoad = !hasRequestedInitialTaskLoadRef.current;
+      hasRequestedInitialTaskLoadRef.current = true;
+
       void loadTasks(currentProjectId, {
         preferCache: true,
         backgroundRefresh: true,
-        deferRemoteMs: PROJECT_SWITCH_TASK_REFRESH_DELAY_MS,
+        deferRemoteMs: isInitialTaskLoad ? STARTUP_TASK_REFRESH_DELAY_MS : PROJECT_SWITCH_TASK_REFRESH_DELAY_MS,
       });
       setSelectedTask(null); // Clear selection on project change
     } else {

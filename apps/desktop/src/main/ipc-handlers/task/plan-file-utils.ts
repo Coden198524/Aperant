@@ -340,7 +340,7 @@ export function persistPlanTokenUsageSync(
 
 export type DirectFallbackSubtaskState = {
   id?: string;
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'in_progress';
   timestamp: string;
   summary?: string;
 };
@@ -380,9 +380,16 @@ export function applyDirectFallbackSubtaskStateToPlan(
           subtaskRecord.completion_summary = directFallbackStringValue(subtaskRecord.completion_summary) || summary;
           subtaskRecord.notes = directFallbackStringValue(subtaskRecord.notes) || summary;
         } else {
-          subtaskRecord.completed_at = state.timestamp;
-          const summary = state.summary || 'Direct fallback marked this execution as failed.';
-          subtaskRecord.notes = directFallbackStringValue(subtaskRecord.notes) || summary;
+          delete subtaskRecord.completed_at;
+          delete subtaskRecord.completion_summary;
+          delete subtaskRecord.completionSummary;
+          delete subtaskRecord.completed_summary;
+          if (state.status === 'failed') {
+            const summary = state.summary || 'Direct fallback marked this execution as failed.';
+            subtaskRecord.notes = directFallbackStringValue(subtaskRecord.notes) || summary;
+          } else {
+            subtaskRecord.notes = state.summary || 'Direct fallback marked this execution as resumable.';
+          }
         }
         updated = true;
       }
@@ -447,12 +454,17 @@ export function persistDirectFallbackPlanStateSync(
       plan.executionPhase = source.executionPhase;
     }
     if (source.direct_execution) {
-      plan.direct_execution = {
+      const mergedDirectExecution = {
         ...(typeof plan.direct_execution === 'object' && plan.direct_execution !== null && !Array.isArray(plan.direct_execution)
           ? plan.direct_execution as Record<string, unknown>
           : {}),
         ...source.direct_execution,
       };
+      const outcome = directFallbackStringValue(mergedDirectExecution.outcome).toLowerCase();
+      if (outcome && outcome !== 'completed' && outcome !== 'success' && outcome !== 'done') {
+        delete mergedDirectExecution.completed_at;
+      }
+      plan.direct_execution = mergedDirectExecution;
     }
     if (source.directSubtask) {
       applyDirectFallbackSubtaskStateToPlan(plan, source.directSubtask);

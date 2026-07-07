@@ -150,6 +150,7 @@ describe('plan-file-utils token usage persistence', () => {
         enabled: true,
         outcome: 'running',
         current_subtask_id: 'direct-cr-1',
+        completed_at: '2026-01-01T00:00:05.000Z',
       },
       phases: [
         {
@@ -199,7 +200,8 @@ describe('plan-file-utils token usage persistence', () => {
       updated_at: '2026-01-01T00:01:00.000Z',
       notes: 'Direct clean-exit fallback failed.',
     });
-    expect(directSubtask?.completed_at).toBe('2026-01-01T00:01:00.000Z');
+    expect(directSubtask?.completed_at).toBeUndefined();
+    expect((plan.direct_execution as Record<string, unknown> | undefined)?.completed_at).toBeUndefined();
     expect(unrelatedSubtask).toMatchObject({
       id: 'unrelated',
       status: 'pending',
@@ -207,6 +209,95 @@ describe('plan-file-utils token usage persistence', () => {
     expect(projectStore.invalidateTasksCache).toHaveBeenCalledWith('project-1');
   });
 
+  it('persists Direct fallback current subtask as resumable without replacing phases', () => {
+    saveAutocodeImplementationPlanSync(planPath, {
+      workflow_type: 'direct',
+      status: 'error',
+      planStatus: 'pending',
+      reviewReason: 'errors',
+      xstateState: 'error',
+      executionPhase: 'failed',
+      direct_execution: {
+        enabled: true,
+        outcome: 'max_steps',
+        current_subtask_id: 'direct-cr-1',
+        completed_at: '2026-01-01T00:00:05.000Z',
+      },
+      phases: [
+        {
+          phase: 1,
+          name: 'Direct execution',
+          type: 'direct',
+          subtasks: [
+            {
+              id: 'direct-cr-1',
+              title: 'Direct Request Changes',
+              description: 'Do work',
+              status: 'failed',
+              started_at: '2026-01-01T00:00:00.000Z',
+              completed_at: '2026-01-01T00:00:05.000Z',
+              completion_summary: 'Old completion summary',
+              notes: 'Old failure note',
+            },
+            { id: 'unrelated', title: 'Other', description: 'Keep me', status: 'pending' },
+          ],
+        },
+      ],
+    });
+
+    const success = persistDirectFallbackPlanStateSync(planPath, {
+      status: 'in_progress',
+      planStatus: 'coding',
+      xstateState: 'coding',
+      executionPhase: 'coding',
+      direct_execution: {
+        enabled: true,
+        outcome: 'max_steps',
+        current_subtask_id: 'direct-cr-1',
+        summary_file: 'direct_summary.md',
+        ai_coding_quality: { fallbackReason: 'resumable-plan-outcome' },
+      },
+      directSubtask: {
+        id: 'direct-cr-1',
+        status: 'in_progress',
+        timestamp: '2026-01-01T00:01:00.000Z',
+        summary: 'Direct plan outcome is max_steps.',
+      },
+    }, 'project-1');
+
+    const plan = loadAutocodeImplementationPlanSync(planPath)!;
+    const directSubtask = plan.phases?.[0]?.subtasks?.[0];
+    const unrelatedSubtask = plan.phases?.[0]?.subtasks?.[1];
+
+    expect(success).toBe(true);
+    expect(plan.status).toBe('in_progress');
+    expect(plan.planStatus).toBe('coding');
+    expect(plan.reviewReason).toBeUndefined();
+    expect(plan.xstateState).toBe('coding');
+    expect(plan.executionPhase).toBe('coding');
+    expect(plan.direct_execution).toMatchObject({
+      enabled: true,
+      outcome: 'max_steps',
+      current_subtask_id: 'direct-cr-1',
+      summary_file: 'direct_summary.md',
+      ai_coding_quality: { fallbackReason: 'resumable-plan-outcome' },
+    });
+    expect((plan.direct_execution as Record<string, unknown> | undefined)?.completed_at).toBeUndefined();
+    expect(directSubtask).toMatchObject({
+      id: 'direct-cr-1',
+      status: 'in_progress',
+      started_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:01:00.000Z',
+      notes: 'Direct plan outcome is max_steps.',
+    });
+    expect(directSubtask?.completed_at).toBeUndefined();
+    expect(directSubtask?.completion_summary).toBeUndefined();
+    expect(unrelatedSubtask).toMatchObject({
+      id: 'unrelated',
+      status: 'pending',
+    });
+    expect(projectStore.invalidateTasksCache).toHaveBeenCalledWith('project-1');
+  });
   it('persists Direct fallback current subtask completion without replacing phases', () => {
     saveAutocodeImplementationPlanSync(planPath, {
       workflow_type: 'direct',

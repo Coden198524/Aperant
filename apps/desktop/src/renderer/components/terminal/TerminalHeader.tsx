@@ -4,6 +4,7 @@ import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 import type { SupportedCLI, Task, TerminalWorktreeConfig } from '../../../shared/types';
 import type { TerminalStatus } from '../../stores/terminal-store';
 import { useTerminalStore } from '../../stores/terminal-store';
+import { useSettingsStore } from '../../stores/settings-store';
 import { Button } from '../ui/button';
 import {
   DropdownMenu,
@@ -12,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { cn } from '../../lib/utils';
-import { getCliLabel, QUICK_CLI_OPTIONS } from '../../lib/cli-display';
+import { getCliLabel, getQuickCliOptionLabels } from '../../lib/cli-display';
 import { STATUS_COLORS } from './types';
 import { TerminalTitle } from './TerminalTitle';
 import { TaskSelector } from './TaskSelector';
@@ -90,6 +91,8 @@ export function TerminalHeader({
   );
   const showResumeAllButton = pendingResumeCount >= 2;
   const cliLabel = getCliLabel(activeCLI || defaultCLI);
+  const appCliRuntimeRoutes = useSettingsStore((state) => state.settings.autocodeCliRuntimeRoutes);
+  const cliOptions = getQuickCliOptionLabels(appCliRuntimeRoutes, [activeCLI, defaultCLI]);
 
   return (
     <div className="electron-no-drag group/header flex h-9 items-center justify-between gap-2 border-b border-border/50 bg-card/30 px-2">
@@ -244,17 +247,17 @@ export function TerminalHeader({
               </DropdownMenuTrigger>
             </div>
             <DropdownMenuContent align="end" className="w-36">
-              {QUICK_CLI_OPTIONS.map((cli) => (
+              {cliOptions.map((option) => (
                 <DropdownMenuItem
-                  key={cli}
+                  key={option.value}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onInvokeCLI(cli);
+                    onInvokeCLI(option.value);
                   }}
                   className="text-xs"
                 >
                   <Sparkles className="h-3 w-3 mr-2 text-muted-foreground" />
-                  {getCliLabel(cli)}
+                  {option.label}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>

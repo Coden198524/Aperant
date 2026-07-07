@@ -2,16 +2,15 @@
  * Spec Orchestrator
  * =================
  *
- * Drives the spec creation pipeline through complexity-first phase selection:
- *   complexity_assessment → [phases based on tier]
+ * Drives Standard spec creation through complexity-first routing.
+ * Balanced mode prefers the shortest safe path:
+ *   - SIMPLE: local Standard light plan -> deterministic validation
+ *   - STANDARD without research/self-critique: quick_spec -> deterministic validation
+ *   - STANDARD with external facts: requirements -> research -> spec_writing -> planning -> deterministic validation
+ *   - COMPLEX or conservative/phased: fuller multi-phase planning with research/self-critique as needed
  *
- * Complexity assessment runs FIRST to gate the workflow:
- *   - SIMPLE: Standard light planning → validation (2 phases — no discovery/requirements)
- *   - STANDARD: discovery → requirements → spec_writing → planning → validation
- *   - COMPLEX: Full pipeline including research and self-critique
- *
- * Context accumulation: after each phase, output files are captured and injected
- * into the next phase's kickoff message, eliminating redundant file re-reads.
+ * After each phase, compact output summaries are carried forward so later phases
+ * do not need broad redundant reads.
  */
 
 import { readFile, writeFile, access, readdir } from 'node:fs/promises';
@@ -147,32 +146,6 @@ const PHASE_AGENT_MAP: Record<SpecPhase, AgentType> = {
   validation: 'spec_validation',
   quick_spec: 'spec_writer',
 } as const;
-
-/**
- * Phases to run for each complexity tier.
- * Complexity assessment runs BEFORE these phases as the gating step.
- *
- * - SIMPLE: skip discovery & requirements entirely; the internal quick_spec phase writes a light Standard plan.
- * - STANDARD: discovery builds context.md, requirements gathers formal reqs,
- *   then spec_writing + planning. 'context' phase removed (redundant with discovery).
- * - COMPLEX: full pipeline including research and self-critique.
- */
-const COMPLEXITY_PHASES: Record<ComplexityTier, SpecPhase[]> = {
-  simple: ['quick_spec', 'validation'],
-  standard: ['discovery', 'requirements', 'spec_writing', 'planning', 'validation'],
-  complex: [
-    'discovery',
-    'requirements',
-    'research',
-    'context',
-    'spec_writing',
-    'self_critique',
-    'planning',
-    'validation',
-  ],
-} as const;
-
-const AGGRESSIVE_SIMPLE_PHASES: SpecPhase[] = ['quick_spec'];
 
 type DocumentationProfile = 'general-source' | 'game-mmo-source';
 
@@ -849,7 +822,7 @@ function _buildAggressiveStandardLightPlan(
     `- ${escapeMarkdownTableCell(task)}`,
     '',
     '## Implementation Notes',
-    '- Aggressive mode uses one focused coder session.',
+    '- Standard light mode uses one focused coder session.',
     '- The coder should inspect only files directly needed for the task.',
     '- No new design pattern is required unless the existing code clearly demands it.',
     '',
@@ -934,7 +907,7 @@ function buildLocalizedAggressiveStandardLightPlan(
         `- ${escapeMarkdownTableCell(task)}`,
         '',
         '## \u5b9e\u73b0\u8981\u70b9',
-        '- \u6fc0\u8fdb\u6a21\u5f0f\u4f7f\u7528\u4e00\u6b21\u805a\u7126\u7684\u7f16\u7801\u4f1a\u8bdd\u3002',
+        '- \u6807\u51c6\u8f7b\u91cf\u6a21\u5f0f\u4f7f\u7528\u4e00\u6b21\u805a\u7126\u7684\u7f16\u7801\u4f1a\u8bdd\u3002',
         '- \u7f16\u7801\u667a\u80fd\u4f53\u53ea\u5e94\u68c0\u67e5\u4e0e\u4efb\u52a1\u76f4\u63a5\u76f8\u5173\u7684\u6587\u4ef6\u3002',
         ...(constraintReminder ? [`- ${constraintReminder}`] : []),
         '- \u9664\u975e\u73b0\u6709\u4ee3\u7801\u660e\u786e\u9700\u8981\uff0c\u5426\u5219\u4e0d\u5f15\u5165\u65b0\u8bbe\u8ba1\u6a21\u5f0f\u3002',
@@ -957,7 +930,7 @@ function buildLocalizedAggressiveStandardLightPlan(
         `- ${escapeMarkdownTableCell(task)}`,
         '',
         '## Implementation Notes',
-        '- Aggressive mode uses one focused coder session.',
+        '- Standard light mode uses one focused coder session.',
         '- The coder should inspect only files directly needed for the task.',
         ...(constraintReminder ? [`- ${constraintReminder}`] : []),
         '- No new design pattern is required unless the existing code clearly demands it.',
@@ -2251,7 +2224,7 @@ export class SpecOrchestrator extends EventEmitter {
    *
    * Phase progression:
    * 1. Complexity assessment — gate the workflow (uses task description + project docs reference)
-   * 2. Phases based on complexity tier (SIMPLE skips discovery/requirements entirely)
+   * 2. Phases selected by the shared Standard routing strategy
    *
    * After each phase, output files are captured and injected into subsequent phases
    * to eliminate redundant file re-reads between agents.
@@ -2293,6 +2266,15 @@ export class SpecOrchestrator extends EventEmitter {
         await this.persistComplexityAssessment();
         complexity = this.assessment.complexity;
         this.emitTyped('log', `Skipping complexity assessment (already completed): ${complexity}`);
+      } else if (this.config.complexityOverride) {
+        complexity = this.config.complexityOverride;
+        this.assessment = {
+          complexity,
+          confidence: 1,
+          reasoning: 'Complexity override',
+        };
+        this.emitTyped('log', `Complexity override: ${complexity}`);
+        await this.persistComplexityAssessment();
       } else {
         // Fast-path heuristic: catch obviously simple tasks before expensive AI assessment
         const heuristicResult = this.assessComplexityHeuristic(
@@ -2313,9 +2295,16 @@ export class SpecOrchestrator extends EventEmitter {
           phasesExecuted.push('complexity_assessment');
           this.completedPhases.push('complexity_assessment');
           await this.saveState();
-        } else if (this.config.complexityOverride) {
-          complexity = this.config.complexityOverride;
-          this.emitTyped('log', `Complexity override: ${complexity}`);
+        } else if (this.shouldUseLocalComplexityRouting()) {
+          this.assessment = this.buildFallbackComplexityAssessment('Balanced local routing');
+          this.applyProjectProfileAssessmentHints();
+          complexity = this.assessment.complexity;
+          this.emitTyped('log', `Complexity local route: ${complexity} (${this.assessment.reasoning})`);
+          await this.persistComplexityAssessment();
+          phasesExecuted.push('complexity_assessment');
+          this.completedPhases.push('complexity_assessment');
+          await this.capturePhaseOutput('complexity_assessment');
+          await this.saveState();
         } else if (this.config.useAiAssessment !== false) {
           // Try to restore complexity assessment from file first (resume support)
           const assessmentPath = join(this.config.specDir, 'complexity_assessment.json');
@@ -2396,17 +2385,20 @@ export class SpecOrchestrator extends EventEmitter {
         .join(' → ')}`);
 
       for (const phase of phasesToRun) {
-        if (
-          phase === 'quick_spec' &&
-          complexity === 'simple' &&
-          (
-            this.config.workflowConfig?.optimizationLevel === 'aggressive' ||
-            isSourceDocumentationTask(this.config.taskDescription)
-          )
-        ) {
+        // Skip phases that were already completed
+        if (this.completedPhases.includes(phase)) {
+          this.emitTyped('log', `Skipping ${phase} (already completed)`);
+          continue;
+        }
+
+        if (this.aborted) {
+          return this.outcome(false, phasesExecuted, Date.now() - startTime, 'Cancelled');
+        }
+
+        if (phase === 'quick_spec' && this.shouldWriteLocalStandardLightPlan(complexity)) {
           const phaseNumber = phasesExecuted.length + 1;
           const totalPhases = phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0);
-          const result = await this.writeAggressiveStandardLightPlan(phaseNumber, totalPhases);
+          const result = await this.writeLocalStandardLightPlan(phaseNumber, totalPhases);
           phasesExecuted.push(phase);
           if (!result.success) {
             await this.saveState();
@@ -2418,14 +2410,19 @@ export class SpecOrchestrator extends EventEmitter {
           continue;
         }
 
-        // Skip phases that were already completed
-        if (this.completedPhases.includes(phase)) {
-          this.emitTyped('log', `Skipping ${phase} (already completed)`);
+        if (phase === 'validation') {
+          const phaseNumber = phasesExecuted.length + 1;
+          const totalPhases = phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0);
+          const result = await this.runDeterministicValidationPhase(phaseNumber, totalPhases);
+          phasesExecuted.push(phase);
+          if (!result.success) {
+            await this.saveState();
+            return this.outcome(false, phasesExecuted, Date.now() - startTime, result.errors.join('; '));
+          }
+          this.completedPhases.push(phase);
+          await this.capturePhaseOutput(phase);
+          await this.saveState();
           continue;
-        }
-
-        if (this.aborted) {
-          return this.outcome(false, phasesExecuted, Date.now() - startTime, 'Cancelled');
         }
 
         const result = await this.runPhase(phase, phasesExecuted.length + 1, phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0));
@@ -2439,9 +2436,6 @@ export class SpecOrchestrator extends EventEmitter {
         this.completedPhases.push(phase);
 
         // Capture phase outputs for injection into subsequent phases
-        if (phase === 'validation') {
-          await this.writeSpecValidationReport();
-        }
         await this.capturePhaseOutput(phase);
 
         // Save state after each successful phase
@@ -2477,15 +2471,19 @@ export class SpecOrchestrator extends EventEmitter {
       return 'simple';
     }
 
-    // Very short descriptions (under 30 words) with simple signal words → SIMPLE
+    // Very short descriptions with local copy/UI/version cleanup signals are SIMPLE.
+    // External, security, migration, or broad refactor terms keep the safer Standard route.
     if (wordCount <= 30) {
+      const hasShortHighRiskSignal = hasTaskExternalResearchSignal(desc) ||
+        /\b(migrate|migration|refactor|architecture|security|permission|role|workflow|pipeline|concurrent|production|enterprise)\b|迁移|重构|架构|安全|权限|角色|流程|管线|并发|生产|企业/.test(desc);
       const simplePatterns = [
-        /\b(change|rename|update|replace|swap|switch)\b.*\b(color|colour|name|text|label|title|string|value|icon|logo)\b/,
+        /\b(change|rename|update|replace|swap|switch|set|adjust|tweak)\b.*\b(color|colour|name|text|label|title|string|value|icon|logo|copy|message|placeholder)\b/,
+        /\b(add|show|hide)\b.*\b(label|tooltip|text|copy|message|placeholder|button|icon|title)\b/,
         /\b(fix|correct)\b.*\b(typo|spelling|grammar)\b/,
         /\b(bump|update)\b.*\b(version|dependency)\b/,
         /\b(remove|delete)\b.*\b(unused|dead|deprecated)\b/,
       ];
-      if (simplePatterns.some(p => p.test(desc))) {
+      if (!hasShortHighRiskSignal && simplePatterns.some(p => p.test(desc))) {
         return 'simple';
       }
     }
@@ -2524,6 +2522,37 @@ export class SpecOrchestrator extends EventEmitter {
       needs_research: fallbackComplexity.needs_research,
       needs_self_critique: fallbackComplexity.needs_self_critique,
     };
+  }
+
+  private shouldUseLocalComplexityRouting(): boolean {
+    const workflowConfig = this.config.workflowConfig;
+    return workflowConfig?.optimizationLevel === 'balanced' && workflowConfig.specCreationMode !== 'phased';
+  }
+
+  private shouldWriteLocalStandardLightPlan(complexity: ComplexityTier): boolean {
+    if (complexity !== 'simple') {
+      return false;
+    }
+    if (isSourceDocumentationTask(this.config.taskDescription)) {
+      return true;
+    }
+    const optimizationLevel = this.config.workflowConfig?.optimizationLevel;
+    return optimizationLevel === 'balanced' || optimizationLevel === 'aggressive';
+  }
+
+  private async runDeterministicValidationPhase(
+    phaseNumber: number,
+    totalPhases: number,
+  ): Promise<SpecPhaseResult> {
+    const phase: SpecPhase = 'validation';
+    this.emitTyped('phase-start', phase, phaseNumber, totalPhases);
+    const errors = await this.writeSpecValidationReport();
+    const result: SpecPhaseResult = { phase, success: errors.length === 0, errors, retries: 0 };
+    this.emitTyped('phase-complete', phase, result);
+    if (result.success) {
+      this.emitTyped('log', 'Standard plan validated locally without an AI validation session');
+    }
+    return result;
   }
 
   private applyProjectProfileAssessmentHints(): void {
@@ -3174,7 +3203,7 @@ export class SpecOrchestrator extends EventEmitter {
     await saveAutocodeImplementationPlan(this.config.specDir, plan);
   }
 
-  private async writeAggressiveStandardLightPlan(
+  private async writeLocalStandardLightPlan(
     phaseNumber: number,
     totalPhases: number,
   ): Promise<SpecPhaseResult> {
@@ -3213,7 +3242,7 @@ export class SpecOrchestrator extends EventEmitter {
       const result: SpecPhaseResult = { phase, success: true, errors: [], retries: 0 };
       const patternFiles = plan.implementationPlan.phases[0]?.subtasks[0]?.pattern_files ?? [];
       const fileHint = patternFiles.length > 0 ? `; file hints: ${patternFiles.join(', ')}` : '';
-      this.emitTyped('log', `${plan.implementationPlan.workflow_type === 'documentation' ? 'Documentation analysis' : 'Aggressive workflow'} generated a Standard light plan and one-task source without an AI planning session${fileHint}`);
+      this.emitTyped('log', `${plan.implementationPlan.workflow_type === 'documentation' ? 'Documentation analysis' : 'Standard light workflow'} generated a Standard light plan and one-task source without an AI planning session${fileHint}`);
       this.emitTyped('phase-complete', phase, result);
       return result;
     } catch (error) {
@@ -3331,7 +3360,7 @@ export class SpecOrchestrator extends EventEmitter {
     }
   }
 
-  private async writeSpecValidationReport(): Promise<void> {
+  private async writeSpecValidationReport(): Promise<string[]> {
     const rows: Array<[string, string]> = [];
     const addRow = (item: string, status: string): void => {
       rows.push([item, status]);
@@ -3364,9 +3393,17 @@ export class SpecOrchestrator extends EventEmitter {
       addRow(AUTOCODE_TASK_ARTIFACTS.implementationPlan, `unreadable: ${message}`);
     }
 
-    const passed = rows.every(([, status]) => !status.startsWith('missing') && !status.startsWith('invalid') && !status.startsWith('unreadable')) &&
-      implementationPlanValid &&
-      executablePlan;
+    const errors = rows
+      .filter(([, status]) => status.startsWith('missing') || status.startsWith('invalid') || status.startsWith('unreadable'))
+      .map(([item, status]) => `${item}: ${status}`);
+    if (!implementationPlanValid && !errors.some((error) => error.startsWith(AUTOCODE_TASK_ARTIFACTS.implementationPlan))) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.implementationPlan}: invalid`);
+    }
+    if (!executablePlan && !errors.some((error) => error.startsWith('executable subtasks'))) {
+      errors.push('executable subtasks: missing');
+    }
+
+    const passed = errors.length === 0;
     const report = [
       '# Spec Validation Report',
       '',
@@ -3383,7 +3420,10 @@ export class SpecOrchestrator extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.emitTyped('log', `Failed to write validation report: ${message}`);
+      errors.push(`spec_validation_report.md: write failed: ${message}`);
     }
+
+    return errors;
   }
 
   private async capturePhaseOutput(phase: SpecPhase): Promise<void> {

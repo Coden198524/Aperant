@@ -258,15 +258,9 @@ export function registerProjectHandlers(
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_LIST,
     async (): Promise<IPCResult<Project[]>> => {
-      // Validate that .autocode folders still exist for all projects
-      // If a folder was deleted, reset autoBuildPath so UI prompts for reinitialization
-      const resetIds = projectStore.validateProjects();
-      if (resetIds.length > 0) {
-        console.warn('[IPC] PROJECT_LIST: Detected missing .autocode folders for', resetIds.length, 'project(s)');
-      }
-
+      // Keep project listing lightweight during startup. Expensive filesystem
+      // validation is performed by explicit project/version checks instead.
       const projects = projectStore.getProjects();
-      console.warn('[IPC] PROJECT_LIST returning', projects.length, 'projects');
       return { success: true, data: projects };
     }
   );
@@ -294,7 +288,6 @@ export function registerProjectHandlers(
     IPC_CHANNELS.TAB_STATE_GET,
     async (): Promise<IPCResult<{ openProjectIds: string[]; activeProjectId: string | null; tabOrder: string[] }>> => {
       const tabState = projectStore.getTabState();
-      console.log('[IPC] TAB_STATE_GET returning:', tabState);
       return { success: true, data: tabState };
     }
   );
@@ -305,7 +298,6 @@ export function registerProjectHandlers(
       _,
       tabState: { openProjectIds: string[]; activeProjectId: string | null; tabOrder: string[] }
     ): Promise<IPCResult> => {
-      console.log('[IPC] TAB_STATE_SAVE called with:', tabState);
       projectStore.saveTabState(tabState);
       return { success: true };
     }

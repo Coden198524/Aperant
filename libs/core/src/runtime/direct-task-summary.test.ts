@@ -5,11 +5,13 @@ import {
   AUTOCODE_DIRECT_TASK_DESCRIPTION_MAX_CHARS,
   buildAutocodeDirectCompletionSummary,
   buildAutocodeDirectExecutionMetadata,
+  buildAutocodeDirectPlanLifecycleState,
   extractAutocodeDirectTaskDescription,
   getAutocodeDirectQualityGateFailureReason,
   inferAutocodeDirectValidationEvidence,
   isAutocodeDirectQualityGatePassed,
   isAutocodeSuccessfulDirectOutcome,
+  shouldRequireAutocodeDirectValidation,
 } from './direct-task-summary.js';
 
 describe('direct task summary helpers', () => {
@@ -54,7 +56,7 @@ describe('direct task summary helpers', () => {
       outcome: 'completed',
       stepsExecuted: 2,
       usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-      messages: [{ role: 'assistant', content: '验证：npm test 通过。' }],
+      messages: [{ role: 'assistant', content: 'Verification: npm test passed.' }],
       durationMs: 1,
       toolCallCount: 1,
     })).toMatchObject({ status: 'reported_passed' });
@@ -67,6 +69,69 @@ describe('direct task summary helpers', () => {
       durationMs: 1,
       toolCallCount: 1,
     })).toMatchObject({ status: 'reported_failed' });
+
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: 'Verification: npm test passed with 0 failed tests and no errors.' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    })).toMatchObject({ status: 'reported_passed' });
+
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: 'Verification: typecheck completed without errors; not failing.' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    })).toMatchObject({ status: 'reported_passed' });
+
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: '\u9a8c\u8bc1\u901a\u8fc7\uff0c\u65e0\u9519\u8bef\u3002' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    })).toMatchObject({ status: 'reported_passed' });
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: '\u9a8c\u8bc1\u5df2\u8fd0\u884c `node --check game.js`\uff0c\u5e76\u7528 Chrome \u65e0\u5934\u6a21\u5f0f\u751f\u6210\u6e32\u67d3\u622a\u56fe\u786e\u8ba4\u9875\u9762\u53ef\u52a0\u8f7d\u3002' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    })).toMatchObject({ status: 'reported_passed' });
+
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: 'node --check game.js Chrome \u7ead\uE1BF\uE17B\u6924\u7538\u6F70\u9359\uE21A\u59DE\u675E' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    })).toMatchObject({ status: 'reported_passed' });
+
+
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: '验证：npm test 通过，无异常。' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    })).toMatchObject({ status: 'reported_passed' });
+
+    expect(inferAutocodeDirectValidationEvidence({
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: 'Verification: typecheck passed but smoke test failed.' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    })).toMatchObject({ status: 'reported_mixed' });
 
     expect(inferAutocodeDirectValidationEvidence({
       outcome: 'completed',
@@ -120,6 +185,105 @@ describe('direct task summary helpers', () => {
     });
   });
 
+  it('maps Direct completion and failure to consistent plan lifecycle states', () => {
+    expect(buildAutocodeDirectPlanLifecycleState(true)).toEqual({
+      status: 'human_review',
+      planStatus: 'review',
+      reviewReason: 'completed',
+      xstateState: 'human_review',
+      executionPhase: 'complete',
+    });
+    expect(buildAutocodeDirectPlanLifecycleState(false)).toEqual({
+      status: 'error',
+      planStatus: 'error',
+      reviewReason: 'errors',
+      xstateState: 'error',
+      executionPhase: 'failed',
+    });
+  });
+
+  it('removes Direct completion timestamps for failed iterations', () => {
+    const metadata = buildAutocodeDirectExecutionMetadata({
+      existing: {
+        enabled: true,
+        outcome: 'completed',
+        completed_at: '2026-07-01T07:50:11.417Z',
+        current_subtask_id: 'direct-cr-previous',
+        summary_file: 'direct_summary.md',
+      },
+      outcome: 'error',
+      currentSubtaskId: 'direct-cr-current',
+      quality: {
+        mode: 'direct',
+        outcome: 'error',
+        changedFiles: ['src/direct.ts'],
+        filesChanged: 1,
+        stepsExecuted: 2,
+        toolCallCount: 1,
+        durationMs: 10,
+        recordedAt: '2026-07-01T07:50:11.417Z',
+        validation: {
+          status: 'reported_failed',
+          reason: 'npm test failed',
+        },
+      },
+    });
+
+    expect(metadata).toMatchObject({
+      enabled: true,
+      outcome: 'error',
+      current_subtask_id: 'direct-cr-current',
+      summary_file: 'direct_summary.md',
+    });
+    expect(metadata).not.toHaveProperty('completed_at');
+    expect(metadata.ai_coding_quality).toMatchObject({
+      mode: 'direct',
+      outcome: 'error',
+    });
+  });
+  it('does not require validation for analysis or documentation-only Direct tasks', () => {
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'analysis' },
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'documentation' },
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { sourceType: 'project_docs' },
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      description: '\u5206\u6790\u65e5\u5fd7\uff0c\u5b9a\u4f4d Direct \u6a21\u5f0f\u4e3a\u4ec0\u4e48\u6ca1\u6709\u7ee7\u7eed\u6267\u884c\u3002',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      description: 'Analyze the Direct validation error and explain why npm test failed.',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      description: '\u5206\u6790\u6d4b\u8bd5\u5931\u8d25\u539f\u56e0\uff0c\u5b9a\u4f4d\u62a5\u9519\u6839\u56e0\u3002',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      description: 'Generate a reader-first architecture report from the existing source files.',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'direct', title: 'Analyze Direct task logs and explain the pause reason' },
+    })).toBe(false);
+  });
+
+  it('still requires validation for implementation Direct tasks', () => {
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { developmentMode: 'direct', workflowMode: 'off' },
+      description: 'Fix the Direct retry bug in worker.ts and update tests.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'direct', feature: 'Implement Direct retry state handling' },
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { developmentMode: 'direct' },
+      description: 'Direct CLI should retry implementation runs that do not report validation.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'direct', title: 'Fix Direct retry state handling' },
+    })).toBe(true);
+  });
   it('fails the Direct quality gate for failed validation or self-critique', () => {
     const baseQuality = {
       mode: 'direct' as const,
@@ -184,6 +348,16 @@ describe('direct task summary helpers', () => {
     });
     expect(failedCritiqueReason).toContain('Direct self-critique failed');
     expect(failedCritiqueReason).toContain('Handle null input');
+
+    expect(getAutocodeDirectQualityGateFailureReason({
+      ...baseQuality,
+      selfCritique: {
+        status: 'failed',
+        score: 0.5,
+        filesReviewed: 1,
+        improvements: ['Documentation structure needs one more pass'],
+      },
+    }, { requireSelfCritique: false })).toBeNull();
 
     expect(getAutocodeDirectQualityGateFailureReason({
       ...baseQuality,
@@ -310,6 +484,42 @@ describe('direct task summary helpers', () => {
     expect(summary).toContain('| Item | Details |');
   });
 
+  it('localizes zh-CN fallback direct summaries without mojibake', () => {
+    const summary = buildAutocodeDirectCompletionSummary({
+      specDir: 'E:/repo/.autocode/specs/001-task',
+      language: 'zh-CN',
+      streamedText: '',
+      result: {
+        outcome: 'completed',
+        stepsExecuted: 2,
+        toolCallCount: 3,
+        durationMs: 1,
+        messages: [],
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimated: true },
+      },
+      quality: {
+        mode: 'direct',
+        outcome: 'completed',
+        changedFiles: ['src/direct.ts'],
+        filesChanged: 1,
+        stepsExecuted: 2,
+        toolCallCount: 3,
+        durationMs: 1,
+        recordedAt: '2026-01-01T00:00:00.000Z',
+        validation: {
+          status: 'reported_passed',
+          reason: 'npm test passed',
+        },
+      },
+    });
+
+    expect(summary).toContain('\u9879\u76ee');
+    expect(summary).toContain('\u53d8\u66f4\u6587\u4ef6');
+    expect(summary).toContain('\u9a8c\u8bc1\u7ed3\u679c');
+    expect(summary).toContain('Direct \u6a21\u5f0f');
+    expect(summary).not.toMatch(/[\u95b8\u599e\u59a4\u940e\u7f02\u5a23\u6d60\u9429\u935b\u695e]/u);
+  });
+
   it('includes compact token usage in fallback direct completion summaries', () => {
     const summary = buildAutocodeDirectCompletionSummary({
       specDir: 'E:/repo/.autocode/specs/001-task',
@@ -326,6 +536,8 @@ describe('direct task summary helpers', () => {
     });
 
     expect(summary).toContain('| Verification |');
+    expect(summary).toContain('Direct model session ended with outcome "error" for 001-task.');
+    expect(summary).not.toContain('Direct model session completed for 001-task.');
     expect(summary).toContain('Session outcome: error. Steps: 2. Tools: 3.');
     expect(summary).toContain('Tokens: 15 total (10 prompt, 5 completion, estimated).');
   });

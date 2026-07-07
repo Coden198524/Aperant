@@ -5,9 +5,20 @@ import {
   type ModelShorthand,
   type Phase,
 } from '../config/types.js';
-import type { SupportedProvider } from '../providers/types.js';
+import {
+  detectProviderFromModel,
+  parseAutocodeModelProviderRoutes,
+  type AutocodeModelProviderRoute,
+  type AutocodeModelProviderRouteConfig,
+  type AutocodeProviderModelInvocationRouteConfig,
+} from '../providers/routing.js';
+import type { AutocodeCliRuntimeRoute } from '../tasks/cli-catalog.js';
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import type { AutocodeTaskDevelopmentMode, AutocodeTaskWorkflowMode } from '../tasks/spec-store.js';
+import type {
+  AutocodeDirectProviderContinuationCapabilityConfig,
+  AutocodeDirectProviderFallbackCapabilityConfig,
+} from './direct-provider-capabilities.js';
 import {
   resolveAutocodeTaskRuntimeConcurrency,
   type AutocodeTaskRuntimeConcurrencyMetadata,
@@ -27,6 +38,14 @@ export interface AutocodeTaskRuntimeMetadataConfig {
   sourceType?: string;
   upstreamSpecSystem?: string;
   runtimeConcurrency?: AutocodeTaskRuntimeConcurrencyMetadata;
+  cliRuntimeRoutes?: AutocodeCliRuntimeRoute | AutocodeCliRuntimeRoute[];
+  autocodeCliRuntimeRoutes?: AutocodeCliRuntimeRoute | AutocodeCliRuntimeRoute[];
+  directProviderContinuationCapabilities?: AutocodeDirectProviderContinuationCapabilityConfig | AutocodeDirectProviderContinuationCapabilityConfig[];
+  autocodeDirectProviderContinuationCapabilities?: AutocodeDirectProviderContinuationCapabilityConfig | AutocodeDirectProviderContinuationCapabilityConfig[];
+  directProviderFallbackCapabilities?: AutocodeDirectProviderFallbackCapabilityConfig | AutocodeDirectProviderFallbackCapabilityConfig[];
+  autocodeDirectProviderFallbackCapabilities?: AutocodeDirectProviderFallbackCapabilityConfig | AutocodeDirectProviderFallbackCapabilityConfig[];
+  modelProviderRoutes?: AutocodeModelProviderRouteConfig | AutocodeModelProviderRouteConfig[];
+  providerModelInvocationRoutes?: AutocodeProviderModelInvocationRouteConfig | AutocodeProviderModelInvocationRouteConfig[];
 }
 
 export interface AutocodeProviderModelEquivalent {
@@ -46,10 +65,12 @@ export interface ResolveAutocodeTaskPhaseModelInput {
   providerPhaseModelResolver?: (
     targetProvider: string,
   ) => Partial<Record<AutocodeRuntimePhase, string>> | null | undefined;
+  modelProviderRoutes?: readonly AutocodeModelProviderRoute[];
 }
 
 export interface ResolveAutocodeTaskPhaseProviderOptions {
   inferPinnedProvider?: (model: string | undefined) => string | null;
+  modelProviderRoutes?: readonly AutocodeModelProviderRoute[];
 }
 
 export interface ResolveAutocodeCrossProviderModelRequestOptions {
@@ -79,7 +100,8 @@ export function resolveAutocodeTaskPhaseModelId(
 ): string {
   const metadata = input.metadata ?? null;
   const resolveModelId = input.resolveModelId ?? resolveAutocodeModelId;
-  const inferPinnedProvider = input.inferPinnedProvider ?? inferAutocodePinnedProviderFromModel;
+  const modelProviderRoutes = input.modelProviderRoutes ?? parseAutocodeModelProviderRoutes(metadata?.modelProviderRoutes);
+  const inferPinnedProvider = input.inferPinnedProvider ?? ((model) => inferAutocodePinnedProviderFromModel(model, modelProviderRoutes));
   let shorthand = getAutocodeTaskPhaseModel(metadata, input.phase);
   const targetProvider = metadata?.phaseProviders?.[input.phase] ?? inferPinnedProvider(shorthand);
 
@@ -124,12 +146,14 @@ export function resolveAutocodeTaskPhaseProvider(
   }
 
   const model = getAutocodeTaskPhaseModel(metadata, phase);
-  return (options.inferPinnedProvider ?? inferAutocodePinnedProviderFromModel)(model);
+  return options.inferPinnedProvider
+    ? options.inferPinnedProvider(model)
+    : inferAutocodePinnedProviderFromModel(model, options.modelProviderRoutes ?? parseAutocodeModelProviderRoutes(metadata?.modelProviderRoutes));
 }
 
 export function resolveAutocodeTaskWorkflowMode(
   metadata: AutocodeTaskRuntimeMetadataConfig | null | undefined,
-  defaultWorkflowMode: AutocodeTaskWorkflowMode = 'conservative',
+  defaultWorkflowMode: AutocodeTaskWorkflowMode = 'balanced',
 ): AutocodeTaskWorkflowMode {
   const workflowMode = metadata?.workflowMode;
   return isAutocodeTaskWorkflowMode(workflowMode) ? workflowMode : defaultWorkflowMode;
@@ -138,54 +162,42 @@ export function resolveAutocodeTaskWorkflowMode(
 export { resolveAutocodeTaskRuntimeConcurrency };
 export type { AutocodeTaskRuntimeConcurrencyMetadata, AutocodeTaskRuntimeConcurrencyResolved };
 
-export function inferAutocodePinnedProviderFromModel(model: string | undefined): SupportedProvider | null {
-  if (!model || CROSS_PROVIDER_MODEL_SHORTHANDS.has(model)) {
+export function inferAutocodePinnedProviderFromModel(
+  model: string | undefined,
+  routes: readonly AutocodeModelProviderRoute[] = [],
+): string | null {
+  if (!model) {
     return null;
   }
 
-  const directProvider = inferAutocodeProviderFromModelValue(model);
+  const explicitRouteProvider = routes.find((route) => route.supports(model))?.provider;
+  if (explicitRouteProvider) {
+    return explicitRouteProvider;
+  }
+
+  if (CROSS_PROVIDER_MODEL_SHORTHANDS.has(model)) {
+    return null;
+  }
+
+  const directProvider = inferAutocodeProviderFromModelValue(model, routes);
   if (directProvider) {
     return directProvider;
   }
 
   const resolvedModel = resolveAutocodeModelId(model);
-  return resolvedModel === model ? null : inferAutocodeProviderFromModelValue(resolvedModel) ?? null;
+  return resolvedModel === model ? null : inferAutocodeProviderFromModelValue(resolvedModel, routes) ?? null;
 }
 
-export function inferAutocodeProviderFromModelValue(modelValue: string): SupportedProvider | undefined {
+export function inferAutocodeProviderFromModelValue(
+  modelValue: string,
+  routes: readonly AutocodeModelProviderRoute[] = [],
+): string | undefined {
+  const directProvider = detectProviderFromModel(modelValue, routes);
+  if (directProvider) {
+    return directProvider;
+  }
   if (modelValue in MODEL_ID_MAP) {
-    return inferAutocodeProviderFromModelValue(MODEL_ID_MAP[modelValue as ModelShorthand]);
-  }
-  if (modelValue.startsWith('claude-')) {
-    return 'anthropic';
-  }
-  if (
-    modelValue.startsWith('gpt-') ||
-    modelValue === 'o3' ||
-    modelValue.startsWith('o3-') ||
-    modelValue === 'o4-mini' ||
-    modelValue.startsWith('o4-') ||
-    modelValue.includes('codex')
-  ) {
-    return 'openai';
-  }
-  if (modelValue.startsWith('gemini-')) {
-    return 'google';
-  }
-  if (modelValue.startsWith('mistral-') || modelValue.startsWith('codestral-')) {
-    return 'mistral';
-  }
-  if (modelValue.startsWith('grok-')) {
-    return 'xai';
-  }
-  if (modelValue.startsWith('glm-')) {
-    return 'zai';
-  }
-  if (modelValue.startsWith('deepseek-')) {
-    return 'deepseek';
-  }
-  if (modelValue.startsWith('llama-') || modelValue.startsWith('meta-llama/')) {
-    return 'groq';
+    return inferAutocodeProviderFromModelValue(MODEL_ID_MAP[modelValue as ModelShorthand], routes);
   }
   return undefined;
 }

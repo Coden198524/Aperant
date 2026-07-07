@@ -27,6 +27,12 @@ vi.mock('../../ipc-handlers/utils', () => ({
   safeSendToRenderer: vi.fn(),
 }));
 
+vi.mock('../../project-store', () => ({
+  projectStore: {
+    getProjects: vi.fn(() => []),
+  },
+}));
+
 function createMockDisposable(): pty.IDisposable {
   return { dispose: vi.fn() };
 }

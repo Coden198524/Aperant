@@ -249,8 +249,11 @@ export async function loadProjects(): Promise<void> {
   store.setError(null);
 
   try {
-    // First, load tab state from main process (reliable persistence)
-    const tabStateResult = await window.electronAPI.getTabState();
+    // Load tab state and projects concurrently; neither IPC depends on the other.
+    const [tabStateResult, result] = await Promise.all([
+      window.electronAPI.getTabState(),
+      window.electronAPI.getProjects(),
+    ]);
     debugLog('[ProjectStore] Loaded tab state from main process:', tabStateResult.data);
 
     if (tabStateResult.success && tabStateResult.data) {
@@ -261,8 +264,6 @@ export async function loadProjects(): Promise<void> {
       });
     }
 
-    // Then load projects
-    const result = await window.electronAPI.getProjects();
     debugLog('[ProjectStore] getProjects result:', {
       success: result.success,
       projectCount: result.data?.length,

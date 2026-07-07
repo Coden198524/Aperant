@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
   AUTOCODE_TASK_ARTIFACTS,
+  DEFAULT_AUTOCODE_CLI,
+  detectProviderFromModel,
   buildAutocodeWorkspaceState,
   createEmptyAutocodeTaskLogs,
   createManualAutocodeTask,
@@ -20,9 +22,12 @@ import {
   mergeAutocodeTaskLogs,
   readAutocodeTaskLogsFromSpecDir,
   resolveAutocodeCli,
+  resolveAutocodeCliRuntimeStartOptions,
   saveAutocodeImplementationPlanSync,
   serializeAutocodeTaskLogs,
   markAutocodeTaskStopped,
+  parseAutocodeCliRuntimeRoutes,
+  parseAutocodeModelProviderRoutes,
   updateAutocodeTaskLogPhase,
   updateAutocodeTaskPlanStatus,
   type AutocodeCli,
@@ -218,15 +223,24 @@ export class WebLocalService {
 
     const task = findTask(project.path, taskId);
     const cli = resolveWebTaskCli(request.cli);
+    const model = resolveWebTaskModel(request, task);
+    const modelProviderRoutes = resolveWebModelProviderRoutes(project, task);
+    const cliRuntimeOptions = toWebCliRuntimeInput(resolveAutocodeCliRuntimeStartOptions({
+      cli,
+      ...(request.customCommand ? { customCommand: request.customCommand } : {}),
+      provider: resolveWebTaskProvider(project, request, task, model, modelProviderRoutes),
+      modelId: model,
+      authSource: typeof request.authSource === 'string' && request.authSource.trim() ? request.authSource.trim() : undefined,
+      routes: resolveWebCliRuntimeRoutes(project, task),
+    }));
 
     try {
       const started = createStartedAutocodeAgentRuntime({
         projectRoot: project.path,
         taskId: task.specId,
         projectId: project.id,
-        cli,
-        ...(request.customCommand ? { customCommand: request.customCommand } : {}),
-        ...(request.model ? { model: request.model } : {}),
+        ...cliRuntimeOptions,
+        ...(model ? { model } : {}),
         ...(typeof request.bypassPermissions === 'boolean'
           ? { bypassPermissions: request.bypassPermissions }
           : {}),
@@ -1899,8 +1913,88 @@ function findTask(projectRoot: string, taskId: string): AutocodeTask {
 
 function resolveWebTaskCli(cli: StartWebTaskRequest['cli']): AutocodeCli {
   return typeof cli === 'string' && cli.trim()
-    ? resolveAutocodeCli(cli, 'codex')
-    : 'codex';
+    ? resolveAutocodeCli(cli, DEFAULT_AUTOCODE_CLI)
+    : DEFAULT_AUTOCODE_CLI;
+}
+
+function toWebCliRuntimeInput(options: ReturnType<typeof resolveAutocodeCliRuntimeStartOptions>) {
+  return {
+    cli: options.cli,
+    customCommand: options.customCommand,
+    directCliContinuationStrategy: options.directCliContinuationStrategy,
+    directCliJsonEventParser: options.directCliJsonEventParser,
+    directCliRuntimeRouteId: options.directCliRuntimeRouteId,
+    directCliRuntimeRouteDisplayName: options.directCliRuntimeRouteDisplayName,
+    directCliPermissionBypassArgs: options.directCliPermissionBypassArgs,
+    directCliTaskRunStrategy: options.directCliTaskRunStrategy,
+    directCliPreflightActions: options.directCliPreflightActions,
+  };
+}
+
+function resolveWebTaskModel(request: StartWebTaskRequest, task: AutocodeTask): string | undefined {
+  if (typeof request.model === 'string' && request.model.trim()) {
+    return request.model.trim();
+  }
+  const metadataModel = task.metadata?.model;
+  return typeof metadataModel === 'string' && metadataModel.trim() ? metadataModel.trim() : undefined;
+}
+
+function resolveWebTaskProvider(
+  project: WebProject,
+  request: StartWebTaskRequest,
+  task: AutocodeTask,
+  model: string | undefined,
+  modelProviderRoutes: ReturnType<typeof parseAutocodeModelProviderRoutes> = resolveWebModelProviderRoutes(project, task),
+): string | undefined {
+  if (typeof request.provider === 'string' && request.provider.trim()) {
+    return request.provider.trim();
+  }
+  const metadataProvider = task.metadata?.provider;
+  if (typeof metadataProvider === 'string' && metadataProvider.trim()) {
+    return metadataProvider.trim();
+  }
+  return model ? detectProviderFromModel(model, modelProviderRoutes) : undefined;
+}
+
+function resolveWebCliRuntimeRoutes(project: WebProject, task?: AutocodeTask): ReturnType<typeof parseAutocodeCliRuntimeRoutes> {
+  return [
+    ...parseAutocodeCliRuntimeRoutes(task?.metadata?.['cliRuntimeRoutes']),
+    ...parseAutocodeCliRuntimeRoutes(task?.metadata?.['autocodeCliRuntimeRoutes']),
+    ...parseAutocodeCliRuntimeRoutes(project.settings?.autocodeCliRuntimeRoutes),
+    ...readEnvCliRuntimeRoutes(),
+  ];
+}
+
+function resolveWebModelProviderRoutes(project: WebProject, task?: AutocodeTask): ReturnType<typeof parseAutocodeModelProviderRoutes> {
+  return [
+    ...parseAutocodeModelProviderRoutes(task?.metadata?.['modelProviderRoutes']),
+    ...parseAutocodeModelProviderRoutes(project.settings?.autocodeModelProviderRoutes),
+    ...readEnvModelProviderRoutes(),
+  ];
+}
+
+function readEnvCliRuntimeRoutes(): ReturnType<typeof parseAutocodeCliRuntimeRoutes> {
+  const raw = process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON ?? process.env.AUTOCODE_CLI_RUNTIME_ROUTES;
+  if (!raw?.trim()) {
+    return [];
+  }
+  try {
+    return parseAutocodeCliRuntimeRoutes(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
+function readEnvModelProviderRoutes(): ReturnType<typeof parseAutocodeModelProviderRoutes> {
+  const raw = process.env.AUTOCODE_MODEL_PROVIDER_ROUTES_JSON ?? process.env.AUTOCODE_MODEL_PROVIDER_ROUTES;
+  if (!raw?.trim()) {
+    return [];
+  }
+  try {
+    return parseAutocodeModelProviderRoutes(JSON.parse(raw));
+  } catch {
+    return [];
+  }
 }
 
 function deleteMapEntriesByValue(map: Map<string, string>, value: string): void {

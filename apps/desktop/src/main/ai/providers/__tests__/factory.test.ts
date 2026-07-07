@@ -245,6 +245,34 @@ describe('createProvider', () => {
       headers: { 'X-Custom': 'value' },
     });
   });
+
+  it('routes future OpenAI models through configured Responses invocation routes', () => {
+    const result = createProvider({
+      config: { provider: SupportedProvider.OpenAI, apiKey: 'test-key' },
+      modelId: 'future-resp-large',
+      invocationRoutes: {
+        provider: 'openai',
+        modelIdPrefix: 'future-resp-',
+        method: 'responses',
+      },
+    }) as any;
+
+    expect(result.provider).toBe('openai-responses');
+  });
+
+  it('lets configured OpenAI invocation routes override built-in Responses defaults', () => {
+    const result = createProvider({
+      config: { provider: SupportedProvider.OpenAI, apiKey: 'test-key', baseURL: 'https://api.openai.com/v1' },
+      modelId: 'gpt-5.4',
+      invocationRoutes: {
+        provider: 'openai',
+        modelIdPrefix: 'gpt-5',
+        method: 'chat',
+      },
+    }) as any;
+
+    expect(result.provider).toBe('openai-chat');
+  });
 });
 
 describe('detectProviderFromModel', () => {

@@ -19,7 +19,7 @@ import { useAutoNaming } from './terminal/useAutoNaming';
 import { useTerminalFileDrop } from './terminal/useTerminalFileDrop';
 import { debugLog } from '../../shared/utils/debug-logger';
 import { isWindows as checkIsWindows } from '../lib/os-detection';
-import { getCliLabel } from '../lib/cli-display';
+import { DEFAULT_CLI, getCliLabel } from '../lib/cli-display';
 
 // Minimum dimensions to prevent PTY creation with invalid sizes
 const MIN_COLS = 10;
@@ -697,7 +697,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     };
   }, [id, dispose, cleanupAutoNaming]);
 
-  const defaultCLI = (projectDefaultCLI || settings.preferredCLI || 'claude-code') as SupportedCLI;
+  const defaultCLI = (projectDefaultCLI || settings.preferredCLI || DEFAULT_CLI) as SupportedCLI;
 
   const handleInvokeCLI = useCallback((cli?: SupportedCLI) => {
     const selectedCLI = cli || defaultCLI;

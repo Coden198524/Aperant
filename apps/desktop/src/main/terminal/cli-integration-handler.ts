@@ -23,6 +23,7 @@ import { isWindows } from '../platform';
 import { readSettingsFileAsync } from '../settings-utils';
 import type { SupportedCLI } from '../../shared/types/settings';
 import {
+  DEFAULT_AUTOCODE_CLI,
   getAutocodeCliCommandName,
   getAutocodeCliPermissionBypassFlag,
   type AutocodeCli,
@@ -1232,7 +1233,7 @@ export async function invokeCLIAsync(
 
     // Dispatch to the appropriate CLI based on preferredCLI setting
     const settings = await readSettingsFileAsync();
-    const preferredCLI = cliOverride || (settings?.preferredCLI as SupportedCLI | undefined) || 'claude-code';
+    const preferredCLI = cliOverride || (settings?.preferredCLI as SupportedCLI | undefined) || DEFAULT_AUTOCODE_CLI;
     const shouldBypassPermissions = preferredCLI === 'claude-code' && dangerouslySkipPermissions === true;
 
     // Compute extra flags for YOLO mode. Smart-terminal non-Claude CLIs do not opt into

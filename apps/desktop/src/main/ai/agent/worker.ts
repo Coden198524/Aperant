@@ -15,20 +15,13 @@ import { parentPort, workerData } from 'worker_threads';
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 
-import { runAgentSession } from '../session/runner';
 import { runContinuableSession } from '../session/continuation';
 import { createProvider } from '../providers/factory';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { createOpenAICompatibleEndpointFetch } from '../providers/openai-base-url';
 import {
-  AUTOCODE_TASK_ARTIFACTS,
   AUTOCODE_DIRECT_SESSION_STATE_VERSION,
-  DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
   buildAutocodeProjectDocsReferencePrompt,
   buildAutocodeDirectTaskExecutionMessages,
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
-  isOfficialOpenAIBaseUrl,
-  normalizeOpenAICompatibleBaseUrl,
   resolveAutocodeDirectSessionState,
   resolveAutocodeTaskRuntimeConcurrency,
   saveAutocodeDirectSessionState,
@@ -55,11 +48,13 @@ import {
 import {
   buildAutocodeDirectCompletionSummaryV2,
   buildAutocodeDirectExecutionMetadata,
+  buildAutocodeDirectPlanLifecycleState,
   extractAutocodeDirectFilePathFromToolArgs,
   extractAutocodeDirectTaskDescription,
   getAutocodeDirectQualityGateFailureReason,
   inferAutocodeDirectValidationEvidence,
   isAutocodeSuccessfulDirectOutcome,
+  shouldRequireAutocodeDirectValidation,
   shouldTrackAutocodeDirectModifiedFile,
   type AutocodeDirectCodingQualityMetrics,
 } from '@autocode/core/runtime/direct-task-summary';
@@ -106,6 +101,15 @@ import { createMcpClientsForAgent, mergeMcpTools, closeAllMcpClients } from '../
 import type { McpClientResult } from '../mcp/types';
 import type { ProjectType, TaskLogPhase, TaskWorkflowMode } from '../../../shared/types';
 import { FileContentCache } from '../tools/cache/file-cache';
+import {
+  buildProviderFallbackSessionConfigOverrides,
+  mergeProviderFallbackInvocationRoutes,
+  resolveEffectiveSessionProviderTransport,
+  resolveProviderFallbackCacheKey,
+  resolveProviderFallbackTransport,
+  shouldFallbackForProviderError,
+  shouldForceProviderFallbackTransport,
+} from './provider-transport';
 import { buildFocusedCoderKickoffMessage } from './session-efficiency';
 import { specPhaseToPromptName } from './spec-phase-prompts';
 import {
@@ -117,7 +121,9 @@ import { buildAggressiveCoderPrompt } from './aggressive-coder-prompt';
 import {
   AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS,
   buildDirectRetrySessionConfig,
+  buildDirectSessionErrorResult,
   mergeDirectValidationAttemptResults,
+  resolveDirectPersistedDurationMs,
   resolveDirectProviderResponseIdForPersistence,
   shouldRetryDirectAttempt,
   type DirectValidationAttemptFeedback,
@@ -299,7 +305,6 @@ function toTaskLogPhase(phase: Phase | undefined): TaskLogPhase {
       return 'planning';
     case 'qa':
       return 'validation';
-    case 'coding':
     default:
       return 'coding';
   }
@@ -496,7 +501,7 @@ function loadPrompt(promptName: string): string | null {
   // Try to find the prompts directory relative to common locations
   const candidateBases: string[] = [
     // Standard: apps/desktop/prompts/ relative to project root
-    // The worker runs in the Electron main process — __dirname is in out/main/
+    // The worker runs in the Electron main process; __dirname is in out/main/
     // We need to traverse up to find apps/desktop/prompts/
     join(__dirname, '..', '..', 'prompts'),
     join(__dirname, '..', '..', '..', 'apps', 'desktop', 'prompts'),
@@ -544,63 +549,24 @@ function expandPromptPartials(
 // =============================================================================
 
 let mcpClients: McpClientResult[] = [];
-const RESPONSES_PERSISTENCE_BROKEN_BASE_URLS = new Set<string>();
+const PROVIDER_FALLBACK_BROKEN_KEYS = new Set<string>();
 
-function normalizeBaseUrl(baseURL: string | undefined): string | null {
-  if (!baseURL) return null;
-  try {
-    const parsed = new URL(baseURL);
-    return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`.toLowerCase();
-  } catch {
-    return baseURL.trim().toLowerCase();
-  }
-}
-
-function supportsChatFallbackTransport(session: SerializableSessionConfig): boolean {
-  const provider = session.provider.toLowerCase();
-  return (
-    (provider === 'openai' || provider === 'openai-compatible') &&
-    !isOfficialOpenAIBaseUrl(session.baseURL)
-  );
-}
-
-function shouldFallbackForResponsesPersistenceError(result: SessionResult): boolean {
-  if (result.outcome !== 'error') return false;
-  const message = result.error?.message?.toLowerCase() ?? '';
-  const hasMissingFcItem =
-    message.includes('item with id') &&
-    message.includes('fc_') &&
-    message.includes('not found');
-  const mentionsResponsesEndpoint = message.includes('/responses') || message.includes('responses');
-  const hasStorePersistenceMismatch =
-    message.includes('items are not persisted') &&
-    message.includes('store') &&
-    message.includes('false');
-
-  return (
-    hasStorePersistenceMismatch ||
-    (hasMissingFcItem && mentionsResponsesEndpoint)
-  );
-}
-
-function createForcedChatModel(session: SerializableSessionConfig, modelId: string): LanguageModel {
-  const provider = createOpenAICompatible({
-    name: 'openai-compatible',
-    apiKey: session.apiKey ?? 'custom-endpoint',
-    baseURL: normalizeOpenAICompatibleBaseUrl(session.baseURL) ?? DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
-    fetch: createOpenAICompatibleEndpointFetch(),
+function createProviderFallbackModel(session: SerializableSessionConfig, modelId: string): LanguageModel {
+  return createProvider({
+    config: {
+      provider: session.provider as SupportedProvider,
+      apiKey: session.apiKey,
+      baseURL: session.baseURL,
+      oauthTokenFilePath: session.oauthTokenFilePath,
+    },
+    modelId,
+    invocationRoutes: mergeProviderFallbackInvocationRoutes(session),
   });
-  return provider.chatModel(modelId);
 }
 
 function createSessionModel(session: SerializableSessionConfig, modelId: string): LanguageModel {
-  const normalizedBaseUrl = normalizeBaseUrl(session.baseURL);
-  if (
-    normalizedBaseUrl &&
-    RESPONSES_PERSISTENCE_BROKEN_BASE_URLS.has(normalizedBaseUrl) &&
-    supportsChatFallbackTransport(session)
-  ) {
-    return createForcedChatModel(session, modelId);
+  if (shouldForceProviderFallbackTransport(session, PROVIDER_FALLBACK_BROKEN_KEYS)) {
+    return createProviderFallbackModel(session, modelId);
   }
 
   return createProvider({
@@ -611,6 +577,7 @@ function createSessionModel(session: SerializableSessionConfig, modelId: string)
       oauthTokenFilePath: session.oauthTokenFilePath,
     },
     modelId,
+    invocationRoutes: session.providerModelInvocationRoutes,
   });
 }
 
@@ -623,22 +590,23 @@ async function runContinuableSessionWithGatewayFallback(
 ): Promise<SessionResult> {
   const firstResult = await runContinuableSession(sessionConfig, runnerOptions, continuationOptions);
 
-  if (!supportsChatFallbackTransport(session) || !shouldFallbackForResponsesPersistenceError(firstResult)) {
+  if (!shouldFallbackForProviderError(firstResult, session)) {
     return firstResult;
   }
 
-  const normalizedBaseUrl = normalizeBaseUrl(session.baseURL);
-  if (normalizedBaseUrl) {
-    RESPONSES_PERSISTENCE_BROKEN_BASE_URLS.add(normalizedBaseUrl);
+  const fallbackCacheKey = resolveProviderFallbackCacheKey(session);
+  if (fallbackCacheKey) {
+    PROVIDER_FALLBACK_BROKEN_KEYS.add(fallbackCacheKey);
   }
 
   postLog(
-    `[GatewayFallback] Responses item persistence error detected for provider=${session.provider}, baseURL=${session.baseURL ?? 'unknown baseURL'}; retrying with chat transport.`,
+    `[ProviderFallback] Provider persistence error detected for provider=${session.provider}, transport=${session.providerTransport ?? 'unknown transport'}, baseURL=${session.baseURL ?? 'unknown baseURL'}; retrying with fallback transport ${resolveProviderFallbackTransport(session)}.`,
   );
 
   const fallbackConfig: SessionConfig = {
     ...sessionConfig,
-    model: createForcedChatModel(session, modelId),
+    model: createProviderFallbackModel(session, modelId),
+    providerTransport: resolveProviderFallbackTransport(session),
   };
 
   return runContinuableSession(fallbackConfig, runnerOptions, continuationOptions);
@@ -653,25 +621,25 @@ async function runDirectSessionWithGatewayFallback(
 ): Promise<SessionResult> {
   const firstResult = await runContinuableSession(sessionConfig, runnerOptions, continuationOptions);
 
-  if (!supportsChatFallbackTransport(session) || !shouldFallbackForResponsesPersistenceError(firstResult)) {
+  if (!shouldFallbackForProviderError(firstResult, session)) {
     return firstResult;
   }
 
-  const normalizedBaseUrl = normalizeBaseUrl(session.baseURL);
-  if (normalizedBaseUrl) {
-    RESPONSES_PERSISTENCE_BROKEN_BASE_URLS.add(normalizedBaseUrl);
+  const fallbackCacheKey = resolveProviderFallbackCacheKey(session);
+  if (fallbackCacheKey) {
+    PROVIDER_FALLBACK_BROKEN_KEYS.add(fallbackCacheKey);
   }
 
   postLog(
-    `[GatewayFallback] Direct Responses continuation is not supported for provider=${session.provider}, baseURL=${session.baseURL ?? 'unknown baseURL'}; retrying without provider session persistence.`,
+    `[ProviderFallback] Direct provider continuation is not supported for provider=${session.provider}, transport=${session.providerTransport ?? 'unknown transport'}, baseURL=${session.baseURL ?? 'unknown baseURL'}; retrying with fallback transport ${resolveProviderFallbackTransport(session)}.`,
   );
 
   return runContinuableSession({
     ...sessionConfig,
-    model: createForcedChatModel(session, modelId),
+    model: createProviderFallbackModel(session, modelId),
+    providerTransport: resolveProviderFallbackTransport(session),
     initialMessages: buildDirectSummaryFallbackMessages(session, sessionConfig.initialMessages),
-    responsePersistence: false,
-    previousResponseId: undefined,
+    ...buildProviderFallbackSessionConfigOverrides(session),
   }, runnerOptions, continuationOptions);
 }
 
@@ -698,7 +666,6 @@ function buildDirectSummaryFallbackMessages(
 // =============================================================================
 
 let cachedProjectInstructions: string | null | undefined;
-let cachedProjectInstructionsSource: string | null = null;
 let cachedProjectPromptProfile: ProjectPromptProfile | null | undefined;
 let cachedProjectPromptProfileDir: string | null = null;
 const loggedProjectPromptOverrides = new Set<string>();
@@ -848,7 +815,7 @@ function getProjectPromptProfile(session: SerializableSessionConfig): ProjectPro
 
 /**
  * Assemble a full system prompt by loading the base prompt and injecting
- * project instructions (AGENTS.md or CLAUDE.md fallback). Provider-agnostic —
+ * project instructions (AGENTS.md or CLAUDE.md fallback). Provider-agnostic:
  * injected for ALL AI providers, not just Anthropic.
  */
 async function assemblePrompt(
@@ -879,7 +846,6 @@ async function assemblePrompt(
   if (cachedProjectInstructions === undefined) {
     const result = await loadProjectInstructions(session.projectDir);
     cachedProjectInstructions = result?.content ?? null;
-    cachedProjectInstructionsSource = result?.source ?? null;
     if (result) {
       postLog(`Project instructions loaded from ${result.source} (${(result.content.length / 1024).toFixed(1)}KB)`);
     } else {
@@ -979,7 +945,7 @@ async function runSingleSession(
 ): Promise<SessionResult> {
   // Use queue-resolved model ID from baseSession (already mapped to the correct
   // provider-specific model, e.g., 'gpt-5.3-codex' for OpenAI Codex).
-  // getPhaseModel() only knows local shorthands (opus → claude-opus-4-6) and
+  // getPhaseModel() only knows local shorthands (opus to claude-opus-4-6) and
   // would create a mismatch when the provider queue selected a non-Anthropic account.
   const phaseModelId = baseSession.modelId;
   const phaseThinking = await getPhaseThinking(specDir, phase);
@@ -1025,6 +991,9 @@ async function runSingleSession(
     modelShorthand: undefined,
     sessionNumber,
     subtaskId,
+    provider: baseSession.provider as SupportedProvider,
+    providerTransport: resolveEffectiveSessionProviderTransport(baseSession, phaseModelId, PROVIDER_FALLBACK_BROKEN_KEYS),
+    providerModelInvocationRoutes: baseSession.providerModelInvocationRoutes,
     contextWindowLimit,
     outputSchema,
   };
@@ -1062,14 +1031,10 @@ async function runSingleSession(
       ? () => refreshOAuthTokenReactive(baseSession.configDir as string)
       : undefined,
     onModelRefresh: baseSession.configDir
-      ? (newToken: string) => createProvider({
-          config: {
-            provider: baseSession.provider as SupportedProvider,
-            apiKey: newToken,
-            baseURL: baseSession.baseURL,
-          },
-          modelId: phaseModelId,
-        })
+      ? (newToken: string) => createSessionModel({
+          ...baseSession,
+          apiKey: newToken,
+        }, phaseModelId)
       : undefined,
   };
 
@@ -1088,7 +1053,7 @@ async function runSingleSession(
     throw error;
   }
 
-  // End phase logging — mark as completed or failed based on outcome (skip when orchestrator manages phases)
+  // End phase logging; mark as completed or failed based on outcome (skip when orchestrator manages phases)
   if (logWriter && !skipPhaseLogging) {
     const success = sessionResult.outcome === 'completed' || sessionResult.outcome === 'max_steps' || sessionResult.outcome === 'context_window';
     logWriter.endPhase(phase, success);
@@ -1299,24 +1264,22 @@ function getDirectSessionSubtaskId(session: SerializableSessionConfig): string {
 }
 
 function shouldRequireDirectValidation(session: SerializableSessionConfig): boolean {
-  return !isNonImplementationDirectSession(session);
-}
-
-function isNonImplementationDirectSession(session: SerializableSessionConfig): boolean {
+  const description = extractDirectTaskDescription(session);
   const specDirs = Array.from(new Set([
     session.specDir,
     session.sourceSpecDir,
   ].filter((value): value is string => Boolean(value))));
 
-  return specDirs.some((specDir) => isNonImplementationDirectContext(
-    loadDirectContextPlan(specDir),
-    loadDirectContextMetadata(specDir),
-  ));
+  return specDirs.every((specDir) => shouldRequireAutocodeDirectValidation({
+    plan: loadDirectContextPlan(specDir),
+    metadata: loadDirectContextMetadata(specDir),
+    description,
+  }));
 }
 
 function loadDirectContextPlan(specDir: string): Record<string, unknown> {
   try {
-    return directRecordValue(loadImplementationPlanFromFilesSync(specDir));
+    return asDirectContextRecord(loadImplementationPlanFromFilesSync(specDir));
   } catch {
     return {};
   }
@@ -1328,69 +1291,14 @@ function loadDirectContextMetadata(specDir: string): Record<string, unknown> {
     return {};
   }
   try {
-    return directRecordValue(JSON.parse(readFileSync(metadataPath, 'utf-8')));
+    return asDirectContextRecord(JSON.parse(readFileSync(metadataPath, 'utf-8')));
   } catch {
     return {};
   }
 }
 
-function isNonImplementationDirectContext(
-  plan: Record<string, unknown>,
-  metadata: Record<string, unknown>,
-): boolean {
-  const workflowType = directNormalizedString(plan.workflow_type) ||
-    directNormalizedString(metadata.workflow_type) ||
-    directNormalizedString(metadata.workflowType);
-  if (['documentation', 'investigation', 'analysis', 'research'].includes(workflowType)) {
-    return true;
-  }
-
-  const metadataCategory = directNormalizedString(metadata.category);
-  const metadataSource = directNormalizedString(metadata.sourceType) || directNormalizedString(metadata.source_type);
-  const metadataIdeaType = directNormalizedString(metadata.ideationType) || directNormalizedString(metadata.ideation_type);
-  const metadataTaskType = directNormalizedString(metadata.taskType) || directNormalizedString(metadata.task_type) || directNormalizedString(metadata.type);
-
-  if (metadataCategory === 'documentation' || metadataSource === 'project_docs') {
-    return true;
-  }
-  if (['documentation_gaps', 'documentation', 'analysis', 'investigation', 'research'].includes(metadataIdeaType)) {
-    return true;
-  }
-  if (['documentation', 'analysis', 'investigation', 'research'].includes(metadataTaskType)) {
-    return true;
-  }
-  if (
-    directStringValue(metadata.projectDocumentType) ||
-    directStringValue(metadata.project_document_type) ||
-    directStringValue(metadata.projectDocumentOutputDir) ||
-    directStringValue(metadata.project_document_output_dir) ||
-    Array.isArray(metadata.projectDocumentOutputs) ||
-    Array.isArray(metadata.project_document_outputs)
-  ) {
-    return true;
-  }
-  if (
-    directStringValue(plan.documentation_depth) ||
-    directStringValue(plan.documentation_profile) ||
-    Array.isArray(plan.documentation_focus) ||
-    Object.keys(directRecordValue(plan.project_documentation)).length > 0
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-function directRecordValue(value: unknown): Record<string, unknown> {
+function asDirectContextRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function directStringValue(value: unknown): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : '';
-}
-
-function directNormalizedString(value: unknown): string {
-  return directStringValue(value).toLowerCase();
 }
 
 function applyDirectQualityGateToResult(
@@ -1402,8 +1310,10 @@ function applyDirectQualityGateToResult(
     return result;
   }
 
+  const requireValidation = shouldRequireDirectValidation(session);
   const failureReason = getAutocodeDirectQualityGateFailureReason(quality, {
-    requireValidation: shouldRequireDirectValidation(session),
+    requireValidation,
+    requireSelfCritique: requireValidation,
   });
   if (!failureReason) {
     return result;
@@ -1492,17 +1402,18 @@ function persistDirectTaskCompletion(
         ? plan.feature
         : basename(specDir);
       plan.workflow_type = 'direct';
-      plan.status = success ? 'human_review' : 'error';
-      plan.planStatus = success ? 'review' : 'pending';
-      plan.reviewReason = success ? 'completed' : 'errors';
-      plan.xstateState = success ? 'human_review' : 'error';
-      plan.executionPhase = success ? 'complete' : 'failed';
+      const lifecycle = buildAutocodeDirectPlanLifecycleState(success);
+      plan.status = lifecycle.status;
+      plan.planStatus = lifecycle.planStatus;
+      plan.reviewReason = lifecycle.reviewReason;
+      plan.xstateState = lifecycle.xstateState;
+      plan.executionPhase = lifecycle.executionPhase;
       plan.direct_execution = buildAutocodeDirectExecutionMetadata({
         existing: typeof plan.direct_execution === 'object' && plan.direct_execution !== null
           ? plan.direct_execution as Record<string, unknown>
           : null,
         outcome: result?.outcome ?? 'unknown',
-        completedAt: now,
+        completedAt: success ? now : undefined,
         currentSubtaskId: directSubtaskId,
         quality,
       });
@@ -1537,7 +1448,17 @@ function persistDirectTaskCompletion(
       currentSubtask.files_to_modify = modifiedFiles;
       currentSubtask.completion_summary = summary;
       currentSubtask.notes = summary;
-      currentSubtask.completed_at = now;
+      const durationMs = resolveDirectPersistedDurationMs(result, quality);
+      if (durationMs !== undefined) {
+        currentSubtask.duration_ms = durationMs;
+      } else {
+        delete currentSubtask.duration_ms;
+      }
+      if (success) {
+        currentSubtask.completed_at = now;
+      } else {
+        delete currentSubtask.completed_at;
+      }
       currentSubtask.verification = {
         type: 'manual',
         scenario: 'Review the completion summary, runtime log, and git changes.',
@@ -1613,9 +1534,8 @@ async function runDirectSessionWithValidationRetries(input: {
         input.modelId,
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      attemptResult = buildDirectSessionErrorResult(message);
-      postError(`Direct task session failed: ${message}`);
+      attemptResult = buildDirectSessionErrorResult(error);
+      postError(`Direct task session failed: ${attemptResult.error?.message ?? String(error)}`);
     } finally {
       input.setActiveAttempt(null);
     }
@@ -1685,22 +1605,6 @@ async function collectDirectModifiedFiles(
   return changedFileBaseline
     ? collectFilesChangedSinceBaseline(session.projectDir, changedFileBaseline, [...modifiedFileHints])
     : [...modifiedFileHints];
-}
-
-function buildDirectSessionErrorResult(message: string): SessionResult {
-  return {
-    outcome: 'error',
-    stepsExecuted: 0,
-    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-    messages: [],
-    toolCallCount: 0,
-    durationMs: 0,
-    error: {
-      code: 'direct_session_error',
-      message,
-      retryable: false,
-    },
-  };
 }
 
 function getDirectAttemptFailureReason(result: SessionResult): string {
@@ -1790,6 +1694,7 @@ async function runDefaultSession(
   toolContext: ToolContext,
   registry: ToolRegistry,
 ): Promise<void> {
+  const useProviderFallback = shouldForceProviderFallbackTransport(session, PROVIDER_FALLBACK_BROKEN_KEYS);
   const model = createSessionModel(session, session.modelId);
   const defaultPhase: Phase = session.phase ?? 'coding';
   const projectId = config.projectId || config.taskId;
@@ -1812,6 +1717,10 @@ async function runDefaultSession(
     ...(mergeMcpTools(mcpClients) as Record<string, AITool>),
   };
 
+  const initialMessages = useProviderFallback && isDirectTaskSession(session)
+    ? buildDirectSummaryFallbackMessages(session, session.initialMessages)
+    : session.initialMessages;
+
   // Resolve context window limit from model metadata
   const contextWindowLimit = getModelContextWindow(session.modelId);
 
@@ -1820,7 +1729,7 @@ async function runDefaultSession(
     agentType: session.agentType,
     model,
     systemPrompt: appendLanguageRequirement(session.systemPrompt, session.language),
-    initialMessages: appendLanguageRequirementToMessages(session.initialMessages, session.language),
+    initialMessages: appendLanguageRequirementToMessages(initialMessages, session.language),
     toolContext,
     maxSteps: resolvePhaseStepBudget(session, session.phase),
     thinkingLevel: session.thinkingLevel,
@@ -1831,9 +1740,17 @@ async function runDefaultSession(
     modelShorthand: session.modelShorthand,
     sessionNumber: session.sessionNumber,
     subtaskId: session.subtaskId,
+    provider: session.provider as SupportedProvider,
+    providerTransport: resolveEffectiveSessionProviderTransport(session, session.modelId, PROVIDER_FALLBACK_BROKEN_KEYS),
     contextWindowLimit,
     responsePersistence: session.responsePersistence,
     previousResponseId: session.previousResponseId,
+    providerOptions: session.providerOptions,
+    providerResponseIdFields: session.providerResponseIdFields,
+    providerResponsePersistence: session.providerResponsePersistence,
+    providerFallback: session.providerFallback,
+    providerModelInvocationRoutes: session.providerModelInvocationRoutes,
+    ...(useProviderFallback ? buildProviderFallbackSessionConfigOverrides(session) : {}),
   };
   const sessionConfig = baseSessionConfig;
 
@@ -1893,14 +1810,10 @@ async function runDefaultSession(
         ? () => refreshOAuthTokenReactive(session.configDir as string)
         : undefined,
       onModelRefresh: session.configDir
-        ? (newToken: string) => createProvider({
-            config: {
-              provider: session.provider as SupportedProvider,
-              apiKey: newToken,
-              baseURL: session.baseURL,
-            },
-            modelId: session.modelId,
-          })
+        ? (newToken: string) => createSessionModel({
+            ...session,
+            apiKey: newToken,
+          }, session.modelId)
         : undefined,
     };
     const continuationOptions = {
@@ -1939,21 +1852,8 @@ async function runDefaultSession(
     if (!isDirectTaskSession(session)) {
       throw error;
     }
-    const message = error instanceof Error ? error.message : String(error);
-    result = {
-      outcome: 'error',
-      stepsExecuted: 0,
-      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      messages: [],
-      toolCallCount: 0,
-      durationMs: 0,
-      error: {
-        code: 'direct_session_error',
-        message,
-        retryable: false,
-      },
-    };
-    postError(`Direct task session failed: ${message}`);
+    result = buildDirectSessionErrorResult(error);
+    postError(`Direct task session failed: ${result.error?.message ?? String(error)}`);
   } finally {
     if (logWriter) {
       const success = isDirectTaskSession(session)
@@ -2019,14 +1919,14 @@ function mapExecutionPhaseToPhase(executionPhase: ExecutionPhase): Phase | undef
 
 /**
  * Run the full build orchestration pipeline:
- * planning → coding (per subtask) → QA review → QA fixing
+ * planning to coding (per subtask) to QA review to QA fixing
  */
 async function runBuildOrchestrator(
   session: SerializableSessionConfig,
   toolContext: ToolContext,
   registry: ToolRegistry,
 ): Promise<void> {
-  postLog('Starting BuildOrchestrator pipeline (planning → coding → QA)');
+  postLog('Starting BuildOrchestrator pipeline (planning to coding to QA)');
 
   const workflowConfig = getWorkflowConfigFromMode(session.workflowMode);
   const agentProfile = resolveProjectAgentProfile(session.projectType);
@@ -2086,14 +1986,14 @@ async function runBuildOrchestrator(
         toolContext,
         registry,
         kickoffMessage,
-        true, // skipPhaseLogging — orchestrator manages phase start/end
+        true, // skipPhaseLogging: orchestrator manages phase start/end
         runConfig.outputSchema,
       );
     },
   });
 
   orchestrator.on('phase-change', (phase: ExecutionPhase, message: string) => {
-    postLog(`Phase: ${phase} — ${message}`);
+    postLog(`Phase: ${phase}: ${message}`);
     // Start the phase in the log writer at orchestrator level (not per-session)
     const logPhase = mapExecutionPhaseToPhase(phase);
     if (logWriter && logPhase) {
@@ -2140,7 +2040,7 @@ async function runBuildOrchestrator(
 
   orchestrator.on('session-complete', (result: SessionResult, phase: string) => {
     // Notify the main process that a session (subtask) completed.
-    // This triggers persistPlanPhaseSync → invalidateTasksCache so the frontend
+    // This triggers persistPlanPhaseSync and invalidateTasksCache so the frontend
     // sees updated subtask statuses in the implementation plan.
     postMessage({
       type: 'execution-progress',
@@ -2194,7 +2094,7 @@ async function runBuildOrchestrator(
     if (finalLogPhase) {
       logWriter.endPhase(finalLogPhase, outcome.success);
     } else {
-      // Terminal state (complete/failed) — close any still-active log phase
+      // Terminal state (complete/failed): close any still-active log phase
       const data = logWriter.getData();
       for (const phase of ['validation', 'coding', 'planning'] as const) {
         if (data.phases[phase]?.status === 'active') {
@@ -2222,7 +2122,7 @@ async function runBuildOrchestrator(
     postTaskEvent('QA_PASSED');
     postTaskEvent('BUILD_COMPLETE');
   } else if (outcome.codingCompleted) {
-    // Coding succeeded but QA failed — emit QA-specific event so XState
+    // Coding succeeded but QA failed: emit QA-specific event so XState
     // transitions to 'error' with reviewReason='errors' instead of the
     // generic CODING_FAILED which would be misleading.
     postTaskEvent('QA_MAX_ITERATIONS', {
@@ -2256,7 +2156,7 @@ async function runBuildOrchestrator(
 }
 
 /**
- * Run the QA validation loop: qa_reviewer → qa_fixer → re-review
+ * Run the QA validation loop: qa_reviewer to qa_fixer to re-review
  */
 async function runQALoop(
   session: SerializableSessionConfig,
@@ -2297,7 +2197,7 @@ async function runQALoop(
         toolContext,
         registry,
         kickoffMessage,
-        true, // skipPhaseLogging — QA loop manages phase start/end
+        true, // skipPhaseLogging: QA loop manages phase start/end
       );
     },
   });
@@ -2431,7 +2331,7 @@ async function runSpecOrchestrator(
         specToolContext,
         registry,
         kickoffMessage,
-        true, // skipPhaseLogging — orchestrator manages phase start/end
+        true, // skipPhaseLogging: orchestrator manages phase start/end
         runConfig.outputSchema,
       );
     },
@@ -2593,6 +2493,9 @@ async function runAgenticSpecOrchestrator(
     projectDir: session.projectDir,
     phase: 'spec',
     sessionNumber: 1,
+    provider: session.provider as SupportedProvider,
+    providerTransport: resolveEffectiveSessionProviderTransport(session, session.modelId, PROVIDER_FALLBACK_BROKEN_KEYS),
+    providerModelInvocationRoutes: session.providerModelInvocationRoutes,
     contextWindowLimit,
   };
 
@@ -2625,14 +2528,10 @@ async function runAgenticSpecOrchestrator(
         ? () => refreshOAuthTokenReactive(session.configDir as string)
         : undefined,
       onModelRefresh: session.configDir
-        ? (newToken: string) => createProvider({
-            config: {
-              provider: session.provider as SupportedProvider,
-              apiKey: newToken,
-              baseURL: session.baseURL,
-            },
-            modelId: session.modelId,
-          })
+        ? (newToken: string) => createSessionModel({
+            ...session,
+            apiKey: newToken,
+          }, session.modelId)
         : undefined,
     }, {
       contextWindowLimit,

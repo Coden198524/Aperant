@@ -13,6 +13,19 @@ import {
 import { loadAutocodeImplementationPlanSync } from './plan-store.js';
 import { createAutocodeTask, getAutocodeSpecDir } from './spec-store.js';
 
+function createDirectCustomLatestContinuation(scriptPath: string, displayName = 'Custom CLI') {
+  const normalizedScriptPath = scriptPath.replace(/\\/g, '/');
+  return {
+    displayName,
+    type: 'exec-resume-session' as const,
+    commandNames: ['node'],
+    execCommand: normalizedScriptPath,
+    resumeArgs: [normalizedScriptPath, 'resume'],
+    promptStdinArg: '-',
+    sessionIdSource: 'latest' as const,
+  };
+}
+
 describe('Autocode CLI runner prompt', () => {
   let projectRoot: string;
   const dataDirName = '.autocode';
@@ -127,6 +140,116 @@ describe('Autocode CLI runner prompt', () => {
     expect(plan.prompt).not.toContain('TECHNICAL_REFERENCE_BODY_SHOULD_BE_EXCLUDED');
   });
 
+  it('uses configured Direct CLI task-run strategy for custom routes', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-direct-custom-task-run-strategy',
+      title: 'Run future CLI through route strategy',
+      description: 'Direct CLI should not require hardcoded command args for future providers.',
+      metadata: { developmentMode: 'direct' },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-direct-custom-task-run-strategy',
+      cli: 'custom',
+      customCommand: 'future-code --profile team',
+      model: 'future-large',
+      bypassPermissions: true,
+      directCliPermissionBypassArgs: ['--future-allow'],
+      directCliTaskRunStrategy: {
+        args: ['run', '--json'],
+        modelFlag: '--model',
+        promptStdinArg: '--stdin',
+      },
+      phase: 'direct',
+    });
+
+    expect(plan.command).toBe('future-code');
+    expect(plan.args).toEqual([
+      '--profile',
+      'team',
+      'run',
+      '--json',
+      '--model',
+      'future-large',
+      '--future-allow',
+      '--stdin',
+    ]);
+  });
+  it('generates a shell-free Windows spawn wrapper for Direct CLI runs', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-direct-windows-spawn-wrapper',
+      title: 'Run Direct CLI without shell args warning',
+      description: 'Direct CLI should avoid shell:true plus args on Windows while preserving cmd shims.',
+      metadata: { developmentMode: 'direct' },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-direct-windows-spawn-wrapper',
+      cli: 'future-code',
+      phase: 'direct',
+    });
+    const runner = readFileSync(plan.runnerFilePath, 'utf8');
+
+    expect(runner).toContain('function spawnCli(commandValue, argValues, options)');
+    expect(runner).toContain('function resolveWindowsCliCommand(commandText)');
+    expect(runner).toContain('windowsVerbatimArguments: true');
+    expect(runner).toContain("shell: false");
+    expect(runner).not.toContain("shell: process.platform === 'win32'");
+    expect(runner).toContain('const child = spawnCli(invocation.command, invocation.args, {');
+    expect(runner).toContain('const child = spawnCli(command, args, {');
+  });
+
+  it('prefers Windows .cmd shims over extensionless npm shims for Direct CLI runs', () => {
+    if (process.platform !== 'win32') {
+      return;
+    }
+
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-direct-windows-cmd-shim',
+      title: 'Run Codex through npm cmd shim',
+      description: 'Direct Codex should use codex.cmd when npm also leaves an extensionless codex shim.',
+      metadata: { developmentMode: 'direct' },
+    });
+
+    writeFakeCodexJsonCommand(projectRoot, [
+      { type: 'agent_message', session_id: 'codex-cmd-shim', message: 'Validation: cmd shim selected and passed.' },
+      { type: 'turn_completed', session_id: 'codex-cmd-shim' },
+    ]);
+    writeFileSync(join(projectRoot, 'codex'), 'extensionless shim should not be spawned on Windows\n', 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-direct-windows-cmd-shim',
+      cli: 'codex',
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        GRAPHITI_ENABLED: 'false',
+        PATH: `${projectRoot}${delimiter}${process.env.PATH ?? ''}`,
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(stdout).toContain('DIRECT_COMPLETED');
+    expect(readFileSync(join(getAutocodeSpecDir({ projectRoot, dataDirName, specId: '001-direct-windows-cmd-shim' }), 'direct_summary.md'), 'utf8'))
+      .toContain('cmd shim selected');
+  });
   it('does not inject revision-state wording for new planning tasks without review input', () => {
     createAutocodeTask({
       projectRoot,
@@ -187,7 +310,7 @@ describe('Autocode CLI runner prompt', () => {
       specId: '001-zh-prompt',
       title: '复现Lumen全局光照',
       description: '当前截图看不出全局光照的效果，继续复现全局光照。',
-      metadata: { developmentMode: 'standard' },
+      metadata: { developmentMode: 'direct' },
     });
 
     const plan = createAutocodeTaskRunPlan({
@@ -195,7 +318,7 @@ describe('Autocode CLI runner prompt', () => {
       dataDirName,
       taskId: '001-zh-prompt',
       cli: 'codex',
-      phase: 'planning',
+      phase: 'direct',
       language: 'zh-CN',
     });
     const prompt = readFileSync(plan.promptFilePath, 'utf8');
@@ -205,19 +328,24 @@ describe('Autocode CLI runner prompt', () => {
     expect(prompt).toContain('Task title: 复现Lumen全局光照');
     expect(prompt).toContain('## 语言');
     expect(prompt).toContain('## 目标');
-    expect(prompt).toContain('## 必须生成的内容');
+    expect(prompt).toContain('## 任务描述');
+    expect(prompt).toContain('## 必须遵循的流程');
     expect(prompt).toContain('简体中文');
     for (const damagedText of ['浠诲姟', '璇', '鐩爣', '蹇呴', '绠€', '鍒涘缓', '瑙勫垝']) {
       expect(prompt).not.toContain(damagedText);
     }
 
-    expect(runner).toContain('sanitizeCodexRulesFiles();');
-    expect(runner).toContain('function stripUtf8BomFromFile(filePath)');
-    expect(runner).toContain('Removed UTF-8 BOM from Codex rules file');
-    expect(runner).toContain('Codex rules file starts with a UTF-8 BOM');
+    expect(runner).toContain('runCliPreflightActions();');
+    expect(runner).toContain('const cliPreflightActions = [{');
+    expect(runner).toContain('"type":"strip-utf8-bom-from-rules"');
+    expect(runner).toContain('function stripUtf8BomFromCliRuleFile(filePath, action)');
+    expect(runner).toContain("Removed UTF-8 BOM from ' + label + ' file");
+    expect(runner).toContain("label + ' file starts with a UTF-8 BOM");
     expect(runner).toContain('const cliJsonEventParsers = [{');
     expect(runner).toContain('"type":"codex-json"');
     expect(runner).toContain('function resolveCliJsonEventParser(command, args)');
+    expect(runner).toContain('function handleGenericCliJsonToolEvent(payload, payloadType, state, handleUsage)');
+    expect(runner).not.toContain("case 'codex-json'");
   });
 
   it('resolves packaged work package helpers from Electron resources', () => {
@@ -1334,6 +1462,7 @@ describe('Autocode CLI runner prompt', () => {
       taskId: '008-direct-validation-retry',
       cli: 'custom',
       customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      directCliContinuationStrategy: createDirectCustomLatestContinuation(fakeCliPath),
       phase: 'direct',
     });
 
@@ -1365,6 +1494,156 @@ describe('Autocode CLI runner prompt', () => {
     expect(result.quality?.validation?.reason).toContain('npm test passed');
     expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).toContain('Attempt 2 summary');
     expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).not.toContain('Attempt 1 summary');
+  });
+
+  it('fails Direct CLI retry when no continuation strategy can keep the same session', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-retry-missing-session',
+      title: 'Fail Direct retry without session continuation',
+      description: 'Direct CLI should not retry in a fresh model session when no continuation strategy is configured.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-retry-missing-session' });
+    const fakeCliPath = join(projectRoot, 'direct-retry-missing-session-cli.cjs');
+    const attemptPath = join(projectRoot, 'direct-retry-missing-session-attempt.txt');
+    const escapedSpecDir = specDir.replace(/\\/g, '\\\\');
+    const escapedAttemptPath = attemptPath.replace(/\\/g, '\\\\');
+    writeFileSync(fakeCliPath, [
+      "const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt ' + attempt + ' summary. Validation: npm test failed.\\n', 'utf8');",
+      "  process.stdout.write('Attempt ' + attempt + ' finished. Validation: npm test failed.\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-retry-missing-session',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    let failed = false;
+    let stdout = '';
+    try {
+      stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+        cwd: projectRoot,
+        env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+    } catch (error) {
+      failed = true;
+      stdout = String((error as { stdout?: string | Buffer }).stdout ?? '');
+    }
+
+    expect(failed).toBe(true);
+    expect(readFileSync(attemptPath, 'utf8')).toBe('1');
+    expect(stdout).toContain('Direct CLI retry requires a configured continuation strategy');
+    expect(stdout).toContain('"type":"CODING_FAILED"');
+    expect(stdout).not.toContain('"type":"DIRECT_COMPLETED"');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      exitCode?: number;
+      attemptCount?: number;
+      message?: string;
+    };
+    expect(result.status).toBe('error');
+    expect(result.exitCode).toBe(1);
+    expect(result.attemptCount).toBe(1);
+    expect(result.message).toContain('same model session');
+  });
+
+  it('retries Direct CLI transient non-zero failures before reporting failure', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-transient-exit-retry',
+      title: 'Retry transient Direct CLI exit',
+      description: 'Direct CLI should retry transient provider exits with corrective feedback.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-transient-exit-retry' });
+    const fakeCliPath = join(projectRoot, 'direct-transient-exit-cli.cjs');
+    const attemptPath = join(projectRoot, 'direct-transient-exit-attempt.txt');
+    const promptPath = join(projectRoot, 'direct-transient-exit-prompts.txt');
+    const escapedSpecDir = specDir.replace(/\\/g, '\\\\');
+    const escapedAttemptPath = attemptPath.replace(/\\/g, '\\\\');
+    const escapedPromptPath = promptPath.replace(/\\/g, '\\\\');
+    writeFileSync(fakeCliPath, [
+      "const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const promptPath = '${escapedPromptPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  appendFileSync(promptPath, '\\n---PROMPT ' + attempt + '---\\n' + stdin, 'utf8');",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt === 1) {",
+      "    process.stderr.write('ERROR stream disconnected before completion\\n');",
+      "    process.exit(1);",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 2 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write('Recovered after transient provider failure.\\nValidation: npm test passed.\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-transient-exit-retry',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      directCliContinuationStrategy: createDirectCustomLatestContinuation(fakeCliPath),
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(readFileSync(attemptPath, 'utf8')).toBe('2');
+    const retryPrompts = readFileSync(promptPath, 'utf8');
+    expect(retryPrompts).toContain('Direct Validation Retry (2/3)');
+    expect(retryPrompts).toContain('exited before completion or returned an error');
+    expect(retryPrompts).toContain('stream disconnected before completion');
+    expect(stdout).toContain('Direct CLI attempt failed before completion');
+    expect(stdout).toContain('Retrying attempt 2/3');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    expect(stdout).not.toContain('"type":"CODING_FAILED"');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      exitCode?: number;
+      attemptCount?: number;
+      quality?: { validation?: { status?: string; reason?: string } };
+    };
+    expect(result.status).toBe('success');
+    expect(result.exitCode).toBe(0);
+    expect(result.attemptCount).toBe(2);
+    expect(result.quality?.validation?.status).toBe('reported_passed');
+    expect(readFileSync(join(specDir, 'direct_summary.md'), 'utf8')).toContain('Attempt 2 summary');
   });
   it('adds a repeated failure guard to Direct CLI retry prompts after the same quality failure repeats', () => {
     createAutocodeTask({
@@ -1412,6 +1691,7 @@ describe('Autocode CLI runner prompt', () => {
       taskId: '008-direct-validation-repeated-failure',
       cli: 'custom',
       customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      directCliContinuationStrategy: createDirectCustomLatestContinuation(fakeCliPath),
       phase: 'direct',
     });
 
@@ -1438,6 +1718,96 @@ describe('Autocode CLI runner prompt', () => {
     expect(result.attemptCount).toBe(3);
     expect(result.quality?.validation?.status).toBe('reported_passed');
   });
+  it('fails Direct CLI after exhausting validation retry attempts', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-retry-exhausted',
+      title: 'Fail exhausted Direct validation retries',
+      description: 'Direct CLI should fail after three validation attempts instead of looping or reporting completion.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-retry-exhausted' });
+    const fakeCliPath = join(projectRoot, 'direct-validation-retry-exhausted-cli.cjs');
+    const attemptPath = join(projectRoot, 'direct-validation-retry-exhausted-attempt.txt');
+    const promptPath = join(projectRoot, 'direct-validation-retry-exhausted-prompts.txt');
+    const escapedSpecDir = specDir.replace(/\\/g, '\\\\');
+    const escapedAttemptPath = attemptPath.replace(/\\/g, '\\\\');
+    const escapedPromptPath = promptPath.replace(/\\/g, '\\\\');
+    writeFileSync(fakeCliPath, [
+      "const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const promptPath = '${escapedPromptPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  appendFileSync(promptPath, '\\n---PROMPT ' + attempt + '---\\n' + stdin, 'utf8');",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt ' + attempt + ' summary. Validation: npm test failed with SAME_ASSERTION.\\n', 'utf8');",
+      "  process.stdout.write('Attempt ' + attempt + ' kept failing.\\nValidation: npm test failed with SAME_ASSERTION.\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-retry-exhausted',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      directCliContinuationStrategy: createDirectCustomLatestContinuation(fakeCliPath),
+      phase: 'direct',
+    });
+
+    let failed = false;
+    let stdout = '';
+    try {
+      stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+        cwd: projectRoot,
+        env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+    } catch (error) {
+      failed = true;
+      stdout = String((error as { stdout?: string | Buffer }).stdout ?? '');
+    }
+
+    expect(failed).toBe(true);
+    expect(readFileSync(attemptPath, 'utf8')).toBe('3');
+    const retryPrompts = readFileSync(promptPath, 'utf8');
+    expect(retryPrompts).toContain('Direct Validation Retry (2/3)');
+    expect(retryPrompts).toContain('Direct Validation Retry (3/3)');
+    expect(retryPrompts).toContain('Repeated failure guard: this failure matches an earlier Direct CLI attempt');
+    expect(stdout).toContain('Retrying attempt 3/3');
+    expect(stdout).not.toContain('Retrying attempt 4/3');
+    expect(stdout).toContain('"type":"CODING_FAILED"');
+    expect(stdout).not.toContain('"type":"DIRECT_COMPLETED"');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      exitCode?: number;
+      attemptCount?: number;
+      message?: string;
+      quality?: { validation?: { status?: string; reason?: string } };
+    };
+    expect(result.status).toBe('error');
+    expect(result.exitCode).toBe(1);
+    expect(result.attemptCount).toBe(3);
+    expect(result.message).toContain('Direct validation reported_failed');
+    expect(result.quality?.validation?.status).toBe('reported_failed');
+    expect(result.quality?.validation?.reason).toContain('SAME_ASSERTION');
+    const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {
+      lastOutcome?: string;
+      latestSummary?: string;
+    };
+    expect(directSession.lastOutcome).toBe('error');
+    expect(directSession.latestSummary).toContain('SAME_ASSERTION');
+  });
+
   it('allows documentation Direct CLI runs without validation evidence', () => {
     createAutocodeTask({
       projectRoot,
@@ -1482,6 +1852,204 @@ describe('Autocode CLI runner prompt', () => {
     expect(result.status).toBe('success');
     expect(result.attemptCount).toBe(1);
     expect(result.quality?.validation?.status).toBe('not_run');
+  });
+
+  it('allows analysis Direct CLI runs without validation evidence based on task text', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-analysis-validation-optional',
+      title: 'Analyze Direct pause reason',
+      description: 'Analyze Direct task validation errors and explain why npm test failed.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-analysis-validation-optional' });
+    const fakeCliPath = join(projectRoot, 'direct-analysis-validation-optional-cli.cjs');
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const specDir = '${specDir.replace(/\\/g, '\\\\')}';`,
+      "mkdirSync(specDir, { recursive: true });",
+      "writeFileSync(join(specDir, 'direct_summary.md'), 'Analysis completed. Root cause: stale runtime state before selecting runnable work.\\n', 'utf8');",
+      "process.stdout.write('Analysis completed. Root cause: stale runtime state before selecting runnable work.\\n');",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-analysis-validation-optional',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      attemptCount?: number;
+      quality?: { validation?: { status?: string } };
+    };
+    expect(result.status).toBe('success');
+    expect(result.attemptCount).toBe(1);
+    expect(result.quality?.validation?.status).toBe('not_run');
+  });
+  it('accepts Direct CLI validation success reported only in Chinese', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-zh',
+      title: 'Require Chinese Direct validation evidence',
+      description: 'Direct CLI should recognize Chinese validation success evidence.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-zh' });
+    const fakeCliPath = join(projectRoot, 'direct-validation-zh-cli.cjs');
+    const escapedSpecDir = specDir.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const validationLine = '\u9a8c\u8bc1\u901a\u8fc7\uff0c\u65e0\u9519\u8bef\u3002';
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const specDir = '${escapedSpecDir}';`,
+      `const validationLine = '${validationLine}';`,
+      "mkdirSync(specDir, { recursive: true });",
+      "writeFileSync(join(specDir, 'direct_summary.md'), validationLine + '\\n', 'utf8');",
+      "process.stdout.write(validationLine + '\\n');",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-zh',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    expect(stdout).not.toContain('"type":"CODING_FAILED"');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      attemptCount?: number;
+      quality?: { validation?: { status?: string; reason?: string } };
+    };
+    expect(result.status).toBe('success');
+    expect(result.attemptCount).toBe(1);
+    expect(result.quality?.validation?.status).toBe('reported_passed');
+    expect(result.quality?.validation?.reason).toContain(validationLine);
+  });
+  it('accepts Direct CLI render confirmation without retry continuation', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-render-confirmation',
+      title: 'Accept render-confirmed Direct validation',
+      description: 'Direct CLI should not retry a completed run when validation confirms the page loads.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-render-confirmation' });
+    const fakeCliPath = join(projectRoot, 'direct-render-confirmation-cli.cjs');
+    const escapedSpecDir = specDir.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const validationLine = '\u9a8c\u8bc1\u5df2\u8fd0\u884c `node --check game.js`\uff0c\u5e76\u7528 Chrome \u65e0\u5934\u6a21\u5f0f\u751f\u6210\u6e32\u67d3\u622a\u56fe\u786e\u8ba4\u9875\u9762\u53ef\u52a0\u8f7d\u3002';
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const specDir = '${escapedSpecDir}';`,
+      `const validationLine = '${validationLine}';`,
+      "mkdirSync(specDir, { recursive: true });",
+      "writeFileSync(join(specDir, 'direct_summary.md'), validationLine + '\\n', 'utf8');",
+      "process.stdout.write(validationLine + '\\n');",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-render-confirmation',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    expect(stdout).not.toContain('Direct CLI retry requires a usable continuation strategy');
+    expect(stdout).not.toContain('"type":"CODING_FAILED"');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      exitCode?: number;
+      attemptCount?: number;
+      quality?: { validation?: { status?: string; reason?: string } };
+    };
+    expect(result.status).toBe('success');
+    expect(result.exitCode).toBe(0);
+    expect(result.attemptCount).toBe(1);
+    expect(result.quality?.validation?.status).toBe('reported_passed');
+  });
+  it('accepts Direct CLI validation success phrased as zero failures', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-zero-failures',
+      title: 'Accept zero-failure Direct validation',
+      description: 'Direct CLI should treat zero failures and no errors as successful validation evidence.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-zero-failures' });
+    const fakeCliPath = join(projectRoot, 'direct-validation-zero-failures-cli.cjs');
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const specDir = '${specDir.replace(/\\/g, '\\\\')}';`,
+      "mkdirSync(specDir, { recursive: true });",
+      "writeFileSync(join(specDir, 'direct_summary.md'), 'Validation: npm test completed with 0 failed tests and no errors.\\n', 'utf8');",
+      "process.stdout.write('Validation: npm test completed with 0 failed tests and no errors.\\n');",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-zero-failures',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    expect(stdout).not.toContain('Direct CLI output failed validation/quality gate');
+    const result = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      attemptCount?: number;
+      quality?: { validation?: { status?: string; reason?: string } };
+    };
+    expect(result.status).toBe('success');
+    expect(result.attemptCount).toBe(1);
+    expect(result.quality?.validation?.status).toBe('reported_passed');
+    expect(result.quality?.validation?.reason).toContain('0 failed tests');
   });
   it('retries Direct CLI implementation runs with ambiguous validation evidence', () => {
     createAutocodeTask({
@@ -1529,6 +2097,7 @@ describe('Autocode CLI runner prompt', () => {
       taskId: '008-direct-validation-ambiguous',
       cli: 'custom',
       customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      directCliContinuationStrategy: createDirectCustomLatestContinuation(fakeCliPath),
       phase: 'direct',
     });
 
@@ -1600,6 +2169,7 @@ describe('Autocode CLI runner prompt', () => {
       taskId: '008-direct-validation-required',
       cli: 'custom',
       customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      directCliContinuationStrategy: createDirectCustomLatestContinuation(fakeCliPath),
       phase: 'direct',
     });
 
@@ -1703,6 +2273,332 @@ describe('Autocode CLI runner prompt', () => {
     expect(readFileSync(attemptPath, 'utf8')).toBe('2');
     expect(readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8')).toContain('Resuming Future CLI Direct session for retry: latest');
     expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+  });
+  it('uses configured JSON parser and argument template to resume future Direct CLI sessions', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-retry-custom-json-session',
+      title: 'Retry Direct validation in configured JSON session',
+      description: 'Direct CLI should use configured JSON event fields for future providers.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-retry-custom-json-session' });
+    const fakeCliPath = join(projectRoot, 'future-json-session-retry-cli.cjs');
+    const attemptPath = join(projectRoot, 'future-json-session-retry-attempt.txt');
+    const argvPath = join(projectRoot, 'future-json-session-retry-argv.jsonl');
+    const escapedSpecDir = specDir.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedAttemptPath = attemptPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedArgvPath = argvPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const normalizedFakeCliPath = fakeCliPath.split(String.fromCharCode(92)).join('/');
+    writeFileSync(fakeCliPath, [
+      "const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const argvPath = '${escapedArgvPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      'const argv = process.argv.slice(2);',
+      "appendFileSync(argvPath, JSON.stringify(argv) + '\\n', 'utf8');",
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt === 1) {",
+      "    writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 1 summary. Validation: npm test failed.\\n', 'utf8');",
+      "    process.stdout.write(JSON.stringify({ kind: 'session', conversation_id: 'future-session', message: 'Attempt 1 done. Validation: npm test failed.' }) + '\\n');",
+      "    process.stdout.write(JSON.stringify({ kind: 'done' }) + '\\n');",
+      "    return;",
+      "  }",
+      "  const expected = ['resume', '--session', 'future-session', '--model', 'future-large', '-'];",
+      "  if (JSON.stringify(argv) !== JSON.stringify(expected)) {",
+      "    process.stderr.write('Expected future session resume args, got ' + JSON.stringify(argv) + '\\n');",
+      "    process.exit(2);",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Attempt 2 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write(JSON.stringify({ kind: 'message', message: 'Attempt 2 fixed it. Validation: npm test passed.' }) + '\\n');",
+      "  process.stdout.write(JSON.stringify({ kind: 'done' }) + '\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-retry-custom-json-session',
+      cli: 'custom',
+      customCommand: `node "${normalizedFakeCliPath}"`,
+      model: 'future-large',
+      directCliRuntimeRouteId: 'future-direct-cli',
+      directCliRuntimeRouteDisplayName: 'Future CLI',
+      directCliJsonEventParser: {
+        type: 'future-json',
+        displayName: 'Future JSON',
+        commandNames: ['node'],
+        sessionIdFields: ['conversation_id'],
+        messageFields: ['message'],
+        eventTypeFields: ['kind'],
+        completionEventTypes: ['done'],
+      },
+      directCliContinuationStrategy: {
+        displayName: 'Future JSON CLI',
+        type: 'argument-template',
+        commandNames: ['node'],
+        requiresJsonMode: true,
+        jsonEventParser: 'future-json',
+        argsTemplate: ['{passthroughArgs}', 'resume', '--session', '{sessionId}', '--model', '{modelId}', '{promptStdinArg}'],
+        promptStdinArg: '-',
+        sessionIdSource: 'json-event-session',
+      },
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    const argvLines = readFileSync(argvPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line) as string[]);
+    expect(argvLines[0]).toEqual([]);
+    expect(argvLines[1]).toEqual(['resume', '--session', 'future-session', '--model', 'future-large', '-']);
+    expect(readFileSync(attemptPath, 'utf8')).toBe('2');
+    expect(readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8')).toContain('Continuing Future JSON CLI Direct session for retry: future-session.');
+    expect(stdout).toContain('Attempt 2 fixed it. Validation: npm test passed.');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {
+      sessionId?: string;
+      provider?: string;
+      providerDisplayName?: string;
+      modelId?: string;
+      lastOutcome?: string;
+    };
+    expect(directSession.sessionId).toBe('future-session');
+    expect(directSession.provider).toBe('future-direct-cli');
+    expect(directSession.providerDisplayName).toBe('Future CLI');
+    expect(directSession.modelId).toBe('future-large');
+    expect(directSession.lastOutcome).toBe('success');
+  });
+  it('handles configured JSON tool events for future Direct CLIs without parser branches', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-custom-json-tool-events',
+      title: 'Handle future JSON tool events',
+      description: 'Direct CLI should parse configured future provider tool events without source-code branches.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-custom-json-tool-events' });
+    const fakeCliPath = join(projectRoot, 'future-json-tool-events-cli.cjs');
+    const escapedSpecDir = specDir.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const normalizedFakeCliPath = fakeCliPath.split(String.fromCharCode(92)).join('/');
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const specDir = '${escapedSpecDir}';`,
+      "mkdirSync(specDir, { recursive: true });",
+      "writeFileSync(join(specDir, 'direct_summary.md'), 'Future tool events completed. Validation: npm test passed.\\n', 'utf8');",
+      "process.stdout.write(JSON.stringify({ kind: 'tool_start', conversation_id: 'future-tool-session', tool: 'Inspect', input: 'src/app.ts', call: 'call-1' }) + '\\n');",
+      "process.stdout.write(JSON.stringify({ kind: 'tool_finish', conversation_id: 'future-tool-session', tool: 'Inspect', result: 'ok', ok: true, call: 'call-1' }) + '\\n');",
+      "process.stdout.write(JSON.stringify({ kind: 'message', conversation_id: 'future-tool-session', message: 'Future tool events completed. Validation: npm test passed.' }) + '\\n');",
+      "process.stdout.write(JSON.stringify({ kind: 'done', conversation_id: 'future-tool-session' }) + '\\n');",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-custom-json-tool-events',
+      cli: 'custom',
+      customCommand: `node "${normalizedFakeCliPath}"`,
+      model: 'future-large',
+      directCliRuntimeRouteId: 'future-tool-direct-cli',
+      directCliRuntimeRouteDisplayName: 'Future Tool CLI',
+      directCliJsonEventParser: {
+        type: 'future-tool-json',
+        displayName: 'Future Tool JSON',
+        commandNames: ['node'],
+        eventTypeFields: ['kind'],
+        sessionIdFields: ['conversation_id'],
+        messageFields: ['message'],
+        completionEventTypes: ['done'],
+        toolStartEventTypes: ['tool_start'],
+        toolEndEventTypes: ['tool_finish'],
+        toolNameFields: ['tool'],
+        toolInputFields: ['input'],
+        toolOutputFields: ['result'],
+        toolCallIdFields: ['call'],
+        toolSuccessFields: ['ok'],
+      },
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(stdout).toContain('Future tool events completed. Validation: npm test passed.');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    const logs = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
+    expect(logs).toContain('Tool started: Inspect');
+    expect(logs).toContain('Tool output: Inspect');
+    expect(logs).toContain('"tool_call_id":"call-1"');
+    const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {
+      sessionId?: string;
+      provider?: string;
+      providerDisplayName?: string;
+      modelId?: string;
+      lastOutcome?: string;
+    };
+    expect(directSession.sessionId).toBe('future-tool-session');
+    expect(directSession.provider).toBe('future-tool-direct-cli');
+    expect(directSession.providerDisplayName).toBe('Future Tool CLI');
+    expect(directSession.modelId).toBe('future-large');
+    expect(directSession.lastOutcome).toBe('success');
+  });
+  it('finalizes configured JSON Direct CLI attempts after completion events when the process stays open', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-custom-json-completion-hang',
+      title: 'Finalize custom JSON Direct completion',
+      description: 'Direct CLI should trust configured JSON completion events for future providers.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-custom-json-completion-hang' });
+    const fakeCliPath = join(projectRoot, 'future-json-completion-hang-cli.cjs');
+    const escapedProjectRoot = projectRoot.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedSpecDir = specDir.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const normalizedFakeCliPath = fakeCliPath.split(String.fromCharCode(92)).join('/');
+    writeFileSync(fakeCliPath, [
+      "const { mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const projectRoot = '${escapedProjectRoot}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  writeFileSync(join(projectRoot, 'future-output.txt'), 'done', 'utf8');",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Implemented future JSON CLI completion. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write(JSON.stringify({ kind: 'message', conversation_id: 'future-hang-session', message: 'Implemented future JSON CLI completion. Validation: npm test passed.' }) + '\\n');",
+      "  process.stdout.write(JSON.stringify({ kind: 'done' }) + '\\n');",
+      "  setInterval(() => {}, 1000);",
+      "});",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-custom-json-completion-hang',
+      cli: 'custom',
+      customCommand: `node "${normalizedFakeCliPath}"`,
+      model: 'future-large',
+      directCliRuntimeRouteId: 'future-direct-cli',
+      directCliRuntimeRouteDisplayName: 'Future CLI',
+      directCliJsonEventParser: {
+        type: 'future-json',
+        displayName: 'Future JSON',
+        commandNames: ['node'],
+        sessionIdFields: ['conversation_id'],
+        messageFields: ['message'],
+        eventTypeFields: ['kind'],
+        completionEventTypes: ['done'],
+      },
+      phase: 'direct',
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        AUTOCODE_DIRECT_COMPLETION_GRACE_MS: '50',
+        GRAPHITI_ENABLED: 'false',
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    expect(stdout).toContain('Implemented future JSON CLI completion. Validation: npm test passed.');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    expect(readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8')).toContain(
+      'Future JSON Direct CLI emitted completion event but the process did not exit; finalizing the Direct attempt.',
+    );
+    expect(readFileSync(join(projectRoot, 'future-output.txt'), 'utf8')).toBe('done');
+    const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {
+      sessionId?: string;
+      provider?: string;
+      providerDisplayName?: string;
+      modelId?: string;
+      lastOutcome?: string;
+    };
+    expect(directSession.sessionId).toBe('future-hang-session');
+    expect(directSession.provider).toBe('future-direct-cli');
+    expect(directSession.providerDisplayName).toBe('Future CLI');
+    expect(directSession.modelId).toBe('future-large');
+    expect(directSession.lastOutcome).toBe('success');
+  });
+
+  it('fails silent Direct CLI attempts with an inactivity timeout instead of hanging', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-inactivity-timeout',
+      title: 'Fail silent Direct CLI',
+      description: 'Direct CLI should not hang forever when a provider process emits no output.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-inactivity-timeout' });
+    const fakeCliPath = join(projectRoot, 'direct-silent-hang.cjs');
+    writeFileSync(fakeCliPath, [
+      'process.stdin.resume();',
+      'setInterval(() => {}, 1000);',
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-inactivity-timeout',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    let error: unknown;
+    try {
+      execFileSync(process.execPath, [plan.runnerFilePath], {
+        cwd: projectRoot,
+        env: {
+          ...process.env,
+          AUTOCODE_DIRECT_INACTIVITY_WARNING_MS: '20',
+          AUTOCODE_DIRECT_INACTIVITY_TIMEOUT_MS: '80',
+          GRAPHITI_ENABLED: 'false',
+        },
+        encoding: 'utf8',
+        timeout: 5_000,
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeTruthy();
+    const logs = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
+    expect(logs).toContain('Direct attempt produced no output');
+    expect(logs).toContain('still waiting before timeout');
+    expect(logs).toContain('marking it failed');
+    const runResult = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      status?: string;
+      message?: string;
+      exitCode?: number;
+    };
+    expect(runResult.status).toBe('error');
+    expect(runResult.exitCode).toBe(1);
+    expect(runResult.message).toContain('Direct attempt produced no output');
   });
   it('resumes the same Codex exec session when retrying Direct quality failures', () => {
     createAutocodeTask({
@@ -1987,6 +2883,148 @@ describe('Autocode CLI runner prompt', () => {
     expect(directSession.provider).toBe('deepseek-cli');
     expect(directSession.lastOutcome).toBe('success');
   });
+  it('continues configured future Direct CLIs with argument templates', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-direct-validation-retry-future-template-session',
+      title: 'Retry Direct validation in configured future session',
+      description: 'Direct CLI should resume configured future providers without provider-specific branches.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '008-direct-validation-retry-future-template-session' });
+    const shimPath = join(projectRoot, 'future-code-session-retry-shim.cjs');
+    const attemptPath = join(projectRoot, 'future-code-session-retry-attempt.txt');
+    const argvPath = join(projectRoot, 'future-code-session-retry-argv.jsonl');
+    const escapedSpecDir = specDir.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedAttemptPath = attemptPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    const escapedArgvPath = argvPath.split(String.fromCharCode(92)).join(String.fromCharCode(92, 92));
+    writeFileSync(shimPath, [
+      "const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      `const attemptPath = '${escapedAttemptPath}';`,
+      `const argvPath = '${escapedArgvPath}';`,
+      `const specDir = '${escapedSpecDir}';`,
+      'const argv = process.argv.slice(2);',
+      "appendFileSync(argvPath, JSON.stringify(argv) + '\\n', 'utf8');",
+      "const previous = existsSync(attemptPath) ? Number(readFileSync(attemptPath, 'utf8')) : 0;",
+      'const attempt = previous + 1;',
+      "writeFileSync(attemptPath, String(attempt), 'utf8');",
+      "let stdin = '';",
+      "process.stdin.on('data', chunk => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  mkdirSync(specDir, { recursive: true });",
+      "  if (attempt === 1) {",
+      "    writeFileSync(join(specDir, 'direct_summary.md'), 'Future attempt 1 summary. Validation: npm test failed.\\n', 'utf8');",
+      "    process.stdout.write(JSON.stringify({ kind: 'configured', conversation_id: 'future-session-123' }) + '\\n');",
+      "    process.stdout.write(JSON.stringify({ kind: 'message', message: 'Future attempt 1 output. Validation: npm test failed.' }) + '\\n');",
+      "    process.stdout.write(JSON.stringify({ kind: 'done' }) + '\\n');",
+      "    return;",
+      "  }",
+      "  const expected = ['resume', '--session', 'future-session-123', '--model', 'future-large', '--stdin'];",
+      "  if (JSON.stringify(argv) !== JSON.stringify(expected)) {",
+      "    process.stderr.write('Expected Future template resume args, got ' + JSON.stringify(argv) + '\\n');",
+      "    process.exit(2);",
+      "    return;",
+      "  }",
+      "  writeFileSync(join(specDir, 'direct_summary.md'), 'Future attempt 2 summary. Validation: npm test passed.\\n', 'utf8');",
+      "  process.stdout.write(JSON.stringify({ kind: 'configured', conversation_id: 'future-session-123' }) + '\\n');",
+      "  process.stdout.write(JSON.stringify({ kind: 'message', message: 'Future attempt 2 fixed it. Validation: npm test passed.' }) + '\\n');",
+      "  process.stdout.write(JSON.stringify({ kind: 'done' }) + '\\n');",
+      "});",
+    ].join('\n'), 'utf8');
+
+    if (process.platform === 'win32') {
+      writeFileSync(
+        join(projectRoot, 'future-code.cmd'),
+        '@echo off\r\nnode "%~dp0future-code-session-retry-shim.cjs" %*\r\n',
+        'utf8',
+      );
+    } else {
+      const unixShimPath = join(projectRoot, 'future-code');
+      writeFileSync(unixShimPath, [
+        '#!/usr/bin/env node',
+        "require('./future-code-session-retry-shim.cjs');",
+      ].join('\n'), 'utf8');
+      chmodSync(unixShimPath, 0o755);
+    }
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-direct-validation-retry-future-template-session',
+      cli: 'future-code',
+      model: 'future-large',
+      phase: 'direct',
+      directCliRuntimeRouteId: 'future-code-direct-cli',
+      directCliRuntimeRouteDisplayName: 'Future Code',
+      directCliTaskRunStrategy: {
+        args: ['run', '--json'],
+        modelFlag: '--model',
+        promptStdinArg: '--stdin',
+      },
+      directCliJsonEventParser: {
+        type: 'future-json',
+        displayName: 'Future Code',
+        commandNames: ['future-code'],
+        requiredArgs: ['--json'],
+        eventTypeFields: ['kind'],
+        sessionIdFields: ['conversation_id'],
+        messageFields: ['message'],
+        completionEventTypes: ['done'],
+      },
+      directCliContinuationStrategy: {
+        displayName: 'Future Code',
+        type: 'argument-template',
+        commandNames: ['future-code'],
+        requiresJsonMode: true,
+        jsonEventParser: 'future-json',
+        sessionIdSource: 'json-event-session',
+        argsTemplate: ['resume', '--session', '{sessionId}', '--model', '{modelId}', '{promptStdinArg}'],
+        promptStdinArg: '--stdin',
+      },
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        GRAPHITI_ENABLED: 'false',
+        PATH: `${projectRoot}${delimiter}${process.env.PATH ?? ''}`,
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    const argvLines = readFileSync(argvPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line) as string[]);
+    expect(argvLines[0]).toEqual(['run', '--json', '--model', 'future-large', '--stdin']);
+    expect(argvLines[1]).toEqual(['resume', '--session', 'future-session-123', '--model', 'future-large', '--stdin']);
+    expect(readFileSync(attemptPath, 'utf8')).toBe('2');
+    expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
+    const runResult = JSON.parse(readFileSync(join(specDir, 'autocode-run-result.json'), 'utf8')) as {
+      attemptCount?: number;
+      quality?: { durationMs?: number };
+    };
+    expect(runResult.attemptCount).toBe(2);
+    expect(runResult.quality?.durationMs).toBeGreaterThanOrEqual(0);
+    const directPlan = loadAutocodeImplementationPlanSync(specDir);
+    const directSubtasks = directPlan?.phases?.flatMap((phase) => phase.subtasks ?? phase.chunks ?? []) ?? [];
+    const completedDirectSubtask = directSubtasks.find((subtask) => subtask.id === 'direct-implementation');
+    expect(completedDirectSubtask?.duration_ms).toBe(runResult.quality?.durationMs);
+    expect(readFileSync(join(specDir, 'implementation_plan.md'), 'utf8')).toContain('"duration_ms":');
+    const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {
+      sessionId?: string;
+      provider?: string;
+      providerDisplayName?: string;
+      modelId?: string;
+      lastOutcome?: string;
+    };
+    expect(directSession.sessionId).toBe('future-session-123');
+    expect(directSession.provider).toBe('future-code-direct-cli');
+    expect(directSession.providerDisplayName).toBe('Future Code');
+    expect(directSession.modelId).toBe('future-large');
+    expect(directSession.lastOutcome).toBe('success');
+  });
   it('binds Direct CLI completion to the latest active change request when metadata lacks current subtask', () => {
     createAutocodeTask({
       projectRoot,
@@ -2127,6 +3165,7 @@ describe('Autocode CLI runner prompt', () => {
     const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
     expect(rawPlan).toContain('"change_request_id":"cr-20260701074920826"');
     expect(rawPlan).toContain('"outcome":"error"');
+    expect(rawPlan).not.toContain('"completed_at"');
     expect(rawPlan).toContain('"ai_coding_quality"');
     expect(rawPlan).toContain('- [!] direct. Direct execution');
     expect(rawPlan).toContain('  - [!] direct-cr-20260701074920826 Direct Request Changes');

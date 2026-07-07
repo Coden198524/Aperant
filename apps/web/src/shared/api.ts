@@ -326,6 +326,8 @@ export interface StartWebTaskRequest {
   cli?: AutocodeCli;
   customCommand?: string;
   model?: string;
+  provider?: string;
+  authSource?: string;
   bypassPermissions?: boolean;
   language?: string;
   forcePlanning?: boolean;

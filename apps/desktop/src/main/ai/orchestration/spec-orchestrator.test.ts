@@ -145,6 +145,25 @@ async function writeValidStandardArtifacts(
   );
 }
 
+async function writeComplexArchitectureReferences(specDir: string): Promise<void> {
+  const specPath = join(specDir, 'spec.md');
+  const existingSpec = await readFile(specPath, 'utf-8');
+  await writeFile(
+    specPath,
+    [
+      existingSpec.trimEnd(),
+      '',
+      '## Architecture And Design Pattern References',
+      '- Tasks 1.1-2.1 orchestration boundary: use service layer separation strategy; source spec.md Design Notes and context.md Architecture Summary.',
+      '- Tasks 3.1-4.1 workflow state boundary: use repository adapter strategy; source requirements.md Acceptance Criteria and Project conventions from AGENTS.md.',
+      '- Tasks 5.1-6.1 API contract layer: use stable interface strategy; source spec.md Requirements and general engineering guidance.',
+      '- Tasks 7.1-8.1 validation boundary: use focused test pipeline strategy; source requirements.md Evidence Sources and project testing practice.',
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
+}
+
 describe('SpecOrchestrator Write tool retry helpers', () => {
   it('detects malformed Write tool JSON errors', () => {
     expect(isWriteToolJsonFailure(
@@ -342,7 +361,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(requirements).not.toBeNull();
       if (!requirements) throw new Error('requirements.md was not written');
 
-      expect(result).toEqual({ phase: 'requirements', success: true, errors: [], retries: 2 });
+      expect(result).toEqual({ phase: 'requirements', success: true, errors: [], retries: 1 });
       expect(requirements).toMatchObject({
         task_description: '\u4fee\u590d\u4efb\u52a1\u6682\u505c\u540e\u8bf7\u6c42\u7edf\u8ba1\u6b21\u6570\u7a81\u7136\u589e\u591a\u7684\u95ee\u9898',
         workflow_type: 'bugfix',
@@ -350,7 +369,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       });
       expect(requirements.user_requirements).toEqual(['\u4fee\u590d\u4efb\u52a1\u6682\u505c\u540e\u8bf7\u6c42\u7edf\u8ba1\u6b21\u6570\u7a81\u7136\u589e\u591a\u7684\u95ee\u9898']);
       expect(requirements).not.toHaveProperty('generated_by_fallback');
-      expect(runSession).toHaveBeenCalledTimes(3);
+      expect(runSession).toHaveBeenCalledTimes(2);
       expect(runSession.mock.calls[0][0].outputSchema).toBeDefined();
     } finally {
       await rm(specDir, { recursive: true, force: true });
@@ -385,12 +404,12 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const result = await runPhase('discovery', 1, 1);
       const context = await readFile(join(specDir, AUTOCODE_TASK_ARTIFACTS.context), 'utf-8');
 
-      expect(result).toEqual({ phase: 'discovery', success: true, errors: [], retries: 2 });
+      expect(result).toEqual({ phase: 'discovery', success: true, errors: [], retries: 1 });
       expect(context).toContain('# Project Context');
       expect(context).toContain('Create a Windows-style calculator page');
       expect(context).toContain('Discovery fallback');
       expect(context).toContain('## Evidence Sources');
-      expect(runSession).toHaveBeenCalledTimes(3);
+      expect(runSession).toHaveBeenCalledTimes(2);
       const firstRunCall = runSession.mock.calls[0] as unknown[] | undefined;
       const firstRunConfig = firstRunCall?.[0] as { outputSchema?: unknown } | undefined;
       expect(firstRunConfig?.outputSchema).toBeUndefined();
@@ -653,8 +672,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const result = await orchestrator.run();
 
       expect(result.success).toBe(true);
-      expect(phases).not.toContain('research');
-      expect(phases).toEqual([
+      expect(result.phasesExecuted).toEqual([
         'discovery',
         'requirements',
         'context',
@@ -662,6 +680,16 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
         'self_critique',
         'planning',
         'validation',
+      ]);
+      expect(phases).not.toContain('research');
+      expect(phases).not.toContain('validation');
+      expect(phases).toEqual([
+        'discovery',
+        'requirements',
+        'context',
+        'spec_writing',
+        'self_critique',
+        'planning',
       ]);
     } finally {
       await rm(specDir, { recursive: true, force: true });
@@ -684,6 +712,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
                 title: `Task ${phaseIndex + 1}`,
                 description: `Implement phase ${phaseIndex + 1}.`,
                 status: 'pending',
+                architecture: 'platform workflow boundary; service/orchestrator separation strategy; source spec.md Design Notes and context.md Architecture Summary',
                 verification: { type: 'manual', scenario: 'Run applicable checks.' },
               },
             ],
@@ -703,6 +732,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
 
     try {
       await writeValidStandardArtifacts(specDir, 'Refactor platform workflow');
+      await writeComplexArchitectureReferences(specDir);
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
@@ -871,7 +901,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(plan.phases[0].subtasks[0].title).toContain('Add note model');
       expect(plan.phases[0].subtasks[0].description).toContain('Add note model');
       expect(plan.phases[0].subtasks[0].description).toContain('Add list state');
-      expect(plan.phases[0].subtasks[0].description).toContain('Add controls');
+      expect(plan.phases[0].subtasks[0].description).toContain('(+1 related tasks)');
       expect(plan.phases[0].subtasks[0].files_to_create).toEqual(['src/notes.ts']);
       expect(plan.phases[0].subtasks[0].files_to_modify).toEqual(['src/notes.ts']);
     } finally {
@@ -974,25 +1004,59 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     }
   });
 
-  it('keeps balanced simple tasks on quick_spec plus validation instead of aggressive local planning', async () => {
+  it('uses one compact quick_spec session plus deterministic validation for balanced standard tasks', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const phases: SpecPhase[] = [];
     const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => {
       phases.push(config.specPhase);
+
       if (config.specPhase === 'quick_spec') {
-        await writeFile(join(specDir, 'spec.md'), '# Specification\n\nImplement the local app.\n', 'utf-8');
+        await writeFile(
+          join(specDir, 'spec.md'),
+          [
+            '# Specification: Runtime metadata compatibility',
+            '',
+            '## Overview',
+            `Refactor runtime metadata schema and compatibility handling. Evidence: ${TEST_TASK_EVIDENCE}.`,
+            '',
+            '## Scope',
+            `- Will: update runtime metadata schema and compatibility handling. Evidence: ${TEST_TASK_EVIDENCE}.`,
+            '- Out of scope: unrelated persistence changes.',
+            '',
+            '## Requirements',
+            '1. Runtime metadata schema and compatibility handling are updated.',
+            '   - Acceptance: focused compatibility checks pass.',
+            `   - Evidence: ${TEST_TASK_EVIDENCE}.`,
+            '',
+            '## Architecture And Design Pattern References',
+            '- Task 1.1 runtime metadata boundary: use adapter compatibility strategy; source spec.md Requirements and context.md runtime evidence.',
+            '- Task 1.1 schema boundary: use stable contract migration strategy; source requirements.md Acceptance Criteria and project conventions.',
+            '- Task 1.1 verification boundary: use focused compatibility test strategy; source spec.md Success Criteria and targeted checks.',
+            '- Implementation boundary applies to task 1.1 and the runtime metadata compatibility layer.',
+            '',
+            '## Evidence',
+            `- ${TEST_TASK_EVIDENCE}.`,
+            '',
+            '## Success Criteria',
+            '- [ ] Runtime metadata compatibility behavior is implemented and verified.',
+            '',
+          ].join('\n'),
+          'utf-8',
+        );
         await saveTasksSource(specDir, {
-          feature: 'Local app',
-          workflow_type: 'simple',
+          feature: 'Runtime metadata compatibility',
+          workflow_type: 'refactor',
           phases: [{
             id: '1',
             name: 'Implementation',
             subtasks: [{
               id: '1.1',
-              title: 'Implement complete task',
-              description: 'Implement the local app.',
+              title: 'Refactor runtime metadata compatibility handling',
+              description: 'Update runtime metadata schema and compatibility handling.',
               status: 'pending',
-              verification: { type: 'manual', run: 'Open the app locally.' },
+              files_to_modify: ['src/runtime-metadata.ts'],
+              architecture: 'runtime metadata boundary; adapter compatibility strategy; source spec.md Architecture And Design Pattern References',
+              verification: { type: 'manual', run: 'Run focused runtime metadata compatibility checks.' },
             }],
           }],
         });
@@ -1003,10 +1067,44 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
         stepsExecuted: 1,
         usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
         messages: [],
-        toolCallCount: 1,
+        toolCallCount: 2,
         durationMs: 1,
       };
     });
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Refactor runtime metadata schema and update compatibility handling',
+        complexityOverride: 'standard',
+        workflowConfig: { optimizationLevel: 'balanced' },
+        generatePrompt: vi.fn(async () => 'Run compact Standard planning.'),
+        runSession,
+      });
+
+      const result = await orchestrator.run();
+
+      expect(phases).toEqual(['quick_spec']);
+      expect(result.error).toBeUndefined();
+      expect(result).toMatchObject({ success: true });
+      const validationReport = await readFile(join(specDir, 'spec_validation_report.md'), 'utf-8');
+
+      expect(result.success).toBe(true);
+      expect(result.phasesExecuted).toEqual(['quick_spec', 'validation']);
+      expect(phases).toEqual(['quick_spec']);
+      expect(phases).not.toContain('validation');
+      expect(runSession).toHaveBeenCalledTimes(1);
+      expect(validationReport).toContain('Status: PASSED');
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses local Standard light planning and deterministic validation for balanced simple tasks', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn();
+    const generatePrompt = vi.fn(async () => 'should not be used');
     const emptyProjectIndex = JSON.stringify({
       project_root: specDir,
       project_type: 'single',
@@ -1022,22 +1120,29 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
         taskDescription: 'Build a small local app and document how to run it.',
         workflowConfig: { optimizationLevel: 'balanced' },
         projectIndex: emptyProjectIndex,
-        generatePrompt: vi.fn(async () => 'Run phase.'),
+        generatePrompt,
         runSession,
       });
 
       const result = await orchestrator.run();
+      const spec = await readFile(join(specDir, 'spec.md'), 'utf-8');
+      const validationReport = await readFile(join(specDir, 'spec_validation_report.md'), 'utf-8');
       const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
         workflow_type: string;
-        phases: Array<{ subtasks: unknown[] }>;
+        phases: Array<{ subtasks: Array<{ title?: string }> }>;
       };
 
       expect(result.success).toBe(true);
       expect(result.complexity).toBe('simple');
       expect(result.phasesExecuted).toEqual(['complexity_assessment', 'quick_spec', 'validation']);
-      expect(phases).toEqual(['quick_spec', 'validation']);
+      expect(generatePrompt).not.toHaveBeenCalled();
+      expect(runSession).not.toHaveBeenCalled();
+      expect(spec).toContain('Standard light mode uses one focused coder session');
+      expect(spec).not.toContain('Aggressive mode');
+      expect(validationReport).toContain('Status: PASSED');
       expect(plan.workflow_type).toBe('simple');
       expect(plan.phases[0].subtasks).toHaveLength(1);
+      expect(plan.phases[0].subtasks[0].title).toContain('Implement complete task');
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }
@@ -1240,48 +1345,6 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     });
     const runSession = vi.fn(async (config: { specPhase: SpecPhase; outputSchema?: unknown }) => {
       phases.push(config.specPhase);
-      if (config.specPhase === 'complexity_assessment') {
-        return {
-          outcome: 'completed' as const,
-          stepsExecuted: 1,
-          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-          messages: [],
-          toolCallCount: 0,
-          durationMs: 1,
-          structuredOutput: {
-            complexity: 'standard',
-            confidence: 0.9,
-            reasoning: 'External API integration requires normal planning.',
-          },
-        };
-      }
-
-      if (config.specPhase === 'discovery') {
-        return {
-          outcome: 'completed' as const,
-          stepsExecuted: 1,
-          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-          messages: [{
-            role: 'assistant' as const,
-            content: JSON.stringify({
-              task_description: 'Create a small app that integrates OAuth and an external API',
-              scoped_services: [],
-              architecture_summary: 'External integration task.',
-              files_to_modify: [],
-              files_to_reference: [],
-              design_patterns: [],
-              implementation_notes: ['Plan integration details.'],
-              risks: ['External API behavior.'],
-              verification_suggestions: ['Run tests.'],
-              evidence_sources: evidenceSources(),
-              created_at: '2026-05-13T00:00:00.000Z',
-            }),
-          }],
-          toolCallCount: 0,
-          durationMs: 1,
-        };
-      }
-
       return {
         outcome: 'cancelled' as const,
         stepsExecuted: 1,
@@ -1306,8 +1369,11 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const result = await orchestrator.run();
 
       expect(result.success).toBe(false);
-      expect(phases[0]).toBe('complexity_assessment');
-      expect(phases).toContain('discovery');
+      expect(result.complexity).toBe('standard');
+      expect(result.phasesExecuted[0]).toBe('complexity_assessment');
+      expect(phases[0]).toBe('requirements');
+      expect(phases).not.toContain('complexity_assessment');
+      expect(phases).not.toContain('discovery');
       expect(phases).not.toContain('quick_spec');
     } finally {
       await rm(specDir, { recursive: true, force: true });
@@ -1491,7 +1557,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
         specDir,
         projectDir: specDir,
         taskDescription: 'Refactor the platform workflow.',
-        workflowConfig: { optimizationLevel: 'balanced' },
+        workflowConfig: { optimizationLevel: 'conservative' },
         projectIndex: '{}',
         generatePrompt: vi.fn(async () => 'Run phase.'),
         runSession,
@@ -1725,11 +1791,9 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(assessment.needs_research).toBe(true);
       expect(assessment.needs_self_critique).toBe(true);
       expect(assessment.reasoning).toContain('MMO routing hints');
-      expect(calls.map((call) => call.phase)).toEqual(['complexity_assessment', 'discovery', 'requirements', 'research']);
+      expect(calls.map((call) => call.phase)).toEqual(['requirements', 'research']);
       expect(calls[0].agentType).toBe('mmo_system_designer');
-      expect(calls[1].agentType).toBe('mmo_system_designer');
-      expect(calls[2].agentType).toBe('mmo_system_designer');
-      expect(calls[3].agentType).toBe('mmo_engine_architect');
+      expect(calls[1].agentType).toBe('mmo_engine_architect');
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }

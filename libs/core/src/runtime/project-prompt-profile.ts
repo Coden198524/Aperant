@@ -240,10 +240,10 @@ Plan for safe concurrency. The runtime schedules work from dependency metadata a
 `;
 }
 
-function buildOpenSpecGradeTaskDecompositionGuidance(): string {
-  return `## OpenSpec-Style Task Decomposition
+function buildFocusedTaskDecompositionGuidance(): string {
+  return `## Focused Task Decomposition
 
-Write tasks the way OpenSpec-style plans tend to read: small behavior slices, clear evidence, and one practical verification path.
+Write tasks the way focused task plans should read: small behavior slices, clear evidence, and one practical verification path.
 
 - Treat each requirement, scenario, acceptance criterion, public contract, user-visible behavior, migration step, error path, and verification scenario as a candidate leaf task.
 - A leaf task normally covers one independently reviewable behavior or contract plus one focused verification path.
@@ -309,160 +309,134 @@ ${formatCommands(profile.commands.typecheck)}`;
 }
 
 export function buildAutocodeSpecQuickPrompt(profile: AutocodeProjectPromptProfile): string {
-  return `${buildGeneratedHeader(profile, 'spec_quick')}
-
-## Role
-
-Create a compact Standard light plan: one readable \`spec.md\` and one executable \`tasks.md\`.
-
-## Outputs
-
-Use the Write tool to create \`spec.md\` in the spec directory.
-Use the Write tool to create \`tasks.md\` in the spec directory.
-Do not write \`implementation_plan.md\`; the runtime derives it as work packages.
-
-Do not modify project source code in this phase. Keep app-owned JSON/JSONL/config artifacts in their native format.
-
-${buildToolCallJsonGuidance()}
-
-${buildProjectConventionSection(profile)}
-
-## Process
-
-1. Read the task and the project documentation reference from the kickoff message.
-2. Inspect only the files needed to identify the change.
-3. Write \`spec.md\` as a short decision index: overview, scope, affected files, change notes, evidence, and success criteria.
-4. Write \`tasks.md\` as the executable checklist. Use one phase only when that matches the real dependency structure.
-
-## Spec Evidence
-
-- \`spec.md\` must include a non-empty \`## Evidence\` section.
-- Evidence must cite the user request, \`requirements.md\`, \`context.md\`, project source/docs, existing project patterns, or verified official/industry references.
-- If no extra project source evidence is needed, say that directly while still citing the user request or \`requirements.md\`.
-
-## Task Writing
-
-- Choose phases from real dependency boundaries.
-- Do not cap task count. Include every concrete task needed and keep each item concise.
-- Cover every \`spec.md\` success criterion.
-- Keep each task small enough for one focused coding session.
-- Keep each \`title\` under 120 characters and each \`description\` under 500 characters.
-- Omit top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, and long analysis.
-${buildRuntimeReadinessPromptRules()}
-
-${buildOpenSpecGradeTaskDecompositionGuidance()}
-
-${buildParallelExecutionPlanningGuidance()}
-
-${buildArchitectureGroundingGuidance()}
-
-${buildDocumentationAnalysisPlanningGuidance()}
-
-## Tasks Shape
-
-\`\`\`markdown
-# Tasks
-
-Feature: Task name
-Workflow: simple
-Status: pending
-
-- [ ] 1. Implementation
-
-- [ ] 1.1 Short action summary
-  - Concrete implementation notes
-  - _Files to modify: path/to/file_
-  - _Depends on: none_
-  - _Requirements: 1.1_
-  - _Evidence: spec.md requirement 1.1; path/to/file existing pattern_
-  - _Done when: the requested behavior is implemented and the check passes_
-  - _Verification: smallest relevant verification command_
-\`\`\`
-
-## Project Commands
-
-${buildProjectCommands(profile)}
-
-## Final Rules
-
-- ${getSpecLengthGuidance(profile)}
-- Do not do research unless the task explicitly introduces unfamiliar external technology.
-- Use existing project conventions and commands from the profile when possible.
-- All file names and paths must use ASCII characters.
-`;
+  const specLineBudget = profile.workflow.specStyle === 'quick' ? '20-60' : '40-80';
+  return [
+    buildGeneratedHeader(profile, 'spec_quick'),
+    '',
+    '## Role',
+    '',
+    'Write a compact Standard plan: one readable `spec.md` and one executable `tasks.md`.',
+    '',
+    '## Outputs',
+    '',
+    '- Write only `spec.md` and `tasks.md` in the spec directory.',
+    '- Do not write `implementation_plan.md`; the runtime derives it.',
+    '- Do not modify project source, git state, app JSON/JSONL state, manifests, settings, metadata, indexes, or parsed config.',
+    '',
+    buildToolCallJsonGuidance(),
+    '',
+    buildProjectConventionSection(profile),
+    '',
+    '## Process',
+    '',
+    '1. Use kickoff context and project docs first.',
+    '2. Read only files needed to identify the target change and closest pattern.',
+    `3. Keep \`spec.md\` to ${specLineBudget} lines with scope, requirements, affected files, evidence, and success criteria.`,
+    '4. Keep `tasks.md` concise and executable.',
+    '',
+    '## Task Contract',
+    '',
+    '- Split only by real behavior, contract, data shape, UI surface, risky error path, or verification scenario.',
+    '- Every executable task needs file intent, exactly one `_Depends on: ..._`, requirements, evidence, done signal, and verification.',
+    '- Shared files do not imply dependencies; the runtime file-conflict scheduler queues overlapping writes.',
+    '- Add architecture metadata only for cross-boundary, migration, schema/compatibility, or high-risk work.',
+    '- For analysis/documentation-only tasks, plan the reader answer first and source evidence later.',
+    buildRuntimeReadinessPromptRules(),
+    '',
+    '## Shape',
+    '',
+    '```markdown',
+    '# Tasks',
+    '',
+    'Feature: Task name',
+    'Workflow: simple',
+    'Status: pending',
+    '',
+    '- [ ] 1. Implementation',
+    '',
+    '- [ ] 1.1 Short action summary',
+    '  - Concrete implementation notes',
+    '  - _Files to modify: path/to/file_',
+    '  - _Depends on: none_',
+    '  - _Requirements: R1_',
+    '  - _Evidence: spec.md R1; path/to/file pattern_',
+    '  - _Done when: requested behavior works and verification passes_',
+    '  - _Verification: smallest reliable check_',
+    '```',
+    '',
+    '## Project Commands',
+    '',
+    buildProjectCommands(profile),
+    '',
+    'Final response: short completion note only.',
+  ].join('\n');
 }
 
 export function buildAutocodePlannerPrompt(profile: AutocodeProjectPromptProfile): string {
-  return `${buildGeneratedHeader(profile, 'planner')}
-
-## Role
-
-Convert the existing spec into one concrete upstream \`tasks.md\`. The runtime derives \`implementation_plan.md\` work packages from it.
-
-## Output
-
-Use the Write tool to create \`tasks.md\` in the spec directory. Do not return the full task list as final text. Do not write \`implementation_plan.md\`.
-
-Update \`requirements.md\` first when it contains placeholders or when your task decomposition creates concrete requirements/scenarios/acceptance criteria. For real Request Changes feedback, update \`spec.md\` and \`requirements.md\` first when the feedback changes scope or decisions.
-
-${buildToolCallJsonGuidance()}
-
-${buildProjectConventionSection(profile)}
-
-## Process
-
-1. Use kickoff context from prior phases first; it may already include \`spec.md\`, \`requirements.md\`, and \`context.md\` summaries.
-2. Read \`spec.md\`, \`requirements.md\`, or \`context.md\` only if the kickoff context is missing the detail needed for tasks.md; use Read \`limit\` for large files.
-3. Inspect only directly relevant project files when the spec does not identify enough detail.
-4. Ground requirements, design choices, file intent, and verification commands in source, docs, patterns, memory, or verified references.
-5. Create phases and subtasks from real dependencies and project boundaries.
-6. Leave gaps as assumptions, blocked items, or validation tasks; do not turn guesses into implementation work.
-
-## Request Changes
-
-- Apply this section only when runtime context provides valid human review feedback in \`HUMAN_INPUT.md\` or a non-empty \`change_requests.jsonl\`. For a new task or ordinary validation repair, ignore this section and do not preserve historical task IDs or old task history.
-- Treat the latest \`HUMAN_INPUT.md\`/\`change_requests.jsonl\` entry as the active same-task contract, not a new task.
-- Edit existing checklist items in place when they still represent the work. Add new tasks only for genuinely new requirements or newly discovered verification gaps.
-- Never prefix task titles with revision, obsolete, retry, or history markers.
-- Every new or revised task must include \`_Evidence: ..._\`, \`_Done when: ..._\`, and \`_Verification: ..._\`.
-
-## Task Writing
-
-- Do not cap tasks.md by phase or task count. Include all required work items and split them when it improves execution safety or reviewability.
-- For complex plans, make descriptions shorter instead of dropping tasks.
-${getComplexPlanningGuidance(profile)}
-- Do not keep the only concrete Requirement Index inside \`tasks.md\`; \`tasks.md\` must cite concrete requirements and acceptance criteria that are visible in \`requirements.md\` or \`spec.md\`.
-- Cover every requirement, scenario, acceptance criterion, or success criterion from \`spec.md\`/\`requirements.md\`; call out blocked or out-of-scope items instead of silently dropping them.
-- Keep each executable task small enough for one focused coding session.
-- Keep each \`title\` under 120 characters and each \`description\` under 700 characters.
-- Omit top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, and long analysis.
-- Put verification on each task using the smallest relevant command or manual check.
-- For large plans, keep one concise checklist Markdown file; do not split tasks.md into phase files.
-${buildRuntimeReadinessPromptRules()}
-
-${buildOpenSpecGradeTaskDecompositionGuidance()}
-
-${buildParallelExecutionPlanningGuidance()}
-
-${buildArchitectureGroundingGuidance()}
-
-${buildDocumentationAnalysisPlanningGuidance()}
-
-## Checklist Shape
-
-- Use Autocode Markdown checklist format with \`- [ ] 1. Phase title\` and \`- [ ] 1.1 Subtask title\`.
-- Each executable task needs precise file metadata, exactly one dependency line, \`_Requirements: ..._\`, one \`_Evidence: ..._\` line, a done signal, and verification.
-- Prefer targeted verification commands:
-${formatCommands([
-  ...profile.commands.typecheck,
-  ...profile.commands.lint,
-  ...profile.commands.test,
-  ...profile.commands.build,
-])}
-- Do not add research, rollout, or broad QA tasks unless the task risk warrants them.
-`;
+  return [
+    buildGeneratedHeader(profile, 'planner'),
+    '',
+    '## Role',
+    '',
+    'Create or repair one upstream `tasks.md`. The runtime derives `implementation_plan.md`; do not write it.',
+    '',
+    '## Output',
+    '',
+    'Use Write/Edit for `tasks.md` in the spec directory. Update `spec.md` or `requirements.md` only when missing, stale, or required by real Request Changes feedback.',
+    '',
+    buildToolCallJsonGuidance(),
+    '',
+    buildProjectConventionSection(profile),
+    '',
+    '## Process',
+    '',
+    '1. Use kickoff context first; read `spec.md`, `requirements.md`, or `context.md` only when needed for task details.',
+    '2. Inspect only directly relevant project files when spec evidence is insufficient.',
+    '3. Create concise checklist tasks from real dependency and project boundaries.',
+    '4. Leave unknowns as assumptions, blocked items, or validation tasks; do not guess.',
+    '',
+    '## Request Changes',
+    '',
+    '- Apply only when valid `HUMAN_INPUT.md` or non-empty `change_requests.jsonl` exists.',
+    '- Treat the latest entry as the same-task contract, not a new task.',
+    '- Edit existing checklist items in place when they still represent the work; add tasks only for new requirements or verification gaps.',
+    '- Never prefix task titles with revision, obsolete, retry, or history markers.',
+    '',
+    '## Task Rules',
+    '',
+    '- Cover every requirement, scenario, acceptance criterion, or success criterion from `spec.md`/`requirements.md`.',
+    '- Split only when it improves execution safety or reviewability.',
+    '- Keep each executable task small enough for one focused coding session.',
+    '- Every executable task needs precise file metadata, exactly one dependency line, `_Requirements: ..._`, one `_Evidence: ..._`, `_Done when: ..._`, and `_Verification: ..._`.',
+    '- Shared files are not dependency evidence; the runtime file-conflict scheduler queues overlapping writes.',
+    '- Add architecture metadata only for cross-boundary, migration, schema/compatibility, or high-risk work.',
+    '- Do not add research, rollout, cleanup, or broad QA tasks unless task risk requires them.',
+    '- Omit copied source, long rationale, top-level `summary`, `verification_strategy`, and `qa_acceptance`.',
+    buildRuntimeReadinessPromptRules(),
+    '',
+    '## Checklist Shape',
+    '',
+    '```markdown',
+    '- [ ] 1. Phase title',
+    '  - Purpose',
+    '',
+    '- [ ] 1.1 Action title',
+    '  - Implementation guidance',
+    '  - _Files to modify: path/to/file_',
+    '  - _Depends on: none_',
+    '  - _Requirements: R1_',
+    '  - _Evidence: spec.md R1; source pattern_',
+    '  - _Done when: behavior works and verification passes_',
+    '  - _Verification: targeted command or manual runtime check_',
+    '```',
+    '',
+    '## Project Commands',
+    '',
+    buildProjectCommands(profile),
+    '',
+    'Final response: task count, phase count, and blocking assumptions only.',
+  ].join('\n');
 }
-
 export function buildAutocodeCoderPrompt(profile: AutocodeProjectPromptProfile): string {
   return `${buildGeneratedHeader(profile, 'coder')}
 

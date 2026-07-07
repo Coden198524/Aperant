@@ -13,7 +13,13 @@ import type { RunnerOptions } from '../session/runner';
 import type { CustomMcpServer, TaskLogPhase, TaskWorkflowMode, TokenUsage } from '../../../shared/types';
 import type { ProjectType } from '../../../shared/types';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
-import type { AutocodeTaskRuntimeConcurrencyResolved } from '@autocode/core';
+import type {
+  AutocodeDirectProviderContinuationRuntime,
+  AutocodeDirectProviderFallbackRuntime,
+  AutocodeDirectProviderOptions,
+  AutocodeProviderModelInvocationRouteConfig,
+  AutocodeTaskRuntimeConcurrencyResolved,
+} from '@autocode/core';
 
 // =============================================================================
 // Worker Configuration
@@ -55,7 +61,7 @@ export interface SerializableSessionConfig {
   projectDocsReference?: string;
   /** Source project dir in main project (for worktree read/search access) */
   sourceProjectDir?: string;
-  /** Source spec dir in main project (for worktree → main sync during execution) */
+  /** Source spec dir in main project (for worktree to main sync during execution) */
   sourceSpecDir?: string;
   phase?: SessionConfig['phase'];
   modelShorthand?: SessionConfig['modelShorthand'];
@@ -64,6 +70,8 @@ export interface SerializableSessionConfig {
   subtaskId?: SessionConfig['subtaskId'];
   /** Provider identifier for model reconstruction */
   provider: string;
+  /** Provider transport identifier resolved from provider/model invocation routes. */
+  providerTransport?: string;
   /** Model ID for model reconstruction */
   modelId: string;
   /** API key or token for auth */
@@ -76,8 +84,18 @@ export interface SerializableSessionConfig {
   oauthTokenFilePath?: string;
   /** Persist OpenAI Responses API state across tool-call steps. Disable for one-shot sessions. */
   responsePersistence?: boolean;
-  /** Previous OpenAI Responses id for provider-native same-session continuation. */
+  /** Previous OpenAI Responses id for legacy provider-native same-session continuation. */
   previousResponseId?: SessionConfig['previousResponseId'];
+  /** Extra AI SDK provider options merged into streamText providerOptions. */
+  providerOptions?: AutocodeDirectProviderOptions;
+  /** Metadata paths used to extract a provider-native continuation id. */
+  providerResponseIdFields?: string[];
+  /** Generic provider-native Direct continuation runtime config. */
+  providerResponsePersistence?: AutocodeDirectProviderContinuationRuntime;
+  /** Generic provider fallback runtime config for provider transport degradation. */
+  providerFallback?: AutocodeDirectProviderFallbackRuntime;
+  /** Optional provider/model -> SDK invocation method routes for worker-side model reconstruction. */
+  providerModelInvocationRoutes?: AutocodeProviderModelInvocationRouteConfig | AutocodeProviderModelInvocationRouteConfig[];
   /** Direct mode continuation uses provider memory; avoid re-injecting bulky local context. */
   directProviderContinuation?: boolean;
   /** MCP options resolved from project settings (serialized for worker) */
@@ -130,7 +148,7 @@ export interface SerializableSessionConfig {
 }
 
 // =============================================================================
-// Worker Messages (worker → main)
+// Worker Messages (worker to main)
 // =============================================================================
 
 /** Discriminated union of all messages posted from worker to main thread */
@@ -198,7 +216,7 @@ export interface WorkerTaskEventMessage {
 }
 
 // =============================================================================
-// Main → Worker Messages
+// Main to Worker Messages
 // =============================================================================
 
 /** Messages sent from main thread to worker */

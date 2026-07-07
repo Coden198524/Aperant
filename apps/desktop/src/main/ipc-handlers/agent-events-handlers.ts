@@ -1,7 +1,7 @@
 ﻿import type { BrowserWindow } from "electron";
 import { ipcMain } from "electron";
 import path from "path";
-import { copyFileSync, existsSync, mkdirSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, statSync } from "fs";
 import { AUTOCODE_TASK_ARTIFACTS, loadAutocodeImplementationPlanSync } from "@autocode/core";
 import { IPC_CHANNELS, TASK_REFRESH_SENTINEL, getSpecsDir } from "../../shared/constants";
 import type {
@@ -39,6 +39,7 @@ import { taskStateManager } from "../task-state-manager";
 import {
   evaluateDirectCompletionFallback,
   readDirectRunResultFromSpecDirs,
+  selectLatestDirectFallbackPlan,
   type DirectCompletionFallbackDecision,
   type DirectFallbackPlan,
 } from "./direct-completion-fallback";
@@ -123,17 +124,36 @@ function loadLatestDirectFallbackPlan(
   specDirs: string[],
   fallbackPlan?: ImplementationPlan | null,
 ): (ImplementationPlan & DirectFallbackPlan) | null {
+  const candidates: Array<{
+    plan: (ImplementationPlan & DirectFallbackPlan) | null;
+    fileModifiedTimeMs?: number;
+  }> = [];
   for (const specDir of specDirs) {
     try {
       const parsed = loadAutocodeImplementationPlanSync(specDir) as (ImplementationPlan & DirectFallbackPlan) | null;
       if (parsed) {
-        return parsed;
+        candidates.push({
+          plan: parsed,
+          fileModifiedTimeMs: getFileModifiedTimeMs(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan)),
+        });
       }
     } catch {
       // Keep checking the remaining artifact locations.
     }
   }
-  return (fallbackPlan as (ImplementationPlan & DirectFallbackPlan) | null | undefined) ?? null;
+  if (fallbackPlan) {
+    candidates.push({ plan: fallbackPlan as ImplementationPlan & DirectFallbackPlan });
+  }
+  return selectLatestDirectFallbackPlan(candidates);
+}
+
+function getFileModifiedTimeMs(filePath: string): number | undefined {
+  try {
+    const timestamp = statSync(filePath).mtimeMs;
+    return Number.isFinite(timestamp) ? timestamp : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function evaluateDirectCompletionFallbackForTask(input: {
@@ -161,6 +181,19 @@ function evaluateDirectCompletionFallbackForTask(input: {
 function getDirectFallbackSubtaskId(plan: DirectFallbackPlan | null): string {
   const value = plan?.direct_execution?.current_subtask_id;
   return typeof value === 'string' && value.trim() ? value.trim() : 'direct-implementation';
+}
+
+function getDirectFallbackActionLabel(decision: DirectCompletionFallbackDecision): string {
+  if (decision.action === 'complete') {
+    return 'DIRECT_COMPLETED';
+  }
+  if (decision.action === 'fail') {
+    return 'CODING_FAILED';
+  }
+  if (decision.action === 'resume') {
+    return 'CODING_RESUMABLE';
+  }
+  return 'ignored';
 }
 
 function markDirectFallbackCompletionOnPlan(
@@ -224,6 +257,37 @@ function markDirectFallbackFailureOnPlan(
   return directSubtask;
 }
 
+function markDirectFallbackResumableOnPlan(
+  plan: ImplementationPlan,
+  decision: DirectCompletionFallbackDecision
+): DirectFallbackSubtaskState | undefined {
+  if (decision.action !== 'resume') {
+    return undefined;
+  }
+  plan.status = 'in_progress';
+  plan.planStatus = 'coding';
+  plan.reviewReason = undefined;
+  plan.xstateState = 'coding';
+  plan.executionPhase = 'coding';
+  const planRecord = plan as ImplementationPlan & DirectFallbackPlan;
+  const directExecution: NonNullable<DirectFallbackPlan['direct_execution']> = {
+    ...(planRecord.direct_execution ?? {}),
+    enabled: true,
+    outcome: decision.outcome,
+    summary_file: 'direct_summary.md',
+    ai_coding_quality: decision.quality,
+  };
+  delete directExecution.completed_at;
+  planRecord.direct_execution = directExecution;
+  const directSubtask: DirectFallbackSubtaskState = {
+    id: getDirectFallbackSubtaskId(planRecord),
+    status: 'in_progress',
+    timestamp: new Date().toISOString(),
+    summary: decision.message,
+  };
+  applyDirectFallbackSubtaskStateToPlan(plan as unknown as Record<string, unknown>, directSubtask);
+  return directSubtask;
+}
 function persistDirectFallbackPlanState(
   project: Project,
   task: Task,
@@ -395,7 +459,7 @@ export function registerAgenteventsHandlers(
               });
               console.warn(
                 `[agent-events-handlers] Task ${taskId} still in XState ${currentState} ` +
-                `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing ${decision.action === 'complete' ? 'DIRECT_COMPLETED' : 'CODING_FAILED'} (${decision.reason})`
+                `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing ${getDirectFallbackActionLabel(decision)} (${decision.reason})`
               );
               syncDirectCompletionArtifactsToMain(checkProject, checkTask);
               if (decision.action === 'complete') {
@@ -418,6 +482,11 @@ export function registerAgenteventsHandlers(
                 }, checkTask, checkProject);
                 if (plan) {
                   const directSubtask = markDirectFallbackFailureOnPlan(plan, decision);
+                  persistDirectFallbackPlanState(checkProject, checkTask, plan, directSubtask);
+                }
+              } else if (decision.action === 'resume') {
+                if (plan) {
+                  const directSubtask = markDirectFallbackResumableOnPlan(plan, decision);
                   persistDirectFallbackPlanState(checkProject, checkTask, plan, directSubtask);
                 }
               }
@@ -483,6 +552,7 @@ export function registerAgenteventsHandlers(
     }
 
     let cleanExitDirectFallbackFailed = false;
+    let cleanExitDirectFallbackResumable = false;
     if (
       code === 0 &&
       processType === 'task-execution' &&
@@ -520,6 +590,12 @@ export function registerAgenteventsHandlers(
         }, exitTask, exitProject);
         if (finalPlan) {
           const directSubtask = markDirectFallbackFailureOnPlan(finalPlan, decision);
+          persistDirectFallbackPlanState(exitProject, exitTask, finalPlan, directSubtask);
+        }
+      } else if (decision.action === 'resume') {
+        cleanExitDirectFallbackResumable = true;
+        if (finalPlan) {
+          const directSubtask = markDirectFallbackResumableOnPlan(finalPlan, decision);
           persistDirectFallbackPlanState(exitProject, exitTask, finalPlan, directSubtask);
         }
       }
@@ -643,9 +719,9 @@ export function registerAgenteventsHandlers(
     if (!task || !project) return;
 
     const taskTitle = task.title || task.specId;
-    if (code === 0 && !cleanExitDirectFallbackFailed) {
+    if (code === 0 && !cleanExitDirectFallbackFailed && !cleanExitDirectFallbackResumable) {
       notificationService.notifyReviewNeeded(taskTitle, project.id, taskId);
-    } else {
+    } else if (code !== 0 || cleanExitDirectFallbackFailed) {
       notificationService.notifyTaskFailed(taskTitle, project.id, taskId);
     }
   });

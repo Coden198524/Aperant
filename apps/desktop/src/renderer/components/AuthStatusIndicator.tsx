@@ -21,6 +21,8 @@ import { useActiveProvider } from '../hooks/useActiveProvider';
 import { formatTimeRemaining, localizeUsageWindowLabel, hasHardcodedText } from '../../shared/utils/format-time';
 import type { ClaudeUsageSnapshot } from '../../shared/types/agent';
 
+const AUTH_USAGE_STARTUP_REQUEST_DELAY_MS = 30000;
+
 const PROVIDER_BADGE_COLORS: Record<string, string> = {
   'anthropic': 'bg-orange-500/10 text-orange-500 border-orange-500/20 hover:bg-orange-500/15',
   'openai': 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 hover:bg-emerald-500/15',
@@ -53,9 +55,18 @@ const PROVIDER_I18N_KEYS: Record<string, string> = {
   'openai-compatible': 'common:usage.providerCustomEndpoint',
 };
 
+const accountHasUsageMonitoring = (account: { provider: string; authType?: string; apiKey?: string } | null): boolean => {
+  if (!account) return false;
+  if ((account.provider === 'anthropic' || account.provider === 'openai') && account.authType === 'oauth') return true;
+  if (account.provider === 'zai' && account.apiKey) return true;
+  return false;
+};
+
 export function AuthStatusIndicator() {
   const { providerAccounts, settings } = useSettingsStore();
   const { t } = useTranslation(['common']);
+  const { account: activeAccount } = useActiveProvider();
+  const hasUsageMonitoring = accountHasUsageMonitoring(activeAccount);
 
   // Track usage data for warning badge
   const [usage, setUsage] = useState<ClaudeUsageSnapshot | null>(null);
@@ -63,30 +74,39 @@ export function AuthStatusIndicator() {
 
   // Listen for usage updates
   useEffect(() => {
+    if (!hasUsageMonitoring) {
+      setUsage(null);
+      setIsLoadingUsage(false);
+      return;
+    }
+
+    setIsLoadingUsage(true);
+
     const unsubscribe = window.electronAPI.onUsageUpdated((snapshot: ClaudeUsageSnapshot) => {
       setUsage(snapshot);
       setIsLoadingUsage(false);
     });
 
-    // Request initial usage
-    window.electronAPI.requestUsageUpdate()
-      .then((result) => {
-        if (result.success && result.data) {
-          setUsage(result.data);
-        }
-      })
-      .catch((error) => {
-        console.warn('[AuthStatusIndicator] Failed to fetch usage:', error);
-      })
-      .finally(() => {
-        setIsLoadingUsage(false);
-      });
+    const startupUsageTimer = window.setTimeout(() => {
+      window.electronAPI.requestUsageUpdate()
+        .then((result) => {
+          if (result.success && result.data) {
+            setUsage(result.data);
+          }
+        })
+        .catch((error) => {
+          console.warn('[AuthStatusIndicator] Failed to fetch usage:', error);
+        })
+        .finally(() => {
+          setIsLoadingUsage(false);
+        });
+    }, AUTH_USAGE_STARTUP_REQUEST_DELAY_MS);
 
     return () => {
+      window.clearTimeout(startupUsageTimer);
       unsubscribe();
     };
-  }, []);
-
+  }, [hasUsageMonitoring, activeAccount?.id]);
   // Determine if usage warning badge should be shown
   const shouldShowUsageWarning = usage && !isLoadingUsage && (
     usage.sessionPercent >= 90 || usage.weeklyPercent >= 90
@@ -103,7 +123,6 @@ export function AuthStatusIndicator() {
       (hasHardcodedText(usage?.sessionResetTime) ? undefined : usage?.sessionResetTime))
     : (hasHardcodedText(usage?.sessionResetTime) ? undefined : usage?.sessionResetTime);
 
-  const { account: activeAccount } = useActiveProvider();
 
   const isCrossProviderMode = settings.customMixedProfileActive && !!settings.customMixedPhaseConfig;
   const crossProviderList = isCrossProviderMode

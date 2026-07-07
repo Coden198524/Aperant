@@ -1,4 +1,4 @@
-﻿import { EventEmitter } from 'events';
+import { EventEmitter } from 'events';
 import path from 'path';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { execFileSync, execSync } from 'child_process';
@@ -7,8 +7,13 @@ import {
   AUTOCODE_COMMON_BASE_BRANCHES,
   AUTOCODE_DEFAULT_BASE_BRANCH,
   AUTOCODE_TASK_ARTIFACTS,
+  DEFAULT_AUTOCODE_CLI,
   DEFAULT_PHASE_THINKING,
   buildAutocodeDefaultDirectTaskPrompt,
+  buildAutocodeDirectProviderContinuationRuntime,
+  buildAutocodeDirectProviderFallbackRuntime,
+  buildProviderModelCreationPlan,
+  detectProviderFromModel,
   buildAutocodeDefaultPlannerPrompt,
   buildAutocodeDefaultQAPrompt,
   buildAutocodeDefaultSpecPrompt,
@@ -25,24 +30,34 @@ import {
   inferAutocodePinnedProviderFromModel,
   isAutocodeCommonBaseBranch,
   resolveAutocodeDirectProviderContinuationCapability,
+  resolveAutocodeDirectProviderFallbackCapability,
   loadAutocodeImplementationPlanSync,
   loadAutocodeTaskRuntimeMetadataConfig,
   normalizeAutocodeBaseBranch,
   normalizeAutocodeRuntimePath,
+  parseAutocodeModelProviderRoutes,
+  parseAutocodeProviderModelInvocationRoutes,
   parseAutocodeCliRuntimeRoutes,
+  parseAutocodeDirectProviderContinuationCapabilities,
+  parseAutocodeDirectProviderFallbackCapabilities,
   parseAutocodeOriginHeadBranch,
-  resolveAutocodeCliRuntimeRoute,
+  resolveAutocodeCliRuntimeStartOptions,
   resolveAutocodeCrossProviderModelRequest,
   resolveAutocodeTaskPhaseModelId,
   resolveAutocodeTaskPhaseProvider,
   resolveAutocodeTaskRuntimeConcurrency,
   resolveAutocodeTaskWorkflowMode,
   resolveAutocodeDirectSessionState,
+  SupportedProvider as SupportedProviderValue,
   withAutocodeRuntimeFileWriteLockSync,
   type AutocodeCli,
+  type AutocodeModelProviderRoute,
+  type AutocodeProviderModelInvocationRouteConfig,
   type AutocodeCliRuntimeRoute,
   type AutocodeTaskRuntimeConcurrencyResolved,
   type AutocodeRuntimeWorkspaceMode,
+  type ResolvedAutocodeCliRuntimeStartOptions,
+  type SupportedProvider,
 } from '@autocode/core';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
@@ -61,7 +76,6 @@ import { resetStuckSubtasks } from '../ipc-handlers/task/plan-file-utils';
 import { projectStore } from '../project-store';
 import { resolveAuth, resolveAuthFromQueue } from '../ai/auth/resolver';
 import { resolveModelId } from '../ai/config/phase-config';
-import { detectProviderFromModel } from '../ai/providers/factory';
 import { resolveModelEquivalent } from '../../shared/constants/models';
 import { resolveSupportedLanguage } from '../../shared/constants/i18n';
 import type { BuiltinProvider } from '../../shared/types/provider-account';
@@ -75,8 +89,21 @@ import { tryLoadPrompt } from '../ai/prompts/prompt-loader';
 import { buildProviderQueueResolutionErrorMessage } from './provider-queue-errors';
 import { resolveProjectAgentProfile } from '../ai/config/project-agent-profile';
 
-export function inferPinnedProviderFromModel(model: string | undefined): BuiltinProvider | null {
-  return inferAutocodePinnedProviderFromModel(model) as BuiltinProvider | null;
+export function inferPinnedProviderFromModel(
+  model: string | undefined,
+  routes: readonly AutocodeModelProviderRoute[] = [],
+): string | null {
+  return inferAutocodePinnedProviderFromModel(model, routes);
+}
+
+function normalizeSupportedProvider(value: string | null | undefined): SupportedProvider | undefined {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  return (Object.values(SupportedProviderValue) as string[]).includes(normalized)
+    ? normalized as SupportedProvider
+    : undefined;
 }
 
 export const __agentManagerTestUtils = {
@@ -87,6 +114,17 @@ export const __agentManagerTestUtils = {
 const SPEC_INITIAL_TASK_DESCRIPTION_MAX_CHARS = 4_000;
 const SPEC_INITIAL_TASK_DESCRIPTION_TRUNCATION_MARKER =
   '\n\n...[task description middle omitted for initial session budget; worker can inspect task metadata if exact omitted detail is required]...\n\n';
+
+type DirectRuntimeRouteMetadata = object | null | undefined;
+
+function readDirectRuntimeRouteMetadataField(
+  metadata: DirectRuntimeRouteMetadata,
+  key: string,
+): unknown {
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>)[key]
+    : undefined;
+}
 
 function getScopedTaskExecutionKey(taskId: string, projectId?: string): string {
   return projectId ? `${projectId}::${taskId}` : taskId;
@@ -450,6 +488,9 @@ export class AgentManager extends EventEmitter {
     const settings = readSettingsFile();
     const accounts = (settings?.providerAccounts as ProviderAccount[] | undefined) ?? [];
     const priorityOrder = (settings?.globalPriorityOrder as string[] | undefined) ?? [];
+    const modelProviderRoutes = this.resolveConfiguredModelProviderRoutes(settings);
+    const inferredProvider = preferredProvider ?? detectProviderFromModel(requestedModel, modelProviderRoutes);
+    const requestedProvider = normalizeSupportedProvider(inferredProvider);
 
     if (accounts.length > 0) {
       // Sort by global priority order when present, while keeping accounts not in the
@@ -480,6 +521,8 @@ export class AgentManager extends EventEmitter {
 
       const resolved = await resolveAuthFromQueue(requestedModel, orderedQueue, {
         executionMode: 'agentic',
+        modelProviderRoutes,
+        ...(requestedProvider ? { requestedProvider } : {}),
       });
       if (resolved) {
         console.warn(`[AgentManager] Resolved auth from provider queue: account=${resolved.accountId} provider=${resolved.resolvedProvider} model=${resolved.resolvedModelId}`);
@@ -499,6 +542,7 @@ export class AgentManager extends EventEmitter {
         if (shorthandRequest !== requestedModel) {
           const fallbackResolved = await resolveAuthFromQueue(shorthandRequest, orderedQueue, {
             executionMode: 'agentic',
+            modelProviderRoutes,
           });
           if (fallbackResolved) {
             console.warn(`[AgentManager] Resolved auth from provider queue (compat retry): account=${fallbackResolved.accountId} provider=${fallbackResolved.resolvedProvider} model=${fallbackResolved.resolvedModelId}`);
@@ -517,6 +561,7 @@ export class AgentManager extends EventEmitter {
         // hard fallback to Anthropic when imported tasks carry legacy/full model IDs.
         const genericFallbackResolved = await resolveAuthFromQueue('sonnet', orderedQueue, {
           executionMode: 'agentic',
+          modelProviderRoutes,
         });
         if (genericFallbackResolved) {
           console.warn(`[AgentManager] Resolved auth from provider queue (generic retry): account=${genericFallbackResolved.accountId} provider=${genericFallbackResolved.resolvedProvider} model=${genericFallbackResolved.resolvedModelId}`);
@@ -528,11 +573,9 @@ export class AgentManager extends EventEmitter {
           };
         }
       }
-
-      const requestedProvider = preferredProvider ?? detectProviderFromModel(requestedModel);
       const errorMessage = buildProviderQueueResolutionErrorMessage(
         requestedModel,
-        requestedProvider,
+        preferredProvider ?? inferredProvider ?? requestedProvider,
         orderedQueue,
       );
       console.warn(`[AgentManager] ${errorMessage}`);
@@ -543,8 +586,11 @@ export class AgentManager extends EventEmitter {
     const profileManager = getClaudeProfileManager();
     const activeProfile = profileManager?.getActiveProfile();
     const configDir = activeProfile?.configDir;
-    const auth = await resolveAuth({ provider: 'anthropic', configDir });
-    const provider = detectProviderFromModel(requestedModel) ?? 'anthropic';
+    const provider = requestedProvider ?? 'anthropic';
+    const auth = await resolveAuth({
+      provider,
+      ...(provider === 'anthropic' && configDir ? { configDir } : {}),
+    });
     const modelId = provider === 'anthropic'
       ? resolveModelId(requestedModel)
       : requestedModel;
@@ -717,9 +763,14 @@ export class AgentManager extends EventEmitter {
       : (metadata?.model ?? 'sonnet');
 
     // Determine the preferred provider (from metadata or task_metadata.json)
+    const settings = readSettingsFile();
+    const modelProviderRoutes = this.resolveConfiguredModelProviderRoutes(
+      settings,
+      metadata as { modelProviderRoutes?: unknown } | undefined,
+    );
     const preferredProvider = (
       specDir ? this.resolveTaskPhaseProvider(specDir, 'spec') : null
-    ) ?? metadata?.phaseProviders?.spec ?? inferPinnedProviderFromModel(specModelShorthand) ?? (metadata?.provider as string | undefined) ?? null;
+    ) ?? metadata?.phaseProviders?.spec ?? inferPinnedProviderFromModel(specModelShorthand, modelProviderRoutes) ?? (metadata?.provider as string | undefined) ?? null;
 
     // Resolve the model requested by queue. Keep shorthand when no preferred provider
     // so the queue can map across providers (e.g. sonnet -> gpt-5.x).
@@ -758,7 +809,7 @@ export class AgentManager extends EventEmitter {
       this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
       return;
     }
-    const workflowMode = metadata?.workflowMode ?? 'conservative';
+    const workflowMode = metadata?.workflowMode ?? 'balanced';
 
     // Build the serializable session config for the worker
     const resolvedSpecDir = specDir ?? getAutocodeSpecDir({
@@ -767,8 +818,8 @@ export class AgentManager extends EventEmitter {
       specId: taskId,
     });
 
-    const cliRuntimeRoute = this.resolveCliRuntimeRoute(resolved);
-    if (cliRuntimeRoute) {
+    const cliRuntimeOptions = this.resolveCliRuntimeStartOptions(resolved, metadata);
+    if (cliRuntimeOptions) {
       await this.startCliRuntime({
         taskId,
         projectPath,
@@ -784,11 +835,7 @@ export class AgentManager extends EventEmitter {
         specDir: resolvedSpecDir,
         metadata,
         baseBranch,
-        cli: cliRuntimeRoute.cli,
-        customCommand: this.resolveCliRuntimeCustomCommand(cliRuntimeRoute, resolved),
-        directCliContinuationStrategy: cliRuntimeRoute.continuationStrategy,
-        routeId: cliRuntimeRoute.id,
-        routeDisplayName: cliRuntimeRoute.displayName,
+        ...this.toCliRuntimeStartInput(cliRuntimeOptions),
       });
       return;
     }
@@ -823,6 +870,7 @@ export class AgentManager extends EventEmitter {
       baseURL: resolved.auth?.baseURL,
       configDir: resolved.configDir,
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
+      providerModelInvocationRoutes: this.resolveConfiguredProviderModelInvocationRouteConfigs(settings, metadata as { providerModelInvocationRoutes?: unknown } | undefined),
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
       projectType: agentProfile.id,
@@ -989,9 +1037,10 @@ export class AgentManager extends EventEmitter {
 
     const effectiveCwd = worktreePath ?? projectPath;
     const effectiveProjectDir = worktreePath ?? projectPath;
+    const runtimeMetadata = loadAutocodeTaskRuntimeMetadataConfig(worktreeSpecDir);
 
-    const cliRuntimeRoute = this.resolveCliRuntimeRoute(resolved);
-    if (cliRuntimeRoute) {
+    const cliRuntimeOptions = this.resolveCliRuntimeStartOptions(resolved, runtimeMetadata);
+    if (cliRuntimeOptions) {
       await this.startCliRuntime({
         taskId,
         projectPath,
@@ -1003,11 +1052,7 @@ export class AgentManager extends EventEmitter {
         processType: 'task-execution',
         projectId,
         specDir: worktreeSpecDir,
-        cli: cliRuntimeRoute.cli,
-        customCommand: this.resolveCliRuntimeCustomCommand(cliRuntimeRoute, resolved),
-        directCliContinuationStrategy: cliRuntimeRoute.continuationStrategy,
-        routeId: cliRuntimeRoute.id,
-        routeDisplayName: cliRuntimeRoute.displayName,
+        ...this.toCliRuntimeStartInput(cliRuntimeOptions),
       });
       return;
     }
@@ -1022,6 +1067,11 @@ export class AgentManager extends EventEmitter {
       language,
       forcePlanning: options.forcePlanning === true,
     });
+
+    const providerModelInvocationRoutes = this.resolveConfiguredProviderModelInvocationRouteConfigs(
+      readSettingsFile(),
+      runtimeMetadata,
+    );
 
     // Build the serializable session config for the worker
     const sessionConfig: SerializableSessionConfig = {
@@ -1042,6 +1092,7 @@ export class AgentManager extends EventEmitter {
       baseURL: resolved.auth?.baseURL,
       configDir: resolved.configDir,
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
+      providerModelInvocationRoutes,
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
       forcePlanning: options.forcePlanning === true,
@@ -1104,11 +1155,6 @@ export class AgentManager extends EventEmitter {
       this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
       return;
     }
-    if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount()) {
-      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
-      return;
-    }
-
     const project = projectStore.getProjects().find((p) => p.id === projectId || p.path === projectPath);
     const specDir = getAutocodeSpecDir({
       projectRoot: projectPath,
@@ -1125,18 +1171,44 @@ export class AgentManager extends EventEmitter {
       specId,
       projectRoot: projectPath,
     });
+    const initialRuntimeMetadata = loadAutocodeTaskRuntimeMetadataConfig(specDir);
+    const routeOnlyProvider = preferredProvider
+      ?? inferPinnedProviderFromModel(
+        modelId,
+        this.resolveConfiguredModelProviderRoutes(readSettingsFile(), initialRuntimeMetadata),
+      )
+      ?? '';
+    const routeOnlyCliRuntimeOptions = this.resolveCliRuntimeStartOptions({
+      provider: routeOnlyProvider,
+      modelId,
+      auth: null,
+    }, initialRuntimeMetadata);
+    const canStartRouteOnlyDirectCli = Boolean(routeOnlyCliRuntimeOptions);
 
-    let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
-    try {
-      resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
-      this.emit('error', taskId, message, projectId);
+    if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount() && !canStartRouteOnlyDirectCli) {
+      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
       return;
     }
-    if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
-      this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
-      return;
+
+    let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
+    if (canStartRouteOnlyDirectCli) {
+      resolved = {
+        auth: null,
+        provider: routeOnlyProvider,
+        modelId,
+      };
+    } else {
+      try {
+        resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
+        this.emit('error', taskId, message, projectId);
+        return;
+      }
+      if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
+        this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
+        return;
+      }
     }
 
     let worktreePath: string | null = null;
@@ -1196,20 +1268,10 @@ export class AgentManager extends EventEmitter {
     const effectiveProjectDir = worktreePath ?? projectPath;
     const directSubtaskId = resolveDirectRuntimeSubtaskId(worktreeSpecDir, options.directSubtaskId);
     const directSessionState = resolveAutocodeDirectSessionState(worktreeSpecDir, specDir);
-    const providerContinuationCapability = resolveAutocodeDirectProviderContinuationCapability({
-      provider: resolved.provider,
-      modelId: resolved.modelId,
-    });
-    const supportsProviderContinuation = Boolean(providerContinuationCapability);
-    const useProviderContinuation = supportsProviderContinuation && Boolean(directSessionState?.providerResponseId);
-    const directContinuationMode = directSessionState
-      ? useProviderContinuation
-        ? providerContinuationCapability?.mode ?? 'provider'
-        : 'summary'
-      : undefined;
+    const runtimeMetadata = loadAutocodeTaskRuntimeMetadataConfig(worktreeSpecDir);
 
-    const cliRuntimeRoute = this.resolveCliRuntimeRoute(resolved);
-    if (cliRuntimeRoute) {
+    const cliRuntimeOptions = this.resolveCliRuntimeStartOptions(resolved, runtimeMetadata) ?? routeOnlyCliRuntimeOptions;
+    if (cliRuntimeOptions) {
       await this.startCliRuntime({
         taskId,
         projectPath,
@@ -1222,14 +1284,45 @@ export class AgentManager extends EventEmitter {
         projectId,
         direct: true,
         specDir: worktreeSpecDir,
-        cli: cliRuntimeRoute.cli,
-        customCommand: this.resolveCliRuntimeCustomCommand(cliRuntimeRoute, resolved),
-        directCliContinuationStrategy: cliRuntimeRoute.continuationStrategy,
-        routeId: cliRuntimeRoute.id,
-        routeDisplayName: cliRuntimeRoute.displayName,
+        ...this.toCliRuntimeStartInput(cliRuntimeOptions),
       });
       return;
     }
+
+    const providerModelInvocationRoutes = this.resolveConfiguredProviderModelInvocationRouteConfigs(
+      readSettingsFile(),
+      runtimeMetadata,
+    );
+    const directProviderTransport = this.resolveDirectProviderTransport(resolved, providerModelInvocationRoutes);
+    const providerContinuationCapability = resolveAutocodeDirectProviderContinuationCapability({
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+      transport: directProviderTransport,
+      capabilities: this.resolveConfiguredDirectProviderContinuationCapabilities(readSettingsFile(), runtimeMetadata),
+    });
+    const providerResponsePersistence = providerContinuationCapability
+      ? buildAutocodeDirectProviderContinuationRuntime({
+          capability: providerContinuationCapability,
+          providerResponseId: directSessionState?.providerResponseId,
+        })
+      : undefined;
+    const providerFallbackCapability = resolveAutocodeDirectProviderFallbackCapability({
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+      transport: directProviderTransport,
+      capabilities: this.resolveConfiguredDirectProviderFallbackCapabilities(readSettingsFile(), runtimeMetadata),
+    });
+    const providerFallback = providerFallbackCapability
+      ? buildAutocodeDirectProviderFallbackRuntime({ capability: providerFallbackCapability })
+      : undefined;
+    const supportsProviderContinuation = Boolean(providerResponsePersistence);
+    const useProviderContinuation = Boolean(providerResponsePersistence?.providerResponseId);
+    const directContinuationMode = directSessionState
+      ? useProviderContinuation
+        ? providerResponsePersistence?.mode ?? 'provider'
+        : 'summary'
+      : undefined;
+
 
     const language = this.resolveAppLanguage();
     const initialMessages = buildAutocodeDirectTaskExecutionMessages({
@@ -1263,7 +1356,11 @@ export class AgentManager extends EventEmitter {
       configDir: resolved.configDir,
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
       responsePersistence: supportsProviderContinuation,
-      previousResponseId: useProviderContinuation ? directSessionState?.providerResponseId : undefined,
+      providerResponseIdFields: providerResponsePersistence?.providerResponseIdFields,
+      providerResponsePersistence,
+      providerFallback,
+      providerModelInvocationRoutes,
+      providerTransport: directProviderTransport,
       directProviderContinuation: useProviderContinuation,
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode: 'off',
@@ -1379,6 +1476,11 @@ export class AgentManager extends EventEmitter {
       dataDirName: project?.autoBuildPath,
     });
 
+    const providerModelInvocationRoutes = this.resolveConfiguredProviderModelInvocationRouteConfigs(
+      readSettingsFile(),
+      loadAutocodeTaskRuntimeMetadataConfig(effectiveSpecDir),
+    );
+
     // Build the serializable session config for the worker
     const sessionConfig: SerializableSessionConfig = {
       agentType: qaReviewAgentType,
@@ -1395,6 +1497,7 @@ export class AgentManager extends EventEmitter {
       baseURL: resolved.auth?.baseURL,
       configDir: resolved.configDir,
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
+      providerModelInvocationRoutes,
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
       projectType: agentProfile.id,
@@ -1762,15 +1865,18 @@ export class AgentManager extends EventEmitter {
    * @param phase - The execution phase ('planning', 'coding', 'qa', 'spec')
    */
   private async resolveTaskModelId(specDir: string, phase: 'planning' | 'coding' | 'qa' | 'spec'): Promise<string> {
+    const metadata = loadAutocodeTaskRuntimeMetadataConfig(specDir);
+    const settings = readSettingsFile();
+    const modelProviderRoutes = this.resolveConfiguredModelProviderRoutes(settings, metadata);
     return resolveAutocodeTaskPhaseModelId({
-      metadata: loadAutocodeTaskRuntimeMetadataConfig(specDir),
+      metadata,
       phase,
       resolveModelId,
-      inferPinnedProvider: inferPinnedProviderFromModel,
+      inferPinnedProvider: (model) => inferPinnedProviderFromModel(model, modelProviderRoutes),
+      modelProviderRoutes,
       resolveModelEquivalent: (modelValue, targetProvider) =>
         resolveModelEquivalent(modelValue, targetProvider as BuiltinProvider),
       providerPhaseModelResolver: (targetProvider) => {
-        const settings = readSettingsFile();
         return (settings?.providerAgentConfig as Record<string, Record<string, unknown>> | undefined)
           ?.[targetProvider]
           ?.customPhaseModels as Record<string, string> | undefined;
@@ -1783,10 +1889,11 @@ export class AgentManager extends EventEmitter {
    * Returns null if no per-phase provider is specified (use default queue).
    */
   private resolveTaskPhaseProvider(specDir: string, phase: 'planning' | 'coding' | 'qa' | 'spec'): string | null {
+    const metadata = loadAutocodeTaskRuntimeMetadataConfig(specDir);
     return resolveAutocodeTaskPhaseProvider(
-      loadAutocodeTaskRuntimeMetadataConfig(specDir),
+      metadata,
       phase,
-      { inferPinnedProvider: inferPinnedProviderFromModel },
+      { modelProviderRoutes: this.resolveConfiguredModelProviderRoutes(readSettingsFile(), metadata) },
     );
   }
 
@@ -1825,41 +1932,193 @@ export class AgentManager extends EventEmitter {
     return provider !== 'ollama';
   }
 
-  private resolveCliRuntimeRoute(resolved: {
+  private resolveDirectProviderTransport(resolved: {
     provider: string;
     modelId: string;
-    auth: { source?: string; oauthTokenFilePath?: string } | null;
-  }): AutocodeCliRuntimeRoute | null {
-    return resolveAutocodeCliRuntimeRoute({
-      provider: resolved.provider,
-      modelId: resolved.modelId,
-      authSource: resolved.auth?.source,
-      routes: this.resolveConfiguredCliRuntimeRoutes(readSettingsFile()),
-    });
-  }
-
-  private resolveCliRuntimeCustomCommand(route: AutocodeCliRuntimeRoute, resolved: {
-    provider: string;
-    modelId: string;
-    auth: { source?: string; oauthTokenFilePath?: string } | null;
-  }): string | undefined {
-    const command = route.customCommand?.trim();
-    if (!command) {
+    auth: { apiKey?: string; baseURL?: string; oauthTokenFilePath?: string } | null;
+  }, providerModelInvocationRoutes: AutocodeProviderModelInvocationRouteConfig[] = []): string | undefined {
+    const provider = resolved.provider.trim();
+    if (!provider) {
       return undefined;
     }
 
-    const replacements: Record<string, string> = {
+    try {
+      const plan = buildProviderModelCreationPlan({
+        provider: provider as SupportedProvider,
+        apiKey: resolved.auth?.apiKey,
+        baseURL: resolved.auth?.baseURL,
+        oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
+      }, resolved.modelId, {
+        invocationRoutes: parseAutocodeProviderModelInvocationRoutes(providerModelInvocationRoutes),
+      });
+      return `${provider}.${plan.invocation.method}`;
+    } catch {
+      return provider;
+    }
+  }
+
+  private resolveCliRuntimeStartOptions(resolved: {
+    provider: string;
+    modelId: string;
+    auth: { source?: string; oauthTokenFilePath?: string } | null;
+  }, metadata?: DirectRuntimeRouteMetadata): ResolvedAutocodeCliRuntimeStartOptions | null {
+    const options = resolveAutocodeCliRuntimeStartOptions({
+      cli: DEFAULT_AUTOCODE_CLI,
       provider: resolved.provider,
-      model: resolved.modelId,
       modelId: resolved.modelId,
-      authSource: resolved.auth?.source ?? '',
+      authSource: resolved.auth?.source,
+      routes: this.resolveConfiguredCliRuntimeRoutes(readSettingsFile(), metadata),
+    });
+    return options.route ? options : null;
+  }
+
+  private toCliRuntimeStartInput(options: ResolvedAutocodeCliRuntimeStartOptions): {
+    cli: AutocodeCli;
+    customCommand?: string;
+    directCliContinuationStrategy?: AutocodeCliRuntimeRoute['continuationStrategy'];
+    directCliJsonEventParser?: AutocodeCliRuntimeRoute['jsonEventParser'];
+    directCliRuntimeRouteId?: string;
+    directCliRuntimeRouteDisplayName?: string;
+    directCliPermissionBypassArgs?: AutocodeCliRuntimeRoute['permissionBypassArgs'];
+    directCliTaskRunStrategy?: AutocodeCliRuntimeRoute['taskRunStrategy'];
+    directCliPreflightActions?: AutocodeCliRuntimeRoute['preflightActions'];
+    routeId: string;
+    routeDisplayName?: string;
+  } {
+    return {
+      cli: options.cli,
+      customCommand: options.customCommand,
+      directCliContinuationStrategy: options.directCliContinuationStrategy,
+      directCliJsonEventParser: options.directCliJsonEventParser,
+      directCliRuntimeRouteId: options.directCliRuntimeRouteId,
+      directCliRuntimeRouteDisplayName: options.directCliRuntimeRouteDisplayName,
+      directCliPermissionBypassArgs: options.directCliPermissionBypassArgs,
+      directCliTaskRunStrategy: options.directCliTaskRunStrategy,
+      directCliPreflightActions: options.directCliPreflightActions,
+      routeId: options.directCliRuntimeRouteId ?? options.route?.id ?? options.cli,
+      routeDisplayName: options.directCliRuntimeRouteDisplayName ?? options.route?.displayName,
     };
-    return command.replace(/\$\{(provider|model|modelId|authSource)\}|\{(provider|model|modelId|authSource)\}/g, (_match, shellKey: string | undefined, braceKey: string | undefined) =>
-      replacements[shellKey ?? braceKey ?? ''] ?? '',
+  }
+
+  private resolveConfiguredModelProviderRoutes(
+    settings?: Record<string, unknown>,
+    metadata?: { modelProviderRoutes?: unknown } | null,
+  ): AutocodeModelProviderRoute[] {
+    return [
+      ...parseAutocodeModelProviderRoutes(metadata?.modelProviderRoutes),
+      ...parseAutocodeModelProviderRoutes(settings?.autocodeModelProviderRoutes),
+      ...this.readEnvModelProviderRoutes(),
+    ];
+  }
+
+  private readEnvModelProviderRoutes(): AutocodeModelProviderRoute[] {
+    const raw = process.env.AUTOCODE_MODEL_PROVIDER_ROUTES_JSON ?? process.env.AUTOCODE_MODEL_PROVIDER_ROUTES;
+    if (!raw?.trim()) {
+      return [];
+    }
+
+    try {
+      return parseAutocodeModelProviderRoutes(JSON.parse(raw));
+    } catch (error) {
+      console.warn('[AgentManager] Ignoring invalid AUTOCODE_MODEL_PROVIDER_ROUTES JSON:', error);
+      return [];
+    }
+  }
+
+  private resolveConfiguredProviderModelInvocationRouteConfigs(
+    settings?: Record<string, unknown>,
+    metadata?: { providerModelInvocationRoutes?: unknown } | null,
+  ): AutocodeProviderModelInvocationRouteConfig[] {
+    return [
+      ...this.readProviderModelInvocationRouteConfigs(metadata?.providerModelInvocationRoutes),
+      ...this.readProviderModelInvocationRouteConfigs(settings?.autocodeProviderModelInvocationRoutes),
+      ...this.readEnvProviderModelInvocationRouteConfigs(),
+    ];
+  }
+
+  private readEnvProviderModelInvocationRouteConfigs(): AutocodeProviderModelInvocationRouteConfig[] {
+    const raw = process.env.AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES_JSON ??
+      process.env.AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES;
+    if (!raw?.trim()) {
+      return [];
+    }
+
+    try {
+      return this.readProviderModelInvocationRouteConfigs(JSON.parse(raw));
+    } catch (error) {
+      console.warn('[AgentManager] Ignoring invalid AUTOCODE_PROVIDER_MODEL_INVOCATION_ROUTES JSON:', error);
+      return [];
+    }
+  }
+
+  private readProviderModelInvocationRouteConfigs(value: unknown): AutocodeProviderModelInvocationRouteConfig[] {
+    const items = Array.isArray(value) ? value : value ? [value] : [];
+    return items.filter((item): item is AutocodeProviderModelInvocationRouteConfig =>
+      Boolean(item && typeof item === 'object' && !Array.isArray(item)),
     );
   }
-  private resolveConfiguredCliRuntimeRoutes(settings?: Record<string, unknown>): AutocodeCliRuntimeRoute[] {
+
+  private resolveConfiguredDirectProviderContinuationCapabilities(
+    settings?: Record<string, unknown>,
+    metadata?: DirectRuntimeRouteMetadata,
+  ) {
     return [
+      ...parseAutocodeDirectProviderContinuationCapabilities(readDirectRuntimeRouteMetadataField(metadata, 'directProviderContinuationCapabilities')),
+      ...parseAutocodeDirectProviderContinuationCapabilities(readDirectRuntimeRouteMetadataField(metadata, 'autocodeDirectProviderContinuationCapabilities')),
+      ...parseAutocodeDirectProviderContinuationCapabilities(settings?.autocodeDirectProviderContinuationCapabilities),
+      ...this.readEnvDirectProviderContinuationCapabilities(),
+    ];
+  }
+
+  private readEnvDirectProviderContinuationCapabilities() {
+    const raw = process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES_JSON ??
+      process.env.AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES;
+    if (!raw?.trim()) {
+      return [];
+    }
+
+    try {
+      return parseAutocodeDirectProviderContinuationCapabilities(JSON.parse(raw));
+    } catch (error) {
+      console.warn('[AgentManager] Ignoring invalid AUTOCODE_DIRECT_PROVIDER_CONTINUATION_CAPABILITIES JSON:', error);
+      return [];
+    }
+  }
+
+  private resolveConfiguredDirectProviderFallbackCapabilities(
+    settings?: Record<string, unknown>,
+    metadata?: DirectRuntimeRouteMetadata,
+  ) {
+    return [
+      ...parseAutocodeDirectProviderFallbackCapabilities(readDirectRuntimeRouteMetadataField(metadata, 'directProviderFallbackCapabilities')),
+      ...parseAutocodeDirectProviderFallbackCapabilities(readDirectRuntimeRouteMetadataField(metadata, 'autocodeDirectProviderFallbackCapabilities')),
+      ...parseAutocodeDirectProviderFallbackCapabilities(settings?.autocodeDirectProviderFallbackCapabilities),
+      ...this.readEnvDirectProviderFallbackCapabilities(),
+    ];
+  }
+
+  private readEnvDirectProviderFallbackCapabilities() {
+    const raw = process.env.AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES_JSON ??
+      process.env.AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES;
+    if (!raw?.trim()) {
+      return [];
+    }
+
+    try {
+      return parseAutocodeDirectProviderFallbackCapabilities(JSON.parse(raw));
+    } catch (error) {
+      console.warn('[AgentManager] Ignoring invalid AUTOCODE_DIRECT_PROVIDER_FALLBACK_CAPABILITIES JSON:', error);
+      return [];
+    }
+  }
+
+  private resolveConfiguredCliRuntimeRoutes(
+    settings?: Record<string, unknown>,
+    metadata?: DirectRuntimeRouteMetadata,
+  ): AutocodeCliRuntimeRoute[] {
+    return [
+      ...parseAutocodeCliRuntimeRoutes(readDirectRuntimeRouteMetadataField(metadata, 'cliRuntimeRoutes')),
+      ...parseAutocodeCliRuntimeRoutes(readDirectRuntimeRouteMetadataField(metadata, 'autocodeCliRuntimeRoutes')),
       ...parseAutocodeCliRuntimeRoutes(settings?.autocodeCliRuntimeRoutes),
       ...this.readEnvCliRuntimeRoutes(),
     ];
@@ -1898,6 +2157,12 @@ export class AgentManager extends EventEmitter {
     cli: AutocodeCli;
     customCommand?: string;
     directCliContinuationStrategy?: AutocodeCliRuntimeRoute['continuationStrategy'];
+    directCliJsonEventParser?: AutocodeCliRuntimeRoute['jsonEventParser'];
+    directCliRuntimeRouteId?: string;
+    directCliRuntimeRouteDisplayName?: string;
+    directCliPermissionBypassArgs?: AutocodeCliRuntimeRoute['permissionBypassArgs'];
+    directCliTaskRunStrategy?: AutocodeCliRuntimeRoute['taskRunStrategy'];
+    directCliPreflightActions?: AutocodeCliRuntimeRoute['preflightActions'];
     routeId: string;
     routeDisplayName?: string;
   }): Promise<void> {
@@ -1915,6 +2180,12 @@ export class AgentManager extends EventEmitter {
       cli: input.cli,
       customCommand: input.customCommand,
       directCliContinuationStrategy: input.directCliContinuationStrategy,
+      directCliJsonEventParser: input.directCliJsonEventParser,
+      directCliRuntimeRouteId: input.directCliRuntimeRouteId,
+      directCliRuntimeRouteDisplayName: input.directCliRuntimeRouteDisplayName,
+      directCliPermissionBypassArgs: input.directCliPermissionBypassArgs,
+      directCliTaskRunStrategy: input.directCliTaskRunStrategy,
+      directCliPreflightActions: input.directCliPreflightActions,
       model: input.modelId,
       bypassPermissions: settings?.dangerouslySkipPermissions === true,
       language: this.resolveAppLanguage(),

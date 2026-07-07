@@ -6,6 +6,7 @@ import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
+import { DEFAULT_CLI, getBuiltinCliOptionLabels, getConfiguredCliOptionLabels } from '../../lib/cli-display';
 import { SettingsSection } from './SettingsSection';
 import type { AppSettings, SupportedIDE, SupportedTerminal, SupportedCLI } from '../../../shared/types';
 
@@ -49,16 +50,6 @@ const IDE_NAMES: Partial<Record<SupportedIDE, string>> = {
   windsurf: 'Windsurf',
   xcode: 'Xcode',
   zed: 'Zed'
-};
-
-// CLI display names
-const CLI_NAMES: Partial<Record<SupportedCLI, string>> = {
-  'claude-code': 'Claude Code',
-  gemini: 'Gemini CLI',
-  opencode: 'OpenCode',
-  kilocode: 'Kilo Code CLI',
-  codex: 'Codex CLI',
-  deepseek: 'DeepSeek'
 };
 
 // Terminal display names - alphabetically sorted
@@ -188,7 +179,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
     if (id !== 'custom' && !detectedIDEIds.has(id)) {
       ideOptions.push({
         value: id as SupportedIDE,
-        label: name,
+        label: name ?? id,
         detected: false
       });
     }
@@ -227,7 +218,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
     if (id !== 'custom' && !detectedTerminalIds.has(id)) {
       terminalOptions.push({
         value: id as SupportedTerminal,
-        label: name,
+        label: name ?? id,
         detected: false
       });
     }
@@ -249,15 +240,29 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
     }
   }
 
-  const detectedCLIIds = new Set(detectedTools?.clis?.map(t => t.id) || []);
-  for (const [id, name] of Object.entries(CLI_NAMES)) {
-    if (id !== 'custom' && !detectedCLIIds.has(id)) {
+  const cliOptionIds = new Set<string>(cliOptions.map(option => option.value));
+  for (const option of getBuiltinCliOptionLabels()) {
+    if (!cliOptionIds.has(option.value)) {
       cliOptions.push({
-        value: id as SupportedCLI,
-        label: name,
+        value: option.value,
+        label: option.label,
         detected: false
       });
+      cliOptionIds.add(option.value);
     }
+  }
+
+  for (const option of getConfiguredCliOptionLabels(settings.autocodeCliRuntimeRoutes)) {
+    if (!cliOptionIds.has(option.value)) {
+      cliOptions.push({ value: option.value, label: option.label, detected: false });
+      cliOptionIds.add(option.value);
+    }
+  }
+
+  const selectedCLI = settings.preferredCLI || DEFAULT_CLI;
+  if (selectedCLI !== 'custom' && !cliOptionIds.has(selectedCLI)) {
+    cliOptions.push({ value: selectedCLI, label: selectedCLI, detected: false });
+    cliOptionIds.add(selectedCLI);
   }
 
   cliOptions.push({ value: 'custom', label: t('devtools.custom'), detected: false });
@@ -422,7 +427,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
             {t('devtools.cli.label', 'Preferred CLI')}
           </Label>
           <Select
-            value={settings.preferredCLI || 'claude-code'}
+            value={settings.preferredCLI || DEFAULT_CLI}
             onValueChange={(value) => handleCLIChange(value as SupportedCLI)}
           >
             <SelectTrigger id="preferred-cli">

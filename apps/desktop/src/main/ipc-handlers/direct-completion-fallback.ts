@@ -3,6 +3,7 @@ import path from 'path';
 import {
   AUTOCODE_TASK_ARTIFACTS,
   getAutocodeDirectQualityGateFailureReason,
+  shouldRequireAutocodeDirectValidation,
   type AutocodeDirectCodingQualityMetrics,
 } from '@autocode/core';
 
@@ -47,6 +48,8 @@ export type DirectFallbackPlan = {
   documentation_profile?: unknown;
   documentation_focus?: unknown;
   project_documentation?: unknown;
+  updated_at?: unknown;
+  created_at?: unknown;
   direct_execution?: DirectExecutionRecord;
   phases?: Array<{
     type?: unknown;
@@ -69,11 +72,23 @@ type DirectRunResultCandidate = {
   sortTimeMs?: number;
 };
 
+export type DirectFallbackPlanCandidate<TPlan extends DirectFallbackPlan = DirectFallbackPlan> = {
+  plan: TPlan | null;
+  fileModifiedTimeMs?: number;
+};
+
 export type DirectCompletionFallbackDecision =
   | {
       action: 'complete';
       reason: string;
       filesChanged: number;
+      quality: Record<string, unknown>;
+    }
+  | {
+      action: 'resume';
+      reason: string;
+      outcome: string;
+      message: string;
       quality: Record<string, unknown>;
     }
   | {
@@ -88,18 +103,25 @@ export type DirectCompletionFallbackDecision =
     };
 
 const SUCCESSFUL_DIRECT_OUTCOMES = new Set(['completed', 'success', 'done']);
+const RESUMABLE_DIRECT_OUTCOMES = new Set(['rate_limited', 'context_window', 'max_steps']);
 const FAILED_DIRECT_OUTCOMES = new Set([
   'error',
   'failed',
   'failure',
-  'rate_limited',
-  'context_window',
-  'max_steps',
   'timeout',
   'cancelled',
   'canceled',
+  'auth_failure',
   'auth_failed',
 ]);
+
+function isSuccessfulDirectRunResult(status: string, exitCode: number | undefined): boolean {
+  return exitCode === 0 && SUCCESSFUL_DIRECT_OUTCOMES.has(status);
+}
+
+function isResumableDirectRunResult(status: string, exitCode: number | undefined): boolean {
+  return RESUMABLE_DIRECT_OUTCOMES.has(status) && (exitCode === 0 || exitCode === undefined);
+}
 
 export function readDirectRunResultFromSpecDirs(specDirs: string[]): DirectRunResultFile | null {
   const candidates: DirectRunResultCandidate[] = [];
@@ -142,6 +164,43 @@ export function readDirectRunResultFromSpecDirs(specDirs: string[]): DirectRunRe
     return best;
   }, null)?.result ?? null;
 }
+
+export function selectLatestDirectFallbackPlan<TPlan extends DirectFallbackPlan>(
+  candidates: Array<DirectFallbackPlanCandidate<TPlan>>,
+): TPlan | null {
+  return candidates.reduce<{ plan: TPlan; sortTimeMs?: number } | null>((best, candidate) => {
+    if (!candidate.plan) {
+      return best;
+    }
+    const scored = {
+      plan: candidate.plan,
+      sortTimeMs: getDirectPlanCandidateSortTimeMs(candidate.plan, candidate.fileModifiedTimeMs),
+    };
+    if (!best) {
+      return scored;
+    }
+    if (scored.sortTimeMs === undefined) {
+      return best;
+    }
+    if (best.sortTimeMs === undefined || scored.sortTimeMs > best.sortTimeMs) {
+      return scored;
+    }
+    return best;
+  }, null)?.plan ?? null;
+}
+
+function getDirectPlanCandidateSortTimeMs(
+  plan: DirectFallbackPlan,
+  fileModifiedTimeMs: number | undefined,
+): number | undefined {
+  const planTimes = [
+    timestampMs(stringValue(plan.updated_at)),
+    timestampMs(stringValue(plan.direct_execution?.completed_at)),
+    getCurrentDirectIterationStartedAtMs(plan),
+    timestampMs(stringValue(plan.created_at)),
+  ].filter((value): value is number => value !== undefined);
+  return planTimes.length > 0 ? Math.max(...planTimes) : fileModifiedTimeMs;
+}
 export function evaluateDirectCompletionFallback(input: {
   exitCode: number | null;
   plan?: DirectFallbackPlan | null;
@@ -159,6 +218,7 @@ export function evaluateDirectCompletionFallback(input: {
   const runResultIsDirect = normalizedString(runResult?.phase) === 'direct';
   const runResultStatus = normalizedString(runResult?.status);
   const runResultExitCode = numberValue(runResult?.exitCode);
+  const runResultSucceeded = isSuccessfulDirectRunResult(runResultStatus, runResultExitCode);
   const iterationStartedAtMs = getCurrentDirectIterationStartedAtMs(plan);
   const runResultUpdatedAtMs = runResultIsDirect ? timestampMs(stringValue(runResult?.updatedAt)) : undefined;
   const runResultIsStale = runResultIsDirect &&
@@ -167,7 +227,7 @@ export function evaluateDirectCompletionFallback(input: {
     runResultUpdatedAtMs < iterationStartedAtMs;
   const durableSuccessOptional = isNonImplementationDirectTask(plan, input.taskMetadata);
 
-  if (runResultIsDirect && !runResultIsStale && runResultStatus === 'success' && runResultExitCode === 0) {
+  if (runResultIsDirect && !runResultIsStale && runResultSucceeded) {
     if (iterationStartedAtMs === undefined || runResultUpdatedAtMs !== undefined) {
       const qualityFailure = getDirectFallbackQualityGateFailureReason(plan, runResult, !durableSuccessOptional);
       if (qualityFailure) {
@@ -196,6 +256,16 @@ export function evaluateDirectCompletionFallback(input: {
   }
 
   if (runResultIsDirect && !runResultIsStale) {
+    if (isResumableDirectRunResult(runResultStatus, runResultExitCode)) {
+      return resumeDecision(
+        input.fallback,
+        'resumable-run-result',
+        runResultStatus,
+        stringValue(runResult?.message) || `Direct run result is resumable after ${runResultStatus}.`,
+        plan,
+        runResult,
+      );
+    }
     return failDecision(
       input.fallback,
       'direct-run-result-not-successful',
@@ -234,6 +304,17 @@ export function evaluateDirectCompletionFallback(input: {
     );
   }
 
+  if (directOutcome && RESUMABLE_DIRECT_OUTCOMES.has(directOutcome)) {
+    return resumeDecision(
+      input.fallback,
+      'resumable-plan-outcome',
+      directOutcome,
+      `Direct plan outcome is ${directOutcome}.`,
+      plan,
+      runResultIsStale ? null : runResult,
+    );
+  }
+
   if (directOutcome && FAILED_DIRECT_OUTCOMES.has(directOutcome)) {
     return failDecision(
       input.fallback,
@@ -254,7 +335,7 @@ export function evaluateDirectCompletionFallback(input: {
   }
 
   if (runResultIsStale) {
-    const staleSuccessfulResult = runResultStatus === 'success' && runResultExitCode === 0;
+    const staleSuccessfulResult = runResultSucceeded;
     return failDecision(
       input.fallback,
       staleSuccessfulResult ? 'stale-successful-run-result' : 'stale-direct-run-result',
@@ -320,6 +401,23 @@ function failDecision(
   };
 }
 
+function resumeDecision(
+  fallback: string,
+  reason: string,
+  outcome: string,
+  message: string,
+  plan: DirectFallbackPlan | null,
+  runResult: DirectRunResultFile | null,
+): DirectCompletionFallbackDecision {
+  return {
+    action: 'resume',
+    reason,
+    outcome,
+    message,
+    quality: buildFallbackQuality(fallback, reason, plan, runResult),
+  };
+}
+
 function buildFallbackQuality(
   fallback: string,
   reason: string,
@@ -345,7 +443,10 @@ function getDirectFallbackQualityGateFailureReason(
     ...recordValue(plan?.direct_execution?.ai_coding_quality),
     ...recordValue(runResult?.quality),
   });
-  return metrics ? getAutocodeDirectQualityGateFailureReason(metrics, { requireValidation }) : null;
+  return metrics ? getAutocodeDirectQualityGateFailureReason(metrics, {
+    requireValidation,
+    requireSelfCritique: requireValidation,
+  }) : null;
 }
 
 function directQualityMetricsFromRecord(record: Record<string, unknown>): AutocodeDirectCodingQualityMetrics | null {
@@ -403,45 +504,16 @@ function isNonImplementationDirectTask(
   plan: DirectFallbackPlan | null,
   metadata: DirectFallbackTaskMetadata | null | undefined,
 ): boolean {
-  const workflowType = normalizedString(plan?.workflow_type);
-  if (['documentation', 'investigation', 'analysis', 'research'].includes(workflowType)) {
-    return true;
-  }
-
-  const metadataCategory = normalizedString(metadata?.category);
-  const metadataSource = normalizedString(metadata?.sourceType) || normalizedString(metadata?.source_type);
-  const metadataIdeaType = normalizedString(metadata?.ideationType) || normalizedString(metadata?.ideation_type);
-  const metadataTaskType = normalizedString(metadata?.taskType) || normalizedString(metadata?.task_type) || normalizedString(metadata?.type);
-
-  if (metadataCategory === 'documentation' || metadataSource === 'project_docs') {
-    return true;
-  }
-  if (['documentation_gaps', 'documentation', 'analysis', 'investigation', 'research'].includes(metadataIdeaType)) {
-    return true;
-  }
-  if (['documentation', 'analysis', 'investigation', 'research'].includes(metadataTaskType)) {
-    return true;
-  }
-  if (
-    stringValue(metadata?.projectDocumentType) ||
-    stringValue(metadata?.project_document_type) ||
-    stringValue(metadata?.projectDocumentOutputDir) ||
-    stringValue(metadata?.project_document_output_dir) ||
-    Array.isArray(metadata?.projectDocumentOutputs) ||
-    Array.isArray(metadata?.project_document_outputs)
-  ) {
-    return true;
-  }
-  if (
-    stringValue(plan?.documentation_depth) ||
-    stringValue(plan?.documentation_profile) ||
-    Array.isArray(plan?.documentation_focus) ||
-    Object.keys(recordValue(plan?.project_documentation)).length > 0
-  ) {
-    return true;
-  }
-
-  return false;
+  const description = [
+    stringValue(plan?.description),
+    stringValue(plan?.title),
+    stringValue(plan?.feature),
+  ].filter(Boolean).join('\n');
+  return !shouldRequireAutocodeDirectValidation({
+    plan: recordValue(plan),
+    metadata: recordValue(metadata),
+    description,
+  });
 }
 
 function getCurrentDirectIterationStartedAtMs(plan: DirectFallbackPlan | null): number | undefined {
@@ -449,13 +521,14 @@ function getCurrentDirectIterationStartedAtMs(plan: DirectFallbackPlan | null): 
     return undefined;
   }
   const currentSubtaskId = stringValue(plan.direct_execution?.current_subtask_id);
+  const encodedIterationStartedAtMs = parseDirectChangeRequestTimestampMs(currentSubtaskId)
+    ?? parseDirectChangeRequestTimestampMs(stringValue(plan.direct_execution?.change_request_id));
+  if (encodedIterationStartedAtMs !== undefined) {
+    return encodedIterationStartedAtMs;
+  }
+
   const currentSubtask = findDirectSubtask(plan, currentSubtaskId);
-  const timestamps = [
-    timestampMs(stringValue(currentSubtask?.started_at)),
-    parseDirectChangeRequestTimestampMs(currentSubtaskId),
-    parseDirectChangeRequestTimestampMs(stringValue(plan.direct_execution?.change_request_id)),
-  ].filter((value): value is number => value !== undefined);
-  return timestamps.length > 0 ? Math.max(...timestamps) : undefined;
+  return timestampMs(stringValue(currentSubtask?.started_at));
 }
 
 function findDirectSubtask(

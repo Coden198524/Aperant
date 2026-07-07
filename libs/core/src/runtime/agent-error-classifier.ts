@@ -8,6 +8,8 @@ export const AutocodeSessionErrorCode = {
   BILLING_ERROR: 'billing_error',
   AUTH_FAILURE: 'auth_failure',
   CONCURRENCY: 'concurrency_error',
+  NETWORK_ERROR: 'network_error',
+  TEMPORARILY_UNAVAILABLE: 'temporarily_unavailable',
   TOOL_ERROR: 'tool_execution_error',
   ABORTED: 'aborted',
   MAX_STEPS: 'max_steps_reached',
@@ -54,6 +56,34 @@ const AUTH_PATTERNS = [
   'http 401',
   'does not have access to claude',
   'please login again',
+] as const;
+
+const TRANSIENT_NETWORK_PATTERNS = [
+  'stream disconnected before completion',
+  'error sending request for url',
+  'failed to connect to websocket',
+  'tls handshake eof',
+  'socket hang up',
+  'connection reset',
+  'connection refused',
+  'connection timed out',
+  'econnreset',
+  'econnrefused',
+  'etimedout',
+  'enotfound',
+  'fetch failed',
+  'network error',
+] as const;
+
+const TEMPORARILY_UNAVAILABLE_PATTERNS = [
+  'temporarily unavailable',
+  'service unavailable',
+  'bad gateway',
+  'gateway timeout',
+  'upstream timeout',
+  'provider overloaded',
+  'server overloaded',
+  'try again later',
 ] as const;
 
 const MODEL_NOT_FOUND_PATTERNS = [
@@ -103,6 +133,18 @@ export function isAutocodeToolConcurrencyError(error: unknown): boolean {
     ((errorStr.includes('tool') && errorStr.includes('concurrency')) ||
       errorStr.includes('too many tools') ||
       errorStr.includes('concurrent tool'));
+}
+
+export function isAutocodeTransientNetworkError(error: unknown): boolean {
+  const errorStr = errorToString(error);
+  return TRANSIENT_NETWORK_PATTERNS.some((pattern) => errorStr.includes(pattern));
+}
+
+export function isAutocodeTemporarilyUnavailableError(error: unknown): boolean {
+  const statusCode = getHttpStatusCode(error);
+  if (statusCode === 502 || statusCode === 503 || statusCode === 504) return true;
+  const errorStr = errorToString(error);
+  return TEMPORARILY_UNAVAILABLE_PATTERNS.some((pattern) => errorStr.includes(pattern));
 }
 
 export function isAutocodeModelNotFoundError(error: unknown): boolean {
@@ -190,6 +232,30 @@ export function classifyAutocodeSessionError(error: unknown): AutocodeClassified
       sessionError: {
         code: AutocodeSessionErrorCode.CONCURRENCY,
         message: `Tool concurrency limit: ${message}`,
+        retryable: true,
+        cause: error,
+      },
+      outcome: 'error',
+    };
+  }
+
+  if (isAutocodeTransientNetworkError(error)) {
+    return {
+      sessionError: {
+        code: AutocodeSessionErrorCode.NETWORK_ERROR,
+        message: `Network error: ${message}`,
+        retryable: true,
+        cause: error,
+      },
+      outcome: 'error',
+    };
+  }
+
+  if (isAutocodeTemporarilyUnavailableError(error)) {
+    return {
+      sessionError: {
+        code: AutocodeSessionErrorCode.TEMPORARILY_UNAVAILABLE,
+        message: `Provider temporarily unavailable: ${message}`,
         retryable: true,
         cause: error,
       },

@@ -24,8 +24,12 @@ import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import {
   type AutocodeCli,
   type AutocodeCliContinuationStrategy,
+  type AutocodeCliJsonEventParser,
+  type AutocodeCliPreflightAction,
+  type AutocodeCliTaskRunStrategy,
   getAutocodeCliContinuationStrategy,
   getAutocodeCliJsonEventParsers,
+  getAutocodeCliPreflightActions,
   resolveAutocodeCliTaskRunInvocation,
 } from './cli-catalog.js';
 import { loadAutocodeImplementationPlanSync } from './plan-store.js';
@@ -51,6 +55,12 @@ export interface CreateAutocodeTaskRunPlanInput {
   phase?: AutocodeTaskRunPhase;
   language?: AutocodeAgentLanguage;
   directCliContinuationStrategy?: AutocodeCliContinuationStrategy;
+  directCliJsonEventParser?: AutocodeCliJsonEventParser;
+  directCliRuntimeRouteId?: string;
+  directCliRuntimeRouteDisplayName?: string;
+  directCliPermissionBypassArgs?: string[];
+  directCliTaskRunStrategy?: AutocodeCliTaskRunStrategy;
+  directCliPreflightActions?: AutocodeCliPreflightAction[];
 }
 
 export interface AutocodeTaskRunPlan {
@@ -106,6 +116,8 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
     customCommand: input.customCommand,
     model: input.model,
     bypassPermissions: input.bypassPermissions === true,
+    permissionBypassArgs: input.directCliPermissionBypassArgs,
+    taskRunStrategy: input.directCliTaskRunStrategy,
   });
   writeFileSync(promptFilePath, `${prompt}\n`, 'utf8');
   writeFileSync(
@@ -125,6 +137,11 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
       runtimeConcurrency,
       cli: input.cli,
       directCliContinuationStrategy: input.directCliContinuationStrategy ?? getAutocodeCliContinuationStrategy(input.cli),
+      directCliJsonEventParser: input.directCliJsonEventParser,
+      directCliRuntimeRouteId: input.directCliRuntimeRouteId,
+      directCliRuntimeRouteDisplayName: input.directCliRuntimeRouteDisplayName,
+      directCliPreflightActions: input.directCliPreflightActions ?? getAutocodeCliPreflightActions(input.cli),
+      model: input.model,
     }),
     'utf8',
   );
@@ -193,25 +210,26 @@ function buildTaskRunPrompt(input: {
   const languageInstruction = buildTaskRunLanguageInstruction(input.language);
   const header = isChinese
     ? [
-        '# Autocode 任务运行',
+        '# Autocode \u4efb\u52a1\u8fd0\u884c',
         '',
-        `Project root: ${input.projectRoot}`,
-        `Spec directory: ${input.specDir}`,
-        `Task ID: ${input.task.specId}`,
-        `Task title: ${input.task.title}`,
+        'Project root: ' + input.projectRoot,
+        'Spec directory: ' + input.specDir,
+        'Task ID: ' + input.task.specId,
+        'Task title: ' + input.task.title,
         '',
-        ...(languageInstruction ? ['## 语言', '', languageInstruction, ''] : []),
+        ...(languageInstruction ? ['## \u8bed\u8a00', '', languageInstruction, ''] : []),
       ].join('\n')
     : [
         '# Autocode Task Run',
         '',
-        `Project root: ${input.projectRoot}`,
-        `Spec directory: ${input.specDir}`,
-        `Task ID: ${input.task.specId}`,
-        `Task title: ${input.task.title}`,
+        'Project root: ' + input.projectRoot,
+        'Spec directory: ' + input.specDir,
+        'Task ID: ' + input.task.specId,
+        'Task title: ' + input.task.title,
         '',
         ...(languageInstruction ? ['## Language', '', languageInstruction, ''] : []),
       ].join('\n');
+
   const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
     projectRoot: input.projectRoot,
     dataDirName: input.dataDirName,
@@ -231,28 +249,28 @@ function buildTaskRunPrompt(input: {
 
   if (input.phase === 'direct') {
     if (isChinese) {
-      return `${header}${contextReference}${humanInputReference}${directContinuationReference}${[
-        '## 目标',
+      return header + contextReference + humanInputReference + directContinuationReference + [
+        '## \u76ee\u6807',
         '',
-        '直接实现任务；不使用单独的规格工作流。',
+        '\u76f4\u63a5\u5b8c\u6210\u4efb\u52a1\uff1b\u4e0d\u542f\u52a8\u72ec\u7acb\u7684\u89c4\u683c\u3001\u8ba1\u5212\u6216 QA \u5de5\u4f5c\u6d41\u3002',
         '',
-        '## 任务描述',
+        '## \u4efb\u52a1\u63cf\u8ff0',
         '',
         taskDescription,
         '',
-        '## 必须遵循的流程',
+        '## \u5fc5\u987b\u9075\u5faa\u7684\u6d41\u7a0b',
         '',
-        '- 编辑前先检查相关项目文件。',
-        '- 做最小且有效的变更。',
-        '- 运行最相关的验证。',
-        '- 在 Node 24+ 中，不要在 node -e、stdin 或 eval 脚本里混用 require(...) 和顶层 await；请使用 async IIFE，或配合 node --input-type=module 使用 ESM import。',
-        '- 避免针对任务初始状态或瞬时状态编写脆弱的冒烟断言；重试和恢复可能推进状态。除非任务明确修改状态机代码，否则验证最终行为或持久化文件。',
+        '- \u7f16\u8f91\u524d\u5148\u68c0\u67e5\u76f8\u5173\u9879\u76ee\u6587\u4ef6\u3002',
+        '- \u53ea\u505a\u6700\u5c0f\u4e14\u6709\u6548\u7684\u53d8\u66f4\u3002',
+        '- \u8fd0\u884c\u6700\u76f8\u5173\u7684\u9a8c\u8bc1\u547d\u4ee4\u3002',
+        '- \u5728 Node 24+ \u4e2d\uff0c\u4e0d\u8981\u5728 node -e\u3001stdin \u6216 eval \u811a\u672c\u91cc\u6df7\u7528 require(...) \u548c\u9876\u5c42 await\uff1b\u8bf7\u4f7f\u7528 async IIFE\uff0c\u6216\u914d\u5408 node --input-type=module \u4f7f\u7528 ESM import\u3002',
+        '- \u907f\u514d\u9488\u5bf9\u4efb\u52a1\u521d\u59cb\u72b6\u6001\u6216\u77ac\u65f6\u72b6\u6001\u7f16\u5199\u8106\u5f31\u7684\u5192\u70df\u65ad\u8a00\uff1b\u91cd\u8bd5\u548c\u6062\u590d\u53ef\u80fd\u63a8\u8fdb\u72b6\u6001\u3002\u9664\u975e\u4efb\u52a1\u660e\u786e\u4fee\u6539\u72b6\u6001\u673a\u4ee3\u7801\uff0c\u5426\u5219\u9a8c\u8bc1\u6700\u7ec8\u884c\u4e3a\u6216\u6301\u4e45\u5316\u6587\u4ef6\u3002',
         buildCliMemoryNotesInstruction(input.language),
-        `- 在 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} 留下一段简短实现总结。`,
-      ].join('\n')}`;
+        '- \u5728 ' + input.specDir + '/' + AUTOCODE_TASK_ARTIFACTS.directSummary + ' \u7559\u4e0b\u4e00\u6bb5\u7b80\u77ed\u5b9e\u73b0\u603b\u7ed3\u3002',
+      ].join('\n');
     }
 
-    return `${header}${contextReference}${humanInputReference}${directContinuationReference}${[
+    return header + contextReference + humanInputReference + directContinuationReference + [
       '## Goal',
       '',
       'Implement the task directly; no separate spec workflow.',
@@ -269,8 +287,8 @@ function buildTaskRunPrompt(input: {
       '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
       '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the task explicitly changes state-machine code.',
       buildCliMemoryNotesInstruction(input.language),
-      `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary}.`,
-    ].join('\n')}`;
+      '- Leave a short implementation summary in ' + input.specDir + '/' + AUTOCODE_TASK_ARTIFACTS.directSummary + '.',
+    ].join('\n');
   }
 
   if (input.phase === 'spec') {
@@ -342,7 +360,7 @@ function buildTaskRunPrompt(input: {
         '- 所有新增或修订的需求、设计说明、任务、依赖和验证命令，都必须基于项目源码/文档、现有模式，或经过核实的官方/行业参考。',
         '- 如果缺少证据，请添加假设/开放问题或验证任务；不要基于猜测创建实现工作。',
         '- 保持任务可独立实现和验证。',
-        '- 将宽泛工作拆成接近 OpenSpec 的叶子任务：一个任务通常只覆盖一个可独立评审的行为/契约和一个聚焦验证路径。',
+        '- 将宽泛工作拆成聚焦的叶子任务：一个任务通常只覆盖一个可独立评审的行为/契约和一个聚焦验证路径。',
         '- 单个任务如果覆盖超过三个行为、超过三个需求/验收引用，或超过四个写入意图文件，就必须拆分；即使触碰同一文件，也不要把独立行为合并成大任务。',
         '- _Depends on_ 只用于真实前置关系；同文件但互不依赖的叶子任务可使用 _Depends on: none_，运行时会用文件冲突调度安全排队重叠写入。',
         '- 每个可执行任务都必须包含 _Depends on_、_Verification_ 和简短 _Evidence_ 说明。如果已知写入意图，也包含 _Files to create/modify_。',
@@ -371,7 +389,7 @@ function buildTaskRunPrompt(input: {
       '- Keep tasks independently implementable and verifiable.',
       '- Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of silently dropping them.',
       '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
-      '- Split broad work into OpenSpec-grade leaf tasks: one independently reviewable behavior or contract plus one focused verification path.',
+      '- Split broad work into focused leaf tasks: one independently reviewable behavior or contract plus one focused verification path.',
       '- A task covering more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files is too broad; split it into leaf tasks even when they touch the same file.',
       '- Use _Depends on_ only for real prerequisites. For independent leaf tasks that touch the same file, use _Depends on: none_ or their actual prerequisite; the runtime queues overlapping file writes safely.',
       '- Every executable task must include _Depends on_, _Requirements_, _Verification_, and a short _Evidence_ note. Include _Files to create/modify_ when write intent is known.',
@@ -436,9 +454,9 @@ function buildTaskRunPrompt(input: {
 function buildCliMemoryNotesInstruction(language?: AutocodeAgentLanguage): string {
   if (isTaskRunChineseLanguage(language)) {
     return [
-      '- 如果发现可长期复用的项目知识，请在最终回复末尾添加一个准确命名为 "Memory Notes" 的章节。',
-      '- Memory Notes 格式："- [gotcha|decision|pattern|error_pattern|module_insight] 简洁可复用的说明"。',
-      '- 如果没有值得长期记住的内容，省略 Memory Notes。',
+      '- \u5982\u679c\u53d1\u73b0\u53ef\u957f\u671f\u590d\u7528\u7684\u9879\u76ee\u77e5\u8bc6\uff0c\u8bf7\u5728\u6700\u7ec8\u56de\u590d\u672b\u5c3e\u6dfb\u52a0\u4e00\u4e2a\u51c6\u786e\u547d\u540d\u4e3a "Memory Notes" \u7684\u7ae0\u8282\u3002',
+      '- Memory Notes \u683c\u5f0f\uff1a"- [gotcha|decision|pattern|error_pattern|module_insight] \u7b80\u6d01\u53ef\u590d\u7528\u7684\u8bf4\u660e"\u3002',
+      '- \u5982\u679c\u6ca1\u6709\u503c\u5f97\u957f\u671f\u8bb0\u4f4f\u7684\u5185\u5bb9\uff0c\u7701\u7565 Memory Notes\u3002',
     ].join('\n');
   }
 
@@ -464,15 +482,16 @@ function buildTaskHumanInputReference(specDir: string, language?: AutocodeAgentL
     if (!content) {
       return '';
     }
+    const fence = String.fromCharCode(96).repeat(3);
     if (isTaskRunChineseLanguage(language)) {
       return [
-        '## 用户反馈',
+        '## \u7528\u6237\u53cd\u9988',
         '',
-        `用户在 ${humanInputPath} 提交了后续反馈。请将这些反馈作为下一次运行的必需上下文。`,
+        '\u7528\u6237\u5728 ' + humanInputPath + ' \u63d0\u4ea4\u4e86\u540e\u7eed\u53cd\u9988\u3002\u8bf7\u5c06\u8fd9\u4e9b\u53cd\u9988\u4f5c\u4e3a\u4e0b\u4e00\u6b21\u8fd0\u884c\u7684\u5fc5\u9700\u4e0a\u4e0b\u6587\u3002',
         '',
-        '```markdown',
+        fence + 'markdown',
         content,
-        '```',
+        fence,
         '',
       ].join('\n');
     }
@@ -480,11 +499,11 @@ function buildTaskHumanInputReference(specDir: string, language?: AutocodeAgentL
     return [
       '## Human Input',
       '',
-      `The user submitted follow-up feedback in ${humanInputPath}. Treat this feedback as required context for the next run.`,
+      'The user submitted follow-up feedback in ' + humanInputPath + '. Treat this feedback as required context for the next run.',
       '',
-      '```markdown',
+      fence + 'markdown',
       content,
-      '```',
+      fence,
       '',
     ].join('\n');
   } catch {
@@ -506,16 +525,17 @@ function buildTaskChangeRequestReference(specDir: string, language?: AutocodeAge
       maxEntries: 3,
       maxChars: CHANGE_REQUEST_AUDIT_MAX_CHARS,
     });
+    const fence = String.fromCharCode(96).repeat(3);
 
     if (isTaskRunChineseLanguage(language)) {
       return [
-        '## 变更请求摘要',
+        '## \u53d8\u66f4\u8bf7\u6c42\u6458\u8981',
         '',
-        `来自 ${changeRequestsPath}。使用最新条目作为当前同一任务迭代契约；只有需要旧历史细节时再读取原 JSONL 文件。`,
+        '\u6765\u81ea ' + changeRequestsPath + '\u3002\u4f7f\u7528\u6700\u65b0\u6761\u76ee\u4f5c\u4e3a\u5f53\u524d\u540c\u4e00\u4efb\u52a1\u7684\u8fed\u4ee3\u5951\u7ea6\uff1b\u53ea\u6709\u9700\u8981\u65e7\u5386\u53f2\u7ec6\u8282\u65f6\u518d\u8bfb\u53d6\u539f JSONL \u6587\u4ef6\u3002',
         '',
-        '```text',
+        fence + 'text',
         compactContent,
-        '```',
+        fence,
         '',
       ].join('\n');
     }
@@ -523,11 +543,11 @@ function buildTaskChangeRequestReference(specDir: string, language?: AutocodeAge
     return [
       '## Change Request Summary',
       '',
-      `From ${changeRequestsPath}. Use the latest entry as the active same-task iteration contract; read the JSONL file directly only if older history is required.`,
+      'From ' + changeRequestsPath + '. Use the latest entry as the active same-task iteration contract; read the JSONL file directly only if older history is required.',
       '',
-      '```text',
+      fence + 'text',
       compactContent,
-      '```',
+      fence,
       '',
     ].join('\n');
   } catch {
@@ -664,8 +684,8 @@ function compactTaskRunPromptSourceText(value: string): string {
 function buildTaskRunLanguageInstruction(language: AutocodeAgentLanguage): string {
   if (isTaskRunChineseLanguage(language)) {
     return [
-      '除代码、路径、命令、API 名称、包名、源文本和必要英文专有名词外，所有说明、计划、规格、总结和评审备注都必须使用简体中文。',
-      '最终答复必须是简洁的中文 Markdown 表格，包含“变更”“验证”“评审备注”。',
+      '\u9664\u4ee3\u7801\u3001\u8def\u5f84\u3001\u547d\u4ee4\u3001API \u540d\u79f0\u3001\u5305\u540d\u3001\u6e90\u6587\u672c\u548c\u5fc5\u8981\u82f1\u6587\u4e13\u6709\u540d\u8bcd\u5916\uff0c\u6240\u6709\u8bf4\u660e\u3001\u8ba1\u5212\u3001\u89c4\u683c\u3001\u603b\u7ed3\u548c\u8bc4\u5ba1\u5907\u6ce8\u90fd\u5fc5\u987b\u4f7f\u7528\u7b80\u4f53\u4e2d\u6587\u3002',
+      '\u6700\u7ec8\u7b54\u590d\u5fc5\u987b\u662f\u7b80\u6d01\u7684\u4e2d\u6587 Markdown \u8868\u683c\uff0c\u5305\u542b\u201c\u53d8\u66f4\u201d\u201c\u9a8c\u8bc1\u201d\u201c\u8bc4\u5ba1\u5907\u6ce8\u201d\u3002',
     ].join(' ');
   }
 
@@ -773,6 +793,11 @@ function buildNodeRunnerScript(input: {
   runtimeConcurrency: AutocodeTaskRuntimeConcurrencyResolved;
   cli: AutocodeCli;
   directCliContinuationStrategy?: AutocodeCliContinuationStrategy;
+  directCliJsonEventParser?: AutocodeCliJsonEventParser;
+  directCliRuntimeRouteId?: string;
+  directCliRuntimeRouteDisplayName?: string;
+  directCliPreflightActions?: AutocodeCliPreflightAction[];
+  model?: string;
 }): string {
   return `const { spawn, spawnSync } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
@@ -785,8 +810,15 @@ const cwd = ${JSON.stringify(input.cwd)};
 const command = ${JSON.stringify(input.command)};
 const args = ${JSON.stringify(input.args)};
 const cli = ${JSON.stringify(input.cli)};
+const directCliRuntimeRouteId = ${JSON.stringify(input.directCliRuntimeRouteId ?? '')};
+const directCliRuntimeRouteDisplayName = ${JSON.stringify(input.directCliRuntimeRouteDisplayName ?? '')};
+const directCliModelId = ${JSON.stringify(input.model ?? '')};
 const directCliContinuationStrategy = ${JSON.stringify(input.directCliContinuationStrategy ?? null)};
-const cliJsonEventParsers = ${JSON.stringify(getAutocodeCliJsonEventParsers())};
+const cliPreflightActions = ${JSON.stringify(input.directCliPreflightActions ?? [])};
+const cliJsonEventParsers = ${JSON.stringify([
+    ...(input.directCliJsonEventParser ? [input.directCliJsonEventParser] : []),
+    ...getAutocodeCliJsonEventParsers(),
+  ])};
 const iconvLiteModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('iconv-lite'))};
 const workPackagesModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/work-packages') ?? resolveOptionalRunnerDependency('./work-packages.js'))};
 const planQualityModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/plan-quality') ?? resolveOptionalRunnerDependency('./plan-quality.js'))};
@@ -812,19 +844,37 @@ const logPhase = phase === 'coding' || phase === 'direct' ? 'coding' : 'planning
 const executionPhase = logPhase === 'coding' ? 'coding' : 'planning';
 const activeCliJsonEventParser = resolveCliJsonEventParser(command, args);
 const cliJsonMode = Boolean(activeCliJsonEventParser);
+const DEFAULT_CLI_JSON_PAYLOAD_FIELDS = ['payload', 'msg.payload', 'msg', 'event', 'data', 'item', 'response_item', 'response'];
+const DEFAULT_CLI_JSON_EVENT_TYPE_FIELDS = ['type', 'event_type', 'eventType', 'kind', 'name'];
+const DEFAULT_CLI_JSON_SESSION_ID_FIELDS = ['session_id', 'sessionId', 'conversation_id', 'conversationId', 'thread_id', 'threadId', 'run_id', 'runId', 'session.id', 'conversation.id', 'thread.id'];
+const DEFAULT_CLI_JSON_MESSAGE_FIELDS = ['message', 'content', 'text', 'output', 'delta', 'response.output_text', 'response.outputText'];
+const DEFAULT_CLI_JSON_COMPLETION_EVENT_TYPES = ['turn_completed', 'response_completed', 'completed', 'done', 'finish', 'finished', 'message_stop', 'result'];
+const DEFAULT_CLI_JSON_IGNORED_EVENT_TYPES = [];
+const DEFAULT_CLI_JSON_IGNORED_EVENT_TYPE_INCLUDES = [];
+const DEFAULT_CLI_JSON_TOOL_START_EVENT_TYPES = [];
+const DEFAULT_CLI_JSON_TOOL_END_EVENT_TYPES = [];
+const DEFAULT_CLI_JSON_TOOL_NAME_FIELDS = ['name', 'tool_name', 'toolName'];
+const DEFAULT_CLI_JSON_TOOL_INPUT_FIELDS = ['arguments', 'input', 'args', 'command', 'cmd'];
+const DEFAULT_CLI_JSON_TOOL_OUTPUT_FIELDS = ['output', 'content', 'result', 'aggregated_output', 'stdout', 'stderr'];
+const DEFAULT_CLI_JSON_TOOL_CALL_ID_FIELDS = ['call_id', 'callId', 'id'];
+const DEFAULT_CLI_JSON_TOOL_SUCCESS_FIELDS = ['success'];
+const DEFAULT_CLI_JSON_TOOL_EXIT_CODE_FIELDS = ['exit_code', 'exitCode'];
+const DEFAULT_CLI_JSON_TOOL_STATUS_FIELDS = ['status'];
 const activeFileWriteLockDirs = new Set();
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
-const maxDirectQualityRetries = phase === 'direct' ? 2 : 0;
+const maxDirectRetries = phase === 'direct' ? 2 : 0;
 const DIRECT_QUALITY_RETRY_FEEDBACK_MAX_CHARS = 1600;
 const DIRECT_QUALITY_RETRY_FILE_PREVIEW_LIMIT = 12;
 const VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS = 6000;
 const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
 const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
-let directQualityRetryCount = 0;
-const directQualityFailureSignatures = [];
+let directRetryCount = 0;
+const directFailureSignatures = [];
 let attemptId = 0;
 let currentAttemptStartedAt = Date.now();
+let currentAttemptDurationRecorded = false;
+let directActiveDurationMs = 0;
 let activeCliJsonSessionId = '';
 let memoryContextBlock = '';
 const pendingMemoryWrites = [];
@@ -836,7 +886,7 @@ const startMessage = logPhase === 'coding'
 emitPhase(executionPhase, startMessage, 0);
 updatePlanRunningState();
 updateTaskLogs(logPhase, 'active', startMessage);
-sanitizeCodexRulesFiles();
+runCliPreflightActions();
 
 let finalized = false;
 let tokenUsageEventCount = 0;
@@ -912,6 +962,18 @@ const CODING_WORKER_INACTIVITY_TIMEOUT_MS = readNonNegativeInteger(
 const CODING_WORKER_COMPLETION_GRACE_MS = readPositiveInteger(
   process.env.AUTOCODE_WORKER_COMPLETION_GRACE_MS,
   45 * 1000,
+);
+const DIRECT_ATTEMPT_COMPLETION_GRACE_MS = readPositiveInteger(
+  process.env.AUTOCODE_DIRECT_COMPLETION_GRACE_MS,
+  CODING_WORKER_COMPLETION_GRACE_MS,
+);
+const DIRECT_ATTEMPT_INACTIVITY_WARNING_MS = readNonNegativeInteger(
+  process.env.AUTOCODE_DIRECT_INACTIVITY_WARNING_MS,
+  CODING_WORKER_INACTIVITY_WARNING_MS,
+);
+const DIRECT_ATTEMPT_INACTIVITY_TIMEOUT_MS = readNonNegativeInteger(
+  process.env.AUTOCODE_DIRECT_INACTIVITY_TIMEOUT_MS,
+  CODING_WORKER_INACTIVITY_TIMEOUT_MS,
 );
 const NOISY_CLI_DIAGNOSTIC_PATTERNS = [
   /WARN\\s+codex_core::shell_snapshot:\\s+Failed to create shell snapshot for powershell\\b/i,
@@ -1550,22 +1612,152 @@ function normalizeCliMemoryNoteKey(value) {
   return String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
 }
 
+function spawnCli(commandValue, argValues, options) {
+  const plan = buildCliSpawnPlan(commandValue, Array.isArray(argValues) ? argValues : []);
+  return spawn(plan.command, plan.args, {
+    ...options,
+    ...(plan.options || {}),
+  });
+}
+
+function buildCliSpawnPlan(commandValue, argValues) {
+  const commandText = String(commandValue || '');
+  if (process.platform !== 'win32') {
+    return { command: commandText, args: argValues, options: { shell: false } };
+  }
+
+  const resolvedCommand = resolveWindowsCliCommand(commandText) || commandText;
+  if (isWindowsCommandScript(resolvedCommand)) {
+    const cmdExe = process.env.ComSpec || join(process.env.SystemRoot || process.env.windir || 'C:\\\\Windows', 'System32', 'cmd.exe');
+    return {
+      command: cmdExe,
+      args: ['/d', '/s', '/c', buildWindowsCmdLine(resolvedCommand, argValues)],
+      options: {
+        shell: false,
+        windowsVerbatimArguments: true,
+      },
+    };
+  }
+
+  return { command: resolvedCommand, args: argValues, options: { shell: false } };
+}
+
+function resolveWindowsCliCommand(commandText) {
+  const trimmed = String(commandText || '').trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  if (trimmed.includes(String.fromCharCode(92)) || trimmed.includes('/')) {
+    return findWindowsExecutableCandidate(isAbsolute(trimmed) ? trimmed : resolve(cwd, trimmed));
+  }
+
+  const pathDirs = String(process.env.PATH || process.env.Path || '')
+    .split(';')
+    .map((item) => item.trim().replace(/^"|"$/g, ''))
+    .filter(Boolean);
+  for (const dir of [cwd, ...pathDirs]) {
+    const candidate = findWindowsExecutableCandidate(join(dir, trimmed));
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return '';
+}
+
+function findWindowsExecutableCandidate(basePath) {
+  const candidates = hasWindowsExecutableExtension(basePath)
+    ? [basePath]
+    : [...getWindowsPathExts().map((extension) => basePath + extension), basePath];
+  for (const candidate of candidates) {
+    try {
+      if (existsSync(candidate) && statSync(candidate).isFile()) {
+        return candidate;
+      }
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return '';
+}
+
+function getWindowsPathExts() {
+  const raw = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
+  return raw.split(';')
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => item.startsWith('.'));
+}
+
+function hasWindowsExecutableExtension(filePath) {
+  const lower = String(filePath || '').toLowerCase();
+  return getWindowsPathExts().some((extension) => lower.endsWith(extension));
+}
+
+function isWindowsCommandScript(commandPath) {
+  const lower = String(commandPath || '').toLowerCase();
+  return lower.endsWith('.cmd') || lower.endsWith('.bat');
+}
+
+function buildWindowsCmdLine(commandPath, argValues) {
+  return '"' + [commandPath, ...argValues].map(quoteWindowsCmdArg).join(' ') + '"';
+}
+
+function quoteWindowsCmdArg(value) {
+  const slash = String.fromCharCode(92);
+  const quote = String.fromCharCode(34);
+  const text = String(value ?? '');
+  if (text.length === 0) {
+    return quote + quote;
+  }
+
+  let escaped = '';
+  let backslashes = 0;
+  for (const char of text) {
+    if (char === slash) {
+      backslashes += 1;
+      continue;
+    }
+    if (char === quote) {
+      escaped += slash.repeat((backslashes * 2) + 1) + quote;
+      backslashes = 0;
+      continue;
+    }
+    if (backslashes > 0) {
+      escaped += slash.repeat(backslashes);
+      backslashes = 0;
+    }
+    escaped += char === '%' ? '%%' : char;
+  }
+  if (backslashes > 0) {
+    escaped += slash.repeat(backslashes * 2);
+  }
+  return quote + escaped + quote;
+}
 function startAttempt(attemptPrompt, subtaskId) {
   const currentAttemptId = ++attemptId;
   currentAttemptStartedAt = Date.now();
+  currentAttemptDurationRecorded = false;
   const state = defaultAttemptState;
   resetMainAttemptStateForRetry(state);
   state.attemptId = currentAttemptId;
   state.subtaskId = subtaskId;
   const invocation = buildAttemptInvocation(currentAttemptId);
+  if (invocation.retryContinuationError) {
+    appendTaskLogEntry(logPhase, 'error', invocation.retryContinuationError);
+    finishRun(1, undefined, invocation.retryContinuationError, undefined)
+      .catch((finalizeError) => finishRun(1, undefined, finalizeError instanceof Error ? finalizeError.message : String(finalizeError), undefined));
+    return;
+  }
   if (invocation.resumeSessionId) {
     appendTaskLogEntry(logPhase, 'info', formatDirectRetryContinuationLog(invocation));
   }
-  const child = spawn(invocation.command, invocation.args, {
+  const child = spawnCli(invocation.command, invocation.args, {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    shell: process.platform === 'win32',
   });
+  state.child = child;
+  state.lastOutputAt = Date.now();
+  scheduleAttemptInactivityWatchdog(state);
 
   child.stdin.end(formatPromptForCli(attemptPrompt));
   child.stdout.on('data', (data) => {
@@ -1580,6 +1772,9 @@ function startAttempt(attemptPrompt, subtaskId) {
       .catch((finalizeError) => finishRun(1, undefined, finalizeError instanceof Error ? finalizeError.message : String(finalizeError), undefined));
   });
   child.on('close', (code, signal) => {
+    if (state.finalizing && isDirectMainAttempt(state)) {
+      return;
+    }
     if (signal) {
       console.error(\`Autocode CLI exited by signal: \${signal}\`);
       finalize(currentAttemptId, 1, signal, \`Autocode CLI exited by signal: \${signal}\`)
@@ -1592,6 +1787,8 @@ function startAttempt(attemptPrompt, subtaskId) {
 }
 
 function resetMainAttemptStateForRetry(state) {
+  clearAttemptTimers(state);
+  state.child = null;
   state.lastCliMessageText = '';
   state.pendingModelOutput = '';
   state.completionSummaryDetected = false;
@@ -1609,6 +1806,10 @@ function buildAttemptInvocation(currentAttemptId) {
   const directRetryInvocation = buildDirectRetryInvocation(currentAttemptId);
   if (directRetryInvocation) {
     return directRetryInvocation;
+  }
+  const retryContinuationError = getDirectCliRetryContinuationBlocker(currentAttemptId);
+  if (retryContinuationError) {
+    return { command, args, resumeSessionId: '', resumeKind: '', retryContinuationError };
   }
   return { command, args, resumeSessionId: '', resumeKind: '' };
 }
@@ -1686,6 +1887,19 @@ function buildDirectCliContinuationInvocation(strategy) {
       : null;
   }
 
+  if (strategy.type === 'argument-template') {
+    const templateArgs = buildDirectCliTemplateContinuationArgs(strategy);
+    return templateArgs
+      ? {
+          command,
+          args: templateArgs,
+          resumeSessionId: strategy.resumeSessionId,
+          resumeKind: strategy.type,
+          resumeDisplayName: strategy.displayName,
+        }
+      : null;
+  }
+
   return null;
 }
 
@@ -1755,6 +1969,84 @@ function buildDirectCliFlagContinuationArgs(strategy) {
   return [strategy.continuationFlag, ...args];
 }
 
+function buildDirectCliTemplateContinuationArgs(strategy) {
+  if (!Array.isArray(args) || !Array.isArray(strategy.argsTemplate) || strategy.argsTemplate.length === 0) {
+    return null;
+  }
+  if (strategy.requiresJsonMode && !isDirectCliJsonModeForStrategy(strategy)) {
+    return null;
+  }
+  if (doesDirectCliArgsTemplateRequireSession(strategy.argsTemplate) && !strategy.resumeSessionId) {
+    return null;
+  }
+
+  const promptStdinArg = typeof strategy.promptStdinArg === 'string' && strategy.promptStdinArg.trim()
+    ? strategy.promptStdinArg.trim()
+    : '-';
+  const rendered = [];
+  let usedTemplateItem = false;
+  for (const item of strategy.argsTemplate) {
+    const value = String(item || '').trim();
+    if (!value) {
+      continue;
+    }
+    usedTemplateItem = true;
+    if (isDirectCliArgsTemplateOriginalArgsToken(value)) {
+      rendered.push(...args);
+      continue;
+    }
+    if (isDirectCliArgsTemplatePassthroughArgsToken(value)) {
+      rendered.push(...getDirectCliPassthroughArgs(promptStdinArg));
+      continue;
+    }
+    rendered.push(renderDirectCliArgsTemplateValue(value, strategy.resumeSessionId || '', promptStdinArg));
+  }
+  return usedTemplateItem ? rendered : null;
+}
+
+function doesDirectCliArgsTemplateRequireSession(template) {
+  return template.some((value) => /\$\{(?:sessionId|session_id)\}|\{(?:sessionId|session_id)\}/.test(String(value || '')));
+}
+
+function isDirectCliArgsTemplateOriginalArgsToken(value) {
+  return value === '{args}' || value === '\${args}' || value === '{originalArgs}' || value === '\${originalArgs}';
+}
+
+function isDirectCliArgsTemplatePassthroughArgsToken(value) {
+  return value === '{passthroughArgs}' || value === '\${passthroughArgs}';
+}
+
+function getDirectCliPassthroughArgs(promptStdinArg) {
+  const passthrough = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === promptStdinArg && index === args.length - 1) {
+      continue;
+    }
+    passthrough.push(arg);
+  }
+  return passthrough;
+}
+
+function renderDirectCliArgsTemplateValue(value, sessionId, promptStdinArg) {
+  const replacements = {
+    sessionId,
+    session_id: sessionId,
+    modelId: directCliModelId,
+    model: directCliModelId,
+    promptStdinArg,
+    prompt_stdin_arg: promptStdinArg,
+    cli,
+    command,
+  };
+  return value.replace(/\$\{([A-Za-z0-9_]+)\}|\{([A-Za-z0-9_]+)\}/g, (match, shellKey, braceKey) => {
+    const key = shellKey || braceKey || '';
+    return Object.prototype.hasOwnProperty.call(replacements, key)
+      ? String(replacements[key] || '')
+      : match;
+  });
+}
+
 function formatDirectRetryContinuationLog(invocation) {
   const displayName = invocation.resumeDisplayName || 'Direct CLI';
   if (invocation.resumeKind === 'exec-resume-session') {
@@ -1763,7 +2055,33 @@ function formatDirectRetryContinuationLog(invocation) {
   if (invocation.resumeKind === 'append-continuation-flag') {
     return 'Continuing ' + displayName + ' Direct session for retry with ' + invocation.continuationFlag + '.';
   }
+  if (invocation.resumeKind === 'argument-template') {
+    return 'Continuing ' + displayName + ' Direct session for retry: ' + (invocation.resumeSessionId || 'configured template') + '.';
+  }
   return 'Continuing Direct CLI session for retry.';
+}
+
+function getDirectCliRetryContinuationBlocker(currentAttemptId) {
+  if (!isDirectCliRetryAttempt(currentAttemptId)) {
+    return '';
+  }
+  const strategies = getDirectCliContinuationStrategies();
+  if (strategies.length === 0) {
+    return 'Direct CLI retry requires a configured continuation strategy to keep retry attempts in the same model session. Configure directCliContinuationStrategy on the selected CLI runtime route, or use a CLI catalog entry that declares continuationStrategy.';
+  }
+  for (const strategy of strategies) {
+    if (buildDirectCliContinuationInvocation(strategy)) {
+      return '';
+    }
+  }
+  return 'Direct CLI retry requires a usable continuation strategy to keep retry attempts in the same model session, but the configured strategy could not build a continuation invocation for this command. Check commandNames, JSON mode/sessionIdSource, argsTemplate/resumeArgs, and the CLI runtime route configuration.';
+}
+
+function blockDirectCliRetryWithoutContinuation(currentAttemptId, failureReason) {
+  const continuationBlocker = getDirectCliRetryContinuationBlocker(currentAttemptId);
+  return continuationBlocker
+    ? continuationBlocker + ' Last failure: ' + failureReason
+    : '';
 }
 
 async function finalize(currentAttemptId, exitCode, signal, explicitError) {
@@ -1773,6 +2091,11 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
 
   const validationError = exitCode === 0 ? await validateExpectedArtifacts() : undefined;
   if (validationError && validationRetryCount < maxValidationRetries) {
+    const retryContinuationBlocker = blockDirectCliRetryWithoutContinuation(currentAttemptId + 1, validationError);
+    if (retryContinuationBlocker) {
+      finishRun(1, undefined, retryContinuationBlocker, validationError);
+      return;
+    }
     validationRetryCount += 1;
     const retryMessage = localizeMessage(
       'validationRetry',
@@ -1792,6 +2115,13 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
   finishRun(exitCode, signal, explicitError, validationError);
 }
 
+function recordDirectAttemptActiveDuration() {
+  if (phase !== 'direct' || currentAttemptDurationRecorded) {
+    return;
+  }
+  currentAttemptDurationRecorded = true;
+  directActiveDurationMs += Math.max(0, Date.now() - currentAttemptStartedAt);
+}
 async function finishRun(exitCode, signal, explicitError, validationError) {
   if (finalized) return;
   let failed = exitCode !== 0 || Boolean(explicitError) || Boolean(validationError);
@@ -1821,47 +2151,95 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     : [];
   let directQuality = undefined;
   if (phase === 'direct') {
-    directQuality = await evaluateDirectCliQuality(result, now, directChangedFiles, currentAttemptStartedAt);
+    recordDirectAttemptActiveDuration();
+    directQuality = await evaluateDirectCliQuality(result, now, directChangedFiles, currentAttemptStartedAt, directActiveDurationMs);
     result.quality = directQuality;
+    const retryableFailureReason = failed
+      ? getDirectCliRetryableFailureReason(result, rateLimited, validationError)
+      : '';
+    if (retryableFailureReason && directRetryCount < maxDirectRetries) {
+      const failureSignature = getDirectQualityFailureSignature(retryableFailureReason, directQuality);
+      const repeatedFailure = Boolean(failureSignature && directFailureSignatures.includes(failureSignature));
+      if (failureSignature) {
+        directFailureSignatures.push(failureSignature);
+      }
+      const nextDirectAttempt = directRetryCount + 2;
+      const retryContinuationBlocker = blockDirectCliRetryWithoutContinuation(nextDirectAttempt, retryableFailureReason);
+      if (retryContinuationBlocker) {
+        result.exitCode = 1;
+        result.status = 'error';
+        result.message = retryContinuationBlocker;
+      } else {
+        directRetryCount += 1;
+        const maxDirectAttempts = maxDirectRetries + 1;
+        const retryMessage = 'Direct CLI attempt failed before completion: ' + retryableFailureReason + ' Retrying attempt ' + nextDirectAttempt + '/' + maxDirectAttempts + '...';
+        appendTaskLogEntry(logPhase, 'info', retryMessage);
+        updateTaskLogs(logPhase, 'active', retryMessage);
+        updatePlanRunningState();
+        emitPhase(executionPhase, retryMessage, 0);
+        startAttempt(buildPromptWithMemoryContext(buildDirectQualityRetryPrompt({
+          failedAttempt: true,
+          failureReason: retryableFailureReason,
+          quality: directQuality,
+          changedFiles: directChangedFiles,
+          attempt: directRetryCount,
+          maxRetries: maxDirectRetries,
+          finalText: readDirectCompletionSummary(result, currentAttemptStartedAt),
+          attemptTranscript: defaultAttemptState.lastCliMessageText || result.message,
+          repeatedFailure,
+        })));
+        return;
+      }
+    }
     if (!failed) {
       const qualityFailureReason = await getDirectCliQualityGateFailureReason(directQuality);
       if (qualityFailureReason) {
         const failureSignature = getDirectQualityFailureSignature(qualityFailureReason, directQuality);
-        const repeatedFailure = Boolean(failureSignature && directQualityFailureSignatures.includes(failureSignature));
+        const repeatedFailure = Boolean(failureSignature && directFailureSignatures.includes(failureSignature));
         if (failureSignature) {
-          directQualityFailureSignatures.push(failureSignature);
+          directFailureSignatures.push(failureSignature);
         }
-        if (directQualityRetryCount < maxDirectQualityRetries) {
-          directQualityRetryCount += 1;
-          const nextDirectAttempt = directQualityRetryCount + 1;
-          const maxDirectAttempts = maxDirectQualityRetries + 1;
-          const retryMessage = 'Direct CLI output failed validation/quality gate: ' + qualityFailureReason + ' Retrying attempt ' + nextDirectAttempt + '/' + maxDirectAttempts + '...';
-          appendTaskLogEntry(logPhase, 'info', retryMessage);
-          updateTaskLogs(logPhase, 'active', retryMessage);
-          updatePlanRunningState();
-          emitPhase(executionPhase, retryMessage, 0);
-          startAttempt(buildPromptWithMemoryContext(buildDirectQualityRetryPrompt({
-            failureReason: qualityFailureReason,
-            quality: directQuality,
-            changedFiles: directChangedFiles,
-            attempt: directQualityRetryCount,
-            maxRetries: maxDirectQualityRetries,
-            finalText: readDirectCompletionSummary(result, currentAttemptStartedAt),
-            attemptTranscript: defaultAttemptState.lastCliMessageText,
-            repeatedFailure,
-          })));
-          return;
+        if (directRetryCount < maxDirectRetries) {
+          const nextDirectAttempt = directRetryCount + 2;
+          const retryContinuationBlocker = blockDirectCliRetryWithoutContinuation(nextDirectAttempt, qualityFailureReason);
+          if (retryContinuationBlocker) {
+            failed = true;
+            result.exitCode = 1;
+            result.status = 'error';
+            result.message = retryContinuationBlocker;
+          } else {
+            directRetryCount += 1;
+            const maxDirectAttempts = maxDirectRetries + 1;
+            const retryMessage = 'Direct CLI output failed validation/quality gate: ' + qualityFailureReason + ' Retrying attempt ' + nextDirectAttempt + '/' + maxDirectAttempts + '...';
+            appendTaskLogEntry(logPhase, 'info', retryMessage);
+            updateTaskLogs(logPhase, 'active', retryMessage);
+            updatePlanRunningState();
+            emitPhase(executionPhase, retryMessage, 0);
+            startAttempt(buildPromptWithMemoryContext(buildDirectQualityRetryPrompt({
+              failureReason: qualityFailureReason,
+              quality: directQuality,
+              changedFiles: directChangedFiles,
+              attempt: directRetryCount,
+              maxRetries: maxDirectRetries,
+              finalText: readDirectCompletionSummary(result, currentAttemptStartedAt),
+              attemptTranscript: defaultAttemptState.lastCliMessageText,
+              repeatedFailure,
+            })));
+            return;
+          }
         }
-        failed = true;
-        result.exitCode = 1;
-        result.status = 'error';
-        result.message = qualityFailureReason;
+        if (!failed) {
+          failed = true;
+          result.exitCode = 1;
+          result.status = 'error';
+          result.message = qualityFailureReason;
+        }
       }
     }
   }
 
   finalized = true;
-  result.attemptCount = phase === 'direct' ? directQualityRetryCount + 1 : attemptId;
+  result.attemptCount = phase === 'direct' ? directRetryCount + 1 : attemptId;
 
   if (phase === 'direct' || (!failed && phase === 'coding')) {
     const finalText = defaultAttemptState.lastCliMessageText || result.message;
@@ -1891,7 +2269,7 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     emitTaskEvent('CODING_FAILED', {
       subtaskId: getDirectCliCurrentSubtaskId(readCurrentPlanDirectExecution(), readCurrentPlanContent()),
       error: result.message || 'Direct CLI run failed.',
-      attemptCount: directQualityRetryCount + 1,
+      attemptCount: directRetryCount + 1,
     });
   }
   updateTaskLogs(logPhase, failed ? 'failed' : 'completed', result.message);
@@ -1924,6 +2302,10 @@ function isCodingWorkerAttempt(state) {
   return Boolean(state?.subtaskId && activeCodingAttempts.has(state.attemptId));
 }
 
+function isDirectMainAttempt(state) {
+  return Boolean(phase === 'direct' && state === defaultAttemptState && state?.attemptId === attemptId && attemptId > 0);
+}
+
 function shouldAttachAttemptSubtaskId(state) {
   return Boolean(
     state?.subtaskId &&
@@ -1953,75 +2335,140 @@ function refreshAttemptActivity(state) {
 }
 
 function scheduleAttemptInactivityWatchdog(state) {
-  if (!isCodingWorkerAttempt(state) || CODING_WORKER_INACTIVITY_TIMEOUT_MS <= 0) {
+  const policy = getAttemptInactivityPolicy(state);
+  if (!policy || policy.timeoutMs <= 0) {
     return;
   }
   if (state.inactivityTimer) {
     clearTimeout(state.inactivityTimer);
   }
-  const initialDelay = getNextAttemptInactivityDelay(state);
+  const initialDelay = getNextAttemptInactivityDelay(state, policy);
   state.inactivityTimer = setTimeout(() => {
-    if (!isCodingWorkerAttempt(state) || state.finalizing) {
+    if (!isAttemptInactivityPolicyStillActive(state, policy) || state.finalizing) {
       return;
     }
     const idleMs = Date.now() - (state.lastOutputAt || 0);
     if (
-      CODING_WORKER_INACTIVITY_WARNING_MS > 0 &&
+      policy.warningMs > 0 &&
       !state.inactivityWarningLogged &&
-      idleMs >= CODING_WORKER_INACTIVITY_WARNING_MS &&
-      idleMs < CODING_WORKER_INACTIVITY_TIMEOUT_MS
+      idleMs >= policy.warningMs &&
+      idleMs < policy.timeoutMs
     ) {
       state.inactivityWarningLogged = true;
-      const message = 'Coding worker ' + state.label + ' for ' + state.subtaskId +
-        ' produced no output for ' + formatDuration(CODING_WORKER_INACTIVITY_WARNING_MS) +
-        '; still waiting before timeout at ' + formatDuration(CODING_WORKER_INACTIVITY_TIMEOUT_MS) + '.';
-      appendTaskLogEntry('coding', 'info', message, undefined, buildAttemptLogExtra(state));
+      const message = policy.label + ' produced no output for ' + formatDuration(policy.warningMs) +
+        '; still waiting before timeout at ' + formatDuration(policy.timeoutMs) + '.';
+      appendTaskLogEntry(policy.logPhase, 'info', message, undefined, buildAttemptLogExtra(state));
       scheduleAttemptInactivityWatchdog(state);
       return;
     }
-    if (idleMs < CODING_WORKER_INACTIVITY_TIMEOUT_MS) {
+    if (idleMs < policy.timeoutMs) {
       scheduleAttemptInactivityWatchdog(state);
       return;
     }
-    const message = 'Coding worker ' + state.label + ' for ' + state.subtaskId +
-      ' produced no output for ' + formatDuration(CODING_WORKER_INACTIVITY_TIMEOUT_MS) + '; marking it failed.';
-    appendTaskLogEntry('coding', 'error', message, undefined, buildAttemptLogExtra(state));
+    const message = policy.label + ' produced no output for ' + formatDuration(policy.timeoutMs) + '; marking it failed.';
+    appendTaskLogEntry(policy.logPhase, 'error', message, undefined, buildAttemptLogExtra(state));
+    if (policy.kind === 'direct-main') {
+      state.finalizing = true;
+    }
     terminateAttemptChild(state, 'inactivity timeout');
-    finalizeCodingAttempt(state.attemptId, 1, undefined, message);
+    if (policy.kind === 'coding-worker') {
+      finalizeCodingAttempt(state.attemptId, 1, undefined, message);
+      return;
+    }
+    finalize(state.attemptId, 1, undefined, message)
+      .catch((finalizeError) => finishRun(
+        1,
+        undefined,
+        finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+        undefined,
+      ));
   }, initialDelay);
 }
 
-function getNextAttemptInactivityDelay(state) {
+function getAttemptInactivityPolicy(state) {
+  if (isCodingWorkerAttempt(state)) {
+    return {
+      kind: 'coding-worker',
+      label: 'Coding worker ' + state.label + ' for ' + state.subtaskId,
+      logPhase: 'coding',
+      warningMs: CODING_WORKER_INACTIVITY_WARNING_MS,
+      timeoutMs: CODING_WORKER_INACTIVITY_TIMEOUT_MS,
+    };
+  }
+  if (isDirectMainAttempt(state)) {
+    return {
+      kind: 'direct-main',
+      label: getDirectCliProviderDisplayLabel() + ' Direct attempt',
+      logPhase,
+      warningMs: DIRECT_ATTEMPT_INACTIVITY_WARNING_MS,
+      timeoutMs: DIRECT_ATTEMPT_INACTIVITY_TIMEOUT_MS,
+    };
+  }
+  return null;
+}
+
+function isAttemptInactivityPolicyStillActive(state, policy) {
+  return policy.kind === 'coding-worker' ? isCodingWorkerAttempt(state) : isDirectMainAttempt(state);
+}
+
+function getNextAttemptInactivityDelay(state, policy) {
   const idleMs = Math.max(0, Date.now() - (state.lastOutputAt || Date.now()));
   const delays = [];
   if (
-    CODING_WORKER_INACTIVITY_WARNING_MS > 0 &&
+    policy.warningMs > 0 &&
     !state.inactivityWarningLogged &&
-    idleMs < CODING_WORKER_INACTIVITY_WARNING_MS
+    idleMs < policy.warningMs
   ) {
-    delays.push(CODING_WORKER_INACTIVITY_WARNING_MS - idleMs);
+    delays.push(policy.warningMs - idleMs);
   }
-  if (idleMs < CODING_WORKER_INACTIVITY_TIMEOUT_MS) {
-    delays.push(CODING_WORKER_INACTIVITY_TIMEOUT_MS - idleMs);
+  if (idleMs < policy.timeoutMs) {
+    delays.push(policy.timeoutMs - idleMs);
   }
   const delay = Math.min(...delays.filter((value) => Number.isFinite(value) && value > 0));
   return Number.isFinite(delay) ? Math.max(1, delay) : 1;
 }
 
-function scheduleAttemptCompletionGrace(state) {
-  if (!isCodingWorkerAttempt(state) || state.completionGraceTimer || state.finalizing || !state.lastCliMessageText) {
+function scheduleAttemptCompletionGrace(state, options = {}) {
+  const explicitCompletionEvent = options.explicitCompletionEvent === true;
+  const canFinalizeCodingWorker = isCodingWorkerAttempt(state) && Boolean(state.lastCliMessageText);
+  const canFinalizeDirectMain = isDirectMainAttempt(state) && (explicitCompletionEvent || Boolean(state.lastCliMessageText));
+  if (
+    (!canFinalizeCodingWorker && !canFinalizeDirectMain) ||
+    state.completionGraceTimer ||
+    state.finalizing
+  ) {
     return;
   }
+  const completionGraceMs = canFinalizeDirectMain
+    ? DIRECT_ATTEMPT_COMPLETION_GRACE_MS
+    : CODING_WORKER_COMPLETION_GRACE_MS;
   state.completionGraceTimer = setTimeout(() => {
-    if (!isCodingWorkerAttempt(state) || state.finalizing) {
+    if (state.finalizing) {
       return;
     }
-    const message = 'Coding worker ' + state.label + ' for ' + state.subtaskId +
-      ' finished model output but the CLI process did not exit; finalizing the work item.';
-    appendTaskLogEntry('coding', 'info', message, undefined, buildAttemptLogExtra(state));
-    terminateAttemptChild(state, 'model completed');
-    finalizeCodingAttempt(state.attemptId, 0, undefined);
-  }, CODING_WORKER_COMPLETION_GRACE_MS);
+    if (isCodingWorkerAttempt(state)) {
+      const message = 'Coding worker ' + state.label + ' for ' + state.subtaskId +
+        ' finished model output but the CLI process did not exit; finalizing the work item.';
+      appendTaskLogEntry('coding', 'info', message, undefined, buildAttemptLogExtra(state));
+      terminateAttemptChild(state, 'model completed');
+      finalizeCodingAttempt(state.attemptId, 0, undefined);
+      return;
+    }
+    if (isDirectMainAttempt(state)) {
+      state.finalizing = true;
+      const message = getActiveCliJsonEventParserDisplayName() +
+        ' Direct CLI emitted completion event but the process did not exit; finalizing the Direct attempt.';
+      appendTaskLogEntry(logPhase, 'info', message, undefined, buildAttemptLogExtra(state));
+      terminateAttemptChild(state, 'model completed');
+      finalize(state.attemptId, 0, undefined)
+        .catch((finalizeError) => finishRun(
+          1,
+          undefined,
+          finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+          undefined,
+        ));
+    }
+  }, completionGraceMs);
 }
 
 function maybeScheduleAttemptCompletionFromModelText(state, text) {
@@ -2082,16 +2529,17 @@ function terminateAttemptChild(state, reason) {
   }
   try {
     if (process.platform === 'win32' && child.pid) {
-      spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+      const result = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
         stdio: 'ignore',
         windowsHide: true,
-      }).on('error', () => {
+      });
+      if (result.error) {
         try {
           child.kill();
         } catch {
           // Ignore best-effort cleanup failures.
         }
-      });
+      }
     } else {
       child.kill('SIGTERM');
     }
@@ -2169,10 +2617,9 @@ function startCodingWorkerAttempt(subtask) {
   appendTaskLogEntry('coding', 'info', message, undefined, buildAttemptLogExtra(state));
   emitPhase('coding', message, progress.percent);
 
-  const child = spawn(command, args, {
+  const child = spawnCli(command, args, {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    shell: process.platform === 'win32',
   });
   state.child = child;
   state.lastOutputAt = Date.now();
@@ -2811,7 +3258,7 @@ function statusToMarker(status) {
   return ' ';
 }
 
-function markPlanSubtaskStatus(subtaskId, status, note) {
+function markPlanSubtaskStatus(subtaskId, status, note, durationMs) {
   const planPath = join(specDir, artifacts.implementationPlan);
   return withFileWriteLock(planPath, 'runner:plan-subtask:' + subtaskId, () => {
     let content = '';
@@ -2919,6 +3366,7 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
       noteValue,
       startedValue,
       completedValue,
+      durationMs,
     }));
     if (contentWithSubtaskMetadata !== content) {
       content = contentWithSubtaskMetadata;
@@ -2946,19 +3394,30 @@ function buildSubtaskStatusMetadataUpdates(status, values) {
       notes: null,
       completed_at: null,
       started_at: null,
+      duration_ms: null,
     };
   }
 
   const updates = {
     started_at: values.startedValue || null,
   };
+  const durationMs = Number.isFinite(values.durationMs)
+    ? Math.max(0, Math.floor(values.durationMs))
+    : undefined;
 
   if (status === 'in_progress') {
     updates.completed_at = null;
+    updates.duration_ms = null;
   } else if (status === 'completed') {
     updates.completed_at = values.completedValue || null;
+    if (durationMs !== undefined) {
+      updates.duration_ms = durationMs;
+    }
   } else if (status === 'failed' || status === 'blocked') {
     updates.completed_at = null;
+    if (durationMs !== undefined) {
+      updates.duration_ms = durationMs;
+    }
   }
 
   if (status === 'completed' && values.completionValue) {
@@ -3238,6 +3697,47 @@ function summarizeCliRateLimitReason(state, ...messages) {
   return 'Autocode CLI rate limited: ' + (signal || 'the provider reported a usage limit.');
 }
 
+function getDirectCliRetryableFailureReason(result, rateLimited, validationError) {
+  if (
+    phase !== 'direct' ||
+    !result ||
+    result.status !== 'error' ||
+    rateLimited ||
+    validationError
+  ) {
+    return '';
+  }
+  const message = String(result.message || '').trim();
+  if (!message || isDirectCliNonRetryableFailure(message)) {
+    return '';
+  }
+  return isDirectCliRetryableFailure(message) ? message : '';
+}
+
+function isDirectCliNonRetryableFailure(message) {
+  const text = String(message || '').toLowerCase();
+  return /\b(?:auth|authentication|unauthorized|invalid token|token expired|login required|please login)\b/i.test(text) ||
+    /\b(?:command not found|not recognized as an internal or external command|enoent|no such file or directory|cannot find module|permission denied)\b/i.test(text) ||
+    /\b(?:model not found|invalid model|unknown model|endpoint not supported)\b/i.test(text);
+}
+
+function isDirectCliRetryableFailure(message) {
+  const text = String(message || '');
+  const lowerText = text.toLowerCase();
+  return /Direct attempt produced no output/i.test(text) ||
+    /\binactivity timeout\b/i.test(text) ||
+    /stream disconnected/i.test(text) ||
+    /tls handshake eof/i.test(text) ||
+    lowerText.includes('http/request failed') ||
+    /error sending request/i.test(text) ||
+    /transport channel closed/i.test(text) ||
+    /failed to connect to websocket/i.test(text) ||
+    /temporar(?:y|ily) unavailable/i.test(text) ||
+    /\bnetwork\b/i.test(text) ||
+    /\btimeout\b|\btimed out\b/i.test(text) ||
+    /Autocode CLI failed with exit code/i.test(text) ||
+    /Autocode CLI failed:/i.test(text);
+}
 function dedupeRecentCliFailureLines(lines) {
   const seen = new Set();
   const result = [];
@@ -3547,14 +4047,14 @@ function processCliJsonLine(line, state = defaultAttemptState) {
   if (!trimmed) {
     return;
   }
-  const normalizedJsonLine = normalizeCodexJsonEventLine(trimmed);
+  const normalizedJsonLine = normalizeCliJsonDiagnosticLine(trimmed);
 
   let event;
   try {
     event = JSON.parse(normalizedJsonLine);
   } catch {
-    if (isLikelyInternalCodexJsonLog(normalizedJsonLine)) {
-      appendCollapsedInternalCodexJsonLog(normalizedJsonLine, state);
+    if (isLikelyInternalCliJsonDiagnosticLog(normalizedJsonLine)) {
+      appendCollapsedInternalCliJsonDiagnosticLog(normalizedJsonLine, state);
       return;
     }
     process.stdout.write(trimmed + '\\n');
@@ -3590,73 +4090,76 @@ function handleCliJsonEvent(event, state = defaultAttemptState) {
   if (!activeCliJsonEventParser) {
     return false;
   }
-  switch (activeCliJsonEventParser.type) {
-    case 'codex-json':
-      return handleCodexJsonEvent(event, state);
-    default:
-      return false;
-  }
+  return handleGenericCliJsonEvent(event, state);
 }
 
-function handleCodexJsonEvent(event, state = defaultAttemptState) {
+function handleGenericCliJsonEvent(event, state = defaultAttemptState) {
   const envelope = asRecord(event);
-  const payload = getCodexPayload(envelope);
-  const payloadType = getFirstString(payload, ['type', 'event_type', 'kind']) || getFirstString(envelope, ['type', 'event_type', 'kind']);
-  const payloadSession = asRecord(payload && payload.session);
-  const envelopeSession = asRecord(envelope && envelope.session);
-  const sessionId = getFirstString(payload, ['session_id', 'sessionId', 'conversation_id']) ||
-    getFirstString(envelope, ['session_id', 'sessionId', 'conversation_id']) ||
-    getFirstString(payloadSession, ['id', 'session_id', 'sessionId', 'conversation_id']) ||
-    getFirstString(envelopeSession, ['id', 'session_id', 'sessionId', 'conversation_id']);
-  rememberCliJsonSessionId(sessionId);
-  const tokenUsage = extractCodexTokenUsage(envelope, payload, sessionId);
-  let tokenUsageHandled = false;
-  const handleTokenUsage = () => {
-    if (!tokenUsage || tokenUsageHandled) {
+  if (!envelope) {
+    return false;
+  }
+
+  const payload = getGenericCliJsonPayload(envelope);
+  const eventTypeFields = getActiveCliJsonParserList('eventTypeFields', DEFAULT_CLI_JSON_EVENT_TYPE_FIELDS);
+  const sessionIdFields = getActiveCliJsonParserList('sessionIdFields', DEFAULT_CLI_JSON_SESSION_ID_FIELDS);
+  const messageFields = getActiveCliJsonParserList('messageFields', DEFAULT_CLI_JSON_MESSAGE_FIELDS);
+  const payloadType = getFirstStringFromFields(payload, eventTypeFields) || getFirstStringFromFields(envelope, eventTypeFields);
+  const sessionId = getFirstStringFromFields(payload, sessionIdFields) || getFirstStringFromFields(envelope, sessionIdFields);
+  let handled = false;
+
+  if (sessionId) {
+    rememberCliJsonSessionId(sessionId);
+    handled = true;
+  }
+
+  const usage = extractCliJsonTokenUsage(envelope, payload, sessionId);
+  let usageHandled = false;
+  const handleUsage = () => {
+    if (!usage || usageHandled) {
       return false;
     }
-    updatePlanTokenUsage(tokenUsage);
-    tokenUsageHandled = true;
+    updatePlanTokenUsage(usage);
+    usageHandled = true;
     return true;
   };
 
-  if (handleCodexCommandExecutionEvent(envelope, payload, payloadType, state)) {
-    handleTokenUsage();
+  if (handleGenericCliJsonToolEvent(payload, payloadType, state, handleUsage)) {
     return true;
   }
 
-  if (payloadType === 'token_count' || payloadType === 'usage' || payloadType === 'usage_update') {
-    handleTokenUsage();
+  if (isIgnoredGenericCliJsonEvent(payloadType)) {
+    handleUsage();
     return true;
   }
 
-  if (payloadType === 'agent_message') {
-    handleTokenUsage();
-    const message = stringifyCodexText(payload.message ?? payload.content ?? payload.text);
-    if (message.trim()) {
-      appendCodexMessageLog(message, state);
-      return true;
-    }
+  const messageValue = getFirstValueFromFields(payload, messageFields) ?? getFirstValueFromFields(envelope, messageFields);
+  const message = stringifyCliJsonText(messageValue);
+  if (message.trim()) {
+    handleUsage();
+    appendCliJsonMessageLog(message, state);
+    handled = true;
   }
 
-  if (payloadType === 'message') {
-    handleTokenUsage();
-    const message = stringifyCodexText(payload.message ?? payload.content ?? payload.text);
-    if (message.trim()) {
-      appendCodexMessageLog(message, state);
-      return true;
-    }
+  if (isGenericCliJsonCompletionEvent(payloadType)) {
+    handleUsage();
+    scheduleAttemptCompletionGrace(state, { explicitCompletionEvent: true });
+    handled = true;
   }
 
-  if (payloadType === 'agent_message_delta' || payloadType === 'message_delta') {
-    return true;
+  return handleUsage() || handled;
+}
+
+function handleGenericCliJsonToolEvent(payload, payloadType, state, handleUsage) {
+  const normalizedType = normalizeCliJsonEventType(payloadType);
+  if (!normalizedType) {
+    return false;
   }
 
-  if (payloadType === 'function_call' || payloadType === 'tool_call') {
-    handleTokenUsage();
+  if (matchesCliJsonEventType(normalizedType, getActiveCliJsonParserList('toolStartEventTypes', DEFAULT_CLI_JSON_TOOL_START_EVENT_TYPES))) {
+    handleUsage();
     state.toolCallCount = (state.toolCallCount || 0) + 1;
-    const toolName = getFirstString(payload, ['name', 'tool_name', 'toolName']) || 'tool';
-    const toolInput = stringifyCodexText(payload.arguments ?? payload.input ?? payload.args);
+    const toolName = getFirstStringFromFields(payload, getActiveCliJsonParserList('toolNameFields', DEFAULT_CLI_JSON_TOOL_NAME_FIELDS)) || 'tool';
+    const toolInput = stringifyCliJsonText(getFirstValueFromFields(payload, getActiveCliJsonParserList('toolInputFields', DEFAULT_CLI_JSON_TOOL_INPUT_FIELDS)));
     appendTaskLogEntry(
       logPhase,
       'tool_start',
@@ -3665,102 +4168,187 @@ function handleCodexJsonEvent(event, state = defaultAttemptState) {
       buildAttemptLogExtra(state, {
         tool_name: toolName,
         tool_input: toolInput ? limitLogText(toolInput, 1000) : undefined,
-        tool_call_id: getFirstString(payload, ['call_id', 'callId', 'id']),
+        tool_call_id: getFirstStringFromFields(payload, getActiveCliJsonParserList('toolCallIdFields', DEFAULT_CLI_JSON_TOOL_CALL_ID_FIELDS)),
       }),
     );
     return true;
   }
 
-  if (payloadType === 'function_call_output' || payloadType === 'tool_result') {
-    handleTokenUsage();
-    const output = stringifyCodexText(payload.output ?? payload.content ?? payload.result);
-    const toolName = getFirstString(payload, ['name', 'tool_name', 'toolName']) || undefined;
-    const success = payload.success === undefined ? undefined : Boolean(payload.success);
-    const summary = output.trim()
-      ? 'Tool output' + (toolName ? ': ' + toolName : '') + '\\n' + limitLogText(output, 1200)
-      : 'Tool output' + (toolName ? ': ' + toolName : '');
+  if (matchesCliJsonEventType(normalizedType, getActiveCliJsonParserList('toolEndEventTypes', DEFAULT_CLI_JSON_TOOL_END_EVENT_TYPES))) {
+    handleUsage();
+    const toolNameFields = getActiveCliJsonParserList('toolNameFields', DEFAULT_CLI_JSON_TOOL_NAME_FIELDS);
+    const toolInputFields = getActiveCliJsonParserList('toolInputFields', DEFAULT_CLI_JSON_TOOL_INPUT_FIELDS);
+    const toolOutputFields = getActiveCliJsonParserList('toolOutputFields', DEFAULT_CLI_JSON_TOOL_OUTPUT_FIELDS);
+    const toolInput = stringifyCliJsonText(getFirstValueFromFields(payload, toolInputFields));
+    const output = stringifyCliJsonText(getFirstValueFromFields(payload, toolOutputFields));
+    const exitCode = getFirstNumberFromFields(payload, getActiveCliJsonParserList('toolExitCodeFields', DEFAULT_CLI_JSON_TOOL_EXIT_CODE_FIELDS));
+    const status = getFirstStringFromFields(payload, getActiveCliJsonParserList('toolStatusFields', DEFAULT_CLI_JSON_TOOL_STATUS_FIELDS));
+    const success = resolveGenericCliJsonToolSuccess(
+      getFirstValueFromFields(payload, getActiveCliJsonParserList('toolSuccessFields', DEFAULT_CLI_JSON_TOOL_SUCCESS_FIELDS)),
+      exitCode,
+      status,
+    );
+    const toolName = getFirstStringFromFields(payload, toolNameFields) || (toolInput ? 'Command' : undefined);
+    const summary = toolInput
+      ? formatCliCommandExecutionSummary(toolInput, success, exitCode)
+      : output.trim()
+        ? 'Tool output' + (toolName ? ': ' + toolName : '') + '\\n' + limitLogText(output, 1200)
+        : 'Tool output' + (toolName ? ': ' + toolName : '');
+    const detail = toolInput
+      ? formatCliCommandExecutionDetail(toolInput, output, exitCode, status)
+      : output.length > 1200 ? output : undefined;
     appendTaskLogEntry(
       logPhase,
       'tool_end',
       summary,
-      output.length > 1200 ? output : undefined,
+      detail,
       buildAttemptLogExtra(state, {
         tool_name: toolName,
+        tool_input: toolInput ? limitLogText(toolInput, 1000) : undefined,
         tool_success: success,
-        tool_call_id: getFirstString(payload, ['call_id', 'callId', 'id']),
+        tool_call_id: getFirstStringFromFields(payload, getActiveCliJsonParserList('toolCallIdFields', DEFAULT_CLI_JSON_TOOL_CALL_ID_FIELDS)),
       }),
     );
     return true;
   }
 
-  if (payloadType && /reasoning|analysis|encrypted/i.test(payloadType)) {
-    return true;
-  }
-
-  const usageOnlyEvent = handleTokenUsage();
-  const message = stringifyCodexText(payload.message ?? payload.content ?? payload.text ?? envelope.message);
-  if (message.trim()) {
-    appendTaskLogEntry(
-      logPhase,
-      'info',
-      limitLogText(message, 1600),
-      message.length > 1600 ? message : undefined,
-      buildAttemptLogExtra(state),
-    );
-    return true;
-  }
-
-  return payloadType === 'turn_started' ||
-    payloadType === 'session_configured' ||
-    payloadType === 'response_started' ||
-    usageOnlyEvent ||
-    handleCodexCompletionEvent(payloadType, state);
+  return false;
 }
 
-function handleCodexCommandExecutionEvent(envelope, payload, payloadType, state = defaultAttemptState) {
-  const item = asRecord(envelope?.item);
-  const source = payloadType === 'command_execution'
-    ? payload
-    : item && getFirstString(item, ['type']) === 'command_execution'
-      ? item
-      : null;
-  if (!source) {
+function isIgnoredGenericCliJsonEvent(payloadType) {
+  const normalizedType = normalizeCliJsonEventType(payloadType);
+  if (!normalizedType) {
     return false;
   }
-
-  const commandText = getFirstString(source, ['command', 'cmd']) || '';
-  const output = stringifyCodexText(
-    source.aggregated_output ?? source.output ?? source.result ?? source.content ?? source.stdout ?? source.stderr
-  );
-  const exitCode = typeof source.exit_code === 'number'
-    ? source.exit_code
-    : typeof source.exitCode === 'number'
-      ? source.exitCode
-      : undefined;
-  const status = getFirstString(source, ['status']) || (exitCode === 0 ? 'completed' : undefined);
-  const success = exitCode === undefined
-    ? status ? !/fail|error|cancel/i.test(status) : undefined
-    : exitCode === 0;
-  const content = formatCodexCommandExecutionSummary(commandText, success, exitCode);
-  const detail = formatCodexCommandExecutionDetail(commandText, output, exitCode, status);
-  state.toolCallCount = (state.toolCallCount || 0) + 1;
-
-  appendTaskLogEntry(
-    logPhase,
-    'tool_end',
-    content,
-    detail,
-    buildAttemptLogExtra(state, {
-      tool_name: 'Command',
-      tool_input: commandText ? limitLogText(commandText, 1000) : undefined,
-      tool_success: success,
-      tool_call_id: getFirstString(source, ['id', 'call_id', 'callId']),
-    }),
-  );
-  return true;
+  if (matchesCliJsonEventType(normalizedType, getActiveCliJsonParserList('ignoredEventTypes', DEFAULT_CLI_JSON_IGNORED_EVENT_TYPES))) {
+    return true;
+  }
+  return getActiveCliJsonParserList('ignoredEventTypeIncludes', DEFAULT_CLI_JSON_IGNORED_EVENT_TYPE_INCLUDES)
+    .some((item) => {
+      const normalized = normalizeCliJsonEventType(item);
+      return Boolean(normalized && normalizedType.includes(normalized));
+    });
 }
 
-function formatCodexCommandExecutionSummary(commandText, success, exitCode) {
+function matchesCliJsonEventType(normalizedType, eventTypes) {
+  return eventTypes.some((item) => normalizeCliJsonEventType(item) === normalizedType);
+}
+
+function normalizeCliJsonEventType(value) {
+  const type = valueToNonEmptyString(value);
+  return type ? type.toLowerCase() : '';
+}
+
+function resolveGenericCliJsonToolSuccess(value, exitCode, status) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    if (/^(true|success|succeeded|ok|completed|passed)$/i.test(value.trim())) {
+      return true;
+    }
+    if (/^(false|fail|failed|error|errored|cancelled|canceled)$/i.test(value.trim())) {
+      return false;
+    }
+  }
+  if (typeof exitCode === 'number') {
+    return exitCode === 0;
+  }
+  if (typeof status === 'string' && status.trim()) {
+    return !/fail|error|cancel/i.test(status);
+  }
+  return undefined;
+}
+
+function getGenericCliJsonPayload(envelope) {
+  const fields = getActiveCliJsonParserList('payloadFields', DEFAULT_CLI_JSON_PAYLOAD_FIELDS);
+  for (const field of fields) {
+    const record = asRecord(getValueByPath(envelope, field));
+    if (record) {
+      return record;
+    }
+  }
+  return envelope;
+}
+
+function isGenericCliJsonCompletionEvent(payloadType) {
+  const type = valueToNonEmptyString(payloadType);
+  if (!type) {
+    return false;
+  }
+  const completionTypes = getActiveCliJsonParserList('completionEventTypes', DEFAULT_CLI_JSON_COMPLETION_EVENT_TYPES);
+  const normalizedType = type.toLowerCase();
+  return completionTypes.some((item) => String(item || '').toLowerCase() === normalizedType);
+}
+
+function getActiveCliJsonParserList(key, fallback) {
+  const value = activeCliJsonEventParser && activeCliJsonEventParser[key];
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
+  const items = value.map((item) => String(item || '').trim()).filter(Boolean);
+  return items.length > 0 ? items : fallback;
+}
+
+function getFirstStringFromFields(record, fields) {
+  const value = getFirstValueFromFields(record, fields);
+  return valueToNonEmptyString(value);
+}
+
+function getFirstNumberFromFields(record, fields) {
+  const value = getFirstValueFromFields(record, fields);
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : typeof value === 'string' && value.trim() && Number.isFinite(Number(value))
+      ? Number(value)
+      : undefined;
+}
+
+function getFirstValueFromFields(record, fields) {
+  const source = asRecord(record);
+  if (!source) {
+    return undefined;
+  }
+  for (const field of fields) {
+    const value = getValueByPath(source, field);
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function getValueByPath(record, path) {
+  const source = asRecord(record);
+  if (!source) {
+    return undefined;
+  }
+  const segments = String(path || '').split('.').map((segment) => segment.trim()).filter(Boolean);
+  if (segments.length === 0) {
+    return undefined;
+  }
+  let current = source;
+  for (const segment of segments) {
+    const currentRecord = asRecord(current);
+    if (!currentRecord || !(segment in currentRecord)) {
+      return undefined;
+    }
+    current = currentRecord[segment];
+  }
+  return current;
+}
+
+function valueToNonEmptyString(value) {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim();
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  return undefined;
+}
+
+function formatCliCommandExecutionSummary(commandText, success, exitCode) {
   const statusText = success === false
     ? localizeMessage('commandFailed', 'Command failed', {})
     : localizeMessage('commandCompleted', 'Command completed', {});
@@ -3770,7 +4358,7 @@ function formatCodexCommandExecutionSummary(commandText, success, exitCode) {
     : statusText + suffix;
 }
 
-function formatCodexCommandExecutionDetail(commandText, output, exitCode, status) {
+function formatCliCommandExecutionDetail(commandText, output, exitCode, status) {
   const lines = [];
   if (commandText) {
     lines.push('Command:', commandText, '');
@@ -3787,8 +4375,8 @@ function formatCodexCommandExecutionDetail(commandText, output, exitCode, status
   return lines.join('\\n').trim();
 }
 
-function isLikelyInternalCodexJsonLog(value) {
-  const text = normalizeCodexJsonEventLine(value);
+function isLikelyInternalCliJsonDiagnosticLog(value) {
+  const text = normalizeCliJsonDiagnosticLine(value);
   if (!text.startsWith('{')) {
     return false;
   }
@@ -3804,7 +4392,7 @@ function isLikelyInternalCodexJsonLog(value) {
   }
 }
 
-function normalizeCodexJsonEventLine(value) {
+function normalizeCliJsonDiagnosticLine(value) {
   const text = String(value ?? '').trim();
   let index = 0;
   while (index < text.length && (text[index] === '。' || text[index].trim() === '')) {
@@ -3813,25 +4401,17 @@ function normalizeCodexJsonEventLine(value) {
   return text[index] === '{' ? text.slice(index) : text;
 }
 
-function appendCollapsedInternalCodexJsonLog(value, state = defaultAttemptState) {
+function appendCollapsedInternalCliJsonDiagnosticLog(value, state = defaultAttemptState) {
   appendTaskLogEntry(
     logPhase,
     'text',
-    localizeMessage('internalCodexJsonCollapsed', 'Internal Codex event log collapsed.', {}),
+    localizeMessage('internalCliJsonCollapsed', 'Internal CLI event log collapsed.', {}),
     String(value ?? ''),
     buildAttemptLogExtra(state),
   );
 }
 
-function handleCodexCompletionEvent(payloadType, state) {
-  if (payloadType === 'turn_completed' || payloadType === 'response_completed') {
-    scheduleAttemptCompletionGrace(state);
-    return true;
-  }
-  return false;
-}
-
-function appendCodexMessageLog(message, state = defaultAttemptState) {
+function appendCliJsonMessageLog(message, state = defaultAttemptState) {
   const cleanMessage = cleanLogText(message).trim();
   if (!cleanMessage || cleanMessage === state.lastCliMessageText) {
     return;
@@ -3849,27 +4429,7 @@ function appendCodexMessageLog(message, state = defaultAttemptState) {
   );
 }
 
-function getCodexPayload(envelope) {
-  const candidates = [
-    envelope.payload,
-    asRecord(envelope.msg)?.payload,
-    envelope.msg,
-    envelope.item,
-    envelope.response_item,
-    envelope.event,
-  ];
-
-  for (const candidate of candidates) {
-    const record = asRecord(candidate);
-    if (record) {
-      return record;
-    }
-  }
-
-  return envelope;
-}
-
-function normalizeCodexTokenUsage(raw, sessionId) {
+function normalizeCliJsonTokenUsage(raw, sessionId) {
   const source = asRecord(raw);
   if (!source) {
     return null;
@@ -3924,7 +4484,7 @@ function normalizeCodexTokenUsage(raw, sessionId) {
   };
 }
 
-function extractCodexTokenUsage(envelope, payload, sessionId) {
+function extractCliJsonTokenUsage(envelope, payload, sessionId) {
   const payloadResponse = asRecord(payload.response);
   const envelopeResponse = asRecord(envelope.response);
   const candidates = [
@@ -3953,7 +4513,7 @@ function extractCodexTokenUsage(envelope, payload, sessionId) {
   ];
 
   for (const candidate of candidates) {
-    const usage = normalizeCodexTokenUsage(candidate, sessionId);
+    const usage = normalizeCliJsonTokenUsage(candidate, sessionId);
     if (usage) {
       return usage;
     }
@@ -4180,7 +4740,8 @@ function persistDirectSessionState(result, now, quality, changedFiles = []) {
     updatedAt: now,
     iteration,
     provider: getDirectCliProviderName(),
-    modelId: undefined,
+    providerDisplayName: getDirectCliProviderDisplayName(),
+    modelId: getDirectCliModelId(),
     originalRequest: compactDirectSessionText(
       typeof existing.originalRequest === 'string' && existing.originalRequest.trim()
         ? existing.originalRequest
@@ -4316,10 +4877,15 @@ function readDirectCompletionSummary(result, minMtimeMs = runStartedAt) {
   return liveText;
 }
 
-async function evaluateDirectCliQuality(result, now, changedFiles = [], minSummaryMtimeMs = runStartedAt) {
+async function evaluateDirectCliQuality(result, now, changedFiles = [], minSummaryMtimeMs = runStartedAt, activeDurationMs) {
   const finalText = readDirectCompletionSummary(result, minSummaryMtimeMs);
   const tokenUsage = readCurrentPlanTokenUsage();
-  const durationMs = Math.max(0, Date.now() - runStartedAt);
+  const durationMs = Math.max(
+    0,
+    Number.isFinite(activeDurationMs)
+      ? Math.floor(activeDurationMs)
+      : Date.now() - runStartedAt,
+  );
   const stepsExecuted = Number.isFinite(tokenUsage && tokenUsage.stepsExecuted)
     ? Math.max(0, Math.floor(tokenUsage.stepsExecuted))
     : tokenUsageEventCount > 0
@@ -4344,19 +4910,33 @@ async function evaluateDirectCliQuality(result, now, changedFiles = [], minSumma
     validation: inferRunnerDirectValidationEvidence(finalText),
   };
 
+  const fallbackValidation = quality.validation;
   const directSummary = await loadDirectTaskSummaryModule();
   if (directSummary && typeof directSummary.inferAutocodeDirectValidationEvidence === 'function') {
     try {
-      quality.validation = directSummary.inferAutocodeDirectValidationEvidence(
+      const sharedValidation = directSummary.inferAutocodeDirectValidationEvidence(
         buildDirectCliSessionResultForQuality(result, quality, finalText, tokenUsage),
         finalText,
       );
+      quality.validation = reconcileRunnerDirectValidationEvidence(fallbackValidation, sharedValidation);
     } catch {
       // Keep the local fallback evidence.
     }
   }
 
   return quality;
+}
+
+function reconcileRunnerDirectValidationEvidence(fallbackValidation, sharedValidation) {
+  if (
+    fallbackValidation &&
+    sharedValidation &&
+    fallbackValidation.status === 'reported_passed' &&
+    !isRunnerDirectValidationPassed(sharedValidation.status)
+  ) {
+    return fallbackValidation;
+  }
+  return sharedValidation || fallbackValidation;
 }
 
 function normalizeDirectCliQualityOutcome(result) {
@@ -4394,8 +4974,9 @@ function buildDirectCliSessionResultForQuality(result, quality, finalText, token
 }
 
 async function getDirectCliQualityGateFailureReason(quality) {
-  const options = { requireValidation: isDirectCliValidationRequired() };
   const directSummary = await loadDirectTaskSummaryModule();
+  const requireValidation = isDirectCliValidationRequired(directSummary);
+  const options = { requireValidation, requireSelfCritique: requireValidation };
   if (directSummary && typeof directSummary.getAutocodeDirectQualityGateFailureReason === 'function') {
     try {
       const sharedReason = directSummary.getAutocodeDirectQualityGateFailureReason(quality, options);
@@ -4419,12 +5000,25 @@ async function loadDirectTaskSummaryModule() {
   return directTaskSummaryModulePromise;
 }
 
-function isDirectCliValidationRequired() {
-  return phase === 'direct' && !isDirectCliNonImplementationTask();
+function isDirectCliValidationRequired(directSummary) {
+  return phase === 'direct' && !isDirectCliNonImplementationTask(directSummary);
 }
 
-function isDirectCliNonImplementationTask() {
-  return isDirectCliNonImplementationContext(readCurrentPlanContextForDirectValidation(), asRecord(taskMetadata) || {});
+function isDirectCliNonImplementationTask(directSummary) {
+  const plan = readCurrentPlanContextForDirectValidation();
+  const metadata = asRecord(taskMetadata) || {};
+  if (directSummary && typeof directSummary.shouldRequireAutocodeDirectValidation === 'function') {
+    try {
+      return !directSummary.shouldRequireAutocodeDirectValidation({
+        plan,
+        metadata,
+        description: taskDescription,
+      });
+    } catch {
+      // Use the local fallback below.
+    }
+  }
+  return isDirectCliNonImplementationContext(plan, metadata, taskDescription);
 }
 
 function readCurrentPlanContextForDirectValidation() {
@@ -4446,7 +5040,7 @@ function extractPlanWorkflowType(content) {
   return match && match[1] ? match[1].trim() : '';
 }
 
-function isDirectCliNonImplementationContext(plan, metadata) {
+function isDirectCliNonImplementationContext(plan, metadata, description) {
   const workflowType = normalizeDirectCliContextString(plan.workflow_type) ||
     normalizeDirectCliContextString(metadata.workflow_type) ||
     normalizeDirectCliContextString(metadata.workflowType);
@@ -4487,7 +5081,32 @@ function isDirectCliNonImplementationContext(plan, metadata) {
     return true;
   }
 
-  return false;
+  const requestText = [
+    directCliContextString(description),
+    directCliContextString(metadata.task_description),
+    directCliContextString(metadata.description),
+    directCliContextString(metadata.title),
+    directCliContextString(plan.title),
+    directCliContextString(plan.feature),
+  ].filter(Boolean).join('\\n');
+  return isDirectCliNonImplementationRequestText(requestText);
+}
+
+function isDirectCliNonImplementationRequestText(text) {
+  if (!String(text || '').trim()) {
+    return false;
+  }
+  if (hasDirectCliImplementationRequestSignal(text)) {
+    return false;
+  }
+  return /\\b(?:analy[sz]e|analysis|investigate|investigation|research|audit|review|explain|summari[sz]e|summary|report|write[-\\s]?up|documentation|docs?|document)\\b/iu.test(text) ||
+    /(?:\u5206\u6790|\u8c03\u67e5|\u8c03\u7814|\u7814\u7a76|\u5ba1\u8ba1|\u590d\u6838|\u89e3\u91ca|\u8bf4\u660e|\u603b\u7ed3|\u62a5\u544a|\u6587\u6863|\u68b3\u7406|\u5b9a\u4f4d\u539f\u56e0|\u539f\u56e0\u5206\u6790|\u4e3a\u4ec0\u4e48|\u4e3a\u5565)/u.test(text);
+}
+
+function hasDirectCliImplementationRequestSignal(text) {
+  // Failure/validation nouns alone can describe analysis tasks; require an explicit implementation action.
+  return /\\b(?:fix(?:e[sd])?|repair|resolve|implement(?:ed|s|ation|ing)?|coding|code|patch(?:ed|es|ing)?|refactor(?:ed|s|ing)?|bugfix)\\b/iu.test(text) ||
+    /(?:\u4fee\u590d|\u5b9e\u73b0|\u7f16\u7801|\u91cd\u6784|\u6539\u4ee3\u7801|\u4ee3\u7801\u4fee\u6539)/u.test(text);
 }
 
 function directCliContextString(value) {
@@ -4502,7 +5121,7 @@ function getRunnerDirectQualityGateFailureReason(quality, options = {}) {
   if (!quality) {
     return null;
   }
-  if (quality.selfCritique && quality.selfCritique.status === 'failed') {
+  if (options.requireSelfCritique !== false && quality.selfCritique && quality.selfCritique.status === 'failed') {
     const improvements = Array.isArray(quality.selfCritique.improvements)
       ? quality.selfCritique.improvements.slice(0, 3).map((item) => String(item || '').trim()).filter(Boolean).join('; ')
       : '';
@@ -4535,9 +5154,10 @@ function inferRunnerDirectValidationEvidence(finalText) {
     };
   }
 
-  const hasPass = /\\b(?:passed|pass|succeeded|success|green|ok)\\b/i.test(validationText) || /(?:通过|成功|正常|无异常)/u.test(validationText);
-  const hasFail = /\\b(?:failed|failing|failure|error|errors|exception|red)\\b/i.test(validationText) || /(?:失败|未通过|报错|错误|异常)/u.test(validationText);
-  const hasSkip = /\\b(?:not run|not executed|skipped|manual only|not required|n\\/a)\\b/i.test(validationText) || /(?:未运行|未执行|跳过|未验证|无需验证|手动验证)/u.test(validationText);
+  const hasPass = hasRunnerDirectValidationPassSignal(validationText);
+  const hasFail = hasRunnerDirectValidationFailSignal(validationText);
+  const hasSkip = /\\b(?:not run|not executed|skipped|manual only|not required|n\\/a)\\b/i.test(validationText) ||
+    /(?:\u672a\u8fd0\u884c|\u672a\u6267\u884c|\u8df3\u8fc7|\u672a\u9a8c\u8bc1|\u65e0\u9700\u9a8c\u8bc1|\u624b\u52a8\u9a8c\u8bc1)/u.test(validationText);
   const reason = compactRunnerDirectValidationReason(validationText);
   if (hasPass && hasFail) {
     return { status: 'reported_mixed', reason };
@@ -4566,8 +5186,46 @@ function extractRunnerDirectValidationText(value) {
 }
 
 function isRunnerDirectValidationLine(line) {
-  return /\\b(?:validation|verify|verified|test|tests|typecheck|build|lint|smoke|passed|failed|not run|skipped|npm|npx|pnpm|yarn|dotnet|cargo|pytest|go test)\\b/i.test(line);
+  return /\\b(?:validation|verify|verified|test|tests|typecheck|build|lint|smoke|passed|failed|not run|skipped|npm|npx|pnpm|yarn|dotnet|cargo|pytest|go test)\\b/i.test(line) ||
+    /(?:\u9a8c\u8bc1|\u6d4b\u8bd5|\u6784\u5efa|\u7f16\u8bd1|\u68c0\u67e5|\u901a\u8fc7|\u5931\u8d25|\u672a\u8fd0\u884c|\u672a\u6267\u884c|\u672a\u9a8c\u8bc1)/u.test(line);
 }
+
+function hasRunnerDirectValidationPassSignal(text) {
+  return /\\b(?:passed|pass|succeeded|success|green|ok|error[-\\s]?free|failure[-\\s]?free)\\b/i.test(text) ||
+    /\\b(?:no|zero|0)\\s+(?:failed|failures?|errors?|exceptions?)\\b/i.test(text) ||
+    /\\b(?:without|with no)\\s+(?:failed|failures?|errors?|exceptions?)\\b/i.test(text) ||
+    /\\bnot\\s+(?:failing|failed)\\b/i.test(text) ||
+    /\\b(?:failed|failures?|errors?|exceptions?)\\s*[:=]\\s*0\\b/i.test(text) ||
+    /\\bexit\\s+code\\s*[:=]?\\s*0\\b/i.test(text) ||
+    /(?:\\u901a\\u8fc7|\\u6210\\u529f|\\u6b63\\u5e38|\\u65e0\\u5f02\\u5e38|\\u65e0\\u9519\\u8bef|\\u672a\\u53d1\\u73b0\\u9519\\u8bef|\\u6ca1\\u6709\\u9519\\u8bef|\\u6ca1\\u6709\\u5f02\\u5e38)/u.test(text) ||
+    hasRunnerDirectRenderValidationPassSignal(text);
+}
+
+function hasRunnerDirectValidationFailSignal(text) {
+  const failureText = stripRunnerDirectNegatedFailureSignals(text);
+  return /\\b(?:failed|failing|failure|error|errors|exception|red|non[-\\s]?zero)\\b/i.test(failureText) ||
+    /\\bexit(?:ed)?\\s+(?:with\\s+)?(?:code\\s*)?[1-9]\\d*\\b/i.test(failureText) ||
+    /(?:\\u5931\\u8d25|\\u672a\\u901a\\u8fc7|\\u62a5\\u9519|\\u9519\\u8bef|\\u5f02\\u5e38)/u.test(failureText) ||
+    /(?:\\u9875\\u9762|\\u754c\\u9762|\\u5e94\\u7528).{0,30}(?:\\u65e0\\u6cd5\\u52a0\\u8f7d|\\u4e0d\\u53ef\\u52a0\\u8f7d|\\u4e0d\\u80fd\\u52a0\\u8f7d|\\u52a0\\u8f7d\\u5931\\u8d25)/u.test(failureText);
+}
+
+function hasRunnerDirectRenderValidationPassSignal(text) {
+  return /(?:\\u622a\\u56fe|\\u6e32\\u67d3|Chrome|headless|canvas|file:\\/\\/).{0,100}(?:\\u786e\\u8ba4|\\u9a8c\\u8bc1).{0,50}(?:\\u9875\\u9762|\\u754c\\u9762|\\u5e94\\u7528).{0,40}(?:\\u53ef\\u52a0\\u8f7d|\\u80fd\\u52a0\\u8f7d|\\u53ef\\u4ee5\\u52a0\\u8f7d|\\u6b63\\u5e38\\u52a0\\u8f7d|\\u6210\\u529f\\u52a0\\u8f7d|\\u53ef\\u6253\\u5f00|\\u80fd\\u6253\\u5f00|\\u6b63\\u786e\\u6e32\\u67d3|\\u6210\\u529f\\u6e32\\u67d3)/iu.test(text) ||
+    /(?:Chrome|node --check|UTF-8).{0,140}\\u7ead\\uE1BF\\uE17B.{0,50}\\u9359\\uE21A\\u59DE\\u675E/iu.test(text);
+}
+
+function stripRunnerDirectNegatedFailureSignals(text) {
+  return String(text || '')
+    .replace(/\\berror[-\\s]?free\\b/gi, ' ')
+    .replace(/\\bfailure[-\\s]?free\\b/gi, ' ')
+    .replace(/\\b(?:no|zero|0)\\s+(?:failed|failures?|errors?|exceptions?)\\b/gi, ' ')
+    .replace(/\\b(?:without|with no)\\s+(?:failed|failures?|errors?|exceptions?)\\b/gi, ' ')
+    .replace(/\\bnot\\s+(?:failing|failed)\\b/gi, ' ')
+    .replace(/\\b(?:failed|failures?|errors?|exceptions?)\\s*[:=]\\s*0\\b/gi, ' ')
+    .replace(/\\bexit\\s+code\\s*[:=]?\\s*0\\b/gi, ' ')
+    .replace(/(?:\\u65e0\\u5f02\\u5e38|\\u65e0\\u9519\\u8bef|\\u672a\\u53d1\\u73b0\\u9519\\u8bef|\\u6ca1\\u6709\\u9519\\u8bef|\\u6ca1\\u6709\\u5f02\\u5e38|0\\s*(?:\\u4e2a)?\\s*\\u9519\\u8bef)/gu, ' ');
+}
+
 
 function compactRunnerDirectValidationReason(value) {
   const normalized = cleanLogText(String(value || '')).replace(/\\s+/g, ' ').trim();
@@ -4999,7 +5657,9 @@ function buildDirectQualityRetryPrompt(input) {
     '',
     '## Direct Validation Retry (' + nextAttempt + '/' + maxAttempts + ')',
     '',
-    'The previous Direct CLI attempt exited successfully, but validation or the quality gate failed.',
+    input.failedAttempt
+      ? 'The previous Direct CLI attempt exited before completion or returned an error.'
+      : 'The previous Direct CLI attempt exited successfully, but validation or the quality gate failed.',
     'Do not repeat the same implementation idea blindly. Inspect the current diff and relevant files first, then decide whether the previous hypothesis was wrong or only incomplete.',
     input.repeatedFailure ? 'Repeated failure guard: this failure matches an earlier Direct CLI attempt. Treat the previous approach as suspect, choose a different strategy, or reduce the fix to a smaller verifiable change before editing again.' : '',
     '',
@@ -5079,7 +5739,7 @@ function buildArtifactValidationRetryPrompt(validationError) {
       : []),
     '- Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of dropping them.',
     '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
-    '- Split broad work into OpenSpec-grade leaf tasks; a task covering more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files is too broad.',
+    '- Split broad work into focused leaf tasks; a task covering more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files is too broad.',
     '- For runnable/user-facing deliverables, add runtime-readiness verification that starts/opens the artifact, exercises the primary path, and checks console/resource loading/blank-screen/startup/exit status.',
     '- Runtime-readiness verification cannot be node --check, lint, typecheck, file existence, or inspect-only review.',
     '- If split tasks touch the same file, keep them separate and add _Depends on_ only for real data, contract, or verification order; the runtime queues overlapping file writes safely.',
@@ -5162,7 +5822,7 @@ function updatePlanStatus(failed, message, now, directQuality, result) {
     directExecution: phase === 'direct'
       ? {
           outcome: getDirectCliExecutionOutcome(failed, result),
-          completedAt: now,
+          completedAt: failed ? undefined : now,
           quality: directQuality,
         }
       : undefined,
@@ -5171,16 +5831,17 @@ function updatePlanStatus(failed, message, now, directQuality, result) {
     updateDirectCliPlanItemStatus(
       failed ? 'failed' : 'completed',
       message || (failed ? 'Direct CLI run failed.' : 'Completed by Autocode Direct CLI run.'),
+      directQuality && Number.isFinite(directQuality.durationMs) ? directQuality.durationMs : undefined,
     );
   }
 }
 
-function updateDirectCliPlanItemStatus(status, note) {
+function updateDirectCliPlanItemStatus(status, note, durationMs) {
   const content = readCurrentPlanContent();
   const directExecution = readPlanMachineMetadata(content).direct_execution;
   const currentSubtaskId = getDirectCliCurrentSubtaskId(directExecution, content);
-  markPlanSubtaskStatus('direct', status, note);
-  markPlanSubtaskStatus(currentSubtaskId, status, note);
+  markPlanSubtaskStatus('direct', status, note, durationMs);
+  markPlanSubtaskStatus(currentSubtaskId, status, note, durationMs);
 }
 
 function ensureDirectCliPlanItems(content, directExecution) {
@@ -5531,9 +6192,7 @@ function getCliJsonEventParserCommandNames(type) {
   return Array.isArray(parser?.commandNames) ? parser.commandNames : [];
 }
 
-function isCodexCommand(command) {
-  return isCliCommandOneOf(command, getCliJsonEventParserCommandNames('codex-json'));
-}
+
 
 function isCliCommandOneOf(command, names) {
   const commandName = getCliCommandName(command);
@@ -5547,20 +6206,58 @@ function getCliCommandName(command) {
 }
 
 function getDirectCliProviderName() {
-  const normalized = String(cli || '').trim() || 'custom';
+  const routeId = normalizeDirectCliIdentity(directCliRuntimeRouteId);
+  if (routeId) {
+    return routeId;
+  }
+  const normalized = normalizeDirectCliIdentity(cli) || 'custom';
   return normalized + '-cli';
+}
+
+function getDirectCliProviderDisplayName() {
+  const normalized = String(directCliRuntimeRouteDisplayName || '').trim();
+  return normalized || undefined;
+}
+
+function getDirectCliProviderDisplayLabel() {
+  return getDirectCliProviderDisplayName() || getDirectCliProviderName();
+}
+
+function getDirectCliModelId() {
+  const normalized = String(directCliModelId || '').trim();
+  return normalized || undefined;
+}
+
+function normalizeDirectCliIdentity(value) {
+  return String(value || '').trim().replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 function getDirectCliSessionPrefix() {
   return getDirectCliProviderName().replace(/[^A-Za-z0-9_.-]+/g, '-') + '-';
 }
 
-function sanitizeCodexRulesFiles() {
-  if (!isCodexCommand(command)) {
-    return;
+function runCliPreflightActions() {
+  const actions = Array.isArray(cliPreflightActions) ? cliPreflightActions : [];
+  for (const action of actions) {
+    if (!action || typeof action !== 'object') {
+      continue;
+    }
+    if (!doesCliPreflightActionApply(action)) {
+      continue;
+    }
+    if (action.type === 'strip-utf8-bom-from-rules') {
+      stripUtf8BomFromCliRuleFiles(action);
+    }
   }
+}
 
-  const rulesDir = resolveCodexRulesDir();
+function doesCliPreflightActionApply(action) {
+  const commandNames = Array.isArray(action.commandNames) ? action.commandNames : [];
+  return commandNames.length === 0 || isCliCommandOneOf(command, commandNames);
+}
+
+function stripUtf8BomFromCliRuleFiles(action) {
+  const rulesDir = resolveCliPreflightRulesDir(action);
   if (!rulesDir || !existsSync(rulesDir)) {
     return;
   }
@@ -5569,39 +6266,54 @@ function sanitizeCodexRulesFiles() {
   try {
     entries = readdirSync(rulesDir, { withFileTypes: true });
   } catch (error) {
-    appendTaskLogEntry(logPhase, 'info', 'Unable to inspect Codex rules directory: ' + formatErrorMessage(error));
+    appendTaskLogEntry(logPhase, 'info', 'Unable to inspect CLI rules directory: ' + formatErrorMessage(error));
     return;
   }
 
+  const extension = typeof action.fileExtension === 'string' && action.fileExtension.trim()
+    ? action.fileExtension.trim().toLowerCase()
+    : '.rules';
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.rules')) {
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith(extension)) {
       continue;
     }
-    stripUtf8BomFromFile(join(rulesDir, entry.name));
+    stripUtf8BomFromCliRuleFile(join(rulesDir, entry.name), action);
   }
 }
 
-function resolveCodexRulesDir() {
-  const explicitHome = typeof process.env.CODEX_HOME === 'string' ? process.env.CODEX_HOME.trim() : '';
-  if (explicitHome) {
-    return join(explicitHome, 'rules');
+function resolveCliPreflightRulesDir(action) {
+  const explicitDirectory = typeof action.directory === 'string' ? action.directory.trim() : '';
+  if (explicitDirectory) {
+    return explicitDirectory;
+  }
+
+  const childDir = typeof action.childDir === 'string' && action.childDir.trim()
+    ? action.childDir.trim()
+    : 'rules';
+  const envHomeKey = typeof action.envHome === 'string' ? action.envHome.trim() : '';
+  const envHome = envHomeKey && typeof process.env[envHomeKey] === 'string'
+    ? process.env[envHomeKey].trim()
+    : '';
+  if (envHome) {
+    return join(envHome, childDir);
   }
 
   const profileHome = typeof process.env.USERPROFILE === 'string' ? process.env.USERPROFILE.trim() : '';
-  if (profileHome) {
-    return join(profileHome, '.codex', 'rules');
-  }
-
   const unixHome = typeof process.env.HOME === 'string' ? process.env.HOME.trim() : '';
-  return unixHome ? join(unixHome, '.codex', 'rules') : '';
+  const home = profileHome || unixHome;
+  const homeSubdir = typeof action.homeSubdir === 'string' ? action.homeSubdir.trim() : '';
+  return home && homeSubdir ? join(home, homeSubdir, childDir) : '';
 }
 
-function stripUtf8BomFromFile(filePath) {
+function stripUtf8BomFromCliRuleFile(filePath, action) {
+  const label = typeof action.displayName === 'string' && action.displayName.trim()
+    ? action.displayName.trim()
+    : 'CLI rules';
   let bytes;
   try {
     bytes = readFileSync(filePath);
   } catch (error) {
-    appendTaskLogEntry(logPhase, 'info', 'Unable to read Codex rules file: ' + filePath + '. ' + formatErrorMessage(error));
+    appendTaskLogEntry(logPhase, 'info', 'Unable to read ' + label + ' file: ' + filePath + '. ' + formatErrorMessage(error));
     return;
   }
 
@@ -5611,12 +6323,12 @@ function stripUtf8BomFromFile(filePath) {
 
   try {
     writeFileSync(filePath, bytes.subarray(3));
-    appendTaskLogEntry(logPhase, 'info', 'Removed UTF-8 BOM from Codex rules file: ' + filePath);
+    appendTaskLogEntry(logPhase, 'info', 'Removed UTF-8 BOM from ' + label + ' file: ' + filePath);
   } catch (error) {
     appendTaskLogEntry(
       logPhase,
       'info',
-      'Codex rules file starts with a UTF-8 BOM and may fail to parse: ' + filePath + '. ' + formatErrorMessage(error),
+      label + ' file starts with a UTF-8 BOM and may fail to parse: ' + filePath + '. ' + formatErrorMessage(error),
     );
   }
 }
@@ -5633,17 +6345,17 @@ function localizeMessage(key, fallback, values) {
   const commandText = values?.command || command;
   switch (key) {
     case 'startCoding':
-      return '开始使用 ' + commandText + ' 执行 Autocode ' + phaseText + ' 编码任务。';
+      return '\u5f00\u59cb\u4f7f\u7528 ' + commandText + ' \u6267\u884c Autocode ' + phaseText + ' \u7f16\u7801\u4efb\u52a1\u3002';
     case 'startPlanning':
-      return '开始使用 ' + commandText + ' 执行 Autocode ' + phaseText + ' 规划任务。';
+      return '\u5f00\u59cb\u4f7f\u7528 ' + commandText + ' \u6267\u884c Autocode ' + phaseText + ' \u89c4\u5212\u4efb\u52a1\u3002';
     case 'completed':
-      return 'Autocode CLI 运行完成。';
+      return 'Autocode CLI \u8fd0\u884c\u5b8c\u6210\u3002';
     case 'commandCompleted':
-      return '命令执行完成';
+      return '\u547d\u4ee4\u6267\u884c\u5b8c\u6210';
     case 'commandFailed':
-      return '命令执行失败';
-    case 'internalCodexJsonCollapsed':
-      return 'Codex 内部事件日志已折叠。';
+      return '\u547d\u4ee4\u6267\u884c\u5931\u8d25';
+    case 'internalCliJsonCollapsed':
+      return 'CLI \u5185\u90e8\u4e8b\u4ef6\u65e5\u5fd7\u5df2\u6298\u53e0\u3002';
     default:
       return fallback;
   }
@@ -5667,7 +6379,7 @@ function getFirstString(record, keys) {
   return undefined;
 }
 
-function stringifyCodexText(value) {
+function stringifyCliJsonText(value) {
   if (typeof value === 'string') {
     return cleanLogText(value);
   }
@@ -5675,13 +6387,13 @@ function stringifyCodexText(value) {
     return '';
   }
   if (Array.isArray(value)) {
-    return value.map((item) => stringifyCodexText(item)).filter(Boolean).join('\\n');
+    return value.map((item) => stringifyCliJsonText(item)).filter(Boolean).join('\\n');
   }
   const record = asRecord(value);
   if (record) {
     for (const key of ['text', 'content', 'message', 'output']) {
       if (record[key] !== undefined) {
-        const text = stringifyCodexText(record[key]);
+        const text = stringifyCliJsonText(record[key]);
         if (text) {
           return text;
         }

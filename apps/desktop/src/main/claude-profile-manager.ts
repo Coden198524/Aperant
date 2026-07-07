@@ -58,6 +58,8 @@ import {
 } from './claude-profile/profile-utils';
 import { debugLog } from '../shared/utils/debug-logger';
 
+const PROFILE_STARTUP_MAINTENANCE_DELAY_MS = 5000;
+
 /**
  * Manages Claude Code profiles for multi-account support.
  * Profiles are stored in the app's userData directory.
@@ -101,16 +103,12 @@ export class ClaudeProfileManager {
       debugLog('[ClaudeProfileManager] No existing profile store found, using defaults');
     }
 
-    // Run one-time migration to fix corrupted emails
-    // This repairs emails that were truncated due to ANSI escape codes in terminal output
-    this.migrateCorruptedEmails();
-
-    // Populate missing subscription metadata for existing profiles
-    // This reads subscriptionType and rateLimitTier from Keychain credentials
-    this.populateSubscriptionMetadata();
-
     this.initialized = true;
     console.log('[ClaudeProfileManager] Initialization complete');
+
+    // Startup maintenance reads profile config files and platform credential stores.
+    // Keep it off the startup critical path; stale display metadata is acceptable briefly.
+    this.scheduleStartupMaintenance();
   }
 
   /**
@@ -145,6 +143,23 @@ export class ClaudeProfileManager {
       this.save();
       console.warn('[ClaudeProfileManager] Email migration complete');
     }
+  }
+
+  private scheduleStartupMaintenance(): void {
+    const timer = setTimeout(() => {
+      try {
+        this.migrateCorruptedEmails();
+      } catch (error) {
+        console.warn('[ClaudeProfileManager] Failed to migrate profile emails:', error);
+      }
+
+      try {
+        this.populateSubscriptionMetadata();
+      } catch (error) {
+        console.warn('[ClaudeProfileManager] Failed to populate subscription metadata:', error);
+      }
+    }, PROFILE_STARTUP_MAINTENANCE_DELAY_MS);
+    timer.unref?.();
   }
 
   /**

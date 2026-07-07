@@ -103,10 +103,10 @@ export class YunxiaoAutoSyncService {
   start(): void {
     if (this.timer) return;
 
-    void this.runSyncCycle('startup');
     this.timer = setInterval(() => {
       void this.runSyncCycle('interval');
     }, this.intervalMs);
+    this.timer.unref?.();
     console.warn(`[YunxiaoAutoSync] started (interval=${Math.round(this.intervalMs / 1000)}s)`);
   }
 

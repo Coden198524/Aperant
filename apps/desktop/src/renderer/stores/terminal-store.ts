@@ -6,6 +6,7 @@ import { arrayMove } from '@dnd-kit/sortable';
 import type { TerminalSession, TerminalWorktreeConfig } from '../../shared/types';
 import type { SupportedCLI } from '../../shared/types/settings';
 import { terminalMachine, type TerminalEvent } from '@shared/state-machines';
+import { DEFAULT_CLI } from '../lib/cli-display';
 import { terminalBufferManager } from '../lib/terminal-buffer-manager';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
 
@@ -435,7 +436,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
               ...t,
               isCLIMode,
               status: isCLIMode ? 'claude-active' : (t.status === 'exited' ? 'exited' : 'running'),
-              activeCLI: isCLIMode ? (activeCLI || t.activeCLI || 'claude-code') : undefined,
+              activeCLI: isCLIMode ? (activeCLI || t.activeCLI || DEFAULT_CLI) : undefined,
               // Reset busy state and naming flag when leaving Claude mode
               isClaudeBusy: isCLIMode ? t.isClaudeBusy : undefined,
               cliNamedOnce: isCLIMode ? t.cliNamedOnce : undefined

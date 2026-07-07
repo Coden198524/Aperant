@@ -7,6 +7,7 @@ import type { AppUpdateAvailableEvent, AppUpdateProgress } from "../../shared/ty
 
 // Poll for updates every 5 minutes
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const UPDATE_STARTUP_CHECK_DELAY_MS = 30000;
 
 interface UpdateBannerProps {
   className?: string;
@@ -79,15 +80,19 @@ export function UpdateBanner({ className }: UpdateBannerProps) {
 
   // Initial check and periodic polling
   useEffect(() => {
-    checkForUpdate();
+    const startupTimer = setTimeout(() => {
+      checkForUpdate();
+    }, UPDATE_STARTUP_CHECK_DELAY_MS);
 
     const interval = setInterval(() => {
       checkForUpdate();
     }, UPDATE_CHECK_INTERVAL_MS);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(startupTimer);
+      clearInterval(interval);
+    };
   }, [checkForUpdate]);
-
   // Listen for push notifications about updates
   useEffect(() => {
     const cleanup = window.electronAPI.onAppUpdateAvailable((info) => {

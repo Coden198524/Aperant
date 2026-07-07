@@ -175,6 +175,27 @@ describe('Autocode runtime agent messages', () => {
     );
   });
 
+  it('describes Direct provider continuation without OpenAI-specific response wording', () => {
+    const [message] = buildAutocodeDirectTaskExecutionMessages({
+      specDir,
+      specId: '001-task',
+      projectRoot: tempRoot,
+      directContinuationMode: 'provider',
+      directSessionState: {
+        version: AUTOCODE_DIRECT_SESSION_STATE_VERSION,
+        sessionId: 'direct-1',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        iteration: 1,
+        providerResponseId: 'provider-state-1',
+        latestSummary: 'Summary should not be injected for provider continuation.',
+      },
+    });
+
+    expect(message.content).toContain('provider-native continuation state provider-state-1');
+    expect(message.content).not.toContain('previous response');
+    expect(message.content).not.toContain('Prior Direct Session Summary');
+  });
   it('limits direct continuation summaries injected from prior sessions', () => {
     const longSummary = `Prior summary start ${'expensive repeated direct context '.repeat(120)} Prior summary tail`;
 

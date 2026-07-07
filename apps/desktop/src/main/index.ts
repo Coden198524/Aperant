@@ -60,14 +60,13 @@ import { getAppLanguage, initAppLanguage } from './app-language';
 import { readSettingsFile } from './settings-utils';
 import { registerSettingsAccessor } from './ai/auth/resolver';
 import { appLog, setupErrorLogging } from './app-logger';
-import { preWarmToolCache } from './cli-tool-manager';
 import { initializeClaudeProfileManager, getClaudeProfileManager } from './claude-profile-manager';
 import { isProfileAuthenticated } from './claude-profile/profile-utils';
 import { isMacOS, isWindows } from './platform';
 import { ptyDaemonClient } from './terminal/pty-daemon-client';
 import { getYunxiaoAutoSyncService } from './integrations/yunxiao-auto-sync';
-import { initializeMetricsTracking } from './ai/orchestration/metrics-tracker';
 import type { AppSettings, AuthFailureInfo } from '../shared/types';
+import type { ProviderAccount } from '../shared/types/provider-account';
 
 const USER_DATA_MIGRATION_SKIP_NAMES = new Set([
   'Cache',
@@ -260,6 +259,158 @@ let mainWindow: typeof BrowserWindow.prototype | null = null;
 let agentManager: AgentManager | null = null;
 let terminalManager: TerminalManager | null = null;
 const yunxiaoAutoSyncService = getYunxiaoAutoSyncService();
+const STARTUP_YUNXIAO_SYNC_DELAY_MS = 60000;
+const STARTUP_PROFILE_SERVICES_DELAY_MS = 10000;
+
+function scheduleAfterWindowLoad(
+  targetWindow: typeof BrowserWindow.prototype,
+  delayMs: number,
+  task: () => void
+): void {
+  const run = () => {
+    const timer = setTimeout(() => {
+      if (!targetWindow.isDestroyed()) {
+        task();
+      }
+    }, delayMs);
+    timer.unref?.();
+  };
+
+  if (targetWindow.webContents.isLoadingMainFrame()) {
+    targetWindow.webContents.once('did-finish-load', run);
+  } else {
+    run();
+  }
+}
+
+function scheduleStartupBackgroundTasks(targetWindow: typeof BrowserWindow.prototype): void {
+  scheduleAfterWindowLoad(targetWindow, STARTUP_PROFILE_SERVICES_DELAY_MS, () => {
+    startProviderUsageServices(targetWindow);
+  });
+
+  scheduleAfterWindowLoad(targetWindow, STARTUP_YUNXIAO_SYNC_DELAY_MS, () => {
+    yunxiaoAutoSyncService.start();
+  });
+}
+
+function sendMigratedProfileAuthFailure(
+  targetWindow: typeof BrowserWindow.prototype,
+  activeProfile: ReturnType<ReturnType<typeof getClaudeProfileManager>['getActiveProfile']>
+): void {
+  scheduleAfterWindowLoad(targetWindow, 1000, () => {
+    const authFailureInfo: AuthFailureInfo = {
+      profileId: activeProfile.id,
+      profileName: activeProfile.name,
+      failureType: 'missing',
+      message: `Profile "${activeProfile.name}" was migrated to an isolated directory and needs re-authentication.`,
+      detectedAt: new Date()
+    };
+    console.warn('[main] Sending auth failure for migrated active profile:', activeProfile.name);
+    targetWindow.webContents.send(IPC_CHANNELS.CLAUDE_AUTH_FAILURE, authFailureInfo);
+  });
+}
+
+function getActiveStartupProviderAccount(settings: AppSettings): ProviderAccount | undefined {
+  const accounts = settings.providerAccounts ?? [];
+  const priorityOrder = settings.globalPriorityOrder ?? [];
+
+  for (const accountId of priorityOrder) {
+    const account = accounts.find(candidate => candidate.id === accountId);
+    if (account) {
+      return account;
+    }
+  }
+
+  return accounts[0];
+}
+
+function accountSupportsStartupUsageMonitoring(account: ProviderAccount | undefined): boolean {
+  if (!account) {
+    return false;
+  }
+
+  if (account.provider === 'anthropic') {
+    return account.authType === 'oauth'
+      ? Boolean(account.claudeProfileId)
+      : Boolean(account.apiKey);
+  }
+
+  if (account.provider === 'openai') {
+    return account.authType === 'oauth';
+  }
+
+  if (account.provider === 'zai') {
+    return Boolean(account.apiKey);
+  }
+
+  return false;
+}
+
+function accountRequiresClaudeProfile(account: ProviderAccount | undefined): boolean {
+  return account?.provider === 'anthropic'
+    && account.authType === 'oauth'
+    && Boolean(account.claudeProfileId);
+}
+
+function startUsageMonitorForWindow(targetWindow: typeof BrowserWindow.prototype): void {
+  if (targetWindow.isDestroyed() || mainWindow !== targetWindow) {
+    return;
+  }
+
+  initializeUsageMonitorForwarding(targetWindow);
+  const usageMonitor = getUsageMonitor();
+  usageMonitor.start();
+  console.warn('[main] Usage monitor initialized for active provider account');
+}
+
+function startProviderUsageServices(targetWindow: typeof BrowserWindow.prototype): void {
+  const activeAccount = getActiveStartupProviderAccount(loadSettingsSync());
+  if (!accountSupportsStartupUsageMonitoring(activeAccount)) {
+    return;
+  }
+
+  if (!accountRequiresClaudeProfile(activeAccount)) {
+    startUsageMonitorForWindow(targetWindow);
+    return;
+  }
+
+  // Anthropic OAuth still depends on Claude profile config/keychain state.
+  initializeClaudeProfileManager()
+    .then(() => {
+      if (targetWindow.isDestroyed() || mainWindow !== targetWindow) {
+        return;
+      }
+
+      startUsageMonitorForWindow(targetWindow);
+
+      const profileManager = getClaudeProfileManager();
+      const migratedProfileIds = profileManager.getMigratedProfileIds();
+      const activeProfile = profileManager.getActiveProfile();
+
+      if (migratedProfileIds.length === 0) {
+        return;
+      }
+
+      console.warn('[main] Found migrated profiles that need re-authentication:', migratedProfileIds);
+
+      for (const profileId of migratedProfileIds) {
+        const profile = profileManager.getProfile(profileId);
+        if (profile && isProfileAuthenticated(profile)) {
+          console.warn('[main] Migrated profile has valid credentials via file fallback, clearing migrated flag:', profile.name);
+          profileManager.clearMigratedProfile(profileId);
+        }
+      }
+
+      const remainingMigratedIds = profileManager.getMigratedProfileIds();
+      if (remainingMigratedIds.includes(activeProfile.id)) {
+        sendMigratedProfileAuthFailure(targetWindow, activeProfile);
+      }
+    })
+    .catch((error) => {
+      console.warn('[main] Failed to initialize profile manager:', error);
+      startUsageMonitorForWindow(targetWindow);
+    });
+}
 
 // Capture child process exits (renderer/GPU/utility) for crash diagnostics.
 app.on('child-process-gone', (_event, details) => {
@@ -451,8 +602,8 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
 
-  // Open DevTools in development
-  if (is.dev) {
+  // Keep normal startup fast; DevTools can still be opened with F12.
+  if (is.dev && process.env.OPEN_DEVTOOLS === 'true') {
     mainWindow.webContents.openDevTools({ mode: 'right' });
   }
 
@@ -485,23 +636,8 @@ app.whenReady().then(async () => {
   // Set app user model id for Windows
   electronApp.setAppUserModelId('com.autocode.app');
 
-  // Clear cache on Windows to prevent permission errors from stale cache
-  if (isWindows()) {
-    session.defaultSession.clearCache()
-      .then(() => console.log('[main] Cleared cache on startup'))
-      .catch((err) => console.warn('[main] Failed to clear cache:', err));
-  }
-
   // Initialize app language from OS locale for main process i18n (context menus)
   initAppLanguage();
-
-  // Initialize workflow metrics tracking
-  try {
-    await initializeMetricsTracking();
-    console.log('[main] Workflow metrics tracking initialized');
-  } catch (error) {
-    console.warn('[main] Failed to initialize metrics tracking:', error);
-  }
 
   // Clean up stale update metadata from the old source updater system
   // This prevents version display desync after electron-updater installs a new version
@@ -622,93 +758,14 @@ app.whenReady().then(async () => {
   // Setup IPC handlers
   setupIpcHandlers(agentManager, terminalManager, () => mainWindow);
 
-  // Start Yunxiao auto-sync background service.
-  // It syncs open Bug items into the local Yunxiao Issues module when
-  // YUNXIAO_ENABLED=true and YUNXIAO_AUTO_SYNC=true.
+  // Configure Yunxiao auto-sync; the first sync is delayed until after startup.
   yunxiaoAutoSyncService.setMainWindowGetter(() => mainWindow);
-  yunxiaoAutoSyncService.start();
 
   // Create window
   createWindow();
-
-  // Pre-warm CLI tool cache in background (non-blocking)
-  // This ensures CLI detection is done before user needs it
-  // Include all commonly used tools to prevent sync blocking on first use
-  setImmediate(() => {
-    preWarmToolCache(['claude', 'git', 'gh', 'python']).catch((error) => {
-      console.warn('[main] Failed to pre-warm CLI cache:', error);
-    });
-  });
-
-  // Initialize Claude profile manager, then start usage monitor
-  // We do this sequentially to ensure profile data (including auto-switch settings)
-  // is loaded BEFORE the usage monitor attempts to read settings.
-  // This prevents the "UsageMonitor disabled" error due to race condition.
-  initializeClaudeProfileManager()
-    .then(() => {
-      // Only start monitoring if window is still available (app not quitting)
-      if (mainWindow) {
-        // Setup event forwarding from usage monitor to renderer
-        initializeUsageMonitorForwarding(mainWindow);
-
-        // Start the usage monitor (uses unified OperationRegistry for proactive restart)
-        const usageMonitor = getUsageMonitor();
-        usageMonitor.start();
-        console.warn('[main] Usage monitor initialized and started (after profile load)');
-
-        // Check for migrated profiles that need re-authentication
-        // These profiles were moved from shared ~/.claude to isolated directories
-        // and need new credentials since they now use a different keychain entry
-        const profileManager = getClaudeProfileManager();
-        const migratedProfileIds = profileManager.getMigratedProfileIds();
-        const activeProfile = profileManager.getActiveProfile();
-
-        if (migratedProfileIds.length > 0) {
-          console.warn('[main] Found migrated profiles that need re-authentication:', migratedProfileIds);
-
-          // Check ALL migrated profiles for valid credentials, not just the active one
-          // This prevents stale migrated flags from triggering unnecessary re-auth prompts
-          // when the user switches to a different profile later
-          for (const profileId of migratedProfileIds) {
-            const profile = profileManager.getProfile(profileId);
-            if (profile && isProfileAuthenticated(profile)) {
-              // Credentials are valid - clear the migrated flag
-              console.warn('[main] Migrated profile has valid credentials via file fallback, clearing migrated flag:', profile.name);
-              profileManager.clearMigratedProfile(profileId);
-            }
-          }
-
-          // Re-check if the active profile still needs re-auth after clearing valid ones
-          const remainingMigratedIds = profileManager.getMigratedProfileIds();
-          if (remainingMigratedIds.includes(activeProfile.id)) {
-            // Active profile still needs re-auth - show the modal
-            mainWindow.webContents.once('did-finish-load', () => {
-              // Small delay to ensure stores are initialized
-              setTimeout(() => {
-                const authFailureInfo: AuthFailureInfo = {
-                  profileId: activeProfile.id,
-                  profileName: activeProfile.name,
-                  failureType: 'missing',
-                  message: `Profile "${activeProfile.name}" was migrated to an isolated directory and needs re-authentication.`,
-                  detectedAt: new Date()
-                };
-                console.warn('[main] Sending auth failure for migrated active profile:', activeProfile.name);
-                mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_AUTH_FAILURE, authFailureInfo);
-              }, 1000);
-            });
-          }
-        }
-      }
-    })
-    .catch((error) => {
-      console.warn('[main] Failed to initialize profile manager:', error);
-      // Fallback: try starting usage monitor anyway (might use defaults)
-      if (mainWindow) {
-        initializeUsageMonitorForwarding(mainWindow);
-        const usageMonitor = getUsageMonitor();
-        usageMonitor.start();
-      }
-    });
+  if (mainWindow) {
+    scheduleStartupBackgroundTasks(mainWindow);
+  }
 
   if (mainWindow) {
     // Log debug mode status
@@ -733,12 +790,6 @@ app.whenReady().then(async () => {
         console.warn('[main] Updater forced in dev mode via DEBUG_UPDATER=true');
         console.warn('[main] Note: Updates won\'t actually work in dev mode');
       }
-    } else {
-      console.warn('[main] ========================================');
-      console.warn('[main] App auto-updater DISABLED (development mode)');
-      console.warn('[main] To test updater logging, set DEBUG_UPDATER=true');
-      console.warn('[main] Note: Actual updates only work in packaged builds');
-      console.warn('[main] ========================================');
     }
   }
 

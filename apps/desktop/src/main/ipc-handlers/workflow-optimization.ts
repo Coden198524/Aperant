@@ -7,7 +7,7 @@
 
 import { ipcMain } from 'electron';
 import type { WorkflowMetrics } from '../../shared/types/workflow-optimization';
-import { getMetricsTracker } from '../ai/orchestration/metrics-tracker';
+import { getMetricsTracker, initializeMetricsTracking } from '../ai/orchestration/metrics-tracker';
 
 /**
  * Register workflow optimization IPC handlers.
@@ -18,6 +18,7 @@ export function registerWorkflowOptimizationHandlers(): void {
    */
   ipcMain.handle('workflow-optimization:get-metrics', async (): Promise<WorkflowMetrics | null> => {
     try {
+      await initializeMetricsTracking();
       const tracker = getMetricsTracker();
       const aggregated = tracker.getAggregatedMetrics();
 
@@ -73,6 +74,7 @@ export function registerWorkflowOptimizationHandlers(): void {
    */
   ipcMain.handle('workflow-optimization:get-recent-records', async (_, limit = 100) => {
     try {
+      await initializeMetricsTracking();
       const tracker = getMetricsTracker();
       return tracker.getRecentRecords(limit);
     } catch (error) {
@@ -86,6 +88,7 @@ export function registerWorkflowOptimizationHandlers(): void {
    */
   ipcMain.handle('workflow-optimization:compare-levels', async () => {
     try {
+      await initializeMetricsTracking();
       const tracker = getMetricsTracker();
       return tracker.compareOptimizationLevels();
     } catch (error) {

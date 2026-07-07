@@ -9,6 +9,9 @@ import type { SessionConfig, SessionResult, StreamEvent } from '../types';
 // Create controllable mock for streamText
 const mockStreamText = vi.fn();
 vi.mock('ai', () => ({
+  Output: {
+    object: vi.fn((input: unknown) => input),
+  },
   streamText: (...args: unknown[]) => mockStreamText(...args),
   stepCountIs: (n: number) => ({ type: 'stepCount', count: n }),
 }));
@@ -40,7 +43,12 @@ function createMockConfig(overrides: Partial<SessionConfig> = {}): SessionConfig
  */
 function createMockStreamResult(
   parts: Array<Record<string, unknown>>,
-  options?: { text?: string; totalUsage?: Record<string, number> | null; providerMetadata?: Record<string, unknown> },
+  options?: {
+    text?: string;
+    totalUsage?: Record<string, number> | null;
+    providerMetadata?: Record<string, unknown>;
+    output?: Record<string, unknown>;
+  },
 ) {
   return {
     fullStream: (async function* () {
@@ -55,6 +63,7 @@ function createMockStreamResult(
         : options?.totalUsage ?? { inputTokens: 100, outputTokens: 50 },
     ),
     providerMetadata: Promise.resolve(options?.providerMetadata),
+    output: Promise.resolve(options?.output),
   };
 }
 
@@ -195,7 +204,7 @@ describe('runAgentSession', () => {
     expect(result.stepsExecuted).toBe(0);
   });
 
-  it('should classify generic errors', async () => {
+  it('should classify network errors', async () => {
     mockStreamText.mockImplementation(() => {
       throw new Error('Network error');
     });
@@ -203,7 +212,7 @@ describe('runAgentSession', () => {
     const result = await runAgentSession(createMockConfig());
 
     expect(result.outcome).toBe('error');
-    expect(result.error!.code).toBe('generic_error');
+    expect(result.error!.code).toBe('network_error');
   });
 
   it('normalizes snake_case total usage from compatible providers', async () => {
@@ -523,6 +532,70 @@ describe('runAgentSession', () => {
     const result = await runAgentSession(createMockConfig());
 
     expect(result.outcome).toBe('auth_failure');
+  });
+
+  it('should preserve invocation routes and clear provider continuation when switching accounts', async () => {
+    let callCount = 0;
+    mockStreamText.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        throw new Error('401 Unauthorized');
+      }
+      return createMockStreamResult(
+        [
+          { type: 'text-delta', id: 'text-1', delta: 'ok' },
+          { type: 'finish-step', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        { text: 'ok', totalUsage: { inputTokens: 10, outputTokens: 5 } },
+      );
+    });
+
+    const onAccountSwitch = vi.fn().mockResolvedValue({
+      accountId: 'openai-2',
+      resolvedProvider: 'openai',
+      resolvedModelId: 'future-resp-large',
+      apiKey: 'new-key',
+      source: 'profile-api-key',
+      reasoningConfig: {},
+    });
+
+    const result = await runAgentSession(createMockConfig({
+      systemPrompt: 'Switch prompt',
+      provider: 'openai-compatible',
+      providerTransport: 'openai-compatible.chatModel',
+      responsePersistence: true,
+      previousResponseId: 'resp_old',
+      providerModelInvocationRoutes: {
+        provider: 'openai',
+        modelIdPrefix: 'future-resp-',
+        method: 'responses',
+      },
+      providerResponsePersistence: {
+        capabilityId: 'old-provider-state',
+        mode: 'provider',
+        providerResponseId: 'resp_old',
+        continuationProviderOptions: {
+          openai: { previousResponseId: '{providerResponseId}' },
+        },
+      },
+      model: {
+        modelId: 'old-model',
+        provider: 'openai-compatible.chatModel',
+      } as SessionConfig['model'],
+    }), {
+      currentAccountId: 'openai-compatible-1',
+      onAccountSwitch,
+    });
+
+    expect(result.outcome).toBe('completed');
+    expect(onAccountSwitch).toHaveBeenCalledTimes(1);
+    const switchedCallArgs = mockStreamText.mock.calls[1][0];
+    expect(switchedCallArgs.system).toBeUndefined();
+    expect(switchedCallArgs.providerOptions?.openai).toMatchObject({
+      instructions: 'Switch prompt',
+      store: true,
+    });
+    expect(switchedCallArgs.providerOptions?.openai?.previousResponseId).toBeUndefined();
   });
 
   // ===========================================================================
@@ -968,7 +1041,7 @@ describe('runAgentSession', () => {
     });
   });
 
-  it('should use instructions and store=false for generic openai provider ids with responses models', async () => {
+  it('should not infer Responses behavior from generic provider ids and model names', async () => {
     mockStreamText.mockReturnValue(
       createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
     );
@@ -982,11 +1055,71 @@ describe('runAgentSession', () => {
     }));
 
     const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.system).toBe('Spec prompt');
+    expect(callArgs.providerOptions?.openai).toBeUndefined();
+  });
+
+  it('should honor configured chat transport over Responses model heuristics', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      systemPrompt: 'Spec prompt',
+      provider: 'openai',
+      providerTransport: 'openai.chatModel',
+      model: {
+        modelId: 'gpt-5.4',
+        provider: 'openai.responses',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.system).toBe('Spec prompt');
+    expect(callArgs.providerOptions?.openai).toBeUndefined();
+  });
+
+  it('should use configured provider transport for future Responses models', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      systemPrompt: 'Spec prompt',
+      provider: 'openai',
+      providerTransport: 'openai.responses',
+      model: {
+        modelId: 'future-resp-large',
+        provider: 'openai',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
     expect(callArgs.system).toBeUndefined();
     expect(callArgs.providerOptions?.openai).toMatchObject({
       instructions: 'Spec prompt',
       store: false,
     });
+  });
+
+  it('should not treat future provider responses transports as OpenAI Responses', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      systemPrompt: 'Future prompt',
+      provider: 'future-ai' as SessionConfig['provider'],
+      providerTransport: 'future.responses',
+      model: {
+        modelId: 'future-resp-large',
+        provider: 'future.responses',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.system).toBe('Future prompt');
+    expect(callArgs.providerOptions?.openai).toBeUndefined();
   });
 
   it('should allow disabling responses persistence for one-shot sessions', async () => {
@@ -1038,5 +1171,84 @@ describe('runAgentSession', () => {
     });
     expect(result.usage.sessionId).toBe('direct-session-1');
     expect(result.providerResponseId).toBe('resp_next');
+  });
+
+  it('should select Anthropic structured-output mode by provider instead of model-name prefix', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], {
+        text: '{"ok":true}',
+        output: { ok: true },
+        totalUsage: { inputTokens: 10, outputTokens: 5 },
+      }),
+    );
+
+    const outputSchema = {
+      safeParse: vi.fn((value: unknown) => ({ success: true, data: value })),
+    } as unknown as SessionConfig['outputSchema'];
+
+    await runAgentSession(createMockConfig({
+      outputSchema,
+      model: {
+        modelId: 'future-structured-large',
+        provider: 'anthropic',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.providerOptions?.anthropic).toMatchObject({
+      structuredOutputMode: 'outputFormat',
+    });
+  });
+
+  it('should apply configured provider continuation options and response id fields', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], {
+        text: 'continued',
+        totalUsage: { inputTokens: 10, outputTokens: 5 },
+        providerMetadata: { future: { stateId: 'state_next' } },
+      }),
+    );
+
+    const result = await runAgentSession(createMockConfig({
+      sessionId: 'direct-session-1',
+      systemPrompt: 'Direct prompt',
+      model: {
+        modelId: 'future-large',
+        provider: 'future-sdk',
+      } as SessionConfig['model'],
+      providerResponsePersistence: {
+        capabilityId: 'future-response-state',
+        mode: 'provider',
+        providerResponseId: 'state_prev',
+        providerOptions: {
+          future: { store: true },
+        },
+        continuationProviderOptions: {
+          future: {
+            store: true,
+            previousStateId: '{providerResponseId}',
+            instructions: '{systemPrompt}',
+            model: '${modelId}',
+            provider: '{provider}',
+            session: '{session_id}',
+            literal: '{unknownValue}',
+          },
+        },
+        providerResponseIdFields: ['future.stateId'],
+      },
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.providerOptions?.future).toMatchObject({
+      store: true,
+      previousStateId: 'state_prev',
+      instructions: 'Direct prompt',
+      model: 'future-large',
+      provider: 'future-sdk',
+      session: 'direct-session-1',
+      literal: '{unknownValue}',
+    });
+    expect(result.usage.sessionId).toBe('direct-session-1');
+    expect(result.providerResponseId).toBe('state_next');
   });
 });

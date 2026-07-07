@@ -6,7 +6,6 @@ import {
   AUTOCODE_PROJECT_DATA_DIR_NAME,
   DEFAULT_AUTOCODE_CLI,
   DEFAULT_PHASE_MODELS,
-  SUPPORTED_AUTOCODE_CLIS,
   SupportedProvider,
   buildAutocodeWorkspaceState,
   buildAutocodeTaskCardViewModel,
@@ -18,16 +17,23 @@ import {
   createManualAutocodeTask,
   createStartedAutocodeAgentRuntime,
   createStartedAutocodeTaskRun,
+  detectProviderFromModel,
   formatAutocodeProjectDocTypeList,
+  getAutocodeSpecDir,
   getAutocodeBooleanOption,
   getAutocodeStringOption,
   hasAutocodeJsonOption,
   isAutocodeProjectDocType,
-  isAutocodeCli,
+  listAutocodeTasks,
+  loadAutocodeTaskRuntimeMetadataConfig,
   markAutocodeTaskDone,
+  parseAutocodeCliRuntimeRoutes,
+  parseAutocodeModelProviderRoutes,
   parseAutocodeCommandArgs,
   readAutocodeTaskLogs,
   requestAutocodeTaskChanges,
+  resolveAutocodeCli,
+  resolveAutocodeCliRuntimeStartOptions,
   summarizeWorkspace,
   startAutocodeAgentRuntime,
   type AutocodeCli,
@@ -36,6 +42,7 @@ import {
   type AutocodeTask,
   type AutocodeTaskDevelopmentMode,
   type AutocodeProjectDocType,
+  type AutocodeTaskRuntimeMetadataConfig,
   type AutocodeTaskLogEntry,
   type AutocodeTaskLogs,
   type ParsedAutocodeCommandArgs,
@@ -233,15 +240,18 @@ function createProjectDocsTask(parsed: ParsedAutocodeCommandArgs): void {
 async function runTask(parsed: ParsedAutocodeCommandArgs): Promise<void> {
   const context = resolveContext(parsed);
   const taskId = resolveTaskId(parsed);
+  const runtimeMetadata = resolveCliTaskRuntimeMetadata(context, taskId);
   const runtime = getStringOption(parsed, 'runtime') ?? 'file';
   if (runtime === 'agent') {
     const cli = resolveCli(getStringOption(parsed, 'cli') ?? DEFAULT_CLI);
     const customCommand = getStringOption(parsed, 'custom-command') ?? getStringOption(parsed, 'custom');
+    const model = getModelOption(parsed, runtimeMetadata);
+    const cliRuntimeOptions = toCliRuntimeInput(resolveCliRuntimeOptions(parsed, cli, customCommand, model, runtimeMetadata));
     const started = createStartedAutocodeAgentRuntime({
       ...context,
       taskId,
-      cli,
-      customCommand,
+      ...cliRuntimeOptions,
+      model,
       bypassPermissions: getBooleanOption(parsed, 'bypass-permissions'),
     });
     const runtimePlan = started.runtimePlan;
@@ -282,11 +292,13 @@ async function runTask(parsed: ParsedAutocodeCommandArgs): Promise<void> {
 
   const cli = resolveCli(getStringOption(parsed, 'cli') ?? DEFAULT_CLI);
   const customCommand = getStringOption(parsed, 'custom-command') ?? getStringOption(parsed, 'custom');
+  const model = getModelOption(parsed, runtimeMetadata);
+  const cliRuntimeOptions = toCliRuntimeInput(resolveCliRuntimeOptions(parsed, cli, customCommand, model, runtimeMetadata));
   const started = createStartedAutocodeTaskRun({
     ...context,
     taskId,
-    cli,
-    customCommand,
+    ...cliRuntimeOptions,
+    model,
     bypassPermissions: getBooleanOption(parsed, 'bypass-permissions'),
   });
   const plan = started.plan;
@@ -388,10 +400,137 @@ function resolveTaskId(parsed: ParsedAutocodeCommandArgs): string {
 }
 
 function resolveCli(value: string): AutocodeCli {
-  if (isAutocodeCli(value)) {
-    return value;
+  return resolveAutocodeCli(value);
+}
+
+function toCliRuntimeInput(options: ReturnType<typeof resolveAutocodeCliRuntimeStartOptions>) {
+  return {
+    cli: options.cli,
+    customCommand: options.customCommand,
+    directCliContinuationStrategy: options.directCliContinuationStrategy,
+    directCliJsonEventParser: options.directCliJsonEventParser,
+    directCliRuntimeRouteId: options.directCliRuntimeRouteId,
+    directCliRuntimeRouteDisplayName: options.directCliRuntimeRouteDisplayName,
+    directCliPermissionBypassArgs: options.directCliPermissionBypassArgs,
+    directCliTaskRunStrategy: options.directCliTaskRunStrategy,
+    directCliPreflightActions: options.directCliPreflightActions,
+  };
+}
+
+function resolveCliRuntimeOptions(
+  parsed: ParsedAutocodeCommandArgs,
+  cli: AutocodeCli,
+  customCommand: string | undefined,
+  model: string | undefined,
+  metadata: AutocodeTaskRuntimeMetadataConfig | null,
+): ReturnType<typeof resolveAutocodeCliRuntimeStartOptions> {
+  return resolveAutocodeCliRuntimeStartOptions({
+    cli,
+    customCommand,
+    provider: getProviderOption(parsed, model, metadata),
+    modelId: model,
+    authSource: getStringOption(parsed, 'auth-source') ?? getStringOption(parsed, 'authSource'),
+    routes: readCliRuntimeRoutes(metadata, {
+      explicitCli: getStringOption(parsed, 'cli') ? cli : undefined,
+      customCommand,
+    }),
+  });
+}
+
+function resolveCliTaskRuntimeMetadata(
+  context: ReturnType<typeof resolveContext>,
+  taskId: string,
+): AutocodeTaskRuntimeMetadataConfig | null {
+  const task = listAutocodeTasks(context)
+    .find((candidate) => candidate.id === taskId || candidate.specId === taskId);
+  const specId = task?.specId ?? taskId;
+  return loadAutocodeTaskRuntimeMetadataConfig(getAutocodeSpecDir({ ...context, specId }));
+}
+
+function getModelOption(
+  parsed: ParsedAutocodeCommandArgs,
+  metadata: AutocodeTaskRuntimeMetadataConfig | null,
+): string | undefined {
+  const explicitModel = getStringOption(parsed, 'model');
+  if (explicitModel) {
+    return explicitModel;
   }
-  throw new Error(`Unsupported CLI "${value}". Supported values: ${SUPPORTED_AUTOCODE_CLIS.join(', ')}.`);
+  if (isDirectRuntimeMetadata(metadata)) {
+    return metadata?.phaseModels?.coding ?? metadata?.model;
+  }
+  return metadata?.model;
+}
+
+function getProviderOption(
+  parsed: ParsedAutocodeCommandArgs,
+  model: string | undefined,
+  metadata: AutocodeTaskRuntimeMetadataConfig | null,
+): string | undefined {
+  const explicitProvider = getStringOption(parsed, 'provider');
+  if (explicitProvider) {
+    return explicitProvider;
+  }
+  const metadataProvider = isDirectRuntimeMetadata(metadata)
+    ? metadata?.phaseProviders?.coding ?? metadata?.provider
+    : metadata?.provider;
+  if (metadataProvider) {
+    return metadataProvider;
+  }
+  return model ? detectProviderFromModel(model, readModelProviderRoutes(metadata)) : undefined;
+}
+
+function isDirectRuntimeMetadata(metadata: AutocodeTaskRuntimeMetadataConfig | null): boolean {
+  return metadata?.developmentMode === 'direct' || metadata?.workflowMode === 'off';
+}
+
+function readCliRuntimeRoutes(
+  metadata: AutocodeTaskRuntimeMetadataConfig | null,
+  options: { explicitCli?: AutocodeCli; customCommand?: string } = {},
+): ReturnType<typeof parseAutocodeCliRuntimeRoutes> {
+  if (options.customCommand?.trim()) {
+    return [];
+  }
+  const routes = [
+    ...parseAutocodeCliRuntimeRoutes(metadata?.cliRuntimeRoutes),
+    ...parseAutocodeCliRuntimeRoutes(metadata?.autocodeCliRuntimeRoutes),
+    ...readEnvCliRuntimeRoutes(),
+  ];
+  return options.explicitCli
+    ? routes.filter((route) => route.cli === options.explicitCli)
+    : routes;
+}
+
+function readModelProviderRoutes(
+  metadata: AutocodeTaskRuntimeMetadataConfig | null,
+): ReturnType<typeof parseAutocodeModelProviderRoutes> {
+  return [
+    ...parseAutocodeModelProviderRoutes(metadata?.modelProviderRoutes),
+    ...readEnvModelProviderRoutes(),
+  ];
+}
+
+function readEnvCliRuntimeRoutes(): ReturnType<typeof parseAutocodeCliRuntimeRoutes> {
+  const raw = process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON ?? process.env.AUTOCODE_CLI_RUNTIME_ROUTES;
+  if (!raw?.trim()) {
+    return [];
+  }
+  try {
+    return parseAutocodeCliRuntimeRoutes(JSON.parse(raw));
+  } catch (error) {
+    throw new Error(`Invalid AUTOCODE_CLI_RUNTIME_ROUTES JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function readEnvModelProviderRoutes(): ReturnType<typeof parseAutocodeModelProviderRoutes> {
+  const raw = process.env.AUTOCODE_MODEL_PROVIDER_ROUTES_JSON ?? process.env.AUTOCODE_MODEL_PROVIDER_ROUTES;
+  if (!raw?.trim()) {
+    return [];
+  }
+  try {
+    return parseAutocodeModelProviderRoutes(JSON.parse(raw));
+  } catch (error) {
+    throw new Error(`Invalid AUTOCODE_MODEL_PROVIDER_ROUTES JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function getDevelopmentModeOption(parsed: ParsedAutocodeCommandArgs): AutocodeTaskDevelopmentMode {
@@ -461,7 +600,7 @@ Usage:
   autocode tasks [--cwd <path>] [--data-dir ${DEFAULT_DATA_DIR}] [--json]
   autocode create --title <title> --description <text> [--mode direct|standard]
   autocode docs generate [--type full|product|architecture|technical]
-  autocode run <task-id> [--cli claude-code|codex|gemini|opencode|kilocode|deepseek|custom]
+  autocode run <task-id> [--cli <cli-id>] [--model <model-id>] [--provider <provider-id>]
   autocode run <task-id> --runtime agent [--execute] [--json]
   autocode run <task-id> --cli custom --custom-command "<command>"
   autocode run <task-id> --execute
@@ -474,7 +613,7 @@ Commands:
   tasks      List shared Autocode task files.
   create     Create an Autocode task. Default mode is standard; use --mode direct for direct LLM execution.
   docs       Create a project documentation task used as context by future spec and coding phases.
-  run        Write a task prompt and runner using @autocode/core.
+  run        Write a task prompt and runner using @autocode/core. Direct CLI routes can be supplied in task metadata or AUTOCODE_CLI_RUNTIME_ROUTES_JSON.
   logs       Show recent task log entries.
   done       Mark a task complete in the shared plan file.
   changes    Move a task back to human review.

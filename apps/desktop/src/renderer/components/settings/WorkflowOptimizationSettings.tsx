@@ -186,7 +186,7 @@ export function WorkflowOptimizationSettings() {
                     type="number"
                     min="0"
                     max="5"
-                    value={settings.advancedRetries?.maxPlanningRetries ?? 2}
+                    value={settings.advancedRetries?.maxPlanningRetries ?? 1}
                     onChange={(e) =>
                       updateAdvancedRetries({ maxPlanningRetries: Number(e.target.value) })
                     }
@@ -214,7 +214,7 @@ export function WorkflowOptimizationSettings() {
                     type="number"
                     min="0"
                     max="5"
-                    value={settings.advancedRetries?.maxQACycles ?? 2}
+                    value={settings.advancedRetries?.maxQACycles ?? 1}
                     onChange={(e) =>
                       updateAdvancedRetries({ maxQACycles: Number(e.target.value) })
                     }
@@ -229,7 +229,7 @@ export function WorkflowOptimizationSettings() {
                     type="number"
                     min="0"
                     max="5"
-                    value={settings.advancedRetries?.maxSpecPhaseRetries ?? 2}
+                    value={settings.advancedRetries?.maxSpecPhaseRetries ?? 1}
                     onChange={(e) =>
                       updateAdvancedRetries({ maxSpecPhaseRetries: Number(e.target.value) })
                     }

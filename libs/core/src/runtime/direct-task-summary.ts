@@ -33,6 +33,7 @@ export interface AutocodeDirectCodingQualityMetrics {
 
 export interface AutocodeDirectQualityGateOptions {
   requireValidation?: boolean;
+  requireSelfCritique?: boolean;
 }
 
 export interface BuildAutocodeDirectCompletionSummaryInput {
@@ -46,26 +47,56 @@ export interface BuildAutocodeDirectCompletionSummaryInput {
 export interface BuildAutocodeDirectExecutionMetadataInput {
   existing?: Record<string, unknown> | null;
   outcome: string;
-  completedAt: string;
+  completedAt?: string;
   summaryFile?: string;
   currentSubtaskId: string;
   quality?: AutocodeDirectCodingQualityMetrics;
 }
 
+export interface AutocodeDirectPlanLifecycleState {
+  status: 'human_review' | 'error';
+  planStatus: 'review' | 'error';
+  reviewReason: 'completed' | 'errors';
+  xstateState: 'human_review' | 'error';
+  executionPhase: 'complete' | 'failed';
+}
+
+export function buildAutocodeDirectPlanLifecycleState(success: boolean): AutocodeDirectPlanLifecycleState {
+  return success
+    ? {
+        status: 'human_review',
+        planStatus: 'review',
+        reviewReason: 'completed',
+        xstateState: 'human_review',
+        executionPhase: 'complete',
+      }
+    : {
+        status: 'error',
+        planStatus: 'error',
+        reviewReason: 'errors',
+        xstateState: 'error',
+        executionPhase: 'failed',
+      };
+}
+
 export function buildAutocodeDirectExecutionMetadata(
   input: BuildAutocodeDirectExecutionMetadataInput,
 ): Record<string, unknown> {
-  return {
+  const metadata: Record<string, unknown> = {
     ...(input.existing ?? {}),
     enabled: true,
     outcome: input.outcome,
-    completed_at: input.completedAt,
     summary_file: input.summaryFile ?? 'direct_summary.md',
     current_subtask_id: input.currentSubtaskId,
     ai_coding_quality: input.quality,
   };
+  if (input.completedAt) {
+    metadata.completed_at = input.completedAt;
+  } else {
+    delete metadata.completed_at;
+  }
+  return metadata;
 }
-
 
 export function isAutocodeSuccessfulDirectOutcome(
   result: AutocodeSessionResult | undefined,
@@ -81,7 +112,7 @@ export function getAutocodeDirectQualityGateFailureReason(
     return null;
   }
 
-  if (quality.selfCritique?.status === 'failed') {
+  if (options.requireSelfCritique !== false && quality.selfCritique?.status === 'failed') {
     const improvements = quality.selfCritique.improvements
       .slice(0, 3)
       .map((item) => item.trim())
@@ -117,6 +148,104 @@ export function isAutocodeDirectQualityGatePassed(
   return getAutocodeDirectQualityGateFailureReason(quality, options) === null;
 }
 
+export interface AutocodeDirectValidationRequirementInput {
+  plan?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
+  description?: string;
+}
+
+export function shouldRequireAutocodeDirectValidation(
+  input: AutocodeDirectValidationRequirementInput,
+): boolean {
+  return !isAutocodeNonImplementationDirectContext(input);
+}
+
+export function isAutocodeNonImplementationDirectContext(
+  input: AutocodeDirectValidationRequirementInput,
+): boolean {
+  const plan = directSummaryRecordValue(input.plan);
+  const metadata = directSummaryRecordValue(input.metadata);
+  const workflowType = directSummaryNormalizedString(plan.workflow_type) ||
+    directSummaryNormalizedString(metadata.workflow_type) ||
+    directSummaryNormalizedString(metadata.workflowType);
+  if (['documentation', 'investigation', 'analysis', 'research'].includes(workflowType)) {
+    return true;
+  }
+
+  const metadataCategory = directSummaryNormalizedString(metadata.category);
+  const metadataSource = directSummaryNormalizedString(metadata.sourceType) || directSummaryNormalizedString(metadata.source_type);
+  const metadataIdeaType = directSummaryNormalizedString(metadata.ideationType) || directSummaryNormalizedString(metadata.ideation_type);
+  const metadataTaskType = directSummaryNormalizedString(metadata.taskType) || directSummaryNormalizedString(metadata.task_type) || directSummaryNormalizedString(metadata.type);
+
+  if (metadataCategory === 'documentation' || metadataSource === 'project_docs') {
+    return true;
+  }
+  if (['documentation_gaps', 'documentation', 'analysis', 'investigation', 'research'].includes(metadataIdeaType)) {
+    return true;
+  }
+  if (['documentation', 'analysis', 'investigation', 'research'].includes(metadataTaskType)) {
+    return true;
+  }
+  if (
+    directSummaryStringValue(metadata.projectDocumentType) ||
+    directSummaryStringValue(metadata.project_document_type) ||
+    directSummaryStringValue(metadata.projectDocumentOutputDir) ||
+    directSummaryStringValue(metadata.project_document_output_dir) ||
+    Array.isArray(metadata.projectDocumentOutputs) ||
+    Array.isArray(metadata.project_document_outputs)
+  ) {
+    return true;
+  }
+  if (
+    directSummaryStringValue(plan.documentation_depth) ||
+    directSummaryStringValue(plan.documentation_profile) ||
+    Array.isArray(plan.documentation_focus) ||
+    Object.keys(directSummaryRecordValue(plan.project_documentation)).length > 0
+  ) {
+    return true;
+  }
+
+  const requestText = [
+    input.description,
+    directSummaryStringValue(metadata.task_description),
+    directSummaryStringValue(metadata.description),
+    directSummaryStringValue(metadata.title),
+    directSummaryStringValue(plan.title),
+    directSummaryStringValue(plan.feature),
+  ].filter(Boolean).join('\n');
+  return isAutocodeNonImplementationDirectRequestText(requestText);
+}
+
+function isAutocodeNonImplementationDirectRequestText(text: string): boolean {
+  if (!text.trim()) {
+    return false;
+  }
+  if (hasAutocodeDirectImplementationRequestSignal(text)) {
+    return false;
+  }
+
+  const englishPattern = /\b(?:analy[sz]e|analysis|investigate|investigation|research|audit|review|explain|summari[sz]e|summary|report|write[-\s]?up|documentation|docs?|document)\b/iu;
+  const chinesePattern = /(?:\u5206\u6790|\u8c03\u67e5|\u8c03\u7814|\u7814\u7a76|\u5ba1\u8ba1|\u590d\u6838|\u89e3\u91ca|\u8bf4\u660e|\u603b\u7ed3|\u62a5\u544a|\u6587\u6863|\u68b3\u7406|\u5b9a\u4f4d\u539f\u56e0|\u539f\u56e0\u5206\u6790|\u4e3a\u4ec0\u4e48|\u4e3a\u5565)/u;
+  return englishPattern.test(text) || chinesePattern.test(text);
+}
+
+function hasAutocodeDirectImplementationRequestSignal(text: string): boolean {
+  // Failure/validation nouns alone can describe analysis tasks; require an explicit implementation action.
+  return /\b(?:fix(?:e[sd])?|repair|resolve|implement(?:ed|s|ation|ing)?|coding|code|patch(?:ed|es|ing)?|refactor(?:ed|s|ing)?|bugfix)\b/iu.test(text) ||
+    /(?:\u4fee\u590d|\u5b9e\u73b0|\u7f16\u7801|\u91cd\u6784|\u6539\u4ee3\u7801|\u4ee3\u7801\u4fee\u6539)/u.test(text);
+}
+
+function directSummaryRecordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function directSummaryStringValue(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+function directSummaryNormalizedString(value: unknown): string {
+  return directSummaryStringValue(value).toLowerCase();
+}
 export function inferAutocodeDirectValidationEvidence(
   result: AutocodeSessionResult | undefined,
   streamedText = '',
@@ -132,12 +261,10 @@ export function inferAutocodeDirectValidationEvidence(
     };
   }
 
-  const hasPass = /\b(?:passed|pass|succeeded|success|green|ok)\b/i.test(validationText)
-    || /(?:通过|成功|正常|无异常)/u.test(validationText);
-  const hasFail = /\b(?:failed|failing|failure|error|errors|exception|red)\b/i.test(validationText)
-    || /(?:失败|未通过|报错|错误|异常)/u.test(validationText);
-  const hasSkip = /\b(?:not run|not executed|skipped|manual only|not required|n\/a)\b/i.test(validationText)
-    || /(?:未运行|未执行|跳过|未验证|无需验证|手动验证)/u.test(validationText);
+  const hasPass = hasAutocodeDirectValidationPassSignal(validationText);
+  const hasFail = hasAutocodeDirectValidationFailSignal(validationText);
+  const hasSkip = /\b(?:not run|not executed|skipped|manual only|not required|n\/a)\b/i.test(validationText) ||
+    /(?:\u672a\u8fd0\u884c|\u672a\u6267\u884c|\u8df3\u8fc7|\u672a\u9a8c\u8bc1|\u65e0\u9700\u9a8c\u8bc1|\u624b\u52a8\u9a8c\u8bc1)/u.test(validationText);
   const reason = compactAutocodeDirectValidationReason(validationText);
   if (hasPass && hasFail) {
     return { status: 'reported_mixed', reason };
@@ -194,13 +321,13 @@ export function getAutocodeDirectSummaryLabels(language: AutocodeDirectSummaryLa
 } {
   if (language === 'zh-CN') {
     return {
-      item: '项目',
-      details: '内容',
-      whatChanged: '修改内容',
-      verification: '验证结果',
-      reviewNotes: '审核要点',
-      changedFiles: '变更文件',
-      quality: 'AI 编码质量',
+      item: '\u9879\u76ee',
+      details: '\u5185\u5bb9',
+      whatChanged: '\u4fee\u6539\u5185\u5bb9',
+      verification: '\u9a8c\u8bc1\u7ed3\u679c',
+      reviewNotes: '\u5ba1\u6838\u8981\u70b9',
+      changedFiles: '\u53d8\u66f4\u6587\u4ef6',
+      quality: 'AI \u7f16\u7801\u8d28\u91cf',
     };
   }
   if (language === 'fr') {
@@ -241,18 +368,26 @@ export function formatAutocodeDirectQualityLine(
     return localizeAutocodeDirectSummaryText(
       language,
       'Quality metrics unavailable.',
-      '质量指标不可用。',
+      '\u8d28\u91cf\u6307\u6807\u4e0d\u53ef\u7528\u3002',
       'Metriques qualite indisponibles.',
     );
   }
   const selfCritique = quality.selfCritique
-    ? `${quality.selfCritique.status}${typeof quality.selfCritique.score === 'number' ? ` (${Math.round(quality.selfCritique.score * 100)}%)` : ''}, files reviewed: ${quality.selfCritique.filesReviewed}`
+    ? quality.selfCritique.status +
+      (typeof quality.selfCritique.score === 'number' ? ' (' + Math.round(quality.selfCritique.score * 100) + '%)' : '') +
+      ', files reviewed: ' + quality.selfCritique.filesReviewed
     : 'not run';
+  const line = 'Files changed: ' + quality.filesChanged +
+    '. Self-critique: ' + selfCritique +
+    '. Validation: ' + quality.validation.status + ' (' + quality.validation.reason + ').';
+  const zhLine = '\u53d8\u66f4\u6587\u4ef6\uff1a' + quality.filesChanged +
+    '\u3002\u81ea\u68c0\uff1a' + selfCritique +
+    '\u3002\u9a8c\u8bc1\uff1a' + quality.validation.status + ' (' + quality.validation.reason + ')\u3002';
   return localizeAutocodeDirectSummaryText(
     language,
-    `Files changed: ${quality.filesChanged}. Self-critique: ${selfCritique}. Validation: ${quality.validation.status} (${quality.validation.reason}).`,
-    `变更文件：${quality.filesChanged}。自检：${selfCritique}。验证：${quality.validation.status}（${quality.validation.reason}）。`,
-    `Fichiers modifies : ${quality.filesChanged}. Auto-critique : ${selfCritique}. Validation : ${quality.validation.status} (${quality.validation.reason}).`,
+    line,
+    zhLine,
+    'Fichiers modifies : ' + quality.filesChanged + '. Auto-critique : ' + selfCritique + '. Validation : ' + quality.validation.status + ' (' + quality.validation.reason + ').',
   );
 }
 
@@ -263,12 +398,17 @@ export function formatAutocodeDirectQualityAppendix(
 ): string {
   const labels = getAutocodeDirectSummaryLabels(language);
   return [
-    `| ${labels.item} | ${labels.details} |`,
+    '| ' + labels.item + ' | ' + labels.details + ' |',
     '| --- | --- |',
-    `| ${labels.changedFiles} | ${escapeAutocodeMarkdownTableCell(formatAutocodeChangedFilesForSummary(quality?.changedFiles ?? []))} |`,
-    `| ${labels.verification} | ${escapeAutocodeMarkdownTableCell(formatAutocodeDirectSessionEvidenceLine(language, result))} |`,
-    `| ${labels.quality} | ${escapeAutocodeMarkdownTableCell(formatAutocodeDirectQualityLine(language, quality))} |`,
-    `| ${labels.reviewNotes} | ${escapeAutocodeMarkdownTableCell(localizeAutocodeDirectSummaryText(language, 'Direct mode has no staged QA pass; review the git diff before approval.', 'Direct 模式没有阶段化 QA 通过结论；批准前请检查 Git diff。', 'Le mode direct n a pas de validation QA par etapes ; relisez le diff Git avant approbation.'))} |`,
+    '| ' + labels.changedFiles + ' | ' + escapeAutocodeMarkdownTableCell(formatAutocodeChangedFilesForSummary(quality?.changedFiles ?? [])) + ' |',
+    '| ' + labels.verification + ' | ' + escapeAutocodeMarkdownTableCell(formatAutocodeDirectSessionEvidenceLine(language, result)) + ' |',
+    '| ' + labels.quality + ' | ' + escapeAutocodeMarkdownTableCell(formatAutocodeDirectQualityLine(language, quality)) + ' |',
+    '| ' + labels.reviewNotes + ' | ' + escapeAutocodeMarkdownTableCell(localizeAutocodeDirectSummaryText(
+      language,
+      'Direct mode has no staged QA pass; review the git diff before approval.',
+      'Direct \u6a21\u5f0f\u6ca1\u6709\u9636\u6bb5\u5316 QA \u901a\u8fc7\u7ed3\u8bba\uff1b\u6279\u51c6\u524d\u8bf7\u68c0\u67e5 Git diff\u3002',
+      'Le mode direct n a pas de validation QA par etapes ; relisez le diff Git avant approbation.',
+    )) + ' |',
   ].join('\n');
 }
 
@@ -278,7 +418,7 @@ export function buildAutocodeDirectCompletionSummary(
   const finalText = getAutocodeFinalAssistantText(input.result, input.streamedText);
   const qualityAppendix = formatAutocodeDirectQualityAppendix(input.language, input.quality, input.result);
   if (finalText) {
-    return `${limitAutocodeDirectFinalText(finalText)}\n\n${qualityAppendix}`.trim();
+    return (limitAutocodeDirectFinalText(finalText) + '\n\n' + qualityAppendix).trim();
   }
 
   const outcome = input.result?.outcome ?? 'unknown';
@@ -288,24 +428,39 @@ export function buildAutocodeDirectCompletionSummary(
     ? localizeAutocodeDirectSummaryText(
         input.language,
         'Direct mode skipped staged spec, implementation planning, and QA. Review the completion summary, runtime log, and git changes manually before approval.',
-        'Direct 模式跳过了阶段化规格、实现计划和 QA。人工确认前请检查完成总结、运行日志和 Git 变更。',
+        'Direct \u6a21\u5f0f\u8df3\u8fc7\u4e86\u9636\u6bb5\u5316\u89c4\u683c\u3001\u5b9e\u73b0\u8ba1\u5212\u548c QA\u3002\u4eba\u5de5\u786e\u8ba4\u524d\u8bf7\u68c0\u67e5\u5b8c\u6210\u603b\u7ed3\u3001\u8fd0\u884c\u65e5\u5fd7\u548c Git \u53d8\u66f4\u3002',
         'Le mode direct a ignore la specification par etapes, le plan de mise en oeuvre et la QA. Relisez le resume, les journaux et les changements Git avant approbation.',
       )
     : localizeAutocodeDirectSummaryText(
         input.language,
-        `Direct mode ended with outcome "${outcome}".${error ? ` Error: ${error}` : ''}`,
-        `Direct 模式结束，结果为 "${outcome}"。${error ? ` 错误：${error}` : ''}`,
-        `Le mode direct s'est termine avec le resultat "${outcome}".${error ? ` Erreur : ${error}` : ''}`,
+        'Direct mode ended with outcome "' + outcome + '".' + (error ? ' Error: ' + error : ''),
+        'Direct \u6a21\u5f0f\u7ed3\u675f\uff0c\u7ed3\u679c\u4e3a "' + outcome + '"\u3002' + (error ? ' \u9519\u8bef\uff1a' + error : ''),
+        'Le mode direct est termine avec le resultat "' + outcome + '".' + (error ? ' Erreur : ' + error : ''),
       );
 
+  const specName = basename(input.specDir);
+  const successful = isAutocodeSuccessfulDirectOutcome(input.result);
+  const whatChanged = successful
+    ? localizeAutocodeDirectSummaryText(
+        input.language,
+        'Direct model session completed for ' + specName + '.',
+        'Direct \u6a21\u5f0f\u5df2\u5b8c\u6210\uff1a' + specName + '\u3002',
+        'Session en mode direct terminee pour ' + specName + '.',
+      )
+    : localizeAutocodeDirectSummaryText(
+        input.language,
+        'Direct model session ended with outcome "' + outcome + '" for ' + specName + '.',
+        'Direct \u6a21\u5f0f\u7ed3\u675f\uff0c\u7ed3\u679c\u4e3a "' + outcome + '"\uff1a' + specName + '\u3002',
+        'Session en mode direct terminee avec le resultat "' + outcome + '" pour ' + specName + '.',
+      );
   return [
-    `| ${labels.item} | ${labels.details} |`,
+    '| ' + labels.item + ' | ' + labels.details + ' |',
     '| --- | --- |',
-    `| ${labels.whatChanged} | ${escapeAutocodeMarkdownTableCell(localizeAutocodeDirectSummaryText(input.language, `Direct model session finished for ${basename(input.specDir)}.`, `Direct 模式已完成：${basename(input.specDir)}。`, `Session en mode direct terminee pour ${basename(input.specDir)}.`))} |`,
-    `| ${labels.changedFiles} | ${escapeAutocodeMarkdownTableCell(formatAutocodeChangedFilesForSummary(input.quality?.changedFiles ?? []))} |`,
-    `| ${labels.verification} | ${escapeAutocodeMarkdownTableCell(formatAutocodeDirectSessionEvidenceLine(input.language, input.result))} |`,
-    `| ${labels.quality} | ${escapeAutocodeMarkdownTableCell(formatAutocodeDirectQualityLine(input.language, input.quality))} |`,
-    `| ${labels.reviewNotes} | ${escapeAutocodeMarkdownTableCell(reviewNote)} |`,
+    '| ' + labels.whatChanged + ' | ' + escapeAutocodeMarkdownTableCell(whatChanged) + ' |',
+    '| ' + labels.changedFiles + ' | ' + escapeAutocodeMarkdownTableCell(formatAutocodeChangedFilesForSummary(input.quality?.changedFiles ?? [])) + ' |',
+    '| ' + labels.verification + ' | ' + escapeAutocodeMarkdownTableCell(formatAutocodeDirectSessionEvidenceLine(input.language, input.result)) + ' |',
+    '| ' + labels.quality + ' | ' + escapeAutocodeMarkdownTableCell(formatAutocodeDirectQualityLine(input.language, input.quality)) + ' |',
+    '| ' + labels.reviewNotes + ' | ' + escapeAutocodeMarkdownTableCell(reviewNote) + ' |',
   ].join('\n');
 }
 
@@ -338,27 +493,40 @@ function formatAutocodeDirectSessionEvidenceLine(
     return localizeAutocodeDirectSummaryText(
       language,
       'Session outcome unavailable. Tokens: unavailable.',
-      'Session outcome unavailable. Tokens: unavailable.',
+      '\u4f1a\u8bdd\u7ed3\u679c\u4e0d\u53ef\u7528\u3002Token\uff1a\u4e0d\u53ef\u7528\u3002',
       'Resultat de session indisponible. Tokens : indisponibles.',
     );
   }
 
   const base = localizeAutocodeDirectSummaryText(
     language,
-    `Session outcome: ${result.outcome}. Steps: ${result.stepsExecuted ?? 0}. Tools: ${result.toolCallCount ?? 0}.`,
-    `Session outcome: ${result.outcome}. Steps: ${result.stepsExecuted ?? 0}. Tools: ${result.toolCallCount ?? 0}.`,
-    `Resultat de session : ${result.outcome}. Etapes : ${result.stepsExecuted ?? 0}. Outils : ${result.toolCallCount ?? 0}.`,
+    'Session outcome: ' + result.outcome + '. Steps: ' + (result.stepsExecuted ?? 0) + '. Tools: ' + (result.toolCallCount ?? 0) + '.',
+    '\u4f1a\u8bdd\u7ed3\u679c\uff1a' + result.outcome + '\u3002\u6b65\u6570\uff1a' + (result.stepsExecuted ?? 0) + '\u3002\u5de5\u5177\uff1a' + (result.toolCallCount ?? 0) + '\u3002',
+    'Resultat de session : ' + result.outcome + '. Etapes : ' + (result.stepsExecuted ?? 0) + '. Outils : ' + (result.toolCallCount ?? 0) + '.',
   );
-  const usage = formatAutocodeDirectTokenUsage(result.usage);
-  return usage ? `${base} ${usage}` : `${base} Tokens: unavailable.`;
+  const usage = formatAutocodeDirectTokenUsage(language, result.usage);
+  const unavailable = localizeAutocodeDirectSummaryText(
+    language,
+    'Tokens: unavailable.',
+    'Token\uff1a\u4e0d\u53ef\u7528\u3002',
+    'Tokens : indisponibles.',
+  );
+  return usage ? base + ' ' + usage : base + ' ' + unavailable;
 }
 
-function formatAutocodeDirectTokenUsage(usage: AutocodeSessionResult['usage'] | undefined): string | null {
+function formatAutocodeDirectTokenUsage(
+  language: AutocodeDirectSummaryLanguage,
+  usage: AutocodeSessionResult['usage'] | undefined,
+): string | null {
   if (!usage || usage.totalTokens <= 0) {
     return null;
   }
   const estimated = usage.estimated ? ', estimated' : '';
-  return `Tokens: ${usage.totalTokens} total (${usage.promptTokens} prompt, ${usage.completionTokens} completion${estimated}).`;
+  const en = 'Tokens: ' + usage.totalTokens + ' total (' + usage.promptTokens + ' prompt, ' + usage.completionTokens + ' completion' + estimated + ').';
+  const zhEstimated = usage.estimated ? '\uff0c\u4f30\u7b97' : '';
+  const zh = 'Token\uff1a' + usage.totalTokens + ' \u603b\u8ba1\uff08' + usage.promptTokens + ' prompt\uff0c' + usage.completionTokens + ' completion' + zhEstimated + '\uff09\u3002';
+  const fr = 'Tokens : ' + usage.totalTokens + ' au total (' + usage.promptTokens + ' prompt, ' + usage.completionTokens + ' completion' + estimated + ').';
+  return localizeAutocodeDirectSummaryText(language, en, zh, fr);
 }
 
 export function extractAutocodeDirectTaskDescription(input: {
@@ -421,8 +589,44 @@ function extractAutocodeDirectValidationText(value: string): string {
 }
 
 function isAutocodeDirectValidationLine(line: string): boolean {
-  return /\b(?:verification|validation|verified|test(?:ed|s)?|build|typecheck|tsc|lint|compile|check|pytest|vitest|jest|npm|pnpm|yarn|dotnet|cargo|go test)\b/i.test(line)
-    || /(?:验证|测试|构建|编译|检查|通过|失败|未运行|未执行|未验证)/u.test(line);
+  return /\b(?:verification|validation|verified|test(?:ed|s)?|build|typecheck|tsc|lint|compile|check|pytest|vitest|jest|npm|pnpm|yarn|dotnet|cargo|go test)\b/i.test(line) ||
+    /(?:\u9a8c\u8bc1|\u6d4b\u8bd5|\u6784\u5efa|\u7f16\u8bd1|\u68c0\u67e5|\u901a\u8fc7|\u5931\u8d25|\u672a\u8fd0\u884c|\u672a\u6267\u884c|\u672a\u9a8c\u8bc1)/u.test(line);
+}
+
+function hasAutocodeDirectValidationPassSignal(text: string): boolean {
+  return /\b(?:passed|pass|succeeded|success|green|ok|error[-\s]?free|failure[-\s]?free)\b/i.test(text) ||
+    /\b(?:no|zero|0)\s+(?:failed|failures?|errors?|exceptions?)\b/i.test(text) ||
+    /\b(?:without|with no)\s+(?:failed|failures?|errors?|exceptions?)\b/i.test(text) ||
+    /\bnot\s+(?:failing|failed)\b/i.test(text) ||
+    /\b(?:failed|failures?|errors?|exceptions?)\s*[:=]\s*0\b/i.test(text) ||
+    /\bexit\s+code\s*[:=]?\s*0\b/i.test(text) ||
+    /(?:\u901a\u8fc7|\u6210\u529f|\u6b63\u5e38|\u65e0\u5f02\u5e38|\u65e0\u9519\u8bef|\u672a\u53d1\u73b0\u9519\u8bef|\u6ca1\u6709\u9519\u8bef|\u6ca1\u6709\u5f02\u5e38)/u.test(text) ||
+    hasAutocodeDirectRenderValidationPassSignal(text);
+}
+
+function hasAutocodeDirectValidationFailSignal(text: string): boolean {
+  const failureText = stripAutocodeDirectNegatedFailureSignals(text);
+  return /\b(?:failed|failing|failure|error|errors|exception|red|non[-\s]?zero)\b/i.test(failureText) ||
+    /\bexit(?:ed)?\s+(?:with\s+)?(?:code\s*)?[1-9]\d*\b/i.test(failureText) ||
+    /(?:\u5931\u8d25|\u672a\u901a\u8fc7|\u62a5\u9519|\u9519\u8bef|\u5f02\u5e38)/u.test(failureText) ||
+    /(?:\u9875\u9762|\u754c\u9762|\u5e94\u7528).{0,30}(?:\u65e0\u6cd5\u52a0\u8f7d|\u4e0d\u53ef\u52a0\u8f7d|\u4e0d\u80fd\u52a0\u8f7d|\u52a0\u8f7d\u5931\u8d25)/u.test(failureText);
+}
+
+function hasAutocodeDirectRenderValidationPassSignal(text: string): boolean {
+  return /(?:\u622a\u56fe|\u6e32\u67d3|Chrome|headless|canvas|file:\/\/).{0,100}(?:\u786e\u8ba4|\u9a8c\u8bc1).{0,50}(?:\u9875\u9762|\u754c\u9762|\u5e94\u7528).{0,40}(?:\u53ef\u52a0\u8f7d|\u80fd\u52a0\u8f7d|\u53ef\u4ee5\u52a0\u8f7d|\u6b63\u5e38\u52a0\u8f7d|\u6210\u529f\u52a0\u8f7d|\u53ef\u6253\u5f00|\u80fd\u6253\u5f00|\u6b63\u786e\u6e32\u67d3|\u6210\u529f\u6e32\u67d3)/iu.test(text) ||
+    /(?:Chrome|node --check|UTF-8).{0,140}\u7ead\uE1BF\uE17B.{0,50}\u9359\uE21A\u59DE\u675E/iu.test(text);
+}
+
+function stripAutocodeDirectNegatedFailureSignals(text: string): string {
+  return text
+    .replace(/\berror[-\s]?free\b/gi, ' ')
+    .replace(/\bfailure[-\s]?free\b/gi, ' ')
+    .replace(/\b(?:no|zero|0)\s+(?:failed|failures?|errors?|exceptions?)\b/gi, ' ')
+    .replace(/\b(?:without|with no)\s+(?:failed|failures?|errors?|exceptions?)\b/gi, ' ')
+    .replace(/\bnot\s+(?:failing|failed)\b/gi, ' ')
+    .replace(/\b(?:failed|failures?|errors?|exceptions?)\s*[:=]\s*0\b/gi, ' ')
+    .replace(/\bexit\s+code\s*[:=]?\s*0\b/gi, ' ')
+    .replace(/(?:\u65e0\u5f02\u5e38|\u65e0\u9519\u8bef|\u672a\u53d1\u73b0\u9519\u8bef|\u6ca1\u6709\u9519\u8bef|\u6ca1\u6709\u5f02\u5e38|0\s*(?:\u4e2a)?\s*\u9519\u8bef)/gu, ' ');
 }
 
 function compactAutocodeDirectValidationReason(value: string): string {

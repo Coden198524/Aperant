@@ -25,6 +25,8 @@ import { fetchCodexUsage, normalizeCodexResponse } from './codex-usage-fetcher';
 import { readSettingsFileAsync, writeSettingsFile } from '../settings-utils';
 import type { ProviderAccount } from '../../shared/types/provider-account';
 
+const USAGE_MONITOR_INITIAL_CHECK_DELAY_MS = 30000;
+
 // Re-export for backward compatibility
 export type { ApiProvider };
 
@@ -211,6 +213,7 @@ function isHttpError(error: unknown): error is Error & { statusCode?: number } {
 export class UsageMonitor extends EventEmitter {
   private static instance: UsageMonitor;
   private intervalId: NodeJS.Timeout | null = null;
+  private initialCheckTimer: NodeJS.Timeout | null = null;
   private currentUsage: ClaudeUsageSnapshot | null = null;
   private currentUsageProfileId: string | null = null; // Track which profile's usage is in currentUsage
   private isChecking = false;
@@ -306,19 +309,29 @@ export class UsageMonitor extends EventEmitter {
 
     this.debugLog('[UsageMonitor] Starting with interval: ' + interval + ' ms (60-second updates for active profile usage stats)');
 
-    // Check immediately
-    this.checkUsageAndSwap();
+    // Delay the first usage check so startup does not immediately touch
+    // credentials or provider APIs while the UI is becoming interactive.
+    this.initialCheckTimer = setTimeout(() => {
+      this.initialCheckTimer = null;
+      this.checkUsageAndSwap();
+    }, USAGE_MONITOR_INITIAL_CHECK_DELAY_MS);
+    this.initialCheckTimer.unref?.();
 
-    // Then check periodically
     this.intervalId = setInterval(() => {
       this.checkUsageAndSwap();
     }, interval);
+    this.intervalId.unref?.();
   }
 
   /**
    * Stop monitoring
    */
   stop(): void {
+    if (this.initialCheckTimer) {
+      clearTimeout(this.initialCheckTimer);
+      this.initialCheckTimer = null;
+    }
+
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;

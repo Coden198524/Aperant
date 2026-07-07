@@ -1,5 +1,46 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { shouldUseShell, getSpawnOptions, getSpawnCommand } from '../env-utils';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import {
+  _resolveWindowsCommandPathForTest,
+  shouldUseShell,
+  getSpawnOptions,
+  getSpawnCommand,
+} from '../env-utils';
+
+describe('Windows command path resolution', () => {
+  const originalPlatform = process.platform;
+  const originalPath = process.env.PATH;
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      writable: true,
+      configurable: true,
+    });
+    process.env.PATH = originalPath;
+  });
+
+  it('resolves bare .cmd commands to absolute paths before cmd.exe execution', () => {
+    Object.defineProperty(process, 'platform', {
+      value: 'win32',
+      writable: true,
+      configurable: true,
+    });
+
+    const binDir = mkdtempSync(join(tmpdir(), 'autocode-env-utils-'));
+    try {
+      const npmCmd = join(binDir, 'npm.cmd');
+      writeFileSync(npmCmd, '@echo off\r\n', 'utf8');
+      process.env.PATH = binDir;
+
+      expect(_resolveWindowsCommandPathForTest('npm.cmd')).toBe(npmCmd);
+    } finally {
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('shouldUseShell', () => {
   const originalPlatform = process.platform;

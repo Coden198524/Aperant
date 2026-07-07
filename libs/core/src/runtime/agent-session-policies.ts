@@ -1,4 +1,3 @@
-import { isResponsesApiModel } from '../providers/routing.js';
 import type {
   AutocodeSessionMessage,
   AutocodeStreamEvent,
@@ -30,25 +29,17 @@ export interface AutocodeWriteToolInputFailure {
 
 export function isAutocodeOpenAIResponsesTransport(
   modelProviderId: string | undefined,
-  modelId: string | undefined,
+  _modelId: string | undefined,
 ): boolean {
   if (modelProviderId) {
     const normalizedProviderId = modelProviderId.toLowerCase();
-    const isResponsesProvider = normalizedProviderId === 'openai-responses' ||
-      normalizedProviderId.endsWith('.responses') ||
-      normalizedProviderId.endsWith('-responses');
+    const isResponsesProvider = normalizedProviderId === 'openai.responses' ||
+      normalizedProviderId === 'openai-responses' ||
+      normalizedProviderId === 'responses';
     if (isResponsesProvider) return true;
-
-    const isChatProvider = normalizedProviderId === 'openai-chat' ||
-      normalizedProviderId.endsWith('.chat') ||
-      normalizedProviderId.endsWith('-chat') ||
-      normalizedProviderId.includes('chatmodel');
-    if (isChatProvider) return false;
-
-    return isResponsesApiModel(modelId);
   }
 
-  return isResponsesApiModel(modelId);
+  return false;
 }
 
 export function isAutocodeWriteToolInputErrorMessage(message: string): boolean {

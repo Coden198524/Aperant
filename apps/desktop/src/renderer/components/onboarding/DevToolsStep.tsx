@@ -12,6 +12,7 @@ import {
   SelectValue
 } from '../ui/select';
 import { Input } from '../ui/input';
+import { DEFAULT_CLI, getBuiltinCliOptionLabels, getConfiguredCliOptionLabels } from '../../lib/cli-display';
 import { useSettingsStore } from '../../stores/settings-store';
 import type { SupportedIDE, SupportedTerminal, SupportedCLI } from '../../../shared/types';
 
@@ -79,16 +80,6 @@ const TERMINAL_NAMES: Partial<Record<SupportedTerminal, string>> = {
   zellij: 'Zellij'
 };
 
-// CLI display names
-const CLI_NAMES: Partial<Record<SupportedCLI, string>> = {
-  'claude-code': 'Claude Code',
-  gemini: 'Gemini CLI',
-  opencode: 'OpenCode',
-  kilocode: 'Kilo Code CLI',
-  codex: 'Codex CLI',
-  deepseek: 'DeepSeek'
-};
-
 /**
  * Developer Tools configuration step for the onboarding wizard.
  *
@@ -102,7 +93,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
   const [preferredTerminal, setPreferredTerminal] = useState<SupportedTerminal>(settings.preferredTerminal || 'system');
   const [customIDEPath, setCustomIDEPath] = useState(settings.customIDEPath || '');
   const [customTerminalPath, setCustomTerminalPath] = useState(settings.customTerminalPath || '');
-  const [preferredCLI, setPreferredCLI] = useState<SupportedCLI>(settings.preferredCLI || 'claude-code');
+  const [preferredCLI, setPreferredCLI] = useState<SupportedCLI>(settings.preferredCLI || DEFAULT_CLI);
   const [customCLIPath, setCustomCLIPath] = useState(settings.customCLIPath || '');
 
   const [detectedTools, setDetectedTools] = useState<DetectedTools | null>(null);
@@ -190,7 +181,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
     if (id !== 'custom' && !detectedIDEIds.has(id)) {
       ideOptions.push({
         value: id as SupportedIDE,
-        label: name,
+        label: name ?? id,
         detected: false
       });
     }
@@ -229,7 +220,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
     if (id !== 'custom' && !detectedTerminalIds.has(id)) {
       terminalOptions.push({
         value: id as SupportedTerminal,
-        label: name,
+        label: name ?? id,
         detected: false
       });
     }
@@ -253,15 +244,28 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
   }
 
   // Add remaining CLIs that weren't detected
-  const detectedCLIIds = new Set(detectedTools?.clis?.map(t => t.id) || []);
-  for (const [id, name] of Object.entries(CLI_NAMES)) {
-    if (id !== 'custom' && !detectedCLIIds.has(id)) {
+  const cliOptionIds = new Set<string>(cliOptions.map(option => option.value));
+  for (const option of getBuiltinCliOptionLabels()) {
+    if (!cliOptionIds.has(option.value)) {
       cliOptions.push({
-        value: id as SupportedCLI,
-        label: name,
+        value: option.value,
+        label: option.label,
         detected: false
       });
+      cliOptionIds.add(option.value);
     }
+  }
+
+  for (const option of getConfiguredCliOptionLabels(settings.autocodeCliRuntimeRoutes)) {
+    if (!cliOptionIds.has(option.value)) {
+      cliOptions.push({ value: option.value, label: option.label, detected: false });
+      cliOptionIds.add(option.value);
+    }
+  }
+
+  if (preferredCLI !== 'custom' && !cliOptionIds.has(preferredCLI)) {
+    cliOptions.push({ value: preferredCLI, label: preferredCLI, detected: false });
+    cliOptionIds.add(preferredCLI);
   }
 
   // Add custom option last

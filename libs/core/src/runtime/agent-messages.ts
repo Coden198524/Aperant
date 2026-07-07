@@ -47,17 +47,17 @@ const DIRECT_TASK_REFERENCE_LIMIT = 25;
 const DIRECT_TASK_ATTACHMENT_LIMIT = 10;
 export const AUTOCODE_DEFAULT_SPEC_TASK_DESCRIPTION_MAX_CHARS = 4_000;
 export const DIRECT_CHANGE_REQUEST_LIMIT = 6000;
-export const RUNTIME_SPEC_CONTEXT_MAX_CHARS = 7_000;
-export const RUNTIME_PLAN_CONTEXT_MAX_CHARS = 10_000;
-export const QA_SPEC_CONTEXT_MAX_CHARS = 5_000;
-export const QA_PLAN_CONTEXT_MAX_CHARS = 8_000;
+export const RUNTIME_SPEC_CONTEXT_MAX_CHARS = 4_500;
+export const RUNTIME_PLAN_CONTEXT_MAX_CHARS = 6_500;
+export const QA_SPEC_CONTEXT_MAX_CHARS = 3_500;
+export const QA_PLAN_CONTEXT_MAX_CHARS = 5_000;
 export const CHANGE_REQUEST_AUDIT_MAX_CHARS = 4_000;
 const ARTIFACT_OPENING_EXCERPT_MAX_CHARS = 1_400;
 const ARTIFACT_LINE_MAX_CHARS = 220;
-const ARTIFACT_HEADING_LIMIT = 14;
-const ARTIFACT_BULLET_LIMIT = 18;
+const ARTIFACT_HEADING_LIMIT = 10;
+const ARTIFACT_BULLET_LIMIT = 12;
 const ARTIFACT_STATUS_LIMIT = 60;
-const ARTIFACT_EVIDENCE_LIMIT = 20;
+const ARTIFACT_EVIDENCE_LIMIT = 12;
 const CHANGE_REQUEST_AUDIT_ENTRY_LIMIT = 3;
 const CHANGE_REQUEST_FEEDBACK_MAX_CHARS = 700;
 const CHANGE_REQUEST_LIST_ITEM_MAX_CHARS = 220;
@@ -274,7 +274,7 @@ function buildAutocodeDirectTaskContinuationMessages(
   parts.push(`Continue Direct task ${input.specId} in project: ${input.projectRoot}`);
   parts.push(`Task data: ${input.specDir}`);
   if (input.directContinuationMode === 'provider' && state?.providerResponseId) {
-    parts.push(`Provider continuation: use previous response ${state.providerResponseId}. Do not request or restate prior task context unless the latest change request is ambiguous.`);
+    parts.push(`Provider continuation: use provider-native continuation state ${state.providerResponseId}. Do not request or restate prior task context unless the latest change request is ambiguous.`);
   } else {
     parts.push('Provider continuation is unavailable. Use the compact prior-session summary below as the only carried context, then inspect files only as needed.');
   }
@@ -485,7 +485,7 @@ function compactMarkdownArtifactForPrompt(
       continue;
     }
 
-    if (/(?:Evidence|证据|Verification|验证|Depends on|依赖|Files? to|文件)/i.test(line)) {
+    if (/(?:Evidence|\u8bc1\u636e|Verification|\u9a8c\u8bc1|Depends on|\u4f9d\u8d56|Files? to|\u6587\u4ef6)/iu.test(line)) {
       pushPromptLine(evidenceLines, line, ARTIFACT_EVIDENCE_LIMIT);
       continue;
     }

@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from '../../../../shared/constants';
@@ -113,6 +113,10 @@ describe('registerTaskExecutionHandlers', () => {
     killTask: ReturnType<typeof vi.fn>;
     isRunning: ReturnType<typeof vi.fn>;
   };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -769,6 +773,9 @@ describe('registerTaskExecutionHandlers', () => {
   });
 
   it('restarts direct Request Changes as a direct continuation without Standard planning artifacts', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+    const existingDirectChangeSubtaskId = 'direct-cr-20260601000000000';
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { appendFileSync, existsSync, writeFileSync } = await import('fs');
@@ -813,6 +820,18 @@ describe('registerTaskExecutionHandlers', () => {
               status: 'completed',
               files: [],
             },
+            {
+              id: existingDirectChangeSubtaskId,
+              title: 'Old Direct Request Changes',
+              description: 'old desc',
+              status: 'completed',
+              started_at: '2026-05-31T23:00:00.000Z',
+              completed_at: '2026-05-31T23:10:00.000Z',
+              completion_summary: 'Old completion summary',
+              notes: 'Old completion notes',
+              duration_ms: 600000,
+              actual_output: 'Old output',
+            },
           ],
         },
       ],
@@ -844,12 +863,24 @@ describe('registerTaskExecutionHandlers', () => {
     const savedPlan = (planShards.saveImplementationPlanToFilesSync as Mock).mock.calls[0][1];
     expect(savedPlan.workflow_type).toBe('direct');
     expect(savedPlan.status).toBe('in_progress');
-    expect(savedPlan.direct_execution.current_subtask_id).toMatch(/^direct-cr-/);
+    expect(savedPlan.direct_execution.current_subtask_id).toBe(existingDirectChangeSubtaskId);
+    const restartedDirectSubtask = savedPlan.phases[0].subtasks.find((subtask: Record<string, unknown>) => subtask.id === existingDirectChangeSubtaskId);
+    expect(restartedDirectSubtask).toMatchObject({
+      id: existingDirectChangeSubtaskId,
+      status: 'in_progress',
+      title: expect.stringContaining('Direct Request Changes'),
+      direct_iteration: true,
+    });
+    expect(restartedDirectSubtask.completed_at).toBeUndefined();
+    expect(restartedDirectSubtask.completion_summary).toBeUndefined();
+    expect(restartedDirectSubtask.notes).toBeUndefined();
+    expect(restartedDirectSubtask.duration_ms).toBeUndefined();
+    expect(restartedDirectSubtask.actual_output).toBeUndefined();
     expect(savedPlan.phases[0].subtasks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: 'direct-implementation', status: 'completed' }),
         expect.objectContaining({
-          id: expect.stringMatching(/^direct-cr-/),
+          id: existingDirectChangeSubtaskId,
           status: 'in_progress',
           title: expect.stringContaining('Direct Request Changes'),
           direct_iteration: true,
@@ -866,7 +897,7 @@ describe('registerTaskExecutionHandlers', () => {
       '001-direct-review',
       'E:/Work/FastProject',
       '001-direct-review',
-      { directSubtaskId: expect.stringMatching(/^direct-cr-/) },
+      { directSubtaskId: existingDirectChangeSubtaskId },
       'project-fast',
     );
     expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();

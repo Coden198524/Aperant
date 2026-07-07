@@ -26,6 +26,7 @@ import { getSentryEnvForSubprocess } from './sentry';
 import { isWindows, isUnix, getPathDelimiter, getNpmCommand } from './platform';
 
 const execFileAsync = promisify(execFile);
+const NPM_GLOBAL_PREFIX_ARGS = ['config', 'get', 'prefix', '--location=global'] as const;
 
 /**
  * Windows npm global fallback path
@@ -62,6 +63,149 @@ export async function existsAsync(filePath: string): Promise<boolean> {
 let npmGlobalPrefixCache: string | null | undefined ;
 let npmGlobalPrefixCachePromise: Promise<string | null> | null = null;
 
+function commandHasPathSegment(command: string): boolean {
+  return command.includes('\\') || command.includes('/');
+}
+
+function getWindowsCommandCandidateNames(command: string): string[] {
+  if (path.extname(command)) {
+    return [command];
+  }
+  return ['.cmd', '.exe', '.bat', ''].map((extension) => `${command}${extension}`);
+}
+
+function getWindowsCommandLookupDirs(): string[] {
+  const pathSeparator = getPathDelimiter();
+  const rawDirs = [
+    ...(process.env.PATH || '').split(pathSeparator),
+    ...getExpandedPlatformPaths(),
+  ];
+  const seen = new Set<string>();
+  return rawDirs
+    .map((entry) => entry.trim())
+    .map((entry) => entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry)
+    .filter((entry) => {
+      if (!entry || seen.has(entry)) {
+        return false;
+      }
+      seen.add(entry);
+      return true;
+    });
+}
+
+function resolveWindowsCommandPathSync(command: string): string {
+  if (!isWindows() || path.isAbsolute(command) || commandHasPathSegment(command)) {
+    return command;
+  }
+
+  for (const dir of getWindowsCommandLookupDirs()) {
+    for (const candidate of getWindowsCommandCandidateNames(command)) {
+      const fullPath = path.join(dir, candidate);
+      if (fs.existsSync(fullPath)) {
+        return fullPath;
+      }
+    }
+  }
+
+  return command;
+}
+
+export function _resolveWindowsCommandPathForTest(command: string): string {
+  return resolveWindowsCommandPathSync(command);
+}
+
+async function resolveWindowsCommandPathAsync(command: string): Promise<string> {
+  if (!isWindows() || path.isAbsolute(command) || commandHasPathSegment(command)) {
+    return command;
+  }
+
+  for (const dir of getWindowsCommandLookupDirs()) {
+    for (const candidate of getWindowsCommandCandidateNames(command)) {
+      const fullPath = path.join(dir, candidate);
+      if (await existsAsync(fullPath)) {
+        return fullPath;
+      }
+    }
+  }
+
+  return command;
+}
+
+function getWindowsNpmFallbackPathIfExistsSync(): string | null {
+  if (!isWindows()) {
+    return null;
+  }
+  const defaultNpmPath = WINDOWS_NPM_FALLBACK_PATH();
+  return fs.existsSync(defaultNpmPath) ? defaultNpmPath : null;
+}
+
+async function getWindowsNpmFallbackPathIfExistsAsync(): Promise<string | null> {
+  if (!isWindows()) {
+    return null;
+  }
+  const defaultNpmPath = WINDOWS_NPM_FALLBACK_PATH();
+  return await existsAsync(defaultNpmPath) ? defaultNpmPath : null;
+}
+
+function getWindowsCommandShell(): string {
+  return process.env.ComSpec
+    || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
+}
+
+function quoteWindowsCommandPart(value: string): string {
+  return '"' + value.replace(/"/g, '""') + '"';
+}
+
+function buildWindowsCommandLine(command: string, args: readonly string[]): string {
+  return ['call', quoteWindowsCommandPart(command), ...args.map(quoteWindowsCommandPart)].join(' ');
+}
+
+function getNpmGlobalPrefixRawSync(npmCommand: string): string {
+  const commonOptions = {
+    encoding: 'utf-8' as const,
+    timeout: 3000,
+    windowsHide: true,
+    cwd: os.homedir(), // Run from home dir to avoid ENOWORKSPACES error in monorepos
+  };
+
+  if (!isWindows()) {
+    return execFileSync(npmCommand, [...NPM_GLOBAL_PREFIX_ARGS], commonOptions).trim();
+  }
+
+  const resolvedNpmCommand = resolveWindowsCommandPathSync(npmCommand);
+  const windowsOptions = commonOptions;
+
+  return execFileSync(
+    getWindowsCommandShell(),
+    ['/d', '/c', buildWindowsCommandLine(resolvedNpmCommand, NPM_GLOBAL_PREFIX_ARGS)],
+    windowsOptions
+  ).trim();
+}
+
+async function getNpmGlobalPrefixRawAsync(npmCommand: string): Promise<string> {
+  const commonOptions = {
+    encoding: 'utf-8' as const,
+    timeout: 3000,
+    windowsHide: true,
+    cwd: os.homedir(), // Run from home dir to avoid ENOWORKSPACES error in monorepos
+  };
+
+  if (!isWindows()) {
+    const { stdout } = await execFileAsync(npmCommand, [...NPM_GLOBAL_PREFIX_ARGS], commonOptions);
+    return stdout.trim();
+  }
+
+  const resolvedNpmCommand = await resolveWindowsCommandPathAsync(npmCommand);
+  const windowsOptions = commonOptions;
+
+  const { stdout } = await execFileAsync(
+    getWindowsCommandShell(),
+    ['/d', '/c', buildWindowsCommandLine(resolvedNpmCommand, NPM_GLOBAL_PREFIX_ARGS)],
+    windowsOptions
+  );
+  return stdout.trim();
+}
+
 /**
  * Get npm global prefix directory dynamically
  *
@@ -74,20 +218,25 @@ let npmGlobalPrefixCachePromise: Promise<string | null> | null = null;
  * @returns npm global binaries directory, or null if npm not available or path doesn't exist
  */
 function getNpmGlobalPrefix(): string | null {
+  if (npmGlobalPrefixCache !== undefined) {
+    return npmGlobalPrefixCache;
+  }
+
+  const windowsFallbackPath = getWindowsNpmFallbackPathIfExistsSync();
+  if (windowsFallbackPath) {
+    npmGlobalPrefixCache = windowsFallbackPath;
+    return windowsFallbackPath;
+  }
+
   try {
     // Use platform module helper for npm command name
     const npmCommand = getNpmCommand();
 
     // Use --location=global to bypass workspace context and avoid ENOWORKSPACES error
-    const rawPrefix = execFileSync(npmCommand, ['config', 'get', 'prefix', '--location=global'], {
-      encoding: 'utf-8',
-      timeout: 3000,
-      windowsHide: true,
-      cwd: os.homedir(), // Run from home dir to avoid ENOWORKSPACES error in monorepos
-      shell: isWindows(), // Enable shell on Windows for .cmd resolution
-    }).trim();
+    const rawPrefix = getNpmGlobalPrefixRawSync(npmCommand);
 
     if (!rawPrefix) {
+      npmGlobalPrefixCache = null;
       return null;
     }
 
@@ -99,18 +248,25 @@ function getNpmGlobalPrefix(): string | null {
 
     // Normalize and verify the path exists
     const normalizedPath = path.normalize(binPath);
+    if (fs.existsSync(normalizedPath)) {
+      npmGlobalPrefixCache = normalizedPath;
+      return normalizedPath;
+    }
 
-    return fs.existsSync(normalizedPath) ? normalizedPath : null;
+    npmGlobalPrefixCache = getWindowsNpmFallbackPathIfExistsSync();
+    return npmGlobalPrefixCache;
   } catch (_error) {
     // Fallback for Windows: try default npm global location when npm.cmd is not in PATH
     // This happens when the packaged app launches from GUI without full shell environment
     if (isWindows()) {
-      const defaultNpmPath = WINDOWS_NPM_FALLBACK_PATH();
-      if (fs.existsSync(defaultNpmPath)) {
+      const defaultNpmPath = getWindowsNpmFallbackPathIfExistsSync();
+      if (defaultNpmPath) {
         console.warn('[env-utils] npm command not found, using default npm path:', defaultNpmPath);
+        npmGlobalPrefixCache = defaultNpmPath;
         return defaultNpmPath;
       }
     }
+    npmGlobalPrefixCache = null;
     return null;
   }
 }
@@ -288,6 +444,12 @@ async function getNpmGlobalPrefixAsync(): Promise<string | null> {
     return npmGlobalPrefixCache;
   }
 
+  const windowsFallbackPath = await getWindowsNpmFallbackPathIfExistsAsync();
+  if (windowsFallbackPath) {
+    npmGlobalPrefixCache = windowsFallbackPath;
+    return windowsFallbackPath;
+  }
+
   // If a fetch is already in progress, wait for it
   if (npmGlobalPrefixCachePromise) {
     return npmGlobalPrefixCachePromise;
@@ -299,15 +461,7 @@ async function getNpmGlobalPrefixAsync(): Promise<string | null> {
       // Use platform module helper for npm command name
       const npmCommand = getNpmCommand();
 
-      const { stdout } = await execFileAsync(npmCommand, ['config', 'get', 'prefix', '--location=global'], {
-        encoding: 'utf-8',
-        timeout: 3000,
-        windowsHide: true,
-        cwd: os.homedir(), // Run from home dir to avoid ENOWORKSPACES error in monorepos
-        shell: isWindows(),
-      });
-
-      const rawPrefix = stdout.trim();
+      const rawPrefix = await getNpmGlobalPrefixRawAsync(npmCommand);
       if (!rawPrefix) {
         npmGlobalPrefixCache = null;
         return null;
@@ -318,20 +472,25 @@ async function getNpmGlobalPrefixAsync(): Promise<string | null> {
         : path.join(rawPrefix, 'bin');
 
       const normalizedPath = path.normalize(binPath);
-      npmGlobalPrefixCache = await existsAsync(normalizedPath) ? normalizedPath : null;
+      if (await existsAsync(normalizedPath)) {
+        npmGlobalPrefixCache = normalizedPath;
+        return normalizedPath;
+      }
+
+      npmGlobalPrefixCache = await getWindowsNpmFallbackPathIfExistsAsync();
       return npmGlobalPrefixCache;
     } catch (error) {
       // Fallback for Windows: try default npm global location when npm.cmd is not in PATH
       // This happens when the packaged app launches from GUI without full shell environment
       if (isWindows()) {
-        const defaultNpmPath = WINDOWS_NPM_FALLBACK_PATH();
-        if (await existsAsync(defaultNpmPath)) {
+        const defaultNpmPath = await getWindowsNpmFallbackPathIfExistsAsync();
+        if (defaultNpmPath) {
           console.warn('[env-utils] npm command not found, using default npm path:', defaultNpmPath);
           npmGlobalPrefixCache = defaultNpmPath;
           return defaultNpmPath;
         }
       }
-      console.warn(`[env-utils] Failed to get npm global prefix: ${error}`);
+      console.warn('[env-utils] Failed to get npm global prefix: ' + error);
       npmGlobalPrefixCache = null;
       return null;
     } finally {

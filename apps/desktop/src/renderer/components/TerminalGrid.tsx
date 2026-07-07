@@ -34,7 +34,7 @@ import { useTaskStore } from '../stores/task-store';
 import { useFileExplorerStore } from '../stores/file-explorer-store';
 import { useSettingsStore } from '../stores/settings-store';
 import { updateProjectSettings, useProjectStore } from '../stores/project-store';
-import { getCliLabel, QUICK_CLI_OPTIONS } from '../lib/cli-display';
+import { DEFAULT_CLI, getCliLabel, getQuickCliOptionLabels } from '../lib/cli-display';
 import { terminalBufferManager } from '../lib/terminal-buffer-manager';
 import { TERMINAL_DOM_UPDATE_DELAY_MS, PANEL_CLEANUP_GRACE_PERIOD_MS } from '../../shared/constants';
 import type { SupportedCLI } from '../../shared/types/settings';
@@ -70,12 +70,17 @@ export function TerminalGrid({ projectId, projectPath, onNewTaskClick, isActive 
   const modifierKey = navigator.platform.includes('Mac') ? '⌘' : 'Ctrl';
   const newTerminalShortcut = `${modifierKey}+T`;
   const allTerminals = useTerminalStore((state) => state.terminals);
-  const appPreferredCLI = useSettingsStore((state) => (state.settings.preferredCLI || 'claude-code') as SupportedCLI);
+  const appPreferredCLI = useSettingsStore((state) => (state.settings.preferredCLI || DEFAULT_CLI) as SupportedCLI);
+  const appCliRuntimeRoutes = useSettingsStore((state) => state.settings.autocodeCliRuntimeRoutes);
   const projectPreferredCLI = useProjectStore((state) =>
     projectId ? state.projects.find((project) => project.id === projectId)?.settings?.preferredCLI : undefined
   );
-  const preferredCLI = (projectPreferredCLI || appPreferredCLI || 'claude-code') as SupportedCLI;
+  const preferredCLI = (projectPreferredCLI || appPreferredCLI || DEFAULT_CLI) as SupportedCLI;
   const preferredCLILabel = getCliLabel(preferredCLI);
+  const smartCliOptions = useMemo(
+    () => getQuickCliOptionLabels(appCliRuntimeRoutes, [preferredCLI]),
+    [appCliRuntimeRoutes, preferredCLI],
+  );
 
   // Track terminals that are in the grace period before being filtered out
   // Map of terminal ID -> timestamp when it was marked for cleanup
@@ -117,7 +122,7 @@ export function TerminalGrid({ projectId, projectPath, onNewTaskClick, isActive 
   }, [allTerminals, projectPath, pendingCleanup]);
 
   const terminalSessionKey = useMemo(
-    () => terminals.map(t => `${t.id}:${t.isCLIMode ? t.activeCLI || 'claude-code' : 'shell'}`).join('|'),
+    () => terminals.map(t => `${t.id}:${t.isCLIMode ? t.activeCLI || DEFAULT_CLI : 'shell'}`).join('|'),
     [terminals]
   );
 
@@ -647,14 +652,14 @@ export function TerminalGrid({ projectId, projectPath, onNewTaskClick, isActive 
                   Smart terminal CLI
                 </div>
                 <DropdownMenuSeparator />
-                {QUICK_CLI_OPTIONS.map((cli) => (
+                {smartCliOptions.map((option) => (
                   <DropdownMenuItem
-                    key={cli}
-                    onClick={() => handlePreferredCLIChange(cli)}
+                    key={option.value}
+                    onClick={() => handlePreferredCLIChange(option.value)}
                     className="flex items-center justify-between text-xs"
                   >
-                    <span>{getCliLabel(cli)}</span>
-                    {preferredCLI === cli && (
+                    <span>{option.label}</span>
+                    {preferredCLI === option.value && (
                       <span className="text-primary">
                         {t('terminalGrid.projectDefault', { defaultValue: 'Project' })}
                       </span>

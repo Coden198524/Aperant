@@ -1,4 +1,4 @@
-﻿import { ipcMain, shell, app } from 'electron';
+import { ipcMain, shell, app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { IPC_CHANNELS, DEFAULT_APP_SETTINGS, DEFAULT_FEATURE_MODELS, DEFAULT_FEATURE_THINKING, MODEL_ID_MAP, THINKING_BUDGET_MAP } from '../../../shared/constants';
 import type { IPCResult, WorktreeStatus, WorktreeDiff, WorktreeDiffFile, WorktreeMergeResult, WorktreeDiscardResult, WorktreeListResult, WorktreeListItem, WorktreeCreatePROptions, WorktreeCreatePRResult, SupportedIDE, SupportedTerminal, SupportedCLI, AppSettings } from '../../../shared/types';
@@ -30,6 +30,9 @@ import {
   saveAutocodeImplementationPlan,
   shouldHideAutocodeTaskGitChangePath,
   validateAutocodeWorktreeBranch,
+  getAutocodeCliCommandName,
+  parseAutocodeCliRuntimeRoutes,
+  type AutocodeCli,
   type ModelShorthand,
 } from '@autocode/core';
 import { findTaskAndProject } from './shared';
@@ -1080,8 +1083,10 @@ const TERMINAL_DETECTION: Partial<Record<SupportedTerminal, { name: string; path
   }
 };
 
-// CLI detection for AI-powered terminal tools
-const CLI_DETECTION: Partial<Record<SupportedCLI, { name: string; paths: Record<string, string[]>; commands: Record<string, string> }>> = {
+type CliDetectionConfig = { name: string; paths: Record<string, string[]>; commands: Record<string, string> };
+
+// CLI detection for AI-powered terminal tools. Built-ins are seed candidates; settings/env runtime routes can add more.
+const CLI_DETECTION: Record<string, CliDetectionConfig> = {
   'claude-code': {
     name: 'Claude Code',
     paths: {
@@ -1137,6 +1142,89 @@ const CLI_DETECTION: Partial<Record<SupportedCLI, { name: string; paths: Record<
     commands: { darwin: '', win32: '', linux: '' }
   }
 };
+
+export function buildCliDetectionCandidatesForRoutes(platform: 'darwin' | 'win32' | 'linux', routes: unknown = []): Array<{ id: string; name: string; command: string }> {
+  const candidates = new Map<string, { id: string; name: string; command: string }>();
+  for (const [id, config] of Object.entries(CLI_DETECTION)) {
+    if (id === 'custom') continue;
+    candidates.set(id, {
+      id,
+      name: config.name,
+      command: config.commands[platform] || '',
+    });
+  }
+
+  for (const route of parseAutocodeCliRuntimeRoutes(routes)) {
+    if (route.cli === 'custom' || candidates.has(route.cli)) {
+      continue;
+    }
+    let command = '';
+    try {
+      command = getAutocodeCliCommandName(route.cli as AutocodeCli, route.customCommand);
+    } catch {
+      continue;
+    }
+    candidates.set(route.cli, {
+      id: route.cli,
+      name: route.displayName || route.cli,
+      command,
+    });
+  }
+
+  return Array.from(candidates.values());
+}
+
+function buildCliDetectionCandidates(platform: 'darwin' | 'win32' | 'linux'): Array<{ id: string; name: string; command: string }> {
+  const settingsRoutes = parseAutocodeCliRuntimeRoutes(readConfiguredCliRuntimeRoutesFromSettings());
+  const envRoutes = parseAutocodeCliRuntimeRoutes(readConfiguredCliRuntimeRoutesFromEnv());
+  return buildCliDetectionCandidatesForRoutes(platform, [...settingsRoutes, ...envRoutes]);
+}
+
+
+function readConfiguredCliRuntimeRoutesFromSettings(): unknown {
+  const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+  try {
+    if (!existsSync(settingsPath)) {
+      return [];
+    }
+    const content = readFileSync(settingsPath, 'utf-8');
+    const settings = JSON.parse(content) as AppSettings;
+    return settings.autocodeCliRuntimeRoutes ?? [];
+  } catch (error) {
+    console.warn('[DevTools] Failed to parse CLI runtime routes from settings:', error);
+    return [];
+  }
+}
+
+function readConfiguredCliRuntimeRoutesFromEnv(): unknown {
+  const raw = process.env.AUTOCODE_CLI_RUNTIME_ROUTES_JSON ?? process.env.AUTOCODE_CLI_RUNTIME_ROUTES;
+  if (!raw?.trim()) {
+    return [];
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    console.warn('[DevTools] Failed to parse CLI runtime routes from environment:', error);
+    return [];
+  }
+}
+
+async function isCliCommandInstalled(command: string, platform: 'darwin' | 'win32' | 'linux'): Promise<boolean> {
+  const normalized = command.trim();
+  if (!normalized) {
+    return false;
+  }
+  const expandedCommand = normalized.replace(/^~(?=$|[\\/])/, homedir());
+  if (path.isAbsolute(expandedCommand) || expandedCommand.includes('/') || expandedCommand.includes('\\')) {
+    return existsSync(expandedCommand);
+  }
+  try {
+    await execFileAsync(platform === 'win32' ? 'where' : 'which', [normalized], { timeout: 2000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Security helper functions for safe path handling
@@ -1446,36 +1534,27 @@ async function detectInstalledTools(): Promise<DetectedTools> {
     });
   }
 
-  // Detect CLIs using command checks (CLIs are command-line tools, not GUI apps)
-  const clis: DetectedTool[] = [
-    {
-      id: 'deepseek',
-      name: 'DeepSeek',
-      path: 'built-in',
-      installed: true
-    }
-  ];
-  for (const [id, config] of Object.entries(CLI_DETECTION)) {
-    if (id === 'custom' || !config) continue;
-    if (id === 'deepseek') continue;
-
-    const command = config.commands[platform];
-    if (!command) continue;
-
-    try {
-      if (platform === 'win32') {
-        await execAsync(`where ${command}`, { timeout: 2000 });
-      } else {
-        await execAsync(`which ${command}`, { timeout: 2000 });
-      }
+  // Detect CLIs using command checks (CLIs are command-line tools, not GUI apps).
+  const clis: DetectedTool[] = [];
+  for (const candidate of buildCliDetectionCandidates(platform)) {
+    if (candidate.id === 'deepseek' && candidate.command === '') {
       clis.push({
-        id,
-        name: config.name,
-        path: command,
+        id: candidate.id,
+        name: candidate.name,
+        path: 'built-in',
         installed: true
       });
-    } catch {
-      // Command not found
+      continue;
+    }
+
+    if (!candidate.command) continue;
+    if (await isCliCommandInstalled(candidate.command, platform)) {
+      clis.push({
+        id: candidate.id,
+        name: candidate.name,
+        path: candidate.command,
+        installed: true
+      });
     }
   }
 

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   evaluateDirectCompletionFallback,
   readDirectRunResultFromSpecDirs,
+  selectLatestDirectFallbackPlan,
   type DirectFallbackPlan,
 } from '../direct-completion-fallback';
 
@@ -45,6 +46,30 @@ function writeRunResult(specDir: string, result: Record<string, unknown>): void 
 function setRunResultMtime(specDir: string, date: Date): void {
   utimesSync(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.runResult), date, date);
 }
+
+describe('selectLatestDirectFallbackPlan', () => {
+  it('prefers the plan with newer Direct evidence over a touched stale worktree plan', () => {
+    const staleWorktreePlan: DirectFallbackPlan = {
+      ...currentIterationPlan({
+        outcome: 'completed',
+        completed_at: '2026-07-01T01:00:00.000Z',
+      }),
+      updated_at: '2026-07-01T01:00:00.000Z',
+    };
+    const currentMainPlan: DirectFallbackPlan = {
+      ...currentIterationPlan(),
+      updated_at: '2026-07-01T01:02:00.000Z',
+    };
+
+    expect(selectLatestDirectFallbackPlan([
+      {
+        plan: staleWorktreePlan,
+        fileModifiedTimeMs: new Date('2026-07-01T02:00:00.000Z').getTime(),
+      },
+      { plan: currentMainPlan },
+    ])).toBe(currentMainPlan);
+  });
+});
 
 describe('readDirectRunResultFromSpecDirs', () => {
   it('returns the newest run result across worktree and main spec dirs', () => {
@@ -182,6 +207,83 @@ describe('evaluateDirectCompletionFallback', () => {
     });
   });
 
+  it('treats a successful run result as fresh when fallback backfilled started_at after the run result', () => {
+    const plan: DirectFallbackPlan = {
+      workflow_type: 'direct',
+      direct_execution: {
+        enabled: true,
+        outcome: 'running',
+        current_subtask_id: 'direct-cr-20260706090517930',
+        change_request_id: 'cr-20260706090517930',
+      },
+      phases: [
+        {
+          type: 'direct',
+          subtasks: [
+            {
+              id: 'direct-cr-20260706090517930',
+              started_at: '2026-07-06T15:24:39.929Z',
+            },
+          ],
+        },
+      ],
+    };
+
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'clean-exit',
+      plan,
+      runResult: {
+        phase: 'direct',
+        status: 'success',
+        exitCode: 0,
+        updatedAt: '2026-07-06T15:24:31.992Z',
+        quality: {
+          mode: 'direct',
+          outcome: 'completed',
+          validation: {
+            status: 'reported_passed',
+            reason: 'enter-game-order-ok',
+          },
+        },
+      },
+    });
+
+    expect(decision).toMatchObject({
+      action: 'complete',
+      reason: 'fresh-successful-run-result',
+    });
+  });
+
+  it.each(['completed', 'done'])('completes when Direct run result uses %s as a success status', (status) => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'clean-exit',
+      plan: currentIterationPlan(),
+      runResult: {
+        phase: 'direct',
+        status,
+        exitCode: 0,
+        updatedAt: '2026-07-01T01:01:02.000Z',
+        quality: {
+          mode: 'direct',
+          outcome: 'completed',
+          changedFiles: ['src/direct.ts'],
+          filesChanged: 1,
+          validation: {
+            status: 'reported_passed',
+            reason: 'npm test passed',
+          },
+        },
+      },
+    });
+
+    expect(decision).toMatchObject({
+      action: 'complete',
+      reason: 'fresh-successful-run-result',
+      filesChanged: 1,
+    });
+  });
   it('fails when a fresh successful Direct run result contains failed quality evidence', () => {
     const decision = evaluateDirectCompletionFallback({
       exitCode: 0,
@@ -326,12 +428,12 @@ describe('evaluateDirectCompletionFallback', () => {
     });
   });
 
-  it('fails when Direct plan outcome exhausted max steps', () => {
+  it('fails explicitly when Direct plan outcome is auth_failure', () => {
     const decision = evaluateDirectCompletionFallback({
       exitCode: 0,
       fallback: 'stuck-clean-exit',
       plan: currentIterationPlan({
-        outcome: 'max_steps',
+        outcome: 'auth_failure',
         completed_at: '2026-07-01T01:01:05.000Z',
       }),
       runResult: null,
@@ -340,7 +442,60 @@ describe('evaluateDirectCompletionFallback', () => {
     expect(decision).toMatchObject({
       action: 'fail',
       reason: 'failed-plan-outcome',
-      error: 'Direct plan outcome is max_steps.',
+      error: 'Direct plan outcome is auth_failure.',
+    });
+  });
+  it.each(['max_steps', 'context_window', 'rate_limited'])('keeps Direct plan outcome %s resumable', (outcome) => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'stuck-clean-exit',
+      plan: currentIterationPlan({
+        outcome,
+        completed_at: '2026-07-01T01:01:05.000Z',
+      }),
+      runResult: null,
+    });
+
+    expect(decision).toMatchObject({
+      action: 'resume',
+      reason: 'resumable-plan-outcome',
+      outcome,
+      message: `Direct plan outcome is ${outcome}.`,
+      quality: {
+        fallback: 'stuck-clean-exit',
+        fallbackReason: 'resumable-plan-outcome',
+      },
+    });
+  });
+
+  it.each(['max_steps', 'context_window', 'rate_limited'])('keeps fresh Direct run result %s resumable', (status) => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'clean-exit',
+      plan: currentIterationPlan(),
+      runResult: {
+        phase: 'direct',
+        status,
+        exitCode: 0,
+        message: `Direct stopped with ${status}.`,
+        updatedAt: '2026-07-01T01:01:02.000Z',
+        quality: {
+          filesChanged: 1,
+          changedFiles: ['src/direct.ts'],
+        },
+      },
+    });
+
+    expect(decision).toMatchObject({
+      action: 'resume',
+      reason: 'resumable-run-result',
+      outcome: status,
+      message: `Direct stopped with ${status}.`,
+      quality: {
+        filesChanged: 1,
+        fallback: 'clean-exit',
+        fallbackReason: 'resumable-run-result',
+      },
     });
   });
 
@@ -466,6 +621,42 @@ describe('evaluateDirectCompletionFallback', () => {
       reason: 'fresh-successful-run-result',
     });
   });
+
+  it('allows documentation Direct success evidence with failed self-critique', () => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'clean-exit',
+      plan: currentIterationPlan(),
+      runResult: {
+        phase: 'direct',
+        status: 'success',
+        exitCode: 0,
+        message: 'Documentation summary completed.',
+        updatedAt: '2026-07-01T01:01:02.000Z',
+        quality: {
+          mode: 'direct',
+          outcome: 'completed',
+          validation: {
+            status: 'not_run',
+            reason: 'Documentation-only task did not run code validation.',
+          },
+          selfCritique: {
+            status: 'failed',
+            score: 0.4,
+            filesReviewed: 1,
+            improvements: ['Documentation structure needs one more pass'],
+          },
+        },
+      },
+      taskMetadata: { category: 'documentation' },
+    });
+
+    expect(decision).toMatchObject({
+      action: 'complete',
+      reason: 'fresh-successful-run-result',
+    });
+  });
+
   it('completes documentation tasks on clean exit without durable success evidence', () => {
     const decision = evaluateDirectCompletionFallback({
       exitCode: 0,
@@ -488,6 +679,24 @@ describe('evaluateDirectCompletionFallback', () => {
       plan: {
         ...currentIterationPlan(),
         workflow_type: 'investigation',
+      },
+      runResult: null,
+    });
+
+    expect(decision).toMatchObject({
+      action: 'complete',
+      reason: 'clean-exit-non-implementation-task',
+    });
+  });
+
+  it('uses shared Direct validation requirements for analysis request text', () => {
+    const decision = evaluateDirectCompletionFallback({
+      exitCode: 0,
+      fallback: 'clean-exit',
+      plan: {
+        ...currentIterationPlan(),
+        workflow_type: 'direct',
+        description: 'Analyze the Direct task logs and explain why execution paused.',
       },
       runResult: null,
     });

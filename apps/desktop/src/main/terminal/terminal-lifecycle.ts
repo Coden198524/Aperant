@@ -24,6 +24,7 @@ import { getClaudeCodeEnv } from '../claude-code-settings';
 import { readSettingsFileAsync } from '../settings-utils';
 import { buildCdCommand } from '../../shared/utils/shell-escape';
 import log from 'electron-log/main.js';
+import { getAutocodeCliCommandName, type AutocodeCli } from '@autocode/core';
 
 /**
  * Options for terminal restoration
@@ -43,15 +44,7 @@ export type DataHandlerFn = (terminal: TerminalProcess, data: string) => void;
 
 function getCLICommand(cli: SupportedCLI, customPath?: string, _dangerouslySkipPermissions?: boolean): string {
   if (cli === 'custom' && customPath) return customPath;
-  const commands: Record<string, string> = {
-    gemini: 'gemini',
-    opencode: 'opencode',
-    kilocode: 'kilocode',
-    codex: 'codex',
-    deepseek: 'deepseek',
-  };
-  const command = commands[cli] ?? cli;
-  return command;
+  return getAutocodeCliCommandName(cli as AutocodeCli);
 }
 
 /**

@@ -1101,6 +1101,11 @@ function patchDirectChangeRequestRuntimePlan(
       ].join('\n');
       directSubtask.status = 'in_progress';
       directSubtask.started_at = now;
+      delete directSubtask.completed_at;
+      delete directSubtask.completion_summary;
+      delete directSubtask.notes;
+      delete directSubtask.duration_ms;
+      delete directSubtask.actual_output;
       directSubtask.files_to_modify = [];
       directSubtask.depends_on = [];
       directSubtask.requirements = [changeRequest.id];

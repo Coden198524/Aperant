@@ -18,6 +18,7 @@ export interface AutocodeDirectSessionState {
   updatedAt: string;
   iteration: number;
   provider?: string;
+  providerDisplayName?: string;
   modelId?: string;
   providerResponseId?: string;
   originalRequest?: string;
@@ -94,6 +95,7 @@ function normalizeAutocodeDirectSessionState(value: unknown): AutocodeDirectSess
       ? Math.max(1, Math.floor(record.iteration))
       : 1,
     provider: readString(record.provider),
+    providerDisplayName: readString(record.providerDisplayName),
     modelId: readString(record.modelId),
     providerResponseId: readString(record.providerResponseId),
     originalRequest: readString(record.originalRequest),

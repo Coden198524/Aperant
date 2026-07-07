@@ -349,6 +349,10 @@ export function initializeAppUpdater(window: BrowserWindow, betaUpdates = false)
  */
 export async function checkForUpdates(): Promise<AppUpdateInfo | null> {
   try {
+    if (!app.isPackaged && !DEBUG_UPDATER) {
+      return null;
+    }
+
     console.warn('[app-updater] Manual update check requested');
     const result = await autoUpdater.checkForUpdates();
 

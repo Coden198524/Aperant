@@ -356,7 +356,7 @@ describe('standard plan quality', () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors.join('\n')).toContain('task 1.1 is too broad');
-    expect(result.errors.join('\n')).toContain('OpenSpec-grade leaf tasks');
+    expect(result.errors.join('\n')).toContain('focused leaf tasks');
   });
 
   it('does not reject borderline tasks at the documented three-reference threshold', () => {
@@ -804,10 +804,10 @@ describe('standard plan quality', () => {
 
   it('classifies broad task granularity errors separately from hard metadata failures', () => {
     expect(hasOnlyAutocodePlanTaskGranularityErrors([
-      'tasks.md task 1.1 is too broad; split it into OpenSpec-grade leaf tasks by behavior.',
+      'tasks.md task 1.1 is too broad; split it into focused leaf tasks by behavior.',
     ])).toBe(true);
     expect(hasOnlyAutocodePlanTaskGranularityErrors([
-      'tasks.md task 1.1 is too broad; split it into OpenSpec-grade leaf tasks by behavior.',
+      'tasks.md task 1.1 is too broad; split it into focused leaf tasks by behavior.',
       'tasks.md task 1.2 missing _Evidence: ..._ metadata.',
     ])).toBe(false);
   });

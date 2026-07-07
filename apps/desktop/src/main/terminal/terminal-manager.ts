@@ -24,6 +24,7 @@ import { isDeepSeekStoredSession } from './deepseek-history';
 import { projectStore } from '../project-store';
 import { safeSendToRenderer } from '../ipc-handlers/utils';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
+import { DEFAULT_AUTOCODE_CLI } from '@autocode/core';
 
 export class TerminalManager {
   private terminals: Map<string, TerminalProcess> = new Map();
@@ -175,7 +176,7 @@ export class TerminalManager {
     const projectPreferredCLI = terminal.projectPath
       ? projectStore.getProjects().find((project) => project.path === terminal.projectPath)?.settings?.preferredCLI
       : undefined;
-    const selectedCLI = cliOverride || projectPreferredCLI || (settings?.preferredCLI as import('../../shared/types/settings').SupportedCLI | undefined) || 'claude-code';
+    const selectedCLI = cliOverride || projectPreferredCLI || (settings?.preferredCLI as import('../../shared/types/settings').SupportedCLI | undefined) || DEFAULT_AUTOCODE_CLI;
     if (selectedCLI === 'deepseek') {
       DeepSeekCliSession.startDeepSeekCli(terminal, cwd, this.getWindow);
       return;

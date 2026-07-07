@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import {
   CORE_PACKAGE_VERSION,
+  DEFAULT_AUTOCODE_CLI,
   AUTOCODE_PROJECT_DOC_TYPES,
   DEFAULT_PHASE_MODELS,
   SupportedProvider,
@@ -9,7 +10,7 @@ import {
   buildAutocodeWorkspaceSummaryViewModel,
   createTerminalAgentRuntimeAdapter,
   getAutocodeAgentRuntimeModeLabel,
-  isAutocodeCli,
+  resolveAutocodeCli,
   startAutocodeAgentRuntime,
   type AutocodeCli,
   type AutocodeTaskDevelopmentMode,
@@ -246,8 +247,8 @@ function getActiveProjectRootSync(): string | null {
 function getConfiguredCli(): AutocodeCli {
   const configured = vscode.workspace
     .getConfiguration('autocode')
-    .get<string>('preferredCLI', 'claude-code');
-  return isAutocodeCli(configured) ? configured : 'claude-code';
+    .get<string>('preferredCLI', DEFAULT_AUTOCODE_CLI);
+  return resolveAutocodeCli(configured ?? DEFAULT_AUTOCODE_CLI, DEFAULT_AUTOCODE_CLI);
 }
 
 function getConfiguredBypassPermissions(): boolean {

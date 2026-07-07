@@ -15,6 +15,9 @@ import {
   buildProviderModelCreationPlan,
   detectProviderFromModel as detectProviderFromModelCore,
   getKnownModelProviderPrefixes,
+  parseAutocodeProviderModelInvocationRoutes,
+  SupportedProvider as SupportedProviderValue,
+  type AutocodeProviderModelInvocationRouteConfig,
   type ProviderConfig,
   type ProviderModelInvocationPlan,
   type SupportedProvider,
@@ -43,10 +46,14 @@ export interface CreateProviderOptions {
   config: ProviderConfig;
   /** Full model ID, e.g. 'claude-sonnet-4-5-20250929' */
   modelId: string;
+  /** Optional configurable provider/model -> SDK invocation method routes. */
+  invocationRoutes?: AutocodeProviderModelInvocationRouteConfig | AutocodeProviderModelInvocationRouteConfig[];
 }
 
 export function createProvider(options: CreateProviderOptions): LanguageModel {
-  const plan = buildProviderModelCreationPlan(options.config, options.modelId);
+  const plan = buildProviderModelCreationPlan(options.config, options.modelId, {
+    invocationRoutes: parseAutocodeProviderModelInvocationRoutes(options.invocationRoutes),
+  });
   const instance = createProviderSdkInstanceFromPlan(plan.instance);
   const model = invokeModelFromPlan(instance, plan.invocation);
 
@@ -60,7 +67,12 @@ export function createProvider(options: CreateProviderOptions): LanguageModel {
 }
 
 export function detectProviderFromModel(modelId: string): SupportedProvider | undefined {
-  return detectProviderFromModelCore(modelId);
+  const provider = detectProviderFromModelCore(modelId);
+  return isSupportedProvider(provider) ? provider : undefined;
+}
+
+function isSupportedProvider(value: string | undefined): value is SupportedProvider {
+  return typeof value === 'string' && (Object.values(SupportedProviderValue) as string[]).includes(value);
 }
 
 export function createProviderFromModelId(

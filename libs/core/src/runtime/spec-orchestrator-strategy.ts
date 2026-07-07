@@ -118,6 +118,16 @@ export function selectAutocodeSpecPhases(input: {
   const phases = input.workflowConfig.optimizationLevel === 'aggressive' && input.complexity === 'simple'
     ? [...AUTOCODE_AGGRESSIVE_SIMPLE_SPEC_PHASES]
     : [...AUTOCODE_SPEC_COMPLEXITY_PHASES[input.complexity]];
+
+  const conservativeSpecFlow = input.workflowConfig.optimizationLevel === 'conservative' ||
+    input.workflowConfig.specCreationMode === 'phased';
+  if (input.complexity === 'standard' && !conservativeSpecFlow) {
+    const discoveryIndex = phases.indexOf('discovery');
+    if (discoveryIndex !== -1) {
+      phases.splice(discoveryIndex, 1);
+    }
+  }
+
   if (input.complexity === 'simple' && isAutocodeSourceDocumentationTask(input.taskDescription)) {
     return ['quick_spec'];
   }
@@ -127,6 +137,12 @@ export function selectAutocodeSpecPhases(input: {
     input.taskDescription,
     input.projectDocsReference ?? input.projectIndex,
   );
+  const needsSelfCritique = input.assessment?.needs_self_critique === true;
+
+  if (input.complexity === 'standard' && !conservativeSpecFlow && !needsResearch && !needsSelfCritique) {
+    return ['quick_spec', 'validation'];
+  }
+
   const researchIndex = phases.indexOf('research');
 
   if (needsResearch && researchIndex === -1) {
@@ -232,6 +248,7 @@ export function inferAutocodeSpecComplexityFallback(input: {
   const projectDocsReference = input.projectDocsReference ?? input.projectIndex;
   const projectText = (projectDocsReference ?? '').toLowerCase();
   const parsedProjectReference = parseAutocodeProjectDocsReferenceSummary(projectDocsReference);
+  const needsExternalResearch = shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, projectDocsReference);
   const signals: string[] = [];
 
   const hasBroadChangeIntent = /(\bmigrate|\bmigration|\bport\b|\bremove\b|\bdelete\b|\breplace\b|\brewrite\b|\brefactor\b|\brework\b|\bredesign\b|\brestructure\b|\bswitch\b|\bconvert\b|\bdeprecate\b|\bdrop\b|\bphase[-\s]?out\b|\u8fc1\u79fb|\u79fb\u9664|\u5220\u9664|\u66ff\u6362|\u91cd\u5199|\u91cd\u6784|\u6539\u9020|\u91cd\u65b0\u8bbe\u8ba1|\u5207\u6362|\u8f6c\u6362|\u5e9f\u5f03|\u4e0b\u7ebf)/i.test(taskText);
@@ -286,7 +303,7 @@ export function inferAutocodeSpecComplexityFallback(input: {
       complexity: 'complex',
       confidence: 0.78,
       reasoning: `local fallback detected conservative broad change in large multi-subsystem project (${signals.join(', ')})`,
-      needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, projectDocsReference),
+      needs_research: needsExternalResearch,
       needs_self_critique: true,
     };
   }
@@ -296,7 +313,7 @@ export function inferAutocodeSpecComplexityFallback(input: {
       complexity: 'complex',
       confidence: 0.75,
       reasoning: `local fallback detected ${signals.join(', ')}`,
-      needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, projectDocsReference),
+      needs_research: needsExternalResearch,
       needs_self_critique: true,
     };
   }
@@ -306,18 +323,30 @@ export function inferAutocodeSpecComplexityFallback(input: {
       complexity: 'standard',
       confidence: 0.65,
       reasoning: `local fallback detected ${signals.join(', ') || 'moderate scope'}`,
-      needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, projectDocsReference),
+      needs_research: needsExternalResearch,
+      needs_self_critique: isConservative,
+    };
+  }
+
+  if (needsExternalResearch || isConservative || signals.length > 0 || hasBroadChangeIntent) {
+    return {
+      complexity: 'standard',
+      confidence: needsExternalResearch || signals.length > 0 ? 0.58 : 0.52,
+      reasoning: signals.length > 0
+        ? `local fallback detected ${signals.join(', ')}`
+        : needsExternalResearch
+          ? 'local fallback detected external research signal'
+          : 'local fallback kept conservative Standard routing',
+      needs_research: needsExternalResearch,
       needs_self_critique: isConservative,
     };
   }
 
   return {
-    complexity: 'standard',
-    confidence: 0.5,
-    reasoning: signals.length > 0
-      ? `local fallback detected ${signals.join(', ')}`
-      : 'local fallback did not find enough signal for complex routing',
-    needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, projectDocsReference),
+    complexity: 'simple',
+    confidence: 0.62,
+    reasoning: 'local fallback found no broad, cross-boundary, or high-risk signals; using Standard light planning',
+    needs_research: needsExternalResearch,
     needs_self_critique: false,
   };
 }

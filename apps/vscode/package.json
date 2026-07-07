@@ -124,17 +124,18 @@
         },
         "autocode.preferredCLI": {
           "type": "string",
-          "enum": [
+          "examples": [
             "claude-code",
             "gemini",
             "opencode",
             "kilocode",
             "codex",
             "deepseek",
-            "custom"
+            "custom",
+            "future-code"
           ],
           "default": "claude-code",
-          "description": "CLI used by the VS Code frontend when starting an Autocode task in a terminal."
+          "description": "CLI identifier used by the VS Code frontend when starting an Autocode task in a terminal. Built-ins and future safe identifiers are accepted; use autocode.customCLICommand when the command needs arguments or spaces."
         },
         "autocode.customCLICommand": {
           "type": "string",

@@ -222,27 +222,40 @@ export function Sidebar({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedProjectId, onViewChange, visibleNavItems]);
 
-  // Check git status when project changes
+  // Check git status only for projects that still need initialization.
+  // Existing initialized projects should not spawn git during app startup.
   useEffect(() => {
-    const checkGit = async () => {
-      if (selectedProject) {
-        try {
-          const result = await window.electronAPI.checkGitStatus(selectedProject.path);
-          if (result.success && result.data) {
-            setGitStatus(result.data);
-            // Show git setup modal if project is not a git repo or has no commits
-            if (!result.data.isGitRepo || !result.data.hasCommits) {
-              setShowGitSetupModal(true);
-            }
+    if (!selectedProject) {
+      setGitStatus(null);
+      return;
+    }
+
+    if (selectedProject.autoBuildPath) {
+      setGitStatus(null);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      window.electronAPI.checkGitStatus(selectedProject.path)
+        .then((result) => {
+          if (cancelled || !result.success || !result.data) return;
+          setGitStatus(result.data);
+          if (!result.data.isGitRepo || !result.data.hasCommits) {
+            setShowGitSetupModal(true);
           }
-        } catch (error) {
-          console.error('Failed to check git status:', error);
-        }
-      } else {
-        setGitStatus(null);
-      }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            console.error('Failed to check git status:', error);
+          }
+        });
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
     };
-    checkGit();
   }, [selectedProject]);
 
   const handleProjectAdded = (project: Project, needsInit: boolean) => {

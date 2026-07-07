@@ -32,6 +32,8 @@ export class WorkflowMetricsTracker {
   private aggregatedFile: string;
   private records: TaskExecutionRecord[] = [];
   private aggregated: AggregatedMetrics | null = null;
+  private initialized = false;
+  private initializePromise: Promise<void> | null = null;
 
   constructor() {
     this.metricsDir = join(app.getPath('userData'), 'workflow-metrics');
@@ -43,12 +45,27 @@ export class WorkflowMetricsTracker {
    * Initialize metrics tracker - load existing records.
    */
   async initialize(): Promise<void> {
+    if (this.initialized) return;
+    if (this.initializePromise) {
+      await this.initializePromise;
+      return;
+    }
+
+    this.initializePromise = (async () => {
+      try {
+        await mkdir(this.metricsDir, { recursive: true });
+        await this.loadRecords();
+        await this.loadAggregated();
+        this.initialized = true;
+      } catch (error) {
+        console.error('[WorkflowMetricsTracker] Failed to initialize:', error);
+      }
+    })();
+
     try {
-      await mkdir(this.metricsDir, { recursive: true });
-      await this.loadRecords();
-      await this.loadAggregated();
-    } catch (error) {
-      console.error('[WorkflowMetricsTracker] Failed to initialize:', error);
+      await this.initializePromise;
+    } finally {
+      this.initializePromise = null;
     }
   }
 
@@ -57,6 +74,8 @@ export class WorkflowMetricsTracker {
    */
   async recordTaskExecution(record: TaskExecutionRecord): Promise<void> {
     try {
+      await this.initialize();
+
       // Append to JSONL file
       const line = JSON.stringify(record) + '\n';
       await writeFile(this.recordsFile, line, { flag: 'a' });
@@ -102,6 +121,7 @@ export class WorkflowMetricsTracker {
    * Clear all metrics data.
    */
   async clearMetrics(): Promise<void> {
+    await this.initialize();
     this.records = [];
     this.aggregated = null;
     try {

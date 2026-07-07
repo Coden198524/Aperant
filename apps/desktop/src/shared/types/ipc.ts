@@ -14,6 +14,7 @@ import type {
   FileNode,
   FileExplorerChangeEvent,
   ProjectContextData,
+  ProjectIndex,
   MemorySystemStatus,
   ContextSearchResult,
   RendererMemory,
@@ -519,6 +520,7 @@ export interface ElectronAPI {
 
   // Context operations
   getProjectContext: (projectId: string) => Promise<IPCResult<ProjectContextData>>;
+  refreshProjectIndex: (projectId: string) => Promise<IPCResult<ProjectIndex>>;
   getMemoryStatus: (projectId: string) => Promise<IPCResult<MemorySystemStatus>>;
   searchMemories: (projectId: string, query: string) => Promise<IPCResult<ContextSearchResult[]>>;
   getRecentMemories: (projectId: string, limit?: number) => Promise<IPCResult<RendererMemory[]>>;

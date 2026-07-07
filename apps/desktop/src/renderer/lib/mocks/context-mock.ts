@@ -2,6 +2,14 @@
  * Mock implementation for context and memory operations
  */
 
+const mockProjectIndex = {
+  project_root: '',
+  project_type: 'single' as const,
+  services: {},
+  infrastructure: {},
+  conventions: {},
+};
+
 export const contextMock = {
   getProjectContext: async () => ({
     success: true,
@@ -12,6 +20,11 @@ export const contextMock = {
       recentMemories: [],
       isLoading: false
     }
+  }),
+
+  refreshProjectIndex: async () => ({
+    success: true,
+    data: mockProjectIndex,
   }),
 
   getMemoryStatus: async () => ({

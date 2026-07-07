@@ -212,6 +212,24 @@ describe('classifyError', () => {
     expect(result.sessionError.retryable).toBe(true);
   });
 
+
+  it('should classify transient network failures as retryable errors', () => {
+    const disconnected = classifyError(new Error('stream disconnected before completion: error sending request for url'));
+    expect(disconnected.sessionError.code).toBe(ErrorCode.NETWORK_ERROR);
+    expect(disconnected.outcome).toBe('error');
+    expect(disconnected.sessionError.retryable).toBe(true);
+
+    const websocket = classifyError(new Error('failed to connect to websocket: IO error: tls handshake eof'));
+    expect(websocket.sessionError.code).toBe(ErrorCode.NETWORK_ERROR);
+    expect(websocket.sessionError.retryable).toBe(true);
+  });
+
+  it('should classify provider availability failures as retryable errors', () => {
+    const unavailable = classifyError(Object.assign(new Error('service unavailable'), { statusCode: 503 }));
+    expect(unavailable.sessionError.code).toBe(ErrorCode.TEMPORARILY_UNAVAILABLE);
+    expect(unavailable.outcome).toBe('error');
+    expect(unavailable.sessionError.retryable).toBe(true);
+  });
   it('should classify unknown errors as generic', () => {
     const result = classifyError(new Error('something went wrong'));
     expect(result.sessionError.code).toBe(ErrorCode.GENERIC);

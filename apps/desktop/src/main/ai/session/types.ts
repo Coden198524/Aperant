@@ -5,6 +5,10 @@ import type {
   AutocodeSessionMessage as SessionMessage,
 } from '@autocode/core/runtime/agent-session-types';
 import type {
+  AutocodeDirectProviderContinuationRuntime,
+  AutocodeDirectProviderFallbackRuntime,
+  AutocodeDirectProviderOptions,
+  AutocodeProviderModelInvocationRouteConfig,
   ModelShorthand,
   Phase,
   SupportedProvider,
@@ -51,8 +55,14 @@ export interface SessionConfig {
   sessionNumber?: number;
   subtaskId?: string;
   provider?: SupportedProvider;
+  providerTransport?: string;
   contextWindowLimit?: number;
   responsePersistence?: boolean;
   previousResponseId?: string;
+  providerOptions?: AutocodeDirectProviderOptions;
+  providerResponseIdFields?: string[];
+  providerResponsePersistence?: AutocodeDirectProviderContinuationRuntime;
+  providerFallback?: AutocodeDirectProviderFallbackRuntime;
+  providerModelInvocationRoutes?: AutocodeProviderModelInvocationRouteConfig | AutocodeProviderModelInvocationRouteConfig[];
   outputSchema?: ZodSchema;
 }

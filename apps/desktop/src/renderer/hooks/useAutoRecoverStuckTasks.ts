@@ -3,6 +3,7 @@ import type { Task, TaskStatus } from '../../shared/types';
 import { useTaskStore, hasRecentActivity, checkTaskRunning, recoverStuckTask } from '../stores/task-store';
 
 export const AUTO_RECOVER_SCAN_INTERVAL_MS = 30_000;
+export const AUTO_RECOVER_INITIAL_SCAN_DELAY_MS = 15_000;
 export const AUTO_RECOVER_COOLDOWN_MS = 3 * 60_000;
 
 interface AutoRecoverRuntimeState {
@@ -135,13 +136,17 @@ export function useAutoRecoverStuckTasks(): void {
       }
     };
 
-    void runScan();
+    const initialScanTimer = window.setTimeout(() => {
+      void runScan();
+    }, AUTO_RECOVER_INITIAL_SCAN_DELAY_MS);
+
     const intervalId = window.setInterval(() => {
       void runScan();
     }, AUTO_RECOVER_SCAN_INTERVAL_MS);
 
     return () => {
       disposed = true;
+      window.clearTimeout(initialScanTimer);
       window.clearInterval(intervalId);
     };
   }, []);

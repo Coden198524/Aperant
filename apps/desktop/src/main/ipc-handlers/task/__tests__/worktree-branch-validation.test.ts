@@ -10,11 +10,38 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  buildCliDetectionCandidatesForRoutes,
   createAddedFilePatchFromContent,
   GIT_BRANCH_REGEX,
   shouldHideTaskGitChangePath,
   validateWorktreeBranch,
 } from '../worktree-handlers';
+
+describe('buildCliDetectionCandidatesForRoutes', () => {
+  it('adds settings-defined future CLI route candidates without source-code registration', () => {
+    const candidates = buildCliDetectionCandidatesForRoutes('win32', [
+      {
+        id: 'future-code-direct-cli',
+        displayName: 'Future Code',
+        cli: 'future-code',
+        condition: { provider_prefix: 'future-' },
+      },
+      {
+        id: 'future-custom-cli',
+        displayName: 'Future Custom',
+        cli: 'custom',
+        customCommand: 'future-code --profile team',
+        condition: { provider: 'future-ai' },
+      },
+    ]);
+
+    expect(candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'codex', command: 'codex.cmd' }),
+      expect.objectContaining({ id: 'future-code', name: 'Future Code', command: 'future-code' }),
+    ]));
+    expect(candidates.some(candidate => candidate.id === 'future-custom-cli')).toBe(false);
+  });
+});
 
 describe('GIT_BRANCH_REGEX', () => {
   it('should accept valid autocode branch names', () => {

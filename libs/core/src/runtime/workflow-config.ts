@@ -52,16 +52,16 @@ const CONSERVATIVE_PRESET: Required<WorkflowConfig> = {
 
 const BALANCED_PRESET: Required<WorkflowConfig> = {
   optimizationLevel: 'balanced',
-  maxPlanningRetries: 2,
+  maxPlanningRetries: 1,
   maxSubtaskRetries: 2,
-  maxQACycles: 2,
-  maxSpecPhaseRetries: 2,
+  maxQACycles: 1,
+  maxSpecPhaseRetries: 1,
   skipAIQAReview: false,
   qualityChecks: {
     enableSmokeTests: false,
     enablePatternInjection: false,
-    enableSelfCritique: true,
-    enablePreImplementationChecklist: true,
+    enableSelfCritique: false,
+    enablePreImplementationChecklist: false,
     enableTieredQualityStandards: true,
   },
   specCreationMode: 'auto',
@@ -166,8 +166,8 @@ export function estimatePerformanceImprovement(level: OptimizationLevel): {
       };
     case 'balanced':
       return {
-        timeReduction: '35-45%',
-        tokenReduction: '40-50%',
+        timeReduction: '45-60%',
+        tokenReduction: '50-65%',
         successRate: '93-96%',
       };
     case 'aggressive':

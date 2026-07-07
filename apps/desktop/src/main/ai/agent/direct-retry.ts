@@ -1,12 +1,14 @@
 import { addAutocodeContinuationUsage, rawTruncateAutocodeSessionMessages } from '@autocode/core/runtime/agent-continuation';
 import { appendAutocodeLanguageRequirement } from '@autocode/core/runtime/agent-language';
 import type { AutocodeDirectCodingQualityMetrics } from '@autocode/core/runtime/direct-task-summary';
-import type { SessionConfig, SessionMessage, SessionResult, TokenUsage } from '../session/types';
+import { classifyError } from '../session/error-classifier';
+import type { SessionConfig, SessionError, SessionMessage, SessionResult, TokenUsage } from '../session/types';
 import type { SerializableSessionConfig } from './types';
 
 export const AUTOCODE_DIRECT_MAX_VALIDATION_ATTEMPTS = 3;
 
 const DIRECT_RETRY_TEXT_MAX_CHARS = 1_200;
+const DIRECT_CONTEXT_WINDOW_RETRY_CONTEXT_MAX_CHARS = 800;
 const DIRECT_RETRY_FILE_PREVIEW_LIMIT = 12;
 
 export interface DirectValidationAttemptFeedback {
@@ -31,9 +33,61 @@ export function shouldRetryDirectAttempt(
     return true;
   }
 
-  return result.outcome === 'error' &&
-    result.error?.code === 'direct_quality_gate_failed' &&
-    result.error.retryable === true;
+  if (result.outcome !== 'error' || result.error?.retryable !== true) {
+    return false;
+  }
+
+  if (result.error.code === 'direct_quality_gate_failed') {
+    return true;
+  }
+
+  return isRetryableDirectIncompleteError(result.error.code);
+}
+
+function isRetryableDirectIncompleteError(code: string | undefined): boolean {
+  return code === 'stream_timeout' ||
+    code === 'generic_error' ||
+    code === 'temporarily_unavailable' ||
+    code === 'network_error' ||
+    code === 'concurrency_error';
+}
+
+export function buildDirectSessionErrorResult(error: unknown): SessionResult {
+  const classified = classifyError(error);
+  const message = stringifyDirectSessionError(error);
+  const useClassifiedError = classified.sessionError.code !== 'generic_error';
+  const sessionError = useClassifiedError
+    ? stripDirectSessionErrorCause(classified.sessionError)
+    : {
+        code: 'direct_session_error',
+        message,
+        retryable: false,
+      };
+
+  return {
+    outcome: useClassifiedError ? classified.outcome : 'error',
+    stepsExecuted: 0,
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    messages: [],
+    toolCallCount: 0,
+    durationMs: 0,
+    error: sessionError,
+  };
+}
+
+function stripDirectSessionErrorCause(error: SessionError): SessionError {
+  return {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+  };
+}
+
+function stringifyDirectSessionError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 export function resolveDirectProviderResponseIdForPersistence(
@@ -44,6 +98,15 @@ export function resolveDirectProviderResponseIdForPersistence(
     return undefined;
   }
   return result?.providerResponseId ?? existingProviderResponseId;
+}
+
+export function resolveDirectPersistedDurationMs(
+  result: Pick<SessionResult, 'durationMs'> | undefined,
+  quality?: Pick<AutocodeDirectCodingQualityMetrics, 'durationMs'>,
+): number | undefined {
+  const value = [quality?.durationMs, result?.durationMs]
+    .find((candidate): candidate is number => typeof candidate === 'number' && Number.isFinite(candidate));
+  return value === undefined ? undefined : Math.max(0, Math.round(value));
 }
 export function buildDirectRetrySessionConfig(
   baseConfig: SessionConfig,
@@ -59,10 +122,12 @@ export function buildDirectRetrySessionConfig(
 
   const latestAttempt = attempts[attempts.length - 1];
   const contextWindowRetry = latestAttempt?.result.outcome === 'context_window';
+  const baseProviderPersistence = baseConfig.providerResponsePersistence;
+  const baseProviderResponseId = baseProviderPersistence?.providerResponseId ?? baseConfig.previousResponseId;
   const useProviderContinuation = !contextWindowRetry &&
-    (baseConfig.responsePersistence === true || Boolean(baseConfig.previousResponseId));
+    Boolean(baseProviderPersistence || baseConfig.responsePersistence === true || baseConfig.previousResponseId);
   const providerResponseId = useProviderContinuation
-    ? latestAttempt?.result.providerResponseId ?? baseConfig.previousResponseId
+    ? latestAttempt?.result.providerResponseId ?? baseProviderResponseId
     : undefined;
   const transcriptMessages = buildRetryTranscript(baseConfig.initialMessages, latestAttempt);
 
@@ -71,8 +136,26 @@ export function buildDirectRetrySessionConfig(
     initialMessages: providerResponseId
       ? [{ role: 'user', content: prompt }]
       : [...transcriptMessages, { role: 'user', content: prompt }],
-    previousResponseId: providerResponseId,
+    previousResponseId: baseConfig.previousResponseId || baseConfig.responsePersistence === true
+      ? providerResponseId
+      : undefined,
+    providerResponsePersistence: contextWindowRetry
+      ? undefined
+      : buildNextProviderResponsePersistence(baseProviderPersistence, providerResponseId),
   };
+}
+
+
+function buildNextProviderResponsePersistence(
+  persistence: SessionConfig['providerResponsePersistence'] | undefined,
+  providerResponseId: string | undefined,
+): SessionConfig['providerResponsePersistence'] | undefined {
+  if (!persistence) {
+    return undefined;
+  }
+  const next = { ...persistence };
+  delete next.providerResponseId;
+  return providerResponseId ? { ...next, providerResponseId } : next;
 }
 
 function buildRetryTranscript(
@@ -80,7 +163,10 @@ function buildRetryTranscript(
   latestAttempt: DirectValidationAttemptFeedback | undefined,
 ): SessionMessage[] {
   if (latestAttempt?.result.outcome === 'context_window') {
-    return initialMessages;
+    const contextSummary = buildContextWindowRetryAssistantContext(latestAttempt);
+    return contextSummary
+      ? [...initialMessages, { role: 'assistant', content: contextSummary }]
+      : initialMessages;
   }
   const attemptMessages = latestAttempt?.result.messages ?? [];
   if (attemptMessages.length > 0) {
@@ -93,6 +179,20 @@ function buildRetryTranscript(
     ...initialMessages,
     { role: 'assistant', content: latestAttempt.streamedText.trim() },
   ];
+}
+
+function buildContextWindowRetryAssistantContext(
+  latestAttempt: DirectValidationAttemptFeedback,
+): string {
+  const excerpt = getDirectAttemptHeadExcerpt(latestAttempt, DIRECT_CONTEXT_WINDOW_RETRY_CONTEXT_MAX_CHARS);
+  if (!excerpt) {
+    return '';
+  }
+  return [
+    'Previous Direct attempt hit the context window before completion.',
+    'Compact record of what the previous attempt reported before retry:',
+    excerpt,
+  ].join('\n\n');
 }
 
 function mergeSessionTranscript(
@@ -236,16 +336,28 @@ function formatDirectAttemptFeedback(
   ].filter(Boolean).join('\n');
 }
 
-function getDirectAttemptFinalExcerpt(attempt: DirectValidationAttemptFeedback): string {
-  const messages: SessionMessage[] = attempt.result.messages.length > 0
+function getDirectAttemptHeadExcerpt(attempt: DirectValidationAttemptFeedback, maxChars: number): string {
+  const messages = getDirectAttemptExcerptMessages(attempt);
+  if (messages.length === 0) {
+    return '';
+  }
+  return limitDirectRetryHeadText(rawTruncateAutocodeSessionMessages(messages), maxChars);
+}
+
+function getDirectAttemptFinalExcerpt(attempt: DirectValidationAttemptFeedback, maxChars = 2_000): string {
+  const messages = getDirectAttemptExcerptMessages(attempt);
+  if (messages.length === 0) {
+    return '';
+  }
+  return limitDirectRetryText(rawTruncateAutocodeSessionMessages(messages), maxChars);
+}
+
+function getDirectAttemptExcerptMessages(attempt: DirectValidationAttemptFeedback): SessionMessage[] {
+  return attempt.result.messages.length > 0
     ? attempt.result.messages
     : attempt.streamedText.trim()
       ? [{ role: 'assistant', content: attempt.streamedText }]
       : [];
-  if (messages.length === 0) {
-    return '';
-  }
-  return limitDirectRetryText(rawTruncateAutocodeSessionMessages(messages), 2_000);
 }
 
 function hasRepeatedDirectFailureSignature(attempts: DirectValidationAttemptFeedback[]): boolean {
@@ -281,6 +393,15 @@ function normalizeDirectFailureSignatureText(value: string): string {
     .trim();
 }
 
+function normalizeDirectRetryText(value: string): string {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+}
+
 function formatListPreview(items: string[], limit: number): string {
   const normalized = items
     .map((item) => item.trim())
@@ -292,13 +413,21 @@ function formatListPreview(items: string[], limit: number): string {
   return normalized.length > limit ? `${preview}, ...and ${normalized.length - limit} more` : preview;
 }
 
+function limitDirectRetryHeadText(value: string, maxChars: number): string {
+  const normalized = normalizeDirectRetryText(value);
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  const marker = `\n[... context-window retry context truncated, ${normalized.length} chars total ...]`;
+  const budget = Math.max(0, maxChars - marker.length);
+  return [
+    normalized.slice(0, budget).trimEnd(),
+    marker,
+  ].filter(Boolean).join('\n');
+}
+
 function limitDirectRetryText(value: string, maxChars: number): string {
-  const normalized = value
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{4,}/g, '\n\n\n')
-    .trim();
+  const normalized = normalizeDirectRetryText(value);
   if (normalized.length <= maxChars) {
     return normalized;
   }

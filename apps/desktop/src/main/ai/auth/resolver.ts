@@ -16,7 +16,11 @@
 
 import * as path from 'node:path';
 import { ensureValidToken, reactiveTokenRefresh } from '../../claude-profile/token-refresh';
-import type { SupportedProvider } from '@autocode/core';
+import {
+  detectProviderFromModel as detectProviderFromModelCore,
+  type AutocodeModelProviderRoute,
+  type SupportedProvider,
+} from '@autocode/core';
 import { detectProviderFromModel } from '../providers/factory';
 import type {
   AuthResolverContext,
@@ -274,10 +278,14 @@ export async function resolveAuthFromQueue(
     userModelOverrides?: Record<string, Partial<Record<BuiltinProvider, import('../../../shared/constants/models').ProviderModelSpec>>>;
     autoSwitchSettings?: ClaudeAutoSwitchSettings;
     executionMode?: 'standard' | 'agentic';
+    modelProviderRoutes?: readonly AutocodeModelProviderRoute[];
+    requestedProvider?: SupportedProvider;
   }
 ): Promise<QueueResolvedAuth | null> {
   const excludeSet = new Set(options?.excludeAccountIds ?? []);
-  const requestedProvider = detectProviderFromModel(requestedModel);
+  const requestedProvider = options?.requestedProvider ?? (options?.modelProviderRoutes
+    ? detectProviderFromModelCore(requestedModel, options.modelProviderRoutes)
+    : detectProviderFromModel(requestedModel));
   const defaultSettings: ClaudeAutoSwitchSettings = {
     enabled: true,
     proactiveSwapEnabled: false,

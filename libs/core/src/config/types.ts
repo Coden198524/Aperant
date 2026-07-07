@@ -102,7 +102,7 @@ export const ADAPTIVE_THINKING_MODELS: ReadonlySet<string> = new Set([
 // Phase Configuration Types
 // ============================================
 
-/** Per-phase model configuration — values can be shorthands or concrete model IDs */
+/** Per-phase model configuration; values can be shorthands or concrete model IDs */
 export interface PhaseModelConfig {
   spec: string;
   planning: string;
@@ -150,6 +150,7 @@ export const MODEL_PROVIDER_MAP: Record<string, SupportedProvider> = {
   'claude-': 'anthropic',
   'gpt-': 'openai',
   'o1-': 'openai',
+  'o3': 'openai',
   'o3-': 'openai',
   'o4-': 'openai',
   'codex-': 'openai',           // OpenAI Codex subscription models
@@ -157,6 +158,7 @@ export const MODEL_PROVIDER_MAP: Record<string, SupportedProvider> = {
   'mistral-': 'mistral',
   'codestral-': 'mistral',
   'llama-': 'groq',
+  'meta-llama/': 'groq',
   'grok-': 'xai',
   'glm-': 'zai',
   'deepseek-': 'deepseek',
@@ -189,8 +191,9 @@ export function resolveReasoningParams(config: ReasoningConfig): Record<string, 
  * Uses MODEL_PROVIDER_MAP for lookup.
  */
 function detectProviderFromModelId(modelId: string): SupportedProvider | undefined {
-  for (const [prefix, provider] of Object.entries(MODEL_PROVIDER_MAP)) {
-    if (modelId.startsWith(prefix)) {
+  for (const [match, provider] of Object.entries(MODEL_PROVIDER_MAP)) {
+    const isPrefixMatch = match.endsWith('-') || match.endsWith('/');
+    if (isPrefixMatch ? modelId.startsWith(match) : modelId === match) {
       return provider;
     }
   }

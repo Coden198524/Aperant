@@ -22,6 +22,7 @@ import type {
   TaskStatus,
 } from '../../../desktop/src/shared/types';
 import type { ProviderAccount } from '../../../desktop/src/shared/types/provider-account';
+import { DEFAULT_AUTOCODE_CLI, resolveAutocodeCli } from '@autocode/core/tasks/cli-catalog';
 import { DEFAULT_APP_SETTINGS, DEFAULT_PROJECT_SETTINGS } from '../../../desktop/src/shared/constants';
 import type {
   CreateWebProjectFolderRequest,
@@ -1037,6 +1038,9 @@ async function startTaskRuntime(
     ...(typeof task?.metadata?.model === 'string' && task.metadata.model.trim()
       ? { model: task.metadata.model.trim() }
       : {}),
+    ...(typeof task?.metadata?.provider === 'string' && task.metadata.provider.trim()
+      ? { provider: task.metadata.provider.trim() }
+      : {}),
     ...(typeof settings.dangerouslySkipPermissions === 'boolean'
       ? { bypassPermissions: settings.dangerouslySkipPermissions }
       : {}),
@@ -1503,18 +1507,9 @@ function normalizeDevelopmentMode(value: TaskMetadata['developmentMode'] | undef
 }
 
 function normalizePreferredCli(value: unknown): StartWebTaskRequest['cli'] {
-  if (
-    value === 'claude-code'
-    || value === 'gemini'
-    || value === 'opencode'
-    || value === 'kilocode'
-    || value === 'codex'
-    || value === 'deepseek'
-    || value === 'custom'
-  ) {
-    return value;
-  }
-  return 'codex';
+  return typeof value === 'string' && value.trim()
+    ? resolveAutocodeCli(value, DEFAULT_AUTOCODE_CLI)
+    : DEFAULT_AUTOCODE_CLI;
 }
 
 function normalizeExecutionPhase(value: string): ExecutionPhase {

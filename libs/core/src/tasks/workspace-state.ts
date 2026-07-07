@@ -74,6 +74,12 @@ export interface CreateStartedAutocodeAgentRuntimeInput extends CreateAutocodeAg
   cli: CreateAutocodeTaskRunPlanInput['cli'];
   customCommand?: string;
   directCliContinuationStrategy?: CreateAutocodeTaskRunPlanInput['directCliContinuationStrategy'];
+  directCliJsonEventParser?: CreateAutocodeTaskRunPlanInput['directCliJsonEventParser'];
+  directCliRuntimeRouteId?: CreateAutocodeTaskRunPlanInput['directCliRuntimeRouteId'];
+  directCliRuntimeRouteDisplayName?: CreateAutocodeTaskRunPlanInput['directCliRuntimeRouteDisplayName'];
+  directCliPermissionBypassArgs?: CreateAutocodeTaskRunPlanInput['directCliPermissionBypassArgs'];
+  directCliTaskRunStrategy?: CreateAutocodeTaskRunPlanInput['directCliTaskRunStrategy'];
+  directCliPreflightActions?: CreateAutocodeTaskRunPlanInput['directCliPreflightActions'];
   model?: string;
   bypassPermissions?: boolean;
   language?: CreateAutocodeTaskRunPlanInput['language'];
@@ -194,45 +200,19 @@ function buildManualAutocodeExecutionSpecMarkdown(input: {
     input.developmentMode === 'direct'
       ? 'Run one direct coding session against the selected model. Do not create staged planning or QA artifacts.'
       : [
-          'Use Standard Autocode planning. Preserve the local Autocode workflow: spec.md, tasks.md, and implementation_plan.md stay inside this task directory.',
-          'Follow the Autocode Standard spec-driven flow: clarify proposal and requirements, capture design decisions, define acceptance criteria and risks, then produce executable tasks.',
-          'Before coding, keep spec.md and tasks.md aligned; implementation_plan.md is downstream runtime state derived from those Standard artifacts.',
+          'Use compact Standard Autocode planning. Keep spec.md, tasks.md, and derived implementation_plan.md inside this task directory.',
+          'Default to task-first planning: update spec.md only with concrete requirements, key decisions or assumptions, evidence, and verification needed for coding.',
+          'Create or repair tasks.md as the executable checklist. Do not write implementation_plan.md; the runtime derives it from tasks.md.',
         ].join('\n'),
     '',
-    ...(input.developmentMode === 'direct'
-      ? []
-      : [
-          '## Planning Seed',
-          'This file is the initial Standard planning seed. The planning phase must replace or expand it with concrete task-specific requirements, design notes, acceptance criteria, risks, and evidence before implementation starts.',
-          '',
-          '## Requirements To Clarify',
-          `- R1: Satisfy the user request: ${input.description}`,
-          '',
-          '## Design Decisions To Record',
-          '- Record the affected file/module boundaries, the implementation approach, and whether a new design pattern is needed.',
-          '- For runnable or user-facing deliverables, record the runtime verification path.',
-          '',
-          '## Acceptance Criteria To Define',
-          '- AC1: The requested behavior is implemented and observable.',
-          '- AC2: Relevant verification is run and recorded.',
-          '',
-          '## Risks / Assumptions To Review',
-          '- Risk: implementation scope may be underspecified until project files and existing patterns are inspected.',
-          '- Assumption: project-specific constraints and verification commands will be confirmed during planning.',
-          '',
-          '## Evidence',
-          `- User request - initial scope: ${input.description}`,
-          '',
-        ]),
     '## Done',
-    '- The change satisfies the request.',
+    '- The request is satisfied.',
     '- Only relevant files are modified.',
     '- Useful verification is recorded.',
     ...(input.developmentMode === 'direct'
       ? []
       : [
-          '- spec.md records requirements, design notes, acceptance criteria, and risks.',
-          '- tasks.md contains concrete checklist work items with dependencies before implementation starts.',
+          '- tasks.md contains focused executable items with dependencies, evidence, done signals, and verification.',
         ]),
   ].join('\n');
 }
@@ -255,41 +235,24 @@ function buildChineseManualAutocodeExecutionSpecMarkdown(input: {
     '',
     '## 执行方式',
     input.developmentMode === 'direct'
-      ? '直连所选大模型进入单次编码会话，不创建分阶段规划或 QA 工件。'
-      : '使用 Autocode Standard 规范流程：先澄清目标和需求，再记录设计决策、验收标准、风险和可执行任务，最后由运行时生成 implementation_plan.md。',
+      ? '使用所选模型运行一次直连编码会话；不创建分阶段规划或 QA 工件。'
+      : [
+          '使用紧凑的 Standard Autocode 规划。spec.md、tasks.md 和运行时派生的 implementation_plan.md 都保留在本任务目录。',
+          '默认任务优先：spec.md 只记录编码所需的具体需求、关键决策或假设、证据和验证方式。',
+          '创建或修复 tasks.md 作为可执行清单。不要写 implementation_plan.md；运行时会从 tasks.md 派生。',
+        ].join('\n'),
     '',
+    '## 完成标准',
+    '- 满足用户请求。',
+    '- 只修改相关文件。',
+    '- 记录有用的验证结果。',
     ...(input.developmentMode === 'direct'
       ? []
       : [
-          '## 规划种子',
-          '本文档是 Standard 任务的初始规划种子。规划阶段必须在编码前将其替换或扩展为包含具体需求、设计决策、验收标准、风险和证据的任务规格。',
-          '',
-          '## 待澄清需求',
-          `- R1：满足用户请求：${input.description}`,
-          '',
-          '## 待记录设计决策',
-          '- 记录受影响的文件/模块边界、实现策略，以及是否需要新的设计模式。',
-          '- 如果是可运行或用户可见交付物，记录真实启动/打开/使用路径的验证方式。',
-          '',
-          '## 待定义验收标准',
-          '- AC1：用户请求的行为已实现且可观察。',
-          '- AC2：相关验证已运行并记录结果。',
-          '',
-          '## 待评估风险 / 假设',
-          '- 风险：在检查项目文件和既有模式前，实现范围可能仍不完整。',
-          '- 假设：规划阶段会确认项目约束和验证命令。',
-          '',
-          '## Evidence',
-          `- 用户请求 - 初始范围：${input.description}`,
-          '',
+          '- tasks.md 包含聚焦的可执行任务，并带有依赖、证据、完成信号和验证方式。',
         ]),
-    '## 完成标准',
-    '- 变更满足请求描述。',
-    '- 只修改相关文件。',
-    '- 记录必要的验证结果。',
   ].join('\n');
 }
-
 function isChineseLanguage(language: unknown): boolean {
   const normalized = typeof language === 'string' ? language.trim().toLowerCase().replace(/_/g, '-') : '';
   return normalized === 'zh' || normalized.startsWith('zh-') || normalized.includes('chinese');
@@ -325,6 +288,12 @@ export function createStartedAutocodeAgentRuntime(
     cli: input.cli,
     customCommand: input.customCommand,
     directCliContinuationStrategy: input.directCliContinuationStrategy,
+    directCliJsonEventParser: input.directCliJsonEventParser,
+    directCliRuntimeRouteId: input.directCliRuntimeRouteId,
+    directCliRuntimeRouteDisplayName: input.directCliRuntimeRouteDisplayName,
+    directCliPermissionBypassArgs: input.directCliPermissionBypassArgs,
+    directCliTaskRunStrategy: input.directCliTaskRunStrategy,
+    directCliPreflightActions: input.directCliPreflightActions,
     model: input.model,
     bypassPermissions: input.bypassPermissions,
     phase: mapAutocodeAgentRuntimeModeToTaskRunPhase(runtimePlan.mode),

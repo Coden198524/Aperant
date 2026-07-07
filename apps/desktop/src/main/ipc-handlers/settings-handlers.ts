@@ -28,6 +28,8 @@ import { loadProfilesFile } from '../utils/profile-manager';
 import { loadProfileStore } from '../claude-profile/profile-storage';
 
 const settingsPath = getSettingsPath();
+let lastSpellCheckLanguage: string | null = null;
+let lastSpellCheckLanguagesKey: string | null = null;
 
 const SELECT_DIRECTORY_DIALOG_OPTIONS: OpenDialogOptions = {
   properties: ['openDirectory', 'createDirectory'],
@@ -949,8 +951,21 @@ export function registerSettingsHandlers(
           ? validLanguages
           : (availableLanguages.includes(DEFAULT_SPELL_CHECK_LANGUAGE) ? [DEFAULT_SPELL_CHECK_LANGUAGE] : []);
 
+        const languagesKey = languagesToSet.join('\0');
+        if (
+          lastSpellCheckLanguage === language &&
+          lastSpellCheckLanguagesKey === languagesKey
+        ) {
+          return {
+            success: true,
+            data: { success: true }
+          };
+        }
+
         if (languagesToSet.length > 0) {
           session.defaultSession.setSpellCheckerLanguages(languagesToSet);
+          lastSpellCheckLanguage = language;
+          lastSpellCheckLanguagesKey = languagesKey;
           console.log(`[SPELLCHECK] Languages set to: ${languagesToSet.join(', ')} for app language: ${language}`);
         } else {
           console.warn(`[SPELLCHECK] No valid spell check languages available for: ${language}`);

@@ -27,6 +27,8 @@ import { buildMemoryAwareStopCondition } from '../memory/injection/memory-stop-c
 import {
   MAX_AUTOCODE_WRITE_TOOL_INPUT_FAILURES_PER_SESSION as MAX_WRITE_TOOL_INPUT_FAILURES_PER_SESSION,
   buildAutocodeWriteToolInputCorrectionPrompt as buildWriteToolInputCorrectionPrompt,
+  buildProviderModelCreationPlan,
+  parseAutocodeProviderModelInvocationRoutes,
   buildThinkingProviderOptions,
   estimateAutocodeStreamPartSize as estimateStreamPartSize,
   estimateAutocodeTokenUsageFromSession as estimateTokenUsageFromSession,
@@ -35,7 +37,6 @@ import {
   getAutocodeWriteToolInputFailure as getWriteToolInputFailure,
   isAutocodeCompletionStreamPart as isCompletionStreamPart,
   isAutocodeOpenAIResponsesTransport as isOpenAIResponsesTransport,
-  isResponsesApiModel,
   normalizeAutocodeTokenUsage as normalizeTokenUsage,
   repairAutocodeWriteToolInput as repairWriteToolInput,
   type AutocodeStreamPartLike,
@@ -103,6 +104,8 @@ const STREAM_INACTIVITY_TIMEOUT_MS = 120_000; // 2 minutes - increased for compl
 
 /** Buffer reasoning deltas before memory observation to avoid one IPC message per tiny stream chunk. */
 const MEMORY_REASONING_OBSERVATION_FLUSH_CHARS = 1_800;
+
+type StreamTextProviderOptions = NonNullable<Parameters<typeof streamText>[0]['providerOptions']>;
 
 async function repairMalformedToolCall(options: {
   toolCall: LanguageModelV3ToolCall;
@@ -234,6 +237,7 @@ export async function runAgentSession(
 
           // Switch to new account - dynamic import to avoid circular deps
           const { createProvider } = await import('../providers/factory');
+          const switchedProviderTransport = resolveAccountSwitchProviderTransport(newAuth, activeConfig);
           activeConfig = {
             ...activeConfig,
             model: createProvider({
@@ -245,7 +249,14 @@ export async function runAgentSession(
                 oauthTokenFilePath: newAuth.oauthTokenFilePath,
               },
               modelId: newAuth.resolvedModelId,
+              invocationRoutes: activeConfig.providerModelInvocationRoutes,
             }),
+            provider: newAuth.resolvedProvider,
+            providerTransport: switchedProviderTransport,
+            previousResponseId: undefined,
+            providerResponseIdFields: undefined,
+            providerResponsePersistence: undefined,
+            providerFallback: undefined,
           };
           activeAccountId = newAuth.accountId;
           continue;
@@ -293,6 +304,25 @@ export async function runAgentSession(
   );
 }
 
+function resolveAccountSwitchProviderTransport(
+  auth: QueueResolvedAuth,
+  config: Pick<SessionConfig, 'providerModelInvocationRoutes'>,
+): string | undefined {
+  try {
+    const plan = buildProviderModelCreationPlan({
+      provider: auth.resolvedProvider,
+      apiKey: auth.apiKey,
+      baseURL: auth.baseURL,
+      headers: auth.headers,
+      oauthTokenFilePath: auth.oauthTokenFilePath,
+    }, auth.resolvedModelId, {
+      invocationRoutes: parseAutocodeProviderModelInvocationRoutes(config.providerModelInvocationRoutes),
+    });
+    return `${auth.resolvedProvider}.${plan.invocation.method}`;
+  } catch {
+    return auth.resolvedProvider;
+  }
+}
 // =============================================================================
 // Stream Execution
 // =============================================================================
@@ -511,9 +541,11 @@ async function executeStream(
   // Subscription-backed Responses models also require `store: false`.
   const modelId = typeof config.model === 'string' ? config.model : config.model.modelId;
   const modelProviderId = typeof config.model === 'string' ? undefined : config.model.provider;
-  const isResponsesModel = isResponsesApiModel(modelId);
-  const usesResponsesTransport = isOpenAIResponsesTransport(modelProviderId, modelId);
-  const isAnthropicModel = modelId?.startsWith('claude-') ?? false;
+  const effectiveProviderId = modelProviderId ?? config.provider;
+  const normalizedProviderId = typeof effectiveProviderId === 'string' ? effectiveProviderId.toLowerCase() : '';
+  const configuredProviderTransport = config.providerTransport;
+  const usesResponsesTransport = isOpenAIResponsesTransport(configuredProviderTransport ?? modelProviderId, modelId);
+  const usesAnthropicProvider = normalizedProviderId === 'anthropic';
 
   // Compute thinking/reasoning provider options from session config
   const thinkingOptions = config.thinkingLevel
@@ -525,15 +557,15 @@ async function executeStream(
 
   // Build prompt caching metadata based on provider
   const promptCachingMetadata = supportsPromptCaching
-    ? config.provider === 'anthropic'
+    ? normalizedProviderId === 'anthropic'
       ? { anthropic: { cacheControl: { type: 'ephemeral' as const } } }
-      : config.provider === 'openai'
+      : normalizedProviderId === 'openai'
         ? { openai: { cacheControl: { type: 'ephemeral' as const } } }
         : undefined
     : undefined;
 
   if (promptCachingMetadata) {
-    debugLog(`[SessionRunner] Prompt Caching: ENABLED (${config.provider} ephemeral cache)`);
+    debugLog(`[SessionRunner] Prompt Caching: ENABLED (${effectiveProviderId} ephemeral cache)`);
   } else {
     debugLog('[SessionRunner] Prompt Caching: DISABLED (model does not support caching)');
   }
@@ -553,7 +585,29 @@ async function executeStream(
   const hasTools = tools != null && Object.keys(tools).length > 0;
   const useOutputSchema = config.outputSchema != null && !hasTools;
   const maxOutputTokens = resolveMaxOutputTokens(config);
-  const responsePersistence = config.responsePersistence === true || Boolean(config.previousResponseId);
+  const providerResponsePersistenceOptions = resolveProviderResponsePersistenceOptions(config, {
+    modelId,
+    provider: modelProviderId ?? config.provider,
+    sessionId,
+  });
+  const responsePersistence = config.responsePersistence === true ||
+    Boolean(config.previousResponseId) ||
+    Boolean(config.providerResponsePersistence);
+  const providerOptions = mergeProviderOptions(
+    thinkingOptions,
+    usesResponsesTransport ? {
+      openai: {
+        ...(config.systemPrompt ? { instructions: config.systemPrompt } : {}),
+        store: responsePersistence,
+        ...(config.previousResponseId ? { previousResponseId: config.previousResponseId } : {}),
+      },
+    } : undefined,
+    useOutputSchema && usesAnthropicProvider ? {
+      anthropic: { structuredOutputMode: 'outputFormat' },
+    } : undefined,
+    config.providerOptions,
+    providerResponsePersistenceOptions,
+  );
 
   const result = streamText({
     model: config.model,
@@ -564,22 +618,7 @@ async function executeStream(
     maxOutputTokens,
     stopWhen: stopCondition,
     abortSignal: mergedAbortSignal,
-    ...((thinkingOptions || isResponsesModel || usesResponsesTransport || (useOutputSchema && isAnthropicModel) || promptCachingMetadata) ? {
-      providerOptions: {
-        ...(thinkingOptions ?? {}),
-        ...(usesResponsesTransport ? {
-          openai: {
-            ...(thinkingOptions?.openai ?? {}),
-            ...(config.systemPrompt ? { instructions: config.systemPrompt } : {}),
-            store: responsePersistence,
-            ...(config.previousResponseId ? { previousResponseId: config.previousResponseId } : {}),
-          },
-        } : {}),
-        ...(useOutputSchema && isAnthropicModel ? {
-          anthropic: { structuredOutputMode: 'outputFormat' },
-        } : {}),
-      },
-    } : {}),
+    ...(providerOptions ? { providerOptions } : {}),
     ...(promptCachingMetadata ? {
       experimental_providerMetadata: promptCachingMetadata,
     } : {}),
@@ -906,8 +945,9 @@ async function executeStream(
   const providerMetadataPromise = (result as { providerMetadata?: PromiseLike<unknown> }).providerMetadata;
   if (providerMetadataPromise) {
     try {
-      providerResponseId = extractOpenAIResponseId(
+      providerResponseId = extractProviderResponseId(
         await withTimeout(providerMetadataPromise, POST_STREAM_TIMEOUT_MS, 'result.providerMetadata'),
+        config.providerResponseIdFields ?? config.providerResponsePersistence?.providerResponseIdFields,
       );
     } catch {
       providerResponseId = undefined;
@@ -1031,14 +1071,109 @@ function withTimeout<T>(thenable: PromiseLike<T>, ms: number, label: string): Pr
   });
 }
 
-function extractOpenAIResponseId(metadata: unknown): string | undefined {
-  if (!metadata || typeof metadata !== 'object') {
+const DEFAULT_PROVIDER_RESPONSE_ID_FIELDS = [
+  'openai.responseId',
+  'openai.response_id',
+  'responseId',
+  'response_id',
+];
+
+type ProviderOptionsTemplateContext = Record<string, string | undefined>;
+
+function resolveProviderResponsePersistenceOptions(
+  config: SessionConfig,
+  context: Pick<ProviderOptionsTemplateContext, 'modelId' | 'provider' | 'sessionId'>,
+): StreamTextProviderOptions | undefined {
+  const persistence = config.providerResponsePersistence;
+  if (!persistence) {
     return undefined;
   }
-  const openai = (metadata as Record<string, unknown>).openai;
-  if (!openai || typeof openai !== 'object') {
+  const providerResponseId = persistence.providerResponseId;
+  const template = providerResponseId && persistence.continuationProviderOptions
+    ? persistence.continuationProviderOptions
+    : persistence.providerOptions;
+  return renderProviderOptionsTemplate(template, {
+    providerResponseId,
+    provider_response_id: providerResponseId,
+    systemPrompt: config.systemPrompt,
+    system_prompt: config.systemPrompt,
+    modelId: context.modelId,
+    model_id: context.modelId,
+    provider: context.provider,
+    sessionId: context.sessionId,
+    session_id: context.sessionId,
+  });
+}
+
+function renderProviderOptionsTemplate(
+  template: Record<string, Record<string, unknown>> | undefined,
+  context: ProviderOptionsTemplateContext,
+): StreamTextProviderOptions | undefined {
+  if (!template) {
     return undefined;
   }
-  const responseId = (openai as Record<string, unknown>).responseId;
-  return typeof responseId === 'string' && responseId.trim() ? responseId : undefined;
+  const rendered = renderProviderOptionValue(template, context);
+  return isRecord(rendered) ? rendered as StreamTextProviderOptions : undefined;
+}
+
+function renderProviderOptionValue(value: unknown, context: ProviderOptionsTemplateContext): unknown {
+  if (typeof value === 'string') {
+    return value.replace(/\$\{([A-Za-z][A-Za-z0-9_]*)\}|\{([A-Za-z][A-Za-z0-9_]*)\}/g, (match, shellKey, braceKey) => {
+      const key = shellKey ?? braceKey;
+      return  Object.hasOwn(context, key) ? context[key] ?? '' : match;
+    });
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => renderProviderOptionValue(item, context));
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, renderProviderOptionValue(item, context)]),
+    );
+  }
+  return value;
+}
+function mergeProviderOptions(
+  ...items: Array<StreamTextProviderOptions | Record<string, Record<string, unknown>> | undefined>
+): StreamTextProviderOptions | undefined {
+  const merged: Record<string, Record<string, unknown>> = {};
+  for (const item of items) {
+    if (!item) {
+      continue;
+    }
+    for (const [provider, options] of Object.entries(item)) {
+      merged[provider] = {
+        ...(merged[provider] ?? {}),
+        ...options,
+      };
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged as StreamTextProviderOptions : undefined;
+}
+
+function extractProviderResponseId(metadata: unknown, fields?: string[]): string | undefined {
+  const paths = fields?.length ? fields : DEFAULT_PROVIDER_RESPONSE_ID_FIELDS;
+  for (const path of paths) {
+    const value = getValueByPath(metadata, path);
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function getValueByPath(value: unknown, path: string): unknown {
+  const segments = path.split('.').map((segment) => segment.trim()).filter(Boolean);
+  let current = value;
+  for (const segment of segments) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
