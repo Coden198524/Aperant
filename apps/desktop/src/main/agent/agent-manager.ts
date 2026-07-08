@@ -48,6 +48,9 @@ import {
   resolveAutocodeTaskRuntimeConcurrency,
   resolveAutocodeTaskWorkflowMode,
   resolveAutocodeDirectSessionState,
+  readAutocodeTaskLogsFromSpecDir,
+  recoverAutocodeCodingWorkItemStatusesFromLogs,
+  saveAutocodeImplementationPlanSync,
   SupportedProvider as SupportedProviderValue,
   withAutocodeRuntimeFileWriteLockSync,
   type AutocodeCli,
@@ -56,6 +59,7 @@ import {
   type AutocodeCliRuntimeRoute,
   type AutocodeTaskRuntimeConcurrencyResolved,
   type AutocodeRuntimeWorkspaceMode,
+  type MutableAutocodePlan,
   type ResolvedAutocodeCliRuntimeStartOptions,
   type SupportedProvider,
 } from '@autocode/core';
@@ -82,7 +86,7 @@ import type { BuiltinProvider } from '../../shared/types/provider-account';
 import type { AgentExecutorConfig, SerializableSessionConfig, SerializedSecurityProfile } from '../ai/agent/types';
 import { getSecurityProfile } from '../ai/security/security-profile';
 import { createOrGetWorktree } from '../ai/worktree';
-import { findTaskWorktree } from '../worktree-paths';
+import { findTaskWorktree, getTaskWorktreeDir } from '../worktree-paths';
 import { readSettingsFile } from '../settings-utils';
 import type { ProviderAccount } from '../../shared/types/provider-account';
 import { tryLoadPrompt } from '../ai/prompts/prompt-loader';
@@ -438,6 +442,11 @@ export class AgentManager extends EventEmitter {
     });
   }
 
+  private throwStartupError(taskId: string, message: string, projectId?: string): never {
+    this.emit('error', taskId, message, projectId);
+    throw new Error(message);
+  }
+
   resolveTaskProjectId(taskId: string, projectId?: string): string | undefined {
     if (projectId) {
       return projectId;
@@ -615,55 +624,120 @@ export class AgentManager extends EventEmitter {
 
       let totalScanned = 0;
       let totalReset = 0;
+      let totalRecovered = 0;
 
-      // Scan each project for stuck subtasks
+      // Scan each project for stuck subtasks. Include task worktrees because the UI
+      // prefers worktree task state when a dedicated worktree exists.
       for (const project of projects) {
         if (!project.autoBuildPath) {
           continue; // Skip projects that haven't been initialized yet
         }
 
-        const specsDir = getAutocodeSpecsDir({
+        const specsRoots: Array<{ specsDir: string; location: 'main' | 'worktree' }> = [];
+        const mainSpecsDir = getAutocodeSpecsDir({
           projectRoot: project.path,
           dataDirName: project.autoBuildPath,
         });
-
-        // Check if specs directory exists
-        if (!existsSync(specsDir)) {
-          continue;
+        if (existsSync(mainSpecsDir)) {
+          specsRoots.push({ specsDir: mainSpecsDir, location: 'main' });
         }
 
-        // Read all spec directories
-        try {
-          const specDirs = readdirSync(specsDir, { withFileTypes: true })
-            .filter(dirent => dirent.isDirectory())
-            .map(dirent => dirent.name);
-
-          // Process each spec directory
-          for (const specDirName of specDirs) {
-            const planPath = path.join(specsDir, specDirName, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
-
-            // Check if implementation_plan.md exists
-            if (!existsSync(planPath)) {
-              continue;
+        const worktreesDir = getTaskWorktreeDir(project.path);
+        if (worktreesDir && existsSync(worktreesDir)) {
+          try {
+            for (const worktree of readdirSync(worktreesDir, { withFileTypes: true })) {
+              if (!worktree.isDirectory()) {
+                continue;
+              }
+              const worktreeSpecsDir = getAutocodeSpecsDir({
+                projectRoot: path.join(worktreesDir, worktree.name),
+                dataDirName: project.autoBuildPath,
+              });
+              if (existsSync(worktreeSpecsDir)) {
+                specsRoots.push({ specsDir: worktreeSpecsDir, location: 'worktree' });
+              }
             }
-
-            totalScanned++;
-
-            // Reset stuck subtasks (pass project.id to invalidate tasks cache)
-            const { success, resetCount } = await resetStuckSubtasks(planPath, project.id);
-
-            if (success && resetCount > 0) {
-              totalReset += resetCount;
-              console.log(`[AgentManager] Startup recovery: Reset ${resetCount} stuck subtask(s) in ${specDirName}`);
-            }
+          } catch (err) {
+            console.warn(`[AgentManager] Failed to scan task worktrees for project ${project.name}:`, err);
           }
-        } catch (err) {
-          console.warn(`[AgentManager] Failed to scan specs directory for project ${project.name}:`, err);
+        }
+
+        for (const specsRoot of specsRoots) {
+          try {
+            const specDirs = readdirSync(specsRoot.specsDir, { withFileTypes: true })
+              .filter(dirent => dirent.isDirectory())
+              .map(dirent => dirent.name);
+
+            for (const specDirName of specDirs) {
+              const specDir = path.join(specsRoot.specsDir, specDirName);
+              const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+
+              if (!existsSync(planPath)) {
+                continue;
+              }
+
+              totalScanned++;
+
+              try {
+                const plan = loadAutocodeImplementationPlanSync(planPath) as MutableAutocodePlan | null;
+                if (plan) {
+                  const taskLogs = readAutocodeTaskLogsFromSpecDir(specDir, specDirName);
+                  const recovery = recoverAutocodeCodingWorkItemStatusesFromLogs({ plan, logs: taskLogs });
+                  if (recovery.recoveredCount > 0 && recovery.plan) {
+                    saveAutocodeImplementationPlanSync(planPath, recovery.plan as MutableAutocodePlan);
+                    totalRecovered += recovery.recoveredCount;
+                    console.log(
+                      `[AgentManager] Startup recovery: Recovered ${recovery.recoveredCount} work item status(es) from logs in ${specDirName} (${specsRoot.location})`
+                    );
+                  }
+                }
+              } catch (recoveryErr) {
+                console.warn(
+                  `[AgentManager] Failed to recover task-log work item statuses for ${specDirName} (${specsRoot.location}):`,
+                  recoveryErr,
+                );
+              }
+
+              const { success, resetCount } = await resetStuckSubtasks(planPath, project.id);
+
+              if (success && resetCount > 0) {
+                totalReset += resetCount;
+                try {
+                  const resetPlan = loadAutocodeImplementationPlanSync(planPath) as MutableAutocodePlan | null;
+                  if (resetPlan) {
+                    resetPlan.status = 'human_review';
+                    resetPlan.planStatus = 'review';
+                    resetPlan.reviewReason = 'stopped';
+                    resetPlan.xstateState = 'human_review';
+                    resetPlan.executionPhase = 'stopped';
+                    resetPlan.updated_at = new Date().toISOString();
+                    saveAutocodeImplementationPlanSync(planPath, resetPlan);
+                    projectStore.invalidateTasksCache(project.id);
+                  }
+                } catch (statusErr) {
+                  console.warn(
+                    `[AgentManager] Failed to sync recovered task status for ${specDirName} (${specsRoot.location}):`,
+                    statusErr,
+                  );
+                }
+                console.log(
+                  `[AgentManager] Startup recovery: Reset ${resetCount} stuck subtask(s) in ${specDirName} (${specsRoot.location})`
+                );
+              }
+            }
+          } catch (err) {
+            console.warn(
+              `[AgentManager] Failed to scan ${specsRoot.location} specs directory for project ${project.name}:`,
+              err,
+            );
+          }
         }
       }
 
-      if (totalReset > 0) {
-        console.log(`[AgentManager] Startup recovery complete: Reset ${totalReset} stuck subtask(s) across ${totalScanned} task(s)`);
+      if (totalReset > 0 || totalRecovered > 0) {
+        console.log(
+          `[AgentManager] Startup recovery complete: Recovered ${totalRecovered} and reset ${totalReset} stuck subtask(s) across ${totalScanned} task(s)`
+        );
       } else {
         console.log(`[AgentManager] Startup recovery complete: No stuck subtasks found (scanned ${totalScanned} task(s))`);
       }
@@ -735,12 +809,10 @@ export class AgentManager extends EventEmitter {
       profileManager = await initializeClaudeProfileManager();
     } catch (error) {
       console.error('[AgentManager] Failed to initialize profile manager:', error);
-      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
-      return;
+      this.throwStartupError(taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
     }
     if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount()) {
-      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
-      return;
+      this.throwStartupError(taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
     }
 
     // Reset stuck subtasks if restarting an existing spec creation task
@@ -802,12 +874,10 @@ export class AgentManager extends EventEmitter {
       resolved = await this.resolveAuthFromProviderQueue(specModelRequest, preferredProvider);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
-      this.emit('error', taskId, message, projectId);
-      return;
+      this.throwStartupError(taskId, message, projectId);
     }
     if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
-      this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
-      return;
+      this.throwStartupError(taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
     }
     const workflowMode = metadata?.workflowMode ?? 'balanced';
 
@@ -927,12 +997,10 @@ export class AgentManager extends EventEmitter {
       profileManager = await initializeClaudeProfileManager();
     } catch (error) {
       console.error('[AgentManager] Failed to initialize profile manager:', error);
-      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
-      return;
+      this.throwStartupError(taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
     }
     if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount()) {
-      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
-      return;
+      this.throwStartupError(taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
     }
 
     // Resolve the spec directory from specId
@@ -970,12 +1038,10 @@ export class AgentManager extends EventEmitter {
       resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
-      this.emit('error', taskId, message, projectId);
-      return;
+      this.throwStartupError(taskId, message, projectId);
     }
     if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
-      this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
-      return;
+      this.throwStartupError(taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
     }
 
     // Create or get a git worktree only when explicitly requested. Existing task
@@ -1029,7 +1095,7 @@ export class AgentManager extends EventEmitter {
           error: message,
           attemptCount: 0,
         }, projectId);
-        return;
+        throw new Error(`Failed to create isolated worktree for this task. Execution was stopped to avoid writing changes to the main project branch. ${message}`);
       }
     } else {
       captureDirectWorkspaceBaseline(projectPath, specDir);
@@ -1152,8 +1218,7 @@ export class AgentManager extends EventEmitter {
       profileManager = await initializeClaudeProfileManager();
     } catch (error) {
       console.error('[AgentManager] Failed to initialize profile manager:', error);
-      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
-      return;
+      this.throwStartupError(taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
     }
     const project = projectStore.getProjects().find((p) => p.id === projectId || p.path === projectPath);
     const specDir = getAutocodeSpecDir({
@@ -1186,8 +1251,7 @@ export class AgentManager extends EventEmitter {
     const canStartRouteOnlyDirectCli = Boolean(routeOnlyCliRuntimeOptions);
 
     if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount() && !canStartRouteOnlyDirectCli) {
-      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
-      return;
+      this.throwStartupError(taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
     }
 
     let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
@@ -1202,12 +1266,10 @@ export class AgentManager extends EventEmitter {
         resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
-        this.emit('error', taskId, message, projectId);
-        return;
+        this.throwStartupError(taskId, message, projectId);
       }
       if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
-        this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
-        return;
+        this.throwStartupError(taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
       }
     }
 
@@ -1258,7 +1320,7 @@ export class AgentManager extends EventEmitter {
           error: message,
           attemptCount: 0,
         }, projectId);
-        return;
+        throw new Error(`Failed to create isolated worktree for this direct task. Execution was stopped to avoid writing changes to the main project branch. ${message}`);
       }
     } else {
       captureDirectWorkspaceBaseline(projectPath, specDir);

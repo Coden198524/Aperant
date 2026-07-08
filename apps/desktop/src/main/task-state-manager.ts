@@ -550,12 +550,7 @@ export class TaskStateManager {
     task: Task
   ): ExecutionPhase {
     if (xstateState === 'human_review' && reviewReason === 'stopped') {
-      const previousPhase = previousState ? XSTATE_TO_PHASE[previousState] : undefined;
-      const resumablePreviousPhase = normalizeStoppedExecutionPhase(previousPhase);
-      if (resumablePreviousPhase) {
-        return resumablePreviousPhase;
-      }
-      return inferStoppedExecutionPhaseFromTask(task);
+      return 'stopped';
     }
 
     return this.mapStateToExecutionPhase(xstateState);
@@ -563,31 +558,3 @@ export class TaskStateManager {
 }
 
 export const taskStateManager = new TaskStateManager();
-
-function normalizeStoppedExecutionPhase(phase: ExecutionPhase | undefined): ExecutionPhase | undefined {
-  switch (phase) {
-    case 'rate_limit_paused':
-    case 'auth_failure_paused':
-      return 'coding';
-    case 'planning':
-    case 'coding':
-    case 'qa_review':
-    case 'qa_fixing':
-      return phase;
-    default:
-      return undefined;
-  }
-}
-
-function inferStoppedExecutionPhaseFromTask(task: Task): ExecutionPhase {
-  const taskPhase = normalizeStoppedExecutionPhase(task.executionProgress?.phase);
-  if (taskPhase) {
-    return taskPhase;
-  }
-
-  if (task.subtasks.some((subtask) => subtask.status !== 'pending') || task.subtasks.length > 0) {
-    return 'coding';
-  }
-
-  return 'planning';
-}

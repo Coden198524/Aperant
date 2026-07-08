@@ -377,9 +377,9 @@ export function buildAutocodeTaskExecutionMessages(
     parts.push('');
     if (input.forcePlanning) {
       parts.push(hasSameTaskReviewFeedback
-        ? `Treat the previous ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as runtime-state context only. For Standard tasks, address the latest Human Review Input by updating spec.md, requirements.md, and tasks.md; do not edit ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md.`
+        ? `Treat the previous ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as runtime-state context for an incremental same-task iteration. For Standard tasks, address the latest Human Review Input by updating only affected parts of spec.md, requirements.md, and tasks.md; do not edit ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md.`
         : `Treat the previous ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as runtime-state context only. For Standard tasks, repair spec.md, requirements.md, and tasks.md only as needed to satisfy planning validation; do not edit ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md.`);
-      parts.push('Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan. Keep one canonical checklist item per behavior/file/requirement boundary; do not append a second task for work already represented in tasks.md.');
+      parts.push('Use the Autocode Standard iteration flow incrementally: changed requirements/design -> affected tasks -> derived implementation plan. Do not regenerate the whole task plan. Keep one canonical checklist item per behavior/file/requirement boundary; do not append a second task for work already represented in tasks.md.');
       if (hasSameTaskReviewFeedback) {
         parts.push('If existing work needs revision for the latest human change request, edit that checklist item in place, reset it to pending, and put any needs_revision marker only in a detail note or metadata line. Never prefix task titles or work package titles with needs_revision, obsolete, or other state labels.');
         parts.push('Add pending tasks only for genuinely new requirements or verification gaps, and remove or compact obsolete executable checklist items after recording the change request.');
@@ -394,7 +394,7 @@ export function buildAutocodeTaskExecutionMessages(
     }
   } else {
     parts.push(input.forcePlanning
-      ? `Address Human Review Input if present. For Standard tasks, update spec.md, requirements.md, and tasks.md using the Autocode Standard flow; do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md. Keep one canonical checklist item per behavior/file/requirement boundary, follow the Standard Iteration Protocol when present, and do not code in this planning pass.`
+      ? `Address Human Review Input if present. For Standard tasks, update only affected parts of spec.md, requirements.md, and tasks.md using the incremental Autocode Standard iteration flow; do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md. Keep one canonical checklist item per behavior/file/requirement boundary, follow the Standard Iteration Protocol when present, and do not code in this planning pass.`
       : `No implementation plan exists yet. Start by updating spec.md and tasks.md using Standard planning, then create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and runtime work items before implementing each item.`);
   }
 

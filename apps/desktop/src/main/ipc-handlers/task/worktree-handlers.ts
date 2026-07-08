@@ -71,6 +71,73 @@ function normalizeGitPath(filePath: string): string {
   return filePath.replace(/\\/g, '/');
 }
 
+function isWindowsAbsolutePathLike(filePath: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(filePath) || /^[/\\]{2}/.test(filePath);
+}
+
+function stripTaskFilePathDecorations(filePath: string): string {
+  return filePath
+    .trim()
+    .replace(/^file:\/\//i, '')
+    .replace(/^[`"']+|[`"']+$/g, '')
+    .trim();
+}
+
+function normalizeAbsolutePathRelativeToRoot(
+  candidate: string,
+  root: string | undefined,
+  pathModule: typeof path,
+): string | undefined {
+  if (!root || !pathModule.isAbsolute(candidate)) {
+    return undefined;
+  }
+
+  const absoluteCandidate = pathModule.resolve(candidate);
+  const absoluteRoot = pathModule.resolve(root);
+  const relativePath = pathModule.relative(absoluteRoot, absoluteCandidate);
+  if (!relativePath || relativePath === '') {
+    return '';
+  }
+  if (relativePath === '..' || relativePath.startsWith(`..${pathModule.sep}`) || pathModule.isAbsolute(relativePath)) {
+    return undefined;
+  }
+  return normalizeGitPath(relativePath);
+}
+
+export function normalizeWorktreeFilePathForPreview(
+  filePath: string,
+  workspacePath: string,
+  projectPath?: string,
+): string {
+  const strippedPath = stripTaskFilePathDecorations(filePath);
+  if (!strippedPath) {
+    return '';
+  }
+
+  const pathModules: Array<typeof path> = [path];
+  const pathSet = [strippedPath, workspacePath, projectPath ?? ''];
+  if (pathSet.some(isWindowsAbsolutePathLike)) {
+    pathModules.push(path.win32 as typeof path);
+  }
+  if (pathSet.some((item) => item.startsWith('/'))) {
+    pathModules.push(path.posix as typeof path);
+  }
+
+  for (const pathModule of pathModules) {
+    const relativeToWorkspace = normalizeAbsolutePathRelativeToRoot(strippedPath, workspacePath, pathModule);
+    if (relativeToWorkspace !== undefined) {
+      return relativeToWorkspace;
+    }
+
+    const relativeToProject = normalizeAbsolutePathRelativeToRoot(strippedPath, projectPath, pathModule);
+    if (relativeToProject !== undefined) {
+      return relativeToProject;
+    }
+  }
+
+  return normalizeGitPath(strippedPath).replace(/^\.\//, '');
+}
+
 export function shouldHideTaskGitChangePath(filePath: string | undefined | null): boolean {
   return shouldHideAutocodeTaskGitChangePath(filePath);
 }
@@ -243,6 +310,40 @@ function createUntrackedWorktreeDiffFile(worktreePath: string, filePath: string)
   }
 }
 
+function readWorktreeFileContentPreview(worktreePath: string, filePath: string): string {
+  const normalizedPath = normalizeGitPath(filePath);
+  if (shouldHideTaskGitChangePath(normalizedPath)) {
+    return '';
+  }
+
+  const worktreeRoot = path.resolve(worktreePath);
+  const absolutePath = path.resolve(worktreePath, filePath);
+
+  if (absolutePath !== worktreeRoot && !absolutePath.startsWith(worktreeRoot + path.sep)) {
+    return '';
+  }
+
+  try {
+    const stats = statSync(absolutePath);
+    if (!stats.isFile()) {
+      return '';
+    }
+
+    if (stats.size > MAX_UNTRACKED_PATCH_BYTES) {
+      return `[File is too large to preview: ${stats.size} bytes]`;
+    }
+
+    const buffer = readFileSync(absolutePath);
+    if (buffer.includes(0)) {
+      return `[Binary file preview unavailable: ${normalizedPath}]`;
+    }
+
+    return buffer.toString('utf-8') || '[File is empty]';
+  } catch (error) {
+    console.warn(`[TASK_WORKTREE_FILE_DIFF] Failed to read file content fallback for ${normalizedPath}:`, error);
+    return '[File preview unavailable: ' + normalizedPath + ']';
+  }
+}
 async function getUntrackedFilePaths(worktreePath: string): Promise<string[]> {
   const result = await execFileAsync(getToolPath('git'), ['ls-files', '--others', '--exclude-standard', '-z'], {
     cwd: worktreePath,
@@ -3620,53 +3721,49 @@ export function registerWorktreeHandlers(
           return { success: false, error: 'Task not found' };
         }
 
-        const worktreePath = findTaskWorktree(project.path, task.specId);
-        if (!worktreePath) {
-          return { success: false, error: 'No worktree found for this task' };
+        const workspace = getTaskDiffWorkspace(project.path, task.specId, project.autoBuildPath);
+        const workspacePath = workspace.path;
+        const normalizedFilePath = normalizeWorktreeFilePathForPreview(filePath, workspacePath, project.path);
+        if (!normalizedFilePath) {
+          return { success: true, data: '[File preview unavailable: empty file path]' };
         }
 
-        // Get current branch
-        const currentBranchResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', 'HEAD'], {
-          cwd: worktreePath,
-          encoding: 'utf-8',
-          env: getIsolatedGitEnv(),
-          timeout: WORKTREE_GIT_TIMEOUT_MS,
-        });
-        const currentBranch = (currentBranchResult.stdout as string).trim();
-
-        // Try to get upstream branch
-        let compareTarget = '';
-        try {
-          const upstreamResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', '@{upstream}'], {
-            cwd: worktreePath,
-            encoding: 'utf-8',
-            env: getIsolatedGitEnv(),
-            timeout: WORKTREE_GIT_TIMEOUT_MS,
-          });
-          compareTarget = (upstreamResult.stdout as string).trim();
-        } catch {
-          // No upstream, use main branch
-          const baseBranch = getEffectiveBaseBranch(project.path, task.specId, project.settings?.mainBranch);
-          compareTarget = `origin/${baseBranch}`;
-        }
-
-        // Get diff for the file
-        if (shouldHideTaskGitChangePath(filePath)) {
+        if (shouldHideTaskGitChangePath(normalizedFilePath)) {
           return { success: true, data: '' };
         }
 
-        const diffResult = await execFileAsync(
-          getToolPath('git'),
-          ['diff', '--no-color', '--unified=3', `${compareTarget}...HEAD`, '--', filePath],
-          {
-            cwd: worktreePath,
-            encoding: 'utf-8',
-            env: getIsolatedGitEnv(),
-            timeout: WORKTREE_GIT_TIMEOUT_MS,
+        try {
+          const untrackedFiles = await getUntrackedFilePaths(workspacePath);
+          if (untrackedFiles.includes(normalizedFilePath)) {
+            const untrackedDiff = createUntrackedWorktreeDiffFile(workspacePath, normalizedFilePath);
+            return { success: true, data: untrackedDiff?.patch ?? '' };
           }
-        );
+        } catch (untrackedError) {
+          console.warn('[TASK_WORKTREE_FILE_DIFF] Failed to inspect untracked files:', untrackedError);
+        }
 
-        return { success: true, data: (diffResult.stdout as string) || '' };
+        const baseRef = resolveTaskDiffBaseRef(project.path, task.specId, workspace, project.settings?.mainBranch);
+        try {
+          const diffResult = await execFileAsync(
+            getToolPath('git'),
+            ['diff', '--no-color', '--find-renames', '--unified=3', baseRef, '--', normalizedFilePath],
+            {
+              cwd: workspacePath,
+              encoding: 'utf-8',
+              env: getIsolatedGitEnv(),
+              timeout: WORKTREE_GIT_TIMEOUT_MS,
+            }
+          );
+
+          const diff = (diffResult.stdout as string) || '';
+          if (diff.length > 0) {
+            return { success: true, data: diff };
+          }
+        } catch (diffError) {
+          console.warn(`[TASK_WORKTREE_FILE_DIFF] Failed to load git diff for ${normalizedFilePath}:`, diffError);
+        }
+
+        return { success: true, data: readWorktreeFileContentPreview(workspacePath, normalizedFilePath) };
       } catch (error) {
         console.error('[TASK_WORKTREE_FILE_DIFF] Error:', error);
         return {

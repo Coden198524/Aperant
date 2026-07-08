@@ -145,6 +145,22 @@ interface AutocodeRunResultFile {
   updatedAt?: string;
 }
 
+interface CodingWorkItemLogStatusEvent {
+  id: string;
+  status: 'completed' | 'failed';
+  timestamp?: string;
+  content: string;
+}
+
+interface RecoverableImplementationPlan extends Record<string, unknown> {
+  phases?: Array<{
+    subtasks?: RawProjectPlanSubtask[];
+    chunks?: RawProjectPlanSubtask[];
+    type?: string;
+  }>;
+  updated_at?: string;
+}
+
 export function loadAutocodeProjectTasks(input: LoadAutocodeProjectTasksInput): AutocodeProjectTask[] {
   const allTasks: AutocodeProjectTask[] = [];
   const mainSpecsDir = getAutocodeSpecsDir({
@@ -307,11 +323,26 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
   const specTitle = readSpecTitle(specFilePath);
   const description = getProjectTaskDescription(requirements, plan, specFilePath);
   const finalDescription = hasJsonError ? `${AUTOCODE_JSON_ERROR_PREFIX}${jsonErrorMessage}` : description;
-  const { status, reviewReason } = hasJsonError
+  let { status, reviewReason } = hasJsonError
     ? { status: 'human_review' as const, reviewReason: 'errors' as const }
     : determineAutocodeProjectTaskStatus(plan);
   let subtasks = extractProjectPlanSubtasks(plan);
   const taskLogs = readAutocodeTaskLogsFromSpecDir(input.specDir, input.specId);
+  if (!hasJsonError && plan && taskLogs) {
+    const recovery = recoverAutocodeCodingWorkItemStatusesFromLogs({ plan: plan as unknown as Record<string, unknown>, logs: taskLogs });
+    if (recovery.recoveredCount > 0 && recovery.plan) {
+      try {
+        if (input.persistStaleStatusCorrections !== false) {
+          saveAutocodeImplementationPlanSync(planPath, recovery.plan as unknown as MutableAutocodePlan);
+        }
+        plan = recovery.plan as ImplementationPlanFile;
+        subtasks = extractProjectPlanSubtasks(plan);
+        ({ status, reviewReason } = determineAutocodeProjectTaskStatus(plan));
+      } catch {
+        // Keep the on-disk plan authoritative if recovery cannot be persisted.
+      }
+    }
+  }
   const corrected = correctStaleAutocodeTaskStatus({
     subtasks,
     hasJsonError,
@@ -377,31 +408,24 @@ function inferAutocodeProjectTaskProgress(input: {
   reviewReason?: AutocodeReviewReason;
 }): AutocodeProjectTaskExecutionProgress | undefined {
   const isStoppedReview = input.status === 'human_review' && input.reviewReason === 'stopped';
+  if (isStoppedReview) {
+    return progressFromPhase('stopped');
+  }
+
   const persistedProgress = progressFromPhase(input.plan?.executionPhase);
-  const usablePersistedProgress = isStoppedReview && !isResumableStoppedPhase(persistedProgress?.phase)
-    ? undefined
-    : persistedProgress;
-  const xstateProgress = !isStoppedReview && input.plan?.xstateState
+  const xstateProgress = input.plan?.xstateState
     ? inferAutocodeExecutionProgressFromXState(input.plan.xstateState)
     : undefined;
   const statusProgress = inferAuthoritativeProgressFromTaskStatus(input.status, input.reviewReason);
-  const planStatusProgress = input.plan?.status && !isStoppedReview && !usablePersistedProgress && !xstateProgress
+  const planStatusProgress = input.plan?.status && !persistedProgress && !xstateProgress
     ? inferAutocodeExecutionProgress(input.plan.status)
     : undefined;
   const activityProgress = strongestProgress([
-    inferProgressFromTaskLogs(input.logs, { ignoreFailedStatus: isStoppedReview }),
+    inferProgressFromTaskLogs(input.logs),
     inferProgressFromSubtasks(input.subtasks),
   ]);
 
-  if (isStoppedReview) {
-    return strongestProgress([
-      usablePersistedProgress,
-      activityProgress,
-      inferStoppedFallbackProgress(input.subtasks),
-    ]);
-  }
-
-  let progress = strongestProgress([usablePersistedProgress, xstateProgress]) ?? statusProgress ?? planStatusProgress;
+  let progress = strongestProgress([persistedProgress, xstateProgress]) ?? statusProgress ?? planStatusProgress;
 
   if (statusProgress && phaseRank(statusProgress.phase) > phaseRank(progress?.phase)) {
     progress = statusProgress;
@@ -470,15 +494,6 @@ function inferProgressFromTaskLogs(
   return undefined;
 }
 
-function inferStoppedFallbackProgress(
-  subtasks: Array<{ status: string }>,
-): AutocodeProjectTaskExecutionProgress | undefined {
-  return progressFromPhase(subtasks.length > 0 ? 'coding' : 'planning');
-}
-
-function isResumableStoppedPhase(phase: string | undefined): boolean {
-  return phase === 'planning' || phase === 'coding' || phase === 'qa_review' || phase === 'qa_fixing';
-}
 
 function inferProgressFromSubtasks(
   subtasks: Array<{ status: string }>,
@@ -507,10 +522,11 @@ function progressFromPhase(phase: string | undefined): AutocodeProjectTaskExecut
   }
   const complete = normalized === 'complete';
   const failed = normalized === 'failed';
+  const inactive = normalized === 'idle' || normalized === 'stopped';
   return {
     phase: normalized,
-    phaseProgress: complete ? 100 : failed || normalized === 'idle' ? 0 : 50,
-    overallProgress: complete ? 100 : failed || normalized === 'idle' ? 0 : 50,
+    phaseProgress: complete ? 100 : failed || inactive ? 0 : 50,
+    overallProgress: complete ? 100 : failed || inactive ? 0 : 50,
   };
 }
 
@@ -527,9 +543,8 @@ function normalizeAutocodeProjectTaskPhase(phase: string | undefined): AutocodeE
     case 'qa_fixing':
     case 'complete':
     case 'failed':
-      return phase;
     case 'stopped':
-      return undefined;
+      return phase;
     default:
       return undefined;
   }
@@ -538,6 +553,7 @@ function normalizeAutocodeProjectTaskPhase(phase: string | undefined): AutocodeE
 function phaseRank(phase: string | undefined): number {
   switch (phase) {
     case 'idle':
+    case 'stopped':
       return 0;
     case 'spec':
     case 'planning':
@@ -629,6 +645,133 @@ function extractProjectPlanSubtasks(plan: ImplementationPlanFile | null): Autoco
   });
 }
 
+export function recoverAutocodeCodingWorkItemStatusesFromLogs(input: {
+  plan: Record<string, unknown> | null | undefined;
+  logs: AutocodeTaskLogs | null | undefined;
+  now?: string;
+}): { plan: Record<string, unknown> | null; recoveredCount: number; latestRecoveredAt?: string } {
+  const plan = input.plan as RecoverableImplementationPlan | null | undefined;
+  if (!plan || !Array.isArray(plan.phases) || !input.logs) {
+    return { plan: input.plan ?? null, recoveredCount: 0 };
+  }
+
+  const events = readCodingWorkItemStatusEvents(input.logs);
+  if (events.size === 0) {
+    return { plan: input.plan ?? null, recoveredCount: 0 };
+  }
+
+  let recoveredCount = 0;
+  let latestRecoveredAt = '';
+  const rewriteItems = (items: RawProjectPlanSubtask[] | undefined): RawProjectPlanSubtask[] | undefined => {
+    if (!Array.isArray(items)) {
+      return items;
+    }
+
+    return items.map((subtask) => {
+      const subtaskId = stringFrom(subtask.id);
+      const event = events.get(subtaskId);
+      if (!event || normalizeSubtaskStatus(subtask.status) !== 'in_progress') {
+        return subtask;
+      }
+      if (!isCodingWorkItemStatusEventFreshForSubtask(event, subtask)) {
+        return subtask;
+      }
+
+      recoveredCount += 1;
+      const eventTimestamp = stringFrom(event.timestamp, input.now, new Date().toISOString());
+      latestRecoveredAt = maxIsoTimestamp(latestRecoveredAt, eventTimestamp);
+      if (event.status === 'completed') {
+        return {
+          ...subtask,
+          status: 'completed',
+          completed_at: stringFrom(subtask.completed_at, eventTimestamp),
+          completion_summary: stringFrom(
+            subtask.completion_summary,
+            subtask.completionSummary,
+            subtask.completed_summary,
+            subtask.notes,
+            'Recovered completed status from task log.',
+          ),
+          notes: stringFrom(
+            subtask.notes,
+            subtask.completion_summary,
+            subtask.completionSummary,
+            'Recovered completed status from task log.',
+          ),
+        };
+      }
+
+      const rest = { ...subtask } as RawProjectPlanSubtask & { completionSummary?: unknown };
+      delete rest.completed_at;
+      delete rest.completion_summary;
+      delete rest.completionSummary;
+      delete rest.completed_summary;
+      return {
+        ...rest,
+        status: 'failed',
+        updated_at: eventTimestamp,
+        notes: stringFrom(subtask.notes, event.content, 'Recovered failed status from task log.'),
+        actual_output: stringFrom(subtask.actual_output, event.content, 'Recovered failed status from task log.'),
+      };
+    });
+  };
+
+  const phases = plan.phases.map((phase) => ({
+    ...phase,
+    subtasks: rewriteItems(phase.subtasks),
+    chunks: rewriteItems(phase.chunks),
+  }));
+
+  if (recoveredCount === 0) {
+    return { plan: input.plan ?? null, recoveredCount: 0 };
+  }
+
+  const recoveredPlan: RecoverableImplementationPlan = {
+    ...plan,
+    updated_at: maxIsoTimestamp(stringFrom(plan.updated_at), latestRecoveredAt) || latestRecoveredAt,
+    phases,
+  };
+  return { plan: recoveredPlan, recoveredCount, latestRecoveredAt };
+}
+
+function readCodingWorkItemStatusEvents(logs: AutocodeTaskLogs): Map<string, CodingWorkItemLogStatusEvent> {
+  const events = new Map<string, CodingWorkItemLogStatusEvent>();
+  for (const entry of logs.phases.coding?.entries ?? []) {
+    const text = stringFrom(entry.content);
+    const match = /\bWork item\s+([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)\s+(completed|failed|interrupted)\b/i.exec(text);
+    if (!match) {
+      continue;
+    }
+    const status = match[2].toLowerCase() === 'completed' ? 'completed' : 'failed';
+    events.set(match[1], {
+      id: match[1],
+      status,
+      timestamp: stringFrom(entry.timestamp),
+      content: text,
+    });
+  }
+  return events;
+}
+
+function isCodingWorkItemStatusEventFreshForSubtask(
+  event: CodingWorkItemLogStatusEvent,
+  subtask: RawProjectPlanSubtask,
+): boolean {
+  const startedMs = timestampMs(stringFrom(subtask.started_at));
+  const eventMs = timestampMs(event.timestamp);
+  return startedMs === undefined || eventMs === undefined || eventMs >= startedMs - 1000;
+}
+
+function maxIsoTimestamp(left: string, right: string): string {
+  if (!left) return right;
+  if (!right) return left;
+  const leftMs = timestampMs(left);
+  const rightMs = timestampMs(right);
+  if (leftMs === undefined) return right;
+  if (rightMs === undefined) return left;
+  return rightMs > leftMs ? right : left;
+}
+
 function correctStaleAutocodeTaskStatus(input: {
   subtasks: Array<{ status: string }>;
   hasJsonError: boolean;
@@ -698,6 +841,27 @@ function correctStaleAutocodeTaskStatus(input: {
   }
 
   const allCompleted = input.subtasks.every((subtask) => subtask.status === 'completed');
+  if (allCompleted && input.status === 'human_review' && !input.reviewReason) {
+    if (input.persist && input.plan) {
+      const correctedPlan: ImplementationPlanFile = {
+        ...input.plan,
+        status: 'human_review',
+        planStatus: 'review',
+        reviewReason: 'completed',
+        updated_at: new Date().toISOString(),
+        xstateState: 'human_review',
+        executionPhase: 'complete',
+      };
+      try {
+        saveAutocodeImplementationPlanSync(input.planPath, correctedPlan as unknown as MutableAutocodePlan);
+        Object.assign(input.plan, correctedPlan);
+      } catch {
+        return { status: 'human_review', reviewReason: 'completed' };
+      }
+    }
+    return { status: 'human_review', reviewReason: 'completed' };
+  }
+
   if (!allCompleted && shouldResumeIncompleteReviewStatus(input.status, input.reviewReason)) {
     if (input.persist && input.plan) {
       const correctedPlan: ImplementationPlanFile = {

@@ -389,7 +389,8 @@ export function getTaskExecutionPhaseLabel(t: TFunction, phase: ExecutionPhase):
       qa_review: 'AI Review',
       qa_fixing: 'Fixing Issues',
       complete: 'Complete',
-      failed: 'Failed'
+      failed: 'Failed',
+      stopped: 'Stopped'
     }[phase]
   });
 }

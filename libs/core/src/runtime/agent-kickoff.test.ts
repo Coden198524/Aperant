@@ -256,8 +256,11 @@ describe('buildAutocodeSpecKickoffMessage', () => {
       forcePlanning: true,
     });
 
-    expect(message).toContain('PLAN REVIEW REGENERATION');
+    expect(message).toContain('STANDARD ITERATION PLANNING');
     expect(message).toContain('Do not edit E:/Work/App/.autocode/specs/001-task/implementation_plan.md directly');
+    expect(message).toContain('Autocode Standard iteration flow incrementally');
+    expect(message).toContain('Do not regenerate the entire task plan');
+    expect(message).toContain('editing affected checklist items in place');
     expect(message).toContain('keep one canonical checklist item');
     expect(message).toContain('Do not append a second task');
     expect(message).toContain('cannot start, open, run, or play');

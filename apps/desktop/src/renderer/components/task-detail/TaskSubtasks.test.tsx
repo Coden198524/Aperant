@@ -2,8 +2,8 @@
 
 import '@testing-library/jest-dom/vitest';
 import '../../../shared/i18n';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task, TaskLogs } from '../../../shared/types';
 import { TooltipProvider } from '../ui/tooltip';
 import { TaskSubtasks } from './TaskSubtasks';
@@ -77,6 +77,51 @@ function createConcurrentWorkPackageTask(): Task {
   };
 }
 
+function createRunningTimedWorkPackageTask(): Task {
+  return {
+    ...createTask(),
+    status: 'in_progress',
+    metadata: {
+      runtimeConcurrency: {
+        mode: 'concurrent',
+        workers: 2,
+        unit: 'work_item',
+        conflictPolicy: 'lock-and-queue',
+      },
+    },
+    subtasks: [
+      {
+        id: 'wp-1',
+        title: 'Build active package',
+        description: 'Build active package',
+        status: 'in_progress',
+        files: [],
+        workPackage: true,
+        startedAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'wp-2',
+        title: 'Build queued package',
+        description: 'Build queued package',
+        status: 'pending',
+        files: [],
+        dependsOn: ['wp-1'],
+        workPackage: true,
+      },
+    ],
+  };
+}
+
+function createRecoveredRunningTimedWorkPackageTask(): Task {
+  const task = createRunningTimedWorkPackageTask();
+
+  return {
+    ...task,
+    subtasks: task.subtasks.map(subtask => subtask.id === 'wp-1'
+      ? { ...subtask, startedAt: '2026-01-01T00:05:00.000Z' }
+      : subtask),
+  };
+}
 function createConcurrentTaskWithRequestChangesFollowup(): Task {
   const task = createConcurrentWorkPackageTask();
 
@@ -244,6 +289,29 @@ function createTimedSerialWorkPackageTask(): Task {
   };
 }
 
+function createCompletedGappedWorkPackageTask(): Task {
+  return {
+    ...createTask(),
+    subtasks: [
+      {
+        id: 'wp-1',
+        title: 'Build first package',
+        description: 'Build first package',
+        status: 'completed',
+        files: [],
+        workPackage: true,
+      },
+      {
+        id: 'wp-2',
+        title: 'Build second package',
+        description: 'Build second package',
+        status: 'completed',
+        files: [],
+        workPackage: true,
+      },
+    ],
+  };
+}
 function createPausedTimedWorkPackageTask(): Task {
   return {
     ...createTask(),
@@ -274,6 +342,40 @@ function createPausedTimedWorkPackageTask(): Task {
   };
 }
 
+function createCompletedGappedWorkPackageLogs(): TaskLogs {
+  const logs = createConcurrentWorkPackageLogs();
+  logs.phases.coding.entries = [
+    {
+      timestamp: '2026-01-01T00:00:00.000Z',
+      type: 'info',
+      phase: 'coding',
+      content: 'Worker 1 coding work package wp-1: Build first package',
+      subtask_id: 'wp-1',
+    },
+    {
+      timestamp: '2026-01-01T00:01:00.000Z',
+      type: 'success',
+      phase: 'coding',
+      content: 'Work item wp-1 completed.',
+      subtask_id: 'wp-1',
+    },
+    {
+      timestamp: '2026-01-01T00:05:00.000Z',
+      type: 'info',
+      phase: 'coding',
+      content: 'Worker 1 coding work package wp-2: Build second package',
+      subtask_id: 'wp-2',
+    },
+    {
+      timestamp: '2026-01-01T00:07:00.000Z',
+      type: 'success',
+      phase: 'coding',
+      content: 'Work item wp-2 completed.',
+      subtask_id: 'wp-2',
+    },
+  ];
+  return logs;
+}
 function createTimedFanOutWorkPackageLogs(): TaskLogs {
   const logs = createConcurrentWorkPackageLogs();
   logs.phases.coding.entries = [
@@ -403,6 +505,33 @@ function createConcurrentWorkPackageLogs(): TaskLogs {
   };
 }
 
+function createRecoveredRunningWorkPackageLogs(): TaskLogs {
+  const logs = createConcurrentWorkPackageLogs();
+  logs.phases.coding.entries = [
+    {
+      timestamp: '2026-01-01T00:02:00.000Z',
+      type: 'info',
+      phase: 'coding',
+      content: 'Worker 1 coding work package wp-1: Build active package',
+      subtask_id: 'wp-1',
+    },
+    {
+      timestamp: '2026-01-01T00:03:00.000Z',
+      type: 'text',
+      phase: 'coding',
+      content: 'Recovered package model output.',
+      subtask_id: 'wp-1',
+    },
+    {
+      timestamp: '2026-01-01T00:05:00.000Z',
+      type: 'info',
+      phase: 'coding',
+      content: 'Worker 1 coding work package wp-1: Build active package',
+      subtask_id: 'wp-1',
+    },
+  ];
+  return logs;
+}
 function createConcurrentLogsWithRequestChangesFollowup(): TaskLogs {
   const logs = createConcurrentWorkPackageLogs();
   logs.phases.coding.entries.push({
@@ -436,7 +565,15 @@ describe('TaskSubtasks', () => {
       unwatchTaskLogs: vi.fn(async () => ({ success: true })),
       onTaskLogsChanged: vi.fn(() => vi.fn()),
       onTaskLogsStream: vi.fn(() => vi.fn()),
+      getWorktreeFileDiff: vi.fn(async () => ({
+        success: true,
+        data: 'diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-old\n+new',
+      })),
     } as typeof window.electronAPI;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('shows completion summary when a subtask is expanded', () => {
@@ -458,6 +595,60 @@ describe('TaskSubtasks', () => {
     expect(screen.getByText(/Verified with TaskSubtasks.test.tsx/)).toBeInTheDocument();
   });
 
+  it('opens a separate file diff dialog from a subtask file', async () => {
+    const task = createTask();
+    task.subtasks[0] = {
+      ...task.subtasks[0],
+      files: ['src/app.ts'],
+    };
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={task} />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(screen.getByText('Render summary'));
+    fireEvent.click(screen.getByRole('button', {
+      name: /Preview changes for src\/app\.ts in Render summary/i,
+    }));
+
+    await waitFor(() => {
+      expect(window.electronAPI.getWorktreeFileDiff).toHaveBeenCalledWith('task-1', 'src/app.ts', 'project-1');
+    });
+
+    expect(await screen.findByText('File change preview')).toBeInTheDocument();
+    expect(screen.getByText('src/app.ts')).toBeInTheDocument();
+    expect(screen.getByText('diff --git a/src/app.ts b/src/app.ts')).toBeInTheDocument();
+    expect(screen.getByText('-old')).toBeInTheDocument();
+    expect(screen.getByText('+new')).toBeInTheDocument();
+  });
+  it('shows file content when no inline diff exists', async () => {
+    window.electronAPI.getWorktreeFileDiff = vi.fn(async () => ({
+      success: true,
+      data: 'export const value = 1;',
+    })) as typeof window.electronAPI.getWorktreeFileDiff;
+
+    const task = createTask();
+    task.subtasks[0] = {
+      ...task.subtasks[0],
+      files: ['src/app.ts'],
+    };
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={task} />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(screen.getByText('Render summary'));
+    fireEvent.click(screen.getByRole('button', {
+      name: /Preview changes for src\/app\.ts in Render summary/i,
+    }));
+
+    expect(await screen.findByText('export const value = 1;')).toBeInTheDocument();
+    expect(screen.queryByText('No preview available for this file.')).not.toBeInTheDocument();
+  });
   it('shows markdown table supplemental text around completion summaries', () => {
     const task = createTask();
     task.subtasks[0].completionSummary = [
@@ -547,6 +738,61 @@ describe('TaskSubtasks', () => {
     expect(edgePaths.every(path => path.includes(' H ') && !path.includes(' C '))).toBe(true);
   });
 
+  it('shows rounds only for pending execution graph nodes', () => {
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createFanOutWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    expect(screen.queryByText('Round 1')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Round 2')).toHaveLength(3);
+    expect(screen.getByText('Round 3')).toBeInTheDocument();
+  });
+
+  it('shows elapsed time instead of a round for running execution graph nodes', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:02:05.000Z'));
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createRunningTimedWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('2m 5s')).toBeInTheDocument();
+    expect(screen.queryByText('Round 1')).not.toBeInTheDocument();
+    expect(screen.getByText('Round 2')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(screen.getByText('2m 6s')).toBeInTheDocument();
+  });
+
+  it('excludes paused time between recovered running execution graph segments', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-01-01T00:06:00.000Z').getTime());
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({
+      success: true,
+      data: createRecoveredRunningWorkPackageLogs(),
+    })) as typeof window.electronAPI.getTaskLogs;
+
+    try {
+      render(
+        <TooltipProvider>
+          <TaskSubtasks task={createRecoveredRunningTimedWorkPackageTask()} />
+        </TooltipProvider>
+      );
+
+      expect(await screen.findByText('2m')).toBeInTheDocument();
+      expect(screen.queryByText('4m')).not.toBeInTheDocument();
+      expect(screen.queryByText('1m')).not.toBeInTheDocument();
+      expect(screen.queryByText('Round 1')).not.toBeInTheDocument();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
   it('routes skip-level execution graph edges around intermediate nodes', () => {
     const { container } = render(
       <TooltipProvider>
@@ -583,6 +829,24 @@ describe('TaskSubtasks', () => {
     expect(selectedEdges.some(path => path.getAttribute('marker-end') === 'url(#subtask-graph-arrow-default)')).toBe(true);
   });
 
+  it('uses completed work package active intervals for parallel duration totals', async () => {
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({
+      success: true,
+      data: createCompletedGappedWorkPackageLogs(),
+    })) as typeof window.electronAPI.getTaskLogs;
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createCompletedGappedWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    expect(await screen.findByText('Sequential 3m')).toBeInTheDocument();
+    expect(screen.getByText('Parallel 3m')).toBeInTheDocument();
+    expect(screen.getByText('Saves 0s')).toBeInTheDocument();
+    expect(screen.queryByText('Parallel 7m')).not.toBeInTheDocument();
+    expect(screen.queryByText('Parallel 2m')).not.toBeInTheDocument();
+  });
   it('uses recorded work package timings for execution graph totals', () => {
     render(
       <TooltipProvider>

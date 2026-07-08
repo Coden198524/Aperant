@@ -56,15 +56,11 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
       task.reviewReason === 'errors' ||
       task.reviewReason === 'stopped'
     );
-  const isCompletedReview =
-    task?.status === 'human_review' &&
-    task.reviewReason === 'completed';
   const canResumeExecution =
     !!task &&
     (
       isPlanReview ||
-      isErrorRecovery ||
-      isCompletedReview
+      isErrorRecovery
     );
 
   const handleMarkDone = async () => {

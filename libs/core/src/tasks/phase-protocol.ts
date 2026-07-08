@@ -11,6 +11,7 @@ export const EXECUTION_PHASES = [
   'qa_fixing',
   'complete',
   'failed',
+  'stopped',
 ] as const;
 
 export const BACKEND_PHASES = [
@@ -38,6 +39,7 @@ export const PHASE_ORDER_INDEX: Readonly<Record<ExecutionPhase, number>> = {
   qa_fixing: 3,
   complete: 4,
   failed: 99,
+  stopped: -1,
 } as const;
 
 export const TERMINAL_PHASES: ReadonlySet<ExecutionPhase> = new Set(['complete', 'failed']);
@@ -106,6 +108,7 @@ export function isValidPhaseTransition(
     qa_fixing: ['qa_review'],
     complete: ['qa_review', 'qa_fixing'],
     failed: [],
+    stopped: [],
   };
 
   if (newPhase === 'failed') {
@@ -140,6 +143,7 @@ export function getExpectedPreviousPhase(phase: ExecutionPhase): ExecutionPhase 
     qa_fixing: 'qa_review',
     complete: 'qa_review',
     failed: null,
+    stopped: null,
   };
   return previousPhases[phase];
 }

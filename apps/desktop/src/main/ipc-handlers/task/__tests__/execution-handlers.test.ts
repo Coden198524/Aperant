@@ -41,6 +41,7 @@ vi.mock('../../../task-state-manager', () => ({
   taskStateManager: {
     configure: vi.fn(),
     prepareForRestart: vi.fn(),
+    clearTask: vi.fn(),
     getCurrentState: vi.fn(() => null),
     handleUiEvent: vi.fn(),
     handleManualStatusChange: vi.fn(() => true),
@@ -105,6 +106,9 @@ describe('registerTaskExecutionHandlers', () => {
   let onHandlers: Record<string, Function>;
   let handleHandlers: Record<string, Function>;
   let mockMainWindow: Partial<BrowserWindow>;
+  let runningTaskKeys: Set<string>;
+  const getScopedTaskKey = (taskId: string, projectId?: string): string =>
+    projectId ? `${projectId}::${taskId}` : taskId;
   let mockAgentManager: {
     startSpecCreation: ReturnType<typeof vi.fn>;
     startTaskExecution: ReturnType<typeof vi.fn>;
@@ -136,13 +140,25 @@ describe('registerTaskExecutionHandlers', () => {
       } as unknown as BrowserWindow['webContents'],
     };
 
+    runningTaskKeys = new Set();
     mockAgentManager = {
-      startSpecCreation: vi.fn(),
-      startTaskExecution: vi.fn(),
-      startDirectTaskExecution: vi.fn(),
+      startSpecCreation: vi.fn((taskId: string, _projectPath: string, _taskDescription: string, _specDir?: string, _metadata?: unknown, _baseBranch?: string, projectId?: string) => {
+        runningTaskKeys.add(getScopedTaskKey(taskId, projectId));
+        return Promise.resolve();
+      }),
+      startTaskExecution: vi.fn((taskId: string, _projectPath: string, _specId: string, _options?: unknown, projectId?: string) => {
+        runningTaskKeys.add(getScopedTaskKey(taskId, projectId));
+        return Promise.resolve();
+      }),
+      startDirectTaskExecution: vi.fn((taskId: string, _projectPath: string, _specId: string, _options?: unknown, projectId?: string) => {
+        runningTaskKeys.add(getScopedTaskKey(taskId, projectId));
+        return Promise.resolve();
+      }),
       startQAProcess: vi.fn(),
-      killTask: vi.fn(),
-      isRunning: vi.fn(() => false),
+      killTask: vi.fn((taskId: string, projectId?: string) => {
+        runningTaskKeys.delete(getScopedTaskKey(taskId, projectId));
+      }),
+      isRunning: vi.fn((taskId: string, projectId?: string) => runningTaskKeys.has(getScopedTaskKey(taskId, projectId))),
     };
 
     const { registerTaskExecutionHandlers } = await import('../execution-handlers');
@@ -198,6 +214,173 @@ describe('registerTaskExecutionHandlers', () => {
     );
   });
 
+  it('keeps fully completed human review tasks completed on TASK_START without launching runtime', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { existsSync, readFileSync } = await import('fs');
+    const planShards = await import('../../../ai/schema/plan-shards');
+
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-complete-review',
+        specId: '001-complete-review',
+        projectId: 'project-fast',
+        title: 'Complete task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: undefined,
+        subtasks: [
+          { id: '1.1', title: 'Done work', description: 'done', status: 'completed', files: [] },
+        ],
+        logs: [],
+        metadata: { workflowMode: 'standard' },
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (existsSync as Mock).mockImplementation((filePath: string) => filePath.includes('implementation_plan.md'));
+    (readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.md')) {
+        return JSON.stringify({
+          status: 'human_review',
+          planStatus: 'review',
+          xstateState: 'human_review',
+          executionPhase: 'complete',
+          updated_at: '2026-07-08T00:00:00.000Z',
+          phases: [
+            {
+              phase: 1,
+              name: 'Implementation',
+              type: 'implementation',
+              subtasks: [
+                { id: '1.1', title: 'Done work', description: 'done', status: 'completed', files: [] },
+              ],
+            },
+          ],
+        });
+      }
+      return '';
+    });
+
+    const startHandler = onHandlers[IPC_CHANNELS.TASK_START];
+    await startHandler({}, '001-complete-review', { projectId: 'project-fast' });
+
+    expect(taskStateManager.prepareForRestart).not.toHaveBeenCalled();
+    expect(taskStateManager.handleUiEvent).not.toHaveBeenCalled();
+    expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();
+    expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+    expect(mockAgentManager.startDirectTaskExecution).not.toHaveBeenCalled();
+    expect(planShards.saveImplementationPlanToFilesSync).toHaveBeenCalledWith(
+      expect.stringContaining('implementation_plan.md'),
+      expect.objectContaining({
+        status: 'human_review',
+        reviewReason: 'completed',
+        executionPhase: 'complete',
+      }),
+    );
+    expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
+      IPC_CHANNELS.TASK_STATUS_CHANGE,
+      '001-complete-review',
+      'human_review',
+      'project-fast',
+      'completed',
+    );
+    expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
+      IPC_CHANNELS.TASK_EXECUTION_PROGRESS,
+      '001-complete-review',
+      { phase: 'complete', phaseProgress: 100, overallProgress: 100 },
+      'project-fast',
+    );
+  });
+  it('does not treat qa rejected human review tasks as completed on TASK_START', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { existsSync, readFileSync } = await import('fs');
+
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-qa-rejected-complete',
+        specId: '001-qa-rejected-complete',
+        projectId: 'project-fast',
+        title: 'QA rejected task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'qa_rejected',
+        subtasks: [
+          { id: '1.1', title: 'Done work', description: 'done', status: 'completed', files: [] },
+        ],
+        logs: [],
+        metadata: { workflowMode: 'standard' },
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (existsSync as Mock).mockImplementation((filePath: string) =>
+      filePath.includes('implementation_plan.md') || filePath.includes('spec.md')
+    );
+    (readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.md')) {
+        return JSON.stringify({
+          status: 'human_review',
+          reviewReason: 'qa_rejected',
+          planStatus: 'review',
+          xstateState: 'human_review',
+          executionPhase: 'complete',
+          updated_at: '2026-07-08T00:00:00.000Z',
+          phases: [
+            {
+              phase: 1,
+              name: 'Implementation',
+              type: 'implementation',
+              subtasks: [
+                { id: '1.1', title: 'Done work', description: 'done', status: 'completed', files: [] },
+              ],
+            },
+          ],
+        });
+      }
+      return '';
+    });
+
+    const startHandler = onHandlers[IPC_CHANNELS.TASK_START];
+    await startHandler({}, '001-qa-rejected-complete', { projectId: 'project-fast' });
+
+    expect(taskStateManager.prepareForRestart).toHaveBeenCalledWith('001-qa-rejected-complete', 'project-fast');
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    expect(mockMainWindow.webContents?.send).not.toHaveBeenCalledWith(
+      IPC_CHANNELS.TASK_STATUS_CHANGE,
+      '001-qa-rejected-complete',
+      'human_review',
+      'project-fast',
+      'completed',
+    );
+  });
   it('emits TASK_START validation errors with the resolved projectId', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
@@ -371,7 +554,7 @@ describe('registerTaskExecutionHandlers', () => {
     )).toBe(false);
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('Autocode Standard flow'),
+      expect.stringContaining('Autocode Standard iteration flow incrementally'),
       'utf-8'
     );
     expect(fs.writeFileSync).toHaveBeenCalledWith(
@@ -421,7 +604,7 @@ describe('registerTaskExecutionHandlers', () => {
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
-  it('applies a local Standard change patch when stale progress still says planning', async () => {
+  it('restarts incremental Standard planning when stale progress still says planning', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { findTaskWorktree } = await import('../../../worktree-paths');
@@ -482,17 +665,22 @@ describe('registerTaskExecutionHandlers', () => {
     expect(result).toEqual({ success: true });
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('Impact analysis: requirements, implementation'),
+      expect.stringContaining('Impact analysis: requirements, design, tasks, validation'),
       'utf-8',
     );
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('requirements.md'),
+      expect.stringContaining('First run an incremental task-iteration planning pass'),
       'utf-8',
     );
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('commit-ready'),
+      expect.stringContaining('Update tasks.md by editing represented subtasks in place'),
+      'utf-8',
+    );
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('Do not implement code in this planning pass'),
       'utf-8',
     );
     expect(appendFileSync).toHaveBeenCalledWith(
@@ -508,32 +696,20 @@ describe('registerTaskExecutionHandlers', () => {
     expect((writeFileSync as Mock).mock.calls.some(([filePath]) =>
       String(filePath).includes('CHANGE_REQUESTS.md')
     )).toBe(false);
-    expect(writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining('spec.md'),
-      expect.stringContaining('CR ID: cr-'),
-      'utf-8',
-    );
-    expect(writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining('requirements.md'),
-      expect.stringContaining('interrupted skills'),
-      'utf-8',
-    );
-    expect(writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining('tasks.md'),
-      expect.stringContaining('Change request cr-'),
-      'utf-8',
-    );
-    expect(writeFileAtomicSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.md'),
-      expect.stringContaining('interrupted skills'),
-    );
-    expect(writeFileAtomicSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.md'),
-      expect.stringContaining('"executionPhase": "coding"'),
-    );
+    expect((writeFileSync as Mock).mock.calls.some(([filePath]) =>
+      String(filePath).endsWith('spec.md') ||
+      String(filePath).endsWith('requirements.md') ||
+      String(filePath).endsWith('tasks.md')
+    )).toBe(false);
+    const atomicPlanWrites = (writeFileAtomicSync as Mock).mock.calls
+      .filter(([filePath]) => String(filePath).includes('implementation_plan.md'))
+      .map(([, content]) => String(content));
+    expect(atomicPlanWrites.join('\n')).toContain('"executionPhase": "planning"');
+    expect(atomicPlanWrites.join('\n')).not.toContain('interrupted skills');
+    expect(atomicPlanWrites.join('\n')).not.toContain('"executionPhase": "coding"');
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-standard-requirements-review',
-      { type: 'USER_RESUMED' },
+      { type: 'PLANNING_STARTED' },
       expect.any(Object),
       expect.any(Object),
     );
@@ -541,11 +717,13 @@ describe('registerTaskExecutionHandlers', () => {
       .filter(([filePath]) => String(filePath).includes('HUMAN_INPUT.md'))
       .map(([, content]) => String(content));
     const finalHumanInput = humanInputWrites[humanInputWrites.length - 1];
-    expect(finalHumanInput).toContain('planning artifacts were patched locally');
-    expect(finalHumanInput).toContain('Continue coding from the pending change-request work item');
-    expect(finalHumanInput).not.toContain('Do not implement code in this planning pass');
+    expect(finalHumanInput).toContain('Use the Autocode Standard iteration flow incrementally');
+    expect(finalHumanInput).toContain('Do not regenerate the entire task plan');
+    expect(finalHumanInput).toContain('Do not implement code in this planning pass');
+    expect(finalHumanInput).not.toContain('planning artifacts were patched locally');
+    expect(finalHumanInput).not.toContain('Continue coding from the pending change-request work item');
     const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
-    expect(startOptions?.forcePlanning).not.toBe(true);
+    expect(startOptions?.forcePlanning).toBe(true);
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
@@ -715,6 +893,725 @@ describe('registerTaskExecutionHandlers', () => {
     );
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
     expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+  });
+
+  it('forces Standard Request Changes back through planning on TASK_START even when a pending workpackage exists', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { existsSync, readFileSync } = await import('fs');
+
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-standard-cr-start',
+        specId: '001-standard-cr-start',
+        projectId: 'project-fast',
+        title: 'Standard CR task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'stopped',
+        subtasks: [{ id: 'CR20260708.1', title: 'Change request work', description: 'desc', status: 'pending', files: [] }],
+        logs: [],
+        metadata: { developmentMode: 'standard', workflowMode: 'balanced' },
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (existsSync as Mock).mockImplementation((filePath: string) =>
+      filePath.includes('spec.md') ||
+      filePath.includes('implementation_plan.md') ||
+      filePath.includes('HUMAN_INPUT.md') ||
+      filePath.includes('change_requests.jsonl')
+    );
+    (readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.md')) {
+        return JSON.stringify({
+          phases: [
+            {
+              phase: 1,
+              subtasks: [
+                { id: 'CR20260708.1', title: 'Change request work', description: 'desc', status: 'pending', files: [] },
+              ],
+            },
+          ],
+        });
+      }
+      if (filePath.includes('HUMAN_INPUT.md')) {
+        return 'The user requested a same-task Standard iteration. The planning artifacts were patched locally before this coding pass.';
+      }
+      if (filePath.includes('change_requests.jsonl')) {
+        return JSON.stringify({ scope: 'planning', iteration: { mode: 'standard-planning' } });
+      }
+      return '';
+    });
+
+    const startHandler = onHandlers[IPC_CHANNELS.TASK_START];
+    await startHandler({}, '001-standard-cr-start', { projectId: 'project-fast' });
+
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-standard-cr-start',
+      { type: 'PLANNING_STARTED' },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
+    expect(startOptions?.forcePlanning).toBe(true);
+    expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
+  });
+
+  it('does not force Standard Request Changes planning again when approving plan_review', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { existsSync, readFileSync } = await import('fs');
+
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-standard-cr-plan-review',
+        specId: '001-standard-cr-plan-review',
+        projectId: 'project-fast',
+        title: 'Standard CR plan review task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'plan_review',
+        subtasks: [{ id: '1.1', title: 'Revised work', description: 'desc', status: 'pending', files: [] }],
+        logs: [],
+        metadata: { developmentMode: 'standard', workflowMode: 'balanced' },
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('plan_review');
+    (existsSync as Mock).mockImplementation((filePath: string) =>
+      filePath.includes('spec.md') ||
+      filePath.includes('implementation_plan.md') ||
+      filePath.includes('HUMAN_INPUT.md') ||
+      filePath.includes('change_requests.jsonl')
+    );
+    (readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.md')) {
+        return JSON.stringify({
+          phases: [
+            {
+              phase: 1,
+              subtasks: [
+                { id: '1.1', title: 'Revised work', description: 'desc', status: 'pending', files: [] },
+              ],
+            },
+          ],
+        });
+      }
+      if (filePath.includes('HUMAN_INPUT.md')) {
+        return 'Standard Iteration Protocol\nDo not implement code in this planning pass.';
+      }
+      if (filePath.includes('change_requests.jsonl')) {
+        return JSON.stringify({ scope: 'planning', iteration: { mode: 'standard-planning' } });
+      }
+      return '';
+    });
+
+    const startHandler = onHandlers[IPC_CHANNELS.TASK_START];
+    await startHandler({}, '001-standard-cr-plan-review', { projectId: 'project-fast' });
+
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-standard-cr-plan-review',
+      { type: 'PLAN_APPROVED' },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
+    expect(startOptions?.forcePlanning).not.toBe(true);
+    expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
+  });
+  it('syncs newer stopped main plan over stale worktree coding plan before TASK_START', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { findTaskWorktree } = await import('../../../worktree-paths');
+    const { projectStore } = await import('../../../project-store');
+    const fs = await import('fs');
+    const planShards = await import('../../../ai/schema/plan-shards');
+
+    const normalize = (filePath: string) => filePath.replace(/\\/g, '/');
+    const taskId = '001-stale-worktree';
+    const projectRoot = 'E:/Work/FastProject';
+    const worktreeRoot = `${projectRoot}/.autocode/worktrees/tasks/${taskId}`;
+    const mainPlanPath = `${projectRoot}/.autocode/specs/${taskId}/implementation_plan.md`;
+    const worktreePlanPath = `${worktreeRoot}/.autocode/specs/${taskId}/implementation_plan.md`;
+    const plansByPath = new Map<string, Record<string, unknown>>([
+      [normalize(mainPlanPath), {
+        status: 'human_review',
+        planStatus: 'review',
+        reviewReason: 'stopped',
+        xstateState: 'human_review',
+        executionPhase: 'stopped',
+        updated_at: '2026-07-07T14:36:15.527Z',
+        phases: [{ phase: 1, subtasks: [{ id: 'wp-10', status: 'pending' }] }],
+      }],
+      [normalize(worktreePlanPath), {
+        status: 'in_progress',
+        planStatus: 'in_progress',
+        xstateState: 'coding',
+        executionPhase: 'coding',
+        updated_at: '2026-07-07T09:13:52.085Z',
+        phases: [{ phase: 1, subtasks: [{ id: 'wp-10', status: 'pending' }] }],
+      }],
+    ]);
+
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskWorktree as Mock).mockReturnValue(worktreeRoot);
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: taskId,
+        specId: taskId,
+        projectId: 'project-fast',
+        title: 'Stale worktree task',
+        description: 'desc',
+        status: 'in_progress',
+        subtasks: [],
+        logs: [],
+        metadata: {},
+        executionProgress: { phase: 'coding', phaseProgress: 50, overallProgress: 50 },
+      },
+      project: {
+        id: 'project-fast',
+        path: projectRoot,
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue(null);
+    (fs.existsSync as Mock).mockImplementation((filePath: string) => {
+      const normalizedPath = normalize(filePath);
+      return normalizedPath.endsWith('/implementation_plan.md') || normalizedPath.endsWith('/spec.md');
+    });
+    (planShards.loadImplementationPlanFromFilesSync as Mock).mockImplementation((planPath: string) => {
+      const plan = plansByPath.get(normalize(planPath));
+      return plan ? JSON.parse(JSON.stringify(plan)) : null;
+    });
+    (planShards.saveImplementationPlanToFilesSync as Mock).mockImplementation((planPath: string, plan: Record<string, unknown>) => {
+      plansByPath.set(normalize(planPath), JSON.parse(JSON.stringify(plan)));
+    });
+
+    const startHandler = onHandlers[IPC_CHANNELS.TASK_START];
+    await startHandler({}, taskId, { projectId: 'project-fast' });
+
+    const savedWorktreePlan = (planShards.saveImplementationPlanToFilesSync as Mock).mock.calls
+      .find(([filePath]) => normalize(String(filePath)) === normalize(worktreePlanPath))?.[1];
+    expect(savedWorktreePlan).toMatchObject({
+      status: 'human_review',
+      planStatus: 'review',
+      reviewReason: 'stopped',
+      xstateState: 'human_review',
+      executionPhase: 'stopped',
+      updated_at: '2026-07-07T14:36:15.527Z',
+    });
+    expect(plansByPath.get(normalize(worktreePlanPath))).toMatchObject({
+      status: 'in_progress',
+      planStatus: 'in_progress',
+      xstateState: 'coding',
+      executionPhase: 'coding',
+    });
+    expect(plansByPath.get(normalize(worktreePlanPath))?.reviewReason).toBeUndefined();
+    expect(projectStore.invalidateTasksCache).toHaveBeenCalledWith('project-fast');
+    expect(taskStateManager.clearTask).toHaveBeenCalledWith(taskId, 'project-fast');
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      taskId,
+      { type: 'USER_RESUMED' },
+      expect.objectContaining({
+        status: 'human_review',
+        reviewReason: 'stopped',
+      }),
+      expect.any(Object),
+    );
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+  });
+  it('recovers coding work item logs across main and worktree plans before TASK_START', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { findTaskWorktree } = await import('../../../worktree-paths');
+    const { projectStore } = await import('../../../project-store');
+    const { resetStuckSubtasks } = await import('../plan-file-utils');
+    const fs = await import('fs');
+    const planShards = await import('../../../ai/schema/plan-shards');
+
+    const normalize = (filePath: string) => filePath.replace(/\\/g, '/');
+    const taskId = '003-task';
+    const projectRoot = 'E:/Work/Test/aitest';
+    const worktreeRoot = projectRoot + '/.autocode/worktrees/tasks/' + taskId;
+    const mainPlanPath = projectRoot + '/.autocode/specs/' + taskId + '/implementation_plan.md';
+    const worktreePlanPath = worktreeRoot + '/.autocode/specs/' + taskId + '/implementation_plan.md';
+    const plansByPath = new Map<string, Record<string, unknown>>([
+      [normalize(mainPlanPath), {
+        status: 'in_progress',
+        planStatus: 'in_progress',
+        xstateState: 'coding',
+        executionPhase: 'coding',
+        phases: [{
+          phase: 1,
+          subtasks: [
+            { id: 'wp-9', status: 'completed', completed_at: '2026-07-07T09:13:52.724Z' },
+            { id: 'wp-25', status: 'pending' },
+          ],
+        }],
+      }],
+      [normalize(worktreePlanPath), {
+        status: 'in_progress',
+        planStatus: 'in_progress',
+        xstateState: 'coding',
+        executionPhase: 'coding',
+        phases: [{
+          phase: 1,
+          subtasks: [
+            { id: 'wp-9', status: 'in_progress', started_at: '2026-07-07T09:05:50.634Z' },
+            { id: 'wp-25', status: 'in_progress', started_at: '2026-07-07T09:11:08.034Z' },
+          ],
+        }],
+      }],
+    ]);
+
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskWorktree as Mock).mockReturnValue(worktreeRoot);
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: taskId,
+        specId: taskId,
+        projectId: 'project-fast',
+        title: 'Recover stale worktree plan',
+        description: 'desc',
+        status: 'in_progress',
+        subtasks: [],
+        logs: [],
+        metadata: {},
+        executionProgress: { phase: 'coding', phaseProgress: 50, overallProgress: 50 },
+      },
+      project: {
+        id: 'project-fast',
+        path: projectRoot,
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue(null);
+    (resetStuckSubtasks as Mock).mockResolvedValue({ success: true, resetCount: 1 });
+    (fs.existsSync as Mock).mockImplementation((filePath: string) => {
+      const normalizedPath = normalize(filePath);
+      return normalizedPath.endsWith('/implementation_plan.md') ||
+        normalizedPath.endsWith('/spec.md') ||
+        normalizedPath.endsWith('/task_logs.jsonl');
+    });
+    (fs.readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (normalize(filePath).endsWith('/task_logs.jsonl')) {
+        return JSON.stringify({
+          record_type: 'entry',
+          entry: {
+            timestamp: '2026-07-07T09:13:52.724Z',
+            type: 'success',
+            content: 'Work item wp-9 completed.',
+            phase: 'coding',
+            subtask_id: 'wp-9',
+          },
+        });
+      }
+      return '';
+    });
+    (planShards.loadImplementationPlanFromFilesSync as Mock).mockImplementation((planPath: string) => {
+      const plan = plansByPath.get(normalize(planPath));
+      return plan ? JSON.parse(JSON.stringify(plan)) : null;
+    });
+    (planShards.saveImplementationPlanToFilesSync as Mock).mockImplementation((planPath: string, plan: Record<string, unknown>) => {
+      plansByPath.set(normalize(planPath), JSON.parse(JSON.stringify(plan)));
+    });
+
+    const startHandler = onHandlers[IPC_CHANNELS.TASK_START];
+    await startHandler({}, taskId, { projectId: 'project-fast' });
+
+    const recoveredWorktreePlan = plansByPath.get(normalize(worktreePlanPath));
+    expect(recoveredWorktreePlan?.phases).toEqual([
+      expect.objectContaining({
+        subtasks: [
+          expect.objectContaining({
+            id: 'wp-9',
+            status: 'completed',
+            completed_at: '2026-07-07T09:13:52.724Z',
+          }),
+          expect.objectContaining({ id: 'wp-25', status: 'in_progress' }),
+        ],
+      }),
+    ]);
+    const resetCalls = (resetStuckSubtasks as Mock).mock.calls.map(([filePath, projectId]) => [
+      normalize(String(filePath)),
+      projectId,
+    ]);
+    expect(resetCalls).toContainEqual([normalize(mainPlanPath), 'project-fast']);
+    expect(resetCalls).toContainEqual([normalize(worktreePlanPath), 'project-fast']);
+    expect(projectStore.invalidateTasksCache).toHaveBeenCalledWith('project-fast');
+    expect(taskStateManager.clearTask).toHaveBeenCalledWith(taskId, 'project-fast');
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+  });
+
+  it('keeps recovered auto-restart in progress after the start call succeeds', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { existsSync } = await import('fs');
+    const { resetStuckSubtasks } = await import('../plan-file-utils');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const planShards = await import('../../../ai/schema/plan-shards');
+
+    const planByPath = new Map<string, Record<string, unknown>>();
+    const initialPlan = {
+      phases: [
+        {
+          phase: 1,
+          name: 'Implementation',
+          type: 'implementation',
+          subtasks: [
+            { id: 'wp-10', title: 'Running package', status: 'in_progress', files: [] },
+            { id: 'wp-11', title: 'Pending package', status: 'pending', files: [] },
+          ],
+        },
+      ],
+    };
+
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-restart-no-process',
+        specId: '001-restart-no-process',
+        projectId: 'project-fast',
+        title: 'Restart without process',
+        description: 'desc',
+        status: 'in_progress',
+        subtasks: [],
+        logs: [],
+        metadata: {},
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (existsSync as Mock).mockImplementation((filePath: string) =>
+      filePath.includes('implementation_plan.md') || filePath.includes('spec.md')
+    );
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (resetStuckSubtasks as Mock).mockResolvedValue({ success: true, resetCount: 1 });
+    (mockAgentManager.isRunning as Mock).mockReturnValue(false);
+    (mockAgentManager.startTaskExecution as Mock).mockResolvedValue(undefined);
+    (planShards.loadImplementationPlanFromFilesSync as Mock).mockImplementation((planPath: string) => {
+      const saved = planByPath.get(planPath);
+      return JSON.parse(JSON.stringify(saved ?? initialPlan));
+    });
+    (planShards.saveImplementationPlanToFilesSync as Mock).mockImplementation((planPath: string, plan: Record<string, unknown>) => {
+      planByPath.set(planPath, JSON.parse(JSON.stringify(plan)));
+    });
+
+    const recoverHandler = handleHandlers[IPC_CHANNELS.TASK_RECOVER_STUCK];
+    const result = await recoverHandler({}, '001-restart-no-process', {
+      projectId: 'project-fast',
+      autoRestart: true,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      data: {
+        taskId: '001-restart-no-process',
+        recovered: true,
+        newStatus: 'in_progress',
+        message: 'Task recovered and restarted successfully',
+        autoRestarted: true,
+      },
+    });
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-restart-no-process',
+      { type: 'USER_RESUMED' },
+      expect.objectContaining({ status: 'human_review', reviewReason: 'stopped' }),
+      expect.objectContaining({ id: 'project-fast' }),
+    );
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    expect(planShards.saveImplementationPlanToFilesSync).toHaveBeenLastCalledWith(
+      expect.stringContaining('implementation_plan.md'),
+      expect.objectContaining({
+        status: 'in_progress',
+        planStatus: 'in_progress',
+        xstateState: 'coding',
+        executionPhase: 'coding',
+      }),
+    );
+    expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
+      IPC_CHANNELS.TASK_STATUS_CHANGE,
+      '001-restart-no-process',
+      'in_progress',
+      'project-fast',
+      undefined,
+    );
+  });
+
+  it('keeps recovered stuck coding tasks in stopped review instead of backlog', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { existsSync } = await import('fs');
+    const { resetStuckSubtasks } = await import('../plan-file-utils');
+    const planShards = await import('../../../ai/schema/plan-shards');
+
+    const incompletePlan = {
+      phases: [
+        {
+          phase: 1,
+          name: 'Implementation',
+          type: 'implementation',
+          subtasks: [
+            { id: '1.1', title: 'Done', status: 'completed', files: [] },
+            { id: '1.2', title: 'Interrupted', status: 'in_progress', files: [] },
+          ],
+        },
+      ],
+    };
+
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-stuck-coding',
+        specId: '001-stuck-coding',
+        projectId: 'project-fast',
+        title: 'Stuck coding task',
+        description: 'desc',
+        status: 'in_progress',
+        subtasks: [],
+        logs: [],
+        metadata: {},
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (existsSync as Mock).mockImplementation((filePath: string) =>
+      filePath.includes('implementation_plan.md')
+    );
+    (planShards.loadImplementationPlanFromFilesSync as Mock).mockImplementation(() =>
+      JSON.parse(JSON.stringify(incompletePlan))
+    );
+    (resetStuckSubtasks as Mock).mockResolvedValue({ success: true, resetCount: 1 });
+
+    const recoverHandler = handleHandlers[IPC_CHANNELS.TASK_RECOVER_STUCK];
+    const result = await recoverHandler({}, '001-stuck-coding', { projectId: 'project-fast' });
+
+    expect(result).toEqual({
+      success: true,
+      data: {
+        taskId: '001-stuck-coding',
+        recovered: true,
+        newStatus: 'human_review',
+        message: 'Task recovered successfully and moved to human_review',
+        autoRestarted: false,
+      },
+    });
+    expect(planShards.saveImplementationPlanToFilesSync).toHaveBeenCalledWith(
+      expect.stringContaining('implementation_plan.md'),
+      expect.objectContaining({
+        status: 'human_review',
+        planStatus: 'review',
+        reviewReason: 'stopped',
+        xstateState: 'human_review',
+        executionPhase: 'stopped',
+      }),
+    );
+    expect(planShards.saveImplementationPlanToFilesSync).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ status: 'backlog' }),
+    );
+    expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
+      IPC_CHANNELS.TASK_STATUS_CHANGE,
+      '001-stuck-coding',
+      'human_review',
+      'project-fast',
+      'stopped',
+    );
+  });
+
+
+  it('does not roll TASK_START back just because runtime registration is delayed', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const fs = await import('fs');
+
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-start-delayed-process',
+        specId: '001-start-delayed-process',
+        projectId: 'project-fast',
+        title: 'Start with delayed process registration',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'stopped',
+        subtasks: [],
+        logs: [],
+        metadata: {},
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (fs.existsSync as Mock).mockImplementation((filePath: string) =>
+      filePath.includes('implementation_plan.md') || filePath.includes('spec.md')
+    );
+    (fs.readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.md')) {
+        return JSON.stringify({
+          phases: [{ phase: 1, subtasks: [{ id: 'wp-1', status: 'pending' }] }],
+        });
+      }
+      return '';
+    });
+    (mockAgentManager.startTaskExecution as Mock).mockResolvedValue(undefined);
+    (mockAgentManager.isRunning as Mock).mockReturnValue(false);
+
+    const startHandler = onHandlers[IPC_CHANNELS.TASK_START];
+    await startHandler({}, '001-start-delayed-process', { projectId: 'project-fast' });
+
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    expect(taskStateManager.handleUiEvent).not.toHaveBeenCalledWith(
+      '001-start-delayed-process',
+      expect.objectContaining({ type: 'USER_STOPPED' }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(mockMainWindow.webContents?.send).not.toHaveBeenCalledWith(
+      IPC_CHANNELS.TASK_ERROR,
+      '001-start-delayed-process',
+      expect.any(String),
+      'project-fast',
+    );
+  });
+
+  it('does not roll TASK_UPDATE_STATUS auto-start back just because runtime registration is delayed', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const fs = await import('fs');
+
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-update-delayed-process',
+        specId: '001-update-delayed-process',
+        projectId: 'project-fast',
+        title: 'Update with delayed process registration',
+        description: 'desc',
+        status: 'backlog',
+        subtasks: [],
+        logs: [],
+        metadata: {},
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (fs.existsSync as Mock).mockImplementation((filePath: string) =>
+      filePath.includes('implementation_plan.md') || filePath.includes('spec.md')
+    );
+    (fs.readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.md')) {
+        return JSON.stringify({
+          phases: [{ phase: 1, subtasks: [{ id: 'wp-1', status: 'pending' }] }],
+        });
+      }
+      return '';
+    });
+    (mockAgentManager.startTaskExecution as Mock).mockResolvedValue(undefined);
+    (mockAgentManager.isRunning as Mock).mockReturnValue(false);
+
+    const updateStatusHandler = handleHandlers[IPC_CHANNELS.TASK_UPDATE_STATUS];
+    const result = await updateStatusHandler({}, '001-update-delayed-process', 'in_progress', { projectId: 'project-fast' });
+
+    expect(result).toEqual({ success: true });
+    expect(taskStateManager.handleUiEvent).not.toHaveBeenCalledWith(
+      '001-update-delayed-process',
+      expect.objectContaining({ type: 'USER_STOPPED' }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
+      IPC_CHANNELS.TASK_STATUS_CHANGE,
+      '001-update-delayed-process',
+      'in_progress',
+      'project-fast',
+    );
   });
 
   it('starts direct execution for workflow off tasks without spec creation', async () => {
@@ -945,7 +1842,7 @@ describe('registerTaskExecutionHandlers', () => {
     );
   });
 
-  it('restarts coding for qa_rejected human review Request Changes', async () => {
+  it('restarts planning for qa_rejected Standard Request Changes', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const fs = await import('fs');
@@ -983,20 +1880,21 @@ describe('registerTaskExecutionHandlers', () => {
       'utf-8'
     );
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
+    expect(startOptions?.forcePlanning).toBe(true);
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-qa-review',
-      { type: 'USER_RESUMED' },
+      { type: 'PLANNING_STARTED' },
       expect.any(Object),
       expect.any(Object)
     );
   });
 
-  it('restarts coding for completed human review even without build-failure keywords', async () => {
+  it('restarts planning for completed Standard Request Changes even without build-failure keywords', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { existsSync, writeFileSync, readFileSync } = await import('fs');
-    const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
 
     (findTaskAndProject as Mock).mockReturnValue({
       task: {
@@ -1047,21 +1945,24 @@ describe('registerTaskExecutionHandlers', () => {
       expect.stringContaining('combat values'),
       'utf-8'
     );
-    expect(writeFileAtomicSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.md'),
-      expect.stringContaining('Please balance the combat values again')
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('incremental task-iteration planning pass'),
+      'utf-8'
     );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-completed-review',
-      { type: 'USER_RESUMED' },
+      { type: 'PLANNING_STARTED' },
       expect.any(Object),
       expect.any(Object)
     );
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
+    expect(startOptions?.forcePlanning).toBe(true);
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
-  it('applies a local Standard change patch for legacy balanced metadata that needs new subtasks', async () => {
+  it('restarts planning instead of applying a local Standard change patch', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { existsSync, readFileSync, writeFileSync } = await import('fs');
@@ -1114,39 +2015,32 @@ describe('registerTaskExecutionHandlers', () => {
     expect(result).toEqual({ success: true });
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('update tasks.md with concrete pending subtasks'),
+      expect.stringContaining('Update tasks.md by editing represented subtasks in place'),
       'utf-8'
-    );
-    expect(writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining('tasks.md'),
-      expect.stringContaining('Add another tuning pass'),
-      'utf-8'
-    );
-    expect(writeFileAtomicSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.md'),
-      expect.stringContaining('Add another tuning pass'),
-    );
-    expect(writeFileAtomicSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.md'),
-      expect.stringContaining('"status": "in_progress"'),
     );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-standard-review',
-      { type: 'USER_RESUMED' },
+      { type: 'PLANNING_STARTED' },
       expect.any(Object),
       expect.any(Object)
     );
     const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
-    expect(startOptions?.forcePlanning).not.toBe(true);
+    expect(startOptions?.forcePlanning).toBe(true);
+    const atomicPlanWrites = (writeFileAtomicSync as Mock).mock.calls
+      .filter(([filePath]) => String(filePath).includes('implementation_plan.md'))
+      .map(([, content]) => String(content));
+    expect(atomicPlanWrites.join('\n')).toContain('"executionPhase": "planning"');
+    expect(atomicPlanWrites.join('\n')).not.toContain('Add another tuning pass');
+    expect(atomicPlanWrites.join('\n')).not.toContain('Change request');
+    expect(atomicPlanWrites.join('\n')).not.toContain('"executionPhase": "coding"');
     expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
-  it('restarts coding for completed review feedback that contains build failures', async () => {
+  it('restarts planning for completed Standard Request Changes that contain build failures', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { existsSync, writeFileSync, readFileSync } = await import('fs');
-    const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
 
     (findTaskAndProject as Mock).mockReturnValue({
       task: {
@@ -1197,21 +2091,19 @@ describe('registerTaskExecutionHandlers', () => {
       expect.stringContaining('TS2322'),
       'utf-8'
     );
-    expect(writeFileAtomicSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.md'),
-      expect.stringContaining('TypeScript error TS2322')
-    );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-build-failure-review',
-      { type: 'USER_RESUMED' },
+      { type: 'PLANNING_STARTED' },
       expect.any(Object),
       expect.any(Object)
     );
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
+    expect(startOptions?.forcePlanning).toBe(true);
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
-  it('restarts coding for human_review with missing reviewReason', async () => {
+  it('restarts planning for Standard human_review Request Changes with missing reviewReason', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { existsSync, writeFileSync } = await import('fs');
@@ -1250,19 +2142,20 @@ describe('registerTaskExecutionHandlers', () => {
     );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-missing-reason',
-      { type: 'USER_RESUMED' },
+      { type: 'PLANNING_STARTED' },
       expect.any(Object),
       expect.any(Object)
     );
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
+    expect(startOptions?.forcePlanning).toBe(true);
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
-  it('still appends a new follow-up subtask when plan already has pending subtasks', async () => {
+  it('restarts planning without appending follow-up subtasks when plan already has pending subtasks', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { existsSync, readFileSync } = await import('fs');
-    const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
 
     (findTaskAndProject as Mock).mockReturnValue({
       task: {
@@ -1309,15 +2202,19 @@ describe('registerTaskExecutionHandlers', () => {
     const result = await reviewHandler({}, '001-pending-followup', false, '缁х画浼樺寲浣撻獙');
 
     expect(result).toEqual({ success: true });
-    expect(writeFileAtomicSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.md'),
-      expect.stringContaining('"id": "1.3"')
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-pending-followup',
+      { type: 'PLANNING_STARTED' },
+      expect.any(Object),
+      expect.any(Object)
     );
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
+    expect(startOptions?.forcePlanning).toBe(true);
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
-  it('saves follow-up subtasks through plan helpers on Request Changes', async () => {
+  it('restarts planning without saving follow-up subtasks on Standard Request Changes', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { existsSync } = await import('fs');
@@ -1365,24 +2262,22 @@ describe('registerTaskExecutionHandlers', () => {
     const result = await reviewHandler({}, '001-split-followup', false, 'Continue polishing UI details');
 
     expect(result).toEqual({ success: true });
-    expect(planShards.saveImplementationPlanToFilesSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.md'),
-      expect.objectContaining({
-        phases: [
-          expect.objectContaining({
-            subtasks: expect.arrayContaining([
-              expect.objectContaining({ id: '1.1' }),
-              expect.objectContaining({
-                id: '1.2',
-                status: 'pending',
-                description: expect.stringContaining('Continue polishing UI details'),
-              }),
-            ]),
-          }),
-        ],
-      }),
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-split-followup',
+      { type: 'PLANNING_STARTED' },
+      expect.any(Object),
+      expect.any(Object)
     );
+    expect(planShards.saveImplementationPlanToFilesSync).toHaveBeenCalled();
+    const savedPlan = (planShards.saveImplementationPlanToFilesSync as Mock).mock.calls[0]?.[1] as any;
+    expect(savedPlan.executionPhase).toBe('planning');
+    expect(savedPlan.planStatus).toBe('planning');
+    expect(savedPlan.phases[0].subtasks).toHaveLength(1);
+    expect(JSON.stringify(savedPlan)).not.toContain('Continue polishing UI details');
+    expect(JSON.stringify(savedPlan)).not.toContain('"id":"1.2"');
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
+    expect(startOptions?.forcePlanning).toBe(true);
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 });

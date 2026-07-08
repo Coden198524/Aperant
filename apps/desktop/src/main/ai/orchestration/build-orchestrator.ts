@@ -513,15 +513,17 @@ export class BuildOrchestrator extends EventEmitter {
           return this.buildOutcome(false, Date.now() - startTime, planResult.error);
         }
 
-        // Reset subtask statuses to "pending" after first-run planning — the spec
+        // Reset subtask statuses to "pending" after first-run planning: the spec
         // pipeline or planner may have created the plan with pre-set "completed"
         // statuses, which would cause isBuildComplete() to skip coding entirely.
-        // Only after replanning: resumed builds with an existing executable plan
-        // must preserve genuine progress.
-        await this.resetSubtaskStatuses();
+        // Request Changes iteration planning must preserve genuine completed
+        // progress and reset only the affected upstream tasks.
+        if (this.config.forcePlanning !== true) {
+          await this.resetSubtaskStatuses();
+        }
 
         if (this.config.forcePlanning === true) {
-          this.emitTyped('log', 'Plan regenerated from human review feedback; waiting for plan approval');
+          this.emitTyped('log', 'Incremental planning completed from human review feedback; waiting for plan approval');
           return this.buildOutcome(true, Date.now() - startTime);
         }
       }
@@ -643,7 +645,7 @@ export class BuildOrchestrator extends EventEmitter {
         language: this.config.language,
         sourcePath: AUTOCODE_TASK_ARTIFACTS.tasks,
         requireTaskEvidence: true,
-        includeCompletedTasks: false,
+        includeCompletedTasks: this.config.forcePlanning === true,
       });
       await saveImplementationPlanToFiles(this.config.specDir, plan as never);
       this.emitTyped('log', translateLogMessage('Generated runtime work packages from tasks.md', this.config.language));
@@ -1628,7 +1630,7 @@ export class BuildOrchestrator extends EventEmitter {
   private async shouldRunPlanningPhase(): Promise<boolean> {
     try {
       if (this.config.forcePlanning === true) {
-        this.emitTyped('log', 'Force planning requested; regenerating implementation plan before coding');
+        this.emitTyped('log', 'Force planning requested; running incremental implementation planning before coding');
         return true;
       }
 

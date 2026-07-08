@@ -767,6 +767,12 @@ app.whenReady().then(async () => {
     scheduleStartupBackgroundTasks(mainWindow);
   }
 
+  setTimeout(() => {
+    agentManager?.runStartupRecoveryScan().catch((err: unknown) => {
+      console.warn('[main] Startup recovery scan failed:', err);
+    });
+  }, 5_000);
+
   if (mainWindow) {
     // Log debug mode status
     const isDebugMode = process.env.DEBUG === 'true';

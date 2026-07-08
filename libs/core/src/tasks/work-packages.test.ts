@@ -7,6 +7,8 @@ import {
   estimateAutocodeRuntimeTaskEffort,
   flattenAutocodeRuntimeTasks,
   groupAutocodeRuntimeTasksIntoWorkPackages,
+  preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown,
+  stringifyAutocodeImplementationPlanMarkdown,
 } from './work-packages.js';
 import { parseAutocodeImplementationPlanMarkdown } from './plan-store.js';
 import { validateImplementationPlanLanguage } from '../schema/plan-language.js';
@@ -72,6 +74,170 @@ describe('runtime work package balancing', () => {
     expect(subtasks[0].depends_on).toEqual([]);
   });
 
+  it('preserves completed runtime work package state for unchanged Standard iteration tasks', () => {
+    const previousPlan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [x] 1.1 Create page shell',
+      '    - Create the existing HTML shell.',
+      '    - _Files to modify: index.html_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md E1; requirements.md R1_',
+      '    - _Done when: page shell exists_',
+      '    - _Verification: inspect index.html_',
+      '',
+    ].join('\n'), {
+      now: '2026-06-18T00:00:00.000Z',
+      includeCompletedTasks: true,
+      requireTaskEvidence: true,
+    });
+    const previousSubtask = previousPlan.phases[0].subtasks?.[0];
+    if (previousSubtask) {
+      previousSubtask.completed_at = '2026-06-18T00:10:00.000Z';
+      previousSubtask.completion_summary = 'Previously implemented page shell.';
+    }
+
+    const nextPlan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Create page shell',
+      '    - Create the existing HTML shell.',
+      '    - _Files to modify: index.html_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md E1; requirements.md R1_',
+      '    - _Done when: page shell exists_',
+      '    - _Verification: inspect index.html_',
+      '',
+    ].join('\n'), {
+      now: '2026-06-18T00:20:00.000Z',
+      includeCompletedTasks: true,
+      requireTaskEvidence: true,
+    });
+
+    expect(nextPlan.phases[0].subtasks?.[0]?.status).toBe('pending');
+
+    const preservedPlan = preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown(
+      nextPlan,
+      stringifyAutocodeImplementationPlanMarkdown(previousPlan),
+    );
+
+    const preservedSubtask = preservedPlan.phases[0].subtasks?.[0];
+    expect(preservedSubtask?.status).toBe('completed');
+    expect(preservedSubtask?.completed_at).toBe('2026-06-18T00:10:00.000Z');
+    expect(preservedSubtask?.completion_summary).toBe('Previously implemented page shell.');
+  });
+
+  it('does not preserve completed runtime work package state when iteration changes task content', () => {
+    const previousPlan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [x] 1.1 Create page shell',
+      '    - Create the existing HTML shell.',
+      '    - _Files to modify: index.html_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md E1; requirements.md R1_',
+      '    - _Verification: inspect index.html_',
+      '',
+    ].join('\n'), {
+      now: '2026-06-18T00:00:00.000Z',
+      includeCompletedTasks: true,
+      requireTaskEvidence: true,
+    });
+
+    const nextPlan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Create page shell',
+      '    - Create the existing HTML shell.',
+      '    - _Files to modify: index.html_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R9, AC9_',
+      '    - _Evidence: spec.md E9; requirements.md R9_',
+      '    - _Verification: inspect index.html for the new feedback_',
+      '',
+    ].join('\n'), {
+      now: '2026-06-18T00:20:00.000Z',
+      includeCompletedTasks: true,
+      requireTaskEvidence: true,
+    });
+
+    const preservedPlan = preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown(
+      nextPlan,
+      stringifyAutocodeImplementationPlanMarkdown(previousPlan),
+    );
+
+    expect(preservedPlan.phases[0].subtasks?.[0]?.status).toBe('pending');
+  });
+  it('preserves completed upstream task state before regrouping Standard iteration work packages', () => {
+    const previousPlan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [x] 1.1 Create page shell',
+      '    - Create the existing HTML shell.',
+      '    - _Files to modify: index.html_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md E1; requirements.md R1_',
+      '    - _Done when: page shell exists_',
+      '    - _Verification: inspect index.html_',
+      '',
+    ].join('\n'), {
+      now: '2026-06-18T00:00:00.000Z',
+      includeCompletedTasks: true,
+      requireTaskEvidence: true,
+    });
+
+    const nextPlan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Create page shell',
+      '    - Create the existing HTML shell.',
+      '    - _Files to modify: index.html_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md E1; requirements.md R1_',
+      '    - _Done when: page shell exists_',
+      '    - _Verification: inspect index.html_',
+      '',
+      '  - [ ] 1.2 Add focused follow-up',
+      '    - Add only the newly requested focused behavior.',
+      '    - _Files to modify: index.html_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R2, AC2_',
+      '    - _Evidence: HUMAN_INPUT.md latest change request; requirements.md R2_',
+      '    - _Done when: focused follow-up exists_',
+      '    - _Verification: inspect index.html for focused follow-up_',
+      '',
+    ].join('\n'), {
+      now: '2026-06-18T00:20:00.000Z',
+      includeCompletedTasks: true,
+      requireTaskEvidence: true,
+      preserveCompletedStateFromPreviousPlanMarkdown: stringifyAutocodeImplementationPlanMarkdown(previousPlan),
+    });
+
+    const subtasks = nextPlan.phases[0].subtasks ?? [];
+    expect(subtasks.some((subtask) =>
+      subtask.status === 'completed' && subtask.upstream_task_ids?.includes('1.1')
+    )).toBe(true);
+    expect(subtasks.some((subtask) =>
+      subtask.status === 'pending' && subtask.upstream_task_ids?.includes('1.2')
+    )).toBe(true);
+  });
   it('accepts localized evidence metadata when building runtime work packages', () => {
     const parsed = parseAutocodeImplementationPlanMarkdown([
       '# Tasks',

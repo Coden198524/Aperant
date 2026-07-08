@@ -1522,6 +1522,7 @@ export {
   determineAutocodeProjectTaskStatus,
   loadAutocodeProjectTasks,
   loadAutocodeTasksFromSpecsDir,
+  recoverAutocodeCodingWorkItemStatusesFromLogs,
 } from './tasks/project-task-loader.js';
 
 export {

@@ -71,6 +71,24 @@ describe('Rate Limit Detector', () => {
       expect(info.profileId).toBeUndefined();
     });
 
+    it('should classify Codex model capacity as OpenAI rate limit', async () => {
+      const { detectRateLimit, createSDKRateLimitInfo } = await import('../rate-limit-detector');
+
+      const output = JSON.stringify({
+        type: 'turn.failed',
+        error: { message: 'Selected model is at capacity. Please try a different model.' }
+      });
+      const result = detectRateLimit(output);
+      const info = createSDKRateLimitInfo('task', result, { taskId: '001-task' });
+
+      expect(result.isRateLimited).toBe(true);
+      expect(result.provider).toBe('openai');
+      expect(result.limitType).toBe('session');
+      expect(result.profileId).toBeUndefined();
+      expect(result.suggestedProfile).toBeUndefined();
+      expect(info.provider).toBe('openai');
+      expect(info.profileName).toBe('OpenAI / Codex');
+    });
     it('should detect secondary rate limit indicators', async () => {
       const { detectRateLimit } = await import('../rate-limit-detector');
 

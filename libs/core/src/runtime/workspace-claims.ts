@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { getAutocodeProjectLocksDir } from '../project/data-paths.js';
 
@@ -278,10 +279,11 @@ export function collectAutocodeRuntimeFileIntentsFromPlan(plan: unknown): string
 export async function acquireAutocodeRuntimeFileWriteLock(
   input: AutocodeRuntimeFileWriteLockInput,
 ): Promise<AutocodeRuntimeFileWriteLock> {
-  const attempt = createAutocodeRuntimeFileWriteLockAttempt(input);
+  let attempt = prepareAutocodeRuntimeFileWriteLockAttempt(
+    input,
+    createAutocodeRuntimeFileWriteLockAttempt(input),
+  );
   const deadline = Date.now() + attempt.timeoutMs;
-
-  mkdirSync(getAutocodeRuntimeFileWriteLocksDir(attempt.projectRoot, input.dataDirName), { recursive: true });
 
   while (true) {
     try {
@@ -298,6 +300,11 @@ export async function acquireAutocodeRuntimeFileWriteLock(
       };
     } catch (error) {
       if (!isNodeFileExistsError(error)) {
+        const fallbackAttempt = maybeFallbackAutocodeRuntimeFileWriteLockAttempt(input, attempt, error);
+        if (fallbackAttempt) {
+          attempt = fallbackAttempt;
+          continue;
+        }
         throw error;
       }
 
@@ -325,10 +332,11 @@ export async function acquireAutocodeRuntimeFileWriteLock(
 export function acquireAutocodeRuntimeFileWriteLockSync(
   input: AutocodeRuntimeFileWriteLockInput,
 ): AutocodeRuntimeFileWriteLock {
-  const attempt = createAutocodeRuntimeFileWriteLockAttempt(input);
+  let attempt = prepareAutocodeRuntimeFileWriteLockAttempt(
+    input,
+    createAutocodeRuntimeFileWriteLockAttempt(input),
+  );
   const deadline = Date.now() + attempt.timeoutMs;
-
-  mkdirSync(getAutocodeRuntimeFileWriteLocksDir(attempt.projectRoot, input.dataDirName), { recursive: true });
 
   while (true) {
     try {
@@ -345,6 +353,11 @@ export function acquireAutocodeRuntimeFileWriteLockSync(
       };
     } catch (error) {
       if (!isNodeFileExistsError(error)) {
+        const fallbackAttempt = maybeFallbackAutocodeRuntimeFileWriteLockAttempt(input, attempt, error);
+        if (fallbackAttempt) {
+          attempt = fallbackAttempt;
+          continue;
+        }
         throw error;
       }
 
@@ -441,22 +454,30 @@ export function inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(
   };
 }
 
-function createAutocodeRuntimeFileWriteLockAttempt(input: AutocodeRuntimeFileWriteLockInput): {
+interface AutocodeRuntimeFileWriteLockAttempt {
   projectRoot: string;
   filePath: string;
   ownerId: string;
   token: string;
   acquiredAt: string;
+  lockRoot: string;
   lockDir: string;
   metadataPath: string;
   timeoutMs: number;
   retryMs: number;
   staleMs: number;
-} {
+  usesFallbackLockRoot: boolean;
+}
+
+function createAutocodeRuntimeFileWriteLockAttempt(
+  input: AutocodeRuntimeFileWriteLockInput,
+  lockRootOverride?: string,
+): AutocodeRuntimeFileWriteLockAttempt {
   const projectRoot = normalizeAutocodeRuntimePath(input.projectRoot);
   const filePath = normalizeAutocodeRuntimeFileIntent(input.filePath, projectRoot)
     ?? normalizeAutocodeRuntimePath(input.filePath);
-  const lockDir = getAutocodeRuntimeFileWriteLockDir(projectRoot, filePath, input.dataDirName);
+  const lockRoot = lockRootOverride ?? getAutocodeRuntimeFileWriteLocksDir(projectRoot, input.dataDirName);
+  const lockDir = getAutocodeRuntimeFileWriteLockDirInRoot(lockRoot, filePath);
 
   return {
     projectRoot,
@@ -464,12 +485,60 @@ function createAutocodeRuntimeFileWriteLockAttempt(input: AutocodeRuntimeFileWri
     ownerId: input.ownerId?.trim() || 'unknown',
     token: randomUUID(),
     acquiredAt: toAutocodeRuntimeIsoDate(input.now),
+    lockRoot,
     lockDir,
     metadataPath: getAutocodeRuntimeFileWriteLockMetadataPath(lockDir),
     timeoutMs: Math.max(0, input.timeoutMs ?? AUTOCODE_RUNTIME_FILE_WRITE_LOCK_TIMEOUT_MS),
     retryMs: Math.max(1, input.retryMs ?? AUTOCODE_RUNTIME_FILE_WRITE_LOCK_RETRY_MS),
     staleMs: Math.max(0, input.staleMs ?? AUTOCODE_RUNTIME_FILE_WRITE_LOCK_STALE_MS),
+    usesFallbackLockRoot: Boolean(lockRootOverride),
   };
+}
+
+function prepareAutocodeRuntimeFileWriteLockAttempt(
+  input: AutocodeRuntimeFileWriteLockInput,
+  attempt: AutocodeRuntimeFileWriteLockAttempt,
+): AutocodeRuntimeFileWriteLockAttempt {
+  try {
+    mkdirSync(attempt.lockRoot, { recursive: true });
+    return attempt;
+  } catch (error) {
+    const fallbackAttempt = maybeFallbackAutocodeRuntimeFileWriteLockAttempt(input, attempt, error);
+    if (fallbackAttempt) {
+      return fallbackAttempt;
+    }
+    throw error;
+  }
+}
+
+function maybeFallbackAutocodeRuntimeFileWriteLockAttempt(
+  input: AutocodeRuntimeFileWriteLockInput,
+  attempt: AutocodeRuntimeFileWriteLockAttempt,
+  error: unknown,
+): AutocodeRuntimeFileWriteLockAttempt | null {
+  if (attempt.usesFallbackLockRoot || !isNodeLockStorageError(error)) {
+    return null;
+  }
+
+  const fallbackAttempt = createAutocodeRuntimeFileWriteLockAttempt(
+    input,
+    getAutocodeRuntimeFallbackFileWriteLocksDir(attempt.projectRoot, input.dataDirName),
+  );
+  mkdirSync(fallbackAttempt.lockRoot, { recursive: true });
+  return fallbackAttempt;
+}
+
+function getAutocodeRuntimeFileWriteLockDirInRoot(lockRoot: string, filePath: string): string {
+  const key = createHash('sha256').update(normalizeAutocodeRuntimePath(filePath)).digest('hex').slice(0, 32);
+  return join(lockRoot, `${key}.lock`);
+}
+
+function getAutocodeRuntimeFallbackFileWriteLocksDir(projectRoot: string, dataDirName?: string): string {
+  const scopeKey = createHash('sha256')
+    .update(`${normalizeAutocodeRuntimePath(projectRoot)}\0${dataDirName ?? ''}`)
+    .digest('hex')
+    .slice(0, 32);
+  return join(tmpdir(), 'autocode-runtime-file-write-locks', scopeKey, AUTOCODE_RUNTIME_FILE_WRITE_LOCKS_DIR_NAME);
 }
 
 function collectPlanWorkItems(plan: unknown): Record<string, unknown>[] {
@@ -663,6 +732,15 @@ function isAutocodeRuntimeFileWriteLockHeldBySameOwner(lockDir: string, ownerId:
 
 function isNodeFileExistsError(error: unknown): boolean {
   return !!error && typeof error === 'object' && (error as NodeJS.ErrnoException).code === 'EEXIST';
+}
+
+function isNodeLockStorageError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  return ['EACCES', 'ENAMETOOLONG', 'ENOENT', 'ENOTDIR', 'EPERM', 'EROFS'].includes(
+    (error as NodeJS.ErrnoException).code ?? '',
+  );
 }
 
 function waitForAutocodeRuntimeFileWriteLock(delayMs: number): Promise<void> {

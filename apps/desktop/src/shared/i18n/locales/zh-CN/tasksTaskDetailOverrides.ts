@@ -27,7 +27,8 @@ export const zhCNTasksTaskDetailOverrides = {
       qa_review: 'AI \u5ba1\u67e5\u4e2d',
       qa_fixing: '\u4fee\u590d\u95ee\u9898\u4e2d',
       complete: '\u5df2\u5b8c\u6210',
-      failed: '\u5931\u8d25'
+      failed: '\u5931\u8d25',
+      stopped: '\u5df2\u505c\u6b62'
     }
   },
   metadata: {

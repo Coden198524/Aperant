@@ -20,6 +20,12 @@ const RATE_LIMIT_PATTERN = /Limit reached\s*[·•]\s*resets\s+(.+?)(?:\s*$|\n)/
  */
 const CODEX_RATE_LIMIT_PATTERN =
   /(?:usage_limit_exceeded|UsageLimitExceeded|(?:you['’]?ve|you have)\s+hit\s+your\s+usage\s+limit)(?:[\s\S]{0,300}?(?:try again at|reset(?:s|_at)?|resets?\s+at)\s*[:=]?\s*["']?([^."'}\n]+))?/im;
+/**
+ * Codex/OpenAI transient capacity errors. Treat these like rate limits so
+ * task execution pauses or reports provider capacity instead of failing a work item.
+ */
+const CODEX_CAPACITY_PATTERN =
+  /(?:selected\s+)?model\s+(?:is\s+)?at\s+capacity|at\s+capacity[\s\S]{0,120}?try\s+a\s+different\s+model/im;
 
 /**
  * Additional patterns that might indicate rate limiting
@@ -266,6 +272,17 @@ export function detectRateLimit(
       provider: 'openai',
       resetTime,
       limitType,
+      profileId,
+      originalError: sanitizeErrorOutput(output)
+    };
+  }
+
+  // Check for Codex/OpenAI transient capacity errors
+  if (CODEX_CAPACITY_PATTERN.test(output)) {
+    return {
+      isRateLimited: true,
+      provider: 'openai',
+      limitType: 'session',
       profileId,
       originalError: sanitizeErrorOutput(output)
     };

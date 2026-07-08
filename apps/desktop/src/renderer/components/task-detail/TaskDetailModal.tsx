@@ -233,6 +233,12 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
     if (result.success) {
       state.setIsStuck(false);
       state.setHasCheckedRunning(false);
+    } else {
+      toast({
+        title: t('tasks:detail.recoverFailed', { defaultValue: 'Recovery failed' }),
+        description: result.message,
+        variant: 'destructive',
+      });
     }
     state.setIsRecovering(false);
   };

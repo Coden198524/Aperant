@@ -5,6 +5,8 @@ import {
   AUTOCODE_TASK_ARTIFACTS,
   createAutocodeAgentRuntimePlan,
   getAutocodeAgentRuntimeModeLabel,
+  readAutocodeTaskLogsFromSpecDir,
+  recoverAutocodeCodingWorkItemStatusesFromLogs,
   resolveAutocodeTaskDevelopmentMode,
   resolveAutocodeTaskStartEvent,
   startAutocodeAgentRuntime,
@@ -82,13 +84,6 @@ interface ChangeRequestRecord {
   iteration: ChangeRequestIterationPlan;
   feedback: string;
   attachmentsMarkdown?: string;
-}
-
-interface StandardChangeRequestPatchResult {
-  applied: boolean;
-  patchedSpecDirs: string[];
-  patchedFiles: string[];
-  reason?: string;
 }
 
 type CoreTaskModeMetadata = Parameters<typeof resolveAutocodeTaskDevelopmentMode>[0];
@@ -203,6 +198,335 @@ function getPlanFilePathsForTask(project: Project, task: Task, specsBaseDir: str
   return paths;
 }
 
+function getPlanTimestamp(plan: Record<string, unknown>): number {
+  const rawTimestamp = typeof plan.updated_at === 'string'
+    ? plan.updated_at
+    : typeof plan.updatedAt === 'string'
+      ? plan.updatedAt
+      : typeof plan.last_updated === 'string'
+        ? plan.last_updated
+        : '';
+  const timestamp = Date.parse(rawTimestamp);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isStoppedReviewPlan(plan: Record<string, unknown>): boolean {
+  return (
+    plan.status === 'human_review' &&
+    plan.reviewReason === 'stopped'
+  ) || (
+    plan.xstateState === 'human_review' &&
+    plan.executionPhase === 'stopped'
+  );
+}
+
+function applyStoppedReviewPlanStatus(plan: Record<string, unknown>, updatedAt: string): Record<string, unknown> {
+  return {
+    ...plan,
+    status: 'human_review',
+    planStatus: 'review',
+    reviewReason: 'stopped',
+    xstateState: 'human_review',
+    executionPhase: 'stopped',
+    updated_at: updatedAt,
+  };
+}
+
+function persistStoppedReviewStatusAcrossPlanPaths(planFilePaths: string[], logPrefix: string): boolean {
+  const updatedAt = new Date().toISOString();
+  let persisted = false;
+
+  for (const planPath of Array.from(new Set(planFilePaths))) {
+    try {
+      if (!existsSync(planPath)) {
+        continue;
+      }
+      const plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
+      if (!plan) {
+        continue;
+      }
+      saveImplementationPlanToFilesSync(
+        planPath,
+        applyStoppedReviewPlanStatus(plan, updatedAt) as ShardableImplementationPlan,
+      );
+      persisted = true;
+      console.warn(`${logPrefix} Persisted stopped state to: ${planPath}`);
+    } catch (error) {
+      console.error(`${logPrefix} Failed to persist stopped state to: ${planPath}`, error);
+    }
+  }
+
+  return persisted;
+}
+
+function applyCompletedReviewPlanStatus(plan: Record<string, unknown>, updatedAt: string): Record<string, unknown> {
+  return {
+    ...plan,
+    status: 'human_review',
+    planStatus: 'review',
+    reviewReason: 'completed',
+    xstateState: 'human_review',
+    executionPhase: 'complete',
+    updated_at: updatedAt,
+  };
+}
+
+function persistCompletedReviewStatusAcrossPlanPaths(planFilePaths: string[], logPrefix: string): boolean {
+  const updatedAt = new Date().toISOString();
+  let persisted = false;
+
+  for (const planPath of Array.from(new Set(planFilePaths))) {
+    try {
+      if (!existsSync(planPath)) {
+        continue;
+      }
+      const plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
+      if (!plan) {
+        continue;
+      }
+      saveImplementationPlanToFilesSync(
+        planPath,
+        applyCompletedReviewPlanStatus(plan, updatedAt) as ShardableImplementationPlan,
+      );
+      persisted = true;
+      console.warn(`${logPrefix} Persisted completed review state to: ${planPath}`);
+    } catch (error) {
+      console.error(`${logPrefix} Failed to persist completed review state to: ${planPath}`, error);
+    }
+  }
+
+  return persisted;
+}
+
+function loadLatestPlanFromPaths(planFilePaths: string[]): Record<string, unknown> | null {
+  let latestPlan: Record<string, unknown> | null = null;
+  let latestTimestamp = Number.NEGATIVE_INFINITY;
+
+  for (const planPath of Array.from(new Set(planFilePaths))) {
+    try {
+      if (!existsSync(planPath)) {
+        continue;
+      }
+      const plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
+      if (!plan) {
+        continue;
+      }
+      const timestamp = getPlanTimestamp(plan);
+      if (!latestPlan || timestamp >= latestTimestamp) {
+        latestPlan = plan;
+        latestTimestamp = timestamp;
+      }
+    } catch (error) {
+      console.error(`[plan-file-utils] Failed to inspect plan completion at ${planPath}:`, error);
+    }
+  }
+
+  return latestPlan;
+}
+
+function isLatestPlanFullyCompleted(planFilePaths: string[]): boolean {
+  const latestPlan = loadLatestPlanFromPaths(planFilePaths);
+  return checkSubtasksCompletion(latestPlan).allCompleted;
+}
+
+function emitCompletedReviewStatus(mainWindow: BrowserWindow | null, taskId: string, projectId: string): void {
+  if (!mainWindow) {
+    return;
+  }
+
+  mainWindow.webContents.send(
+    IPC_CHANNELS.TASK_STATUS_CHANGE,
+    taskId,
+    'human_review',
+    projectId,
+    'completed',
+  );
+  mainWindow.webContents.send(
+    IPC_CHANNELS.TASK_EXECUTION_PROGRESS,
+    taskId,
+    {
+      phase: 'complete',
+      phaseProgress: 100,
+      overallProgress: 100,
+    },
+    projectId,
+  );
+}
+function applyRuntimeStartedPlanStatus(
+  plan: Record<string, unknown>,
+  executionPhase: 'planning' | 'coding',
+  updatedAt: string,
+): Record<string, unknown> {
+  const nextPlan: Record<string, unknown> = {
+    ...plan,
+    status: 'in_progress',
+    planStatus: executionPhase === 'planning' ? 'planning' : 'in_progress',
+    xstateState: executionPhase,
+    executionPhase,
+    updated_at: updatedAt,
+  };
+  delete nextPlan.reviewReason;
+  return nextPlan;
+}
+
+function persistRuntimeStartedStatusAcrossPlanPaths(
+  planFilePaths: string[],
+  executionPhase: 'planning' | 'coding',
+  logPrefix: string,
+  projectId?: string,
+): boolean {
+  const updatedAt = new Date().toISOString();
+  let persisted = false;
+
+  for (const planPath of Array.from(new Set(planFilePaths))) {
+    try {
+      if (!existsSync(planPath)) {
+        continue;
+      }
+      const plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
+      if (!plan) {
+        continue;
+      }
+      saveImplementationPlanToFilesSync(
+        planPath,
+        applyRuntimeStartedPlanStatus(plan, executionPhase, updatedAt) as ShardableImplementationPlan,
+      );
+      persisted = true;
+      console.warn(`${logPrefix} Persisted runtime ${executionPhase} state to: ${planPath}`);
+    } catch (error) {
+      console.error(`${logPrefix} Failed to persist runtime ${executionPhase} state to: ${planPath}`, error);
+    }
+  }
+
+  if (persisted && projectId) {
+    projectStore.invalidateTasksCache(projectId);
+  }
+
+  return persisted;
+}
+
+function syncStoppedReviewStatusAcrossPlanPaths(planFilePaths: string[], logPrefix: string): boolean {
+  const snapshots = Array.from(new Set(planFilePaths))
+    .map((planPath) => {
+      try {
+        if (!existsSync(planPath)) {
+          return null;
+        }
+        const plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
+        return plan ? { planPath, plan, timestamp: getPlanTimestamp(plan) } : null;
+      } catch (error) {
+        console.warn(`${logPrefix} Failed to read plan for stopped-state sync:`, planPath, error);
+        return null;
+      }
+    })
+    .filter((value): value is { planPath: string; plan: Record<string, unknown>; timestamp: number } => Boolean(value));
+
+  if (snapshots.length < 2) {
+    return false;
+  }
+
+  const latestStopped = snapshots
+    .filter((snapshot) => isStoppedReviewPlan(snapshot.plan))
+    .sort((left, right) => right.timestamp - left.timestamp)[0];
+
+  if (!latestStopped) {
+    return false;
+  }
+
+  const latestOtherTimestamp = Math.max(
+    0,
+    ...snapshots
+      .filter((snapshot) => !isStoppedReviewPlan(snapshot.plan))
+      .map((snapshot) => snapshot.timestamp),
+  );
+
+  if (latestOtherTimestamp > latestStopped.timestamp) {
+    return false;
+  }
+
+  const updatedAt = typeof latestStopped.plan.updated_at === 'string'
+    ? latestStopped.plan.updated_at
+    : new Date().toISOString();
+  let synced = false;
+
+  for (const snapshot of snapshots) {
+    if (isStoppedReviewPlan(snapshot.plan)) {
+      continue;
+    }
+    try {
+      saveImplementationPlanToFilesSync(
+        snapshot.planPath,
+        applyStoppedReviewPlanStatus(snapshot.plan, updatedAt) as ShardableImplementationPlan,
+      );
+      synced = true;
+      console.warn(`${logPrefix} Synced stopped task state to stale plan:`, snapshot.planPath);
+    } catch (error) {
+      console.error(`${logPrefix} Failed to sync stopped task state to:`, snapshot.planPath, error);
+    }
+  }
+
+  return synced;
+}
+
+function getSpecDirFromPlanFilePath(planFilePath: string): string {
+  return path.basename(planFilePath) === AUTOCODE_TASK_ARTIFACTS.implementationPlan
+    ? path.dirname(planFilePath)
+    : planFilePath;
+}
+
+function recoverCodingWorkItemStatusesAcrossPlanPaths(planFilePaths: string[], specId: string, logPrefix: string): boolean {
+  const uniquePlanPaths = Array.from(new Set(planFilePaths));
+  const logSources = Array.from(new Set(uniquePlanPaths.map(getSpecDirFromPlanFilePath)))
+    .map((specDir) => {
+      try {
+        return readAutocodeTaskLogsFromSpecDir(specDir, specId);
+      } catch (error) {
+        console.warn(`${logPrefix} Failed to read task logs for recovery:`, specDir, error);
+        return null;
+      }
+    })
+    .filter((logs): logs is NonNullable<ReturnType<typeof readAutocodeTaskLogsFromSpecDir>> => Boolean(logs));
+
+  if (logSources.length === 0) {
+    return false;
+  }
+
+  let recoveredAny = false;
+  for (const planPath of uniquePlanPaths) {
+    try {
+      if (!existsSync(planPath)) {
+        continue;
+      }
+
+      let plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
+      if (!plan) {
+        continue;
+      }
+
+      let recoveredCount = 0;
+      for (const logs of logSources) {
+        const recovery = recoverAutocodeCodingWorkItemStatusesFromLogs({ plan, logs });
+        if (recovery.recoveredCount > 0 && recovery.plan) {
+          plan = recovery.plan;
+          recoveredCount += recovery.recoveredCount;
+        }
+      }
+
+      if (recoveredCount === 0 || !plan) {
+        continue;
+      }
+
+      saveImplementationPlanToFilesSync(planPath, plan as ShardableImplementationPlan);
+      recoveredAny = true;
+      console.warn(`${logPrefix} Recovered ${recoveredCount} coding work item status(es) from task logs in:`, planPath);
+    } catch (error) {
+      console.warn(`${logPrefix} Failed to recover coding work item statuses for:`, planPath, error);
+    }
+  }
+
+  return recoveredAny;
+}
+
 function isDirectWorkflowTask(task: Task): boolean {
   return resolveAutocodeTaskDevelopmentMode(task.metadata as CoreTaskModeMetadata, 'standard') === 'direct';
 }
@@ -225,6 +549,43 @@ function isPlanReviewRequest(task: Task, currentXState?: string | null): boolean
   }
 
   return task.status === 'human_review' && task.executionProgress?.phase === 'planning';
+}
+
+const STANDARD_PLANNING_ITERATION_MARKERS = [
+  'Standard Iteration Protocol',
+  'incremental task-iteration planning pass',
+  'Autocode Standard iteration flow',
+  'Do not implement code in this planning pass',
+  'planning artifacts were patched locally',
+  '"mode":"standard-planning"',
+  '"scope":"planning"',
+];
+
+function hasStandardPlanningIterationInput(planFilePaths: string[]): boolean {
+  const specDirs = Array.from(new Set(planFilePaths.map(getSpecDirFromPlanFilePath)));
+
+  return specDirs.some((specDir) => {
+    const humanInput = safeReadFileSync(path.join(specDir, 'HUMAN_INPUT.md')) ?? '';
+    const changeRequests = safeReadFileSync(path.join(specDir, CHANGE_REQUESTS_LOG_FILE)) ?? '';
+    const text = `${humanInput}\n${changeRequests}`;
+    return STANDARD_PLANNING_ITERATION_MARKERS.some((marker) => text.includes(marker));
+  });
+}
+
+function shouldForceStandardPlanningIterationOnStart(
+  task: Task,
+  currentXState: string | undefined,
+  planFilePaths: string[],
+): boolean {
+  if (!isStandardWorkflowTask(task)) {
+    return false;
+  }
+
+  if (currentXState === 'plan_review' || task.reviewReason === 'plan_review') {
+    return false;
+  }
+
+  return hasStandardPlanningIterationInput(planFilePaths);
 }
 
 function getTaskBaseBranch(task: Task, project: Project): string | undefined {
@@ -362,20 +723,15 @@ function classifyChangeRequestImpact(
   return orderedImpacts.filter((impact) => impacts.has(impact));
 }
 
-function shouldRegeneratePlanForFeedback(task: Task, impacts: ChangeRequestImpact[], feedback: string): boolean {
+function shouldRunPlanningIterationForFeedback(task: Task, _impacts: ChangeRequestImpact[], _feedback: string): boolean {
   if (isDirectWorkflowTask(task)) {
     return false;
   }
 
-  const changesPlanningArtifacts = impacts.some((impact) =>
-    impact === 'requirements' || impact === 'design' || impact === 'tasks'
-  );
-
-  if (changesPlanningArtifacts) {
-    return isStandardWorkflowTask(task);
-  }
-
-  return false;
+  // Standard Request Changes must always go through the same-task planning
+  // iteration first. Coding directly from review feedback skips requirements,
+  // tasks.md, and implementation_plan regeneration.
+  return isStandardWorkflowTask(task);
 }
 
 function normalizeDirectChangeImpacts(impacts: ChangeRequestImpact[]): ChangeRequestImpact[] {
@@ -554,10 +910,11 @@ function buildHumanInputContent(
       `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
       `## Instructions\n\n` +
       `- Treat this as an iteration of the existing task. Do not create a new task unless the user explicitly asks for a separate follow-up task.\n` +
-      `- First update requirements/design/task artifacts so they reflect this change request before any coding pass.\n` +
-      `- For Standard tasks, update spec.md with changed requirements, design decisions, acceptance criteria, risks, and open questions.\n` +
-      `- Then update tasks.md with concrete pending subtasks that implement this feedback and keep dependencies/verification current.\n` +
-      `- Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan.\n` +
+      `- First run an incremental task-iteration planning pass before any coding pass.\n` +
+      `- Update only the requirements/design/task artifacts affected by this change request; keep unaffected content and completed work stable.\n` +
+      `- For Standard tasks, update spec.md only for changed requirements, design decisions, acceptance criteria, risks, or open questions.\n` +
+      `- Update tasks.md by editing represented subtasks in place and resetting only affected items to pending; add new subtasks only for genuinely new requirements or verification gaps.\n` +
+      `- Use the Autocode Standard iteration flow incrementally: changed requirements/design -> affected tasks -> derived implementation plan. Do not regenerate the entire task plan.\n` +
       `- Do not edit implementation_plan.md directly in this planning pass; the runtime derives it from validated tasks.md after planning succeeds.\n` +
       `- Edit incrementally: only touch affected requirement IDs, design notes, risks, acceptance criteria, and task checklist items. Keep unaffected sections stable.\n` +
       `- Every new or revised requirement/design/task must keep or add Evidence. If evidence is missing, record an assumption/open question or add a validation task instead of guessing.\n` +
@@ -615,41 +972,6 @@ function buildDirectHumanInputContent(
     `- Inspect only the files needed to understand and fix the reported issue.\n` +
     `- Run one focused validation check when practical, or record why validation was not possible.\n` +
     `- Update direct_summary.md with what changed and the validation result.\n`
-  );
-}
-
-function buildLocalPatchedStandardInputContent(
-  feedback: string,
-  imageReferences: string,
-  changeRequest: ChangeRequestRecord,
-  patchResult: StandardChangeRequestPatchResult,
-): string {
-  const patchedFileNames = Array.from(new Set(
-    patchResult.patchedFiles.map((filePath) => path.basename(filePath)),
-  ));
-  const patchedFilesLine = patchedFileNames.length > 0
-    ? patchedFileNames.join(', ')
-    : AUTOCODE_TASK_ARTIFACTS.implementationPlan;
-
-  return (
-    `# Human Input\n\n` +
-    `The user requested a same-task Standard iteration. The planning artifacts were patched locally before this coding pass.\n\n` +
-    `## Change Request\n\n` +
-    `- ID: ${changeRequest.id}\n` +
-    `- Created: ${changeRequest.createdAt}\n` +
-    `- Scope: ${changeRequest.scope}\n` +
-    `- Impact analysis: ${changeRequest.impacts.join(', ') || 'implementation'}\n` +
-    `- Audit trail: ${CHANGE_REQUESTS_LOG_FILE}\n` +
-    `- Patched files: ${patchedFilesLine}\n\n` +
-    `## Requested Changes\n\n` +
-    `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
-    `## Instructions\n\n` +
-    `- Continue coding from the pending change-request work item in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.\n` +
-    `- Do not regenerate the full plan unless the patched artifacts are missing or internally inconsistent.\n` +
-    `- Implement only behavior required by this change request and preserve completed work that still satisfies the updated requirements.\n` +
-    `- Read the latest ${CHANGE_REQUESTS_LOG_FILE} entry only if you need the structured iteration contract.\n` +
-    `- Update ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as subtasks progress, including validation results.\n` +
-    `- Run the smallest reliable targeted validation for the affected area before returning to review.\n`
   );
 }
 
@@ -728,253 +1050,6 @@ function reopenCompletedPlanForFollowupFix(planPath: string, feedback: string): 
     console.error('[reopenCompletedPlanForFollowupFix] Failed to update plan:', error);
     return false;
   }
-}
-
-function applyStandardChangeRequestLocalPatch(
-  specDirs: Iterable<string>,
-  changeRequest: ChangeRequestRecord,
-): StandardChangeRequestPatchResult {
-  const patchedSpecDirs: string[] = [];
-  const patchedFiles = new Set<string>();
-  const uniqueSpecDirs = Array.from(new Set(specDirs));
-  let planPatchApplied = false;
-
-  for (const specDir of uniqueSpecDirs) {
-    try {
-      mkdirSync(specDir, { recursive: true });
-      const changedFiles = patchStandardChangeRequestArtifacts(specDir, changeRequest);
-      const planPatched = patchStandardChangeRequestImplementationPlan(specDir, changeRequest);
-      if (changedFiles.length > 0 || planPatched) {
-        patchedSpecDirs.push(specDir);
-        changedFiles.forEach((file) => patchedFiles.add(file));
-        if (planPatched) {
-          planPatchApplied = true;
-          patchedFiles.add(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
-        }
-      }
-    } catch (error) {
-      console.warn('[TASK_REVIEW] Failed to apply local Standard change patch:', error);
-    }
-  }
-
-  return {
-    applied: planPatchApplied,
-    patchedSpecDirs,
-    patchedFiles: Array.from(patchedFiles),
-    ...(planPatchApplied ? {} : { reason: 'No existing implementation_plan.md could be patched locally.' }),
-  };
-}
-
-function patchStandardChangeRequestArtifacts(
-  specDir: string,
-  changeRequest: ChangeRequestRecord,
-): string[] {
-  const changed: string[] = [];
-  const impacts = new Set(changeRequest.impacts);
-
-  if (changeRequest.iteration.flowDocuments.includes('spec.md')) {
-    const filePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
-    if (appendChangeRequestSection(filePath, buildSpecChangeRequestSection(changeRequest))) {
-      changed.push(filePath);
-    }
-  }
-
-  if (changeRequest.iteration.flowDocuments.includes('requirements.md')) {
-    const filePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.requirements);
-    if (appendChangeRequestSection(filePath, buildRequirementsChangeRequestSection(changeRequest))) {
-      changed.push(filePath);
-    }
-  }
-
-  if (changeRequest.iteration.flowDocuments.includes('tasks.md') || impacts.has('tasks')) {
-    const filePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.tasks);
-    if (appendChangeRequestSection(filePath, buildTasksChangeRequestSection(changeRequest))) {
-      changed.push(filePath);
-    }
-  }
-
-  return changed;
-}
-
-function appendChangeRequestSection(filePath: string, section: string): boolean {
-  const existing = safeReadFileSync(filePath);
-  if (existing?.includes(section.match(/CR ID:\s*([^\n]+)/)?.[1] ?? '__missing_change_request_id__')) {
-    return false;
-  }
-
-  const prefix = existing?.trimEnd()
-    ? `${existing.trimEnd()}\n\n`
-    : '';
-  writeFileSync(filePath, `${prefix}${section.trimEnd()}\n`, 'utf-8');
-  return true;
-}
-
-function buildSpecChangeRequestSection(changeRequest: ChangeRequestRecord): string {
-  return [
-    '## Change Request Iterations',
-    '',
-    `### ${changeRequest.id}`,
-    '',
-    `- CR ID: ${changeRequest.id}`,
-    `- Scope: ${changeRequest.scope}`,
-    `- Impacts: ${changeRequest.impacts.join(', ') || 'implementation'}`,
-    `- Evidence: HUMAN_INPUT.md; ${CHANGE_REQUESTS_LOG_FILE}`,
-    `- Requested change: ${compactChangeRequestFeedback(changeRequest.feedback)}`,
-    '- Design note: preserve existing accepted behavior unless this change request explicitly overrides it.',
-    '- Open question policy: if source evidence is missing, record an assumption or validation task before coding.',
-  ].join('\n');
-}
-
-function buildRequirementsChangeRequestSection(changeRequest: ChangeRequestRecord): string {
-  return [
-    '## Change Request Requirements',
-    '',
-    `### ${changeRequest.id}`,
-    '',
-    `- CR ID: ${changeRequest.id}`,
-    `- Requirement delta: ${compactChangeRequestFeedback(changeRequest.feedback)}`,
-    '- Acceptance delta: the changed behavior must satisfy this request without regressing unchanged requirements.',
-    `- Evidence: HUMAN_INPUT.md; ${CHANGE_REQUESTS_LOG_FILE}`,
-    '- Validation: run the smallest reliable check for the affected area and record the result.',
-  ].join('\n');
-}
-
-function buildTasksChangeRequestSection(changeRequest: ChangeRequestRecord): string {
-  const phaseId = buildChangeRequestPlanPhaseId(changeRequest);
-  const summary = buildFollowupSummary(changeRequest.feedback) || changeRequest.id;
-  return [
-    '## Change Request Tasks',
-    '',
-    `CR ID: ${changeRequest.id}`,
-    '',
-    `- [ ] ${phaseId}. Change request ${changeRequest.id}`,
-    '',
-    `- [ ] ${phaseId}.1 Address ${summary}`,
-    `  - Apply only the changes required by ${changeRequest.id}; preserve completed work that still satisfies the updated requirement.`,
-    '  - Reset or revise only affected implementation details.',
-    '  - _Files to modify: none_',
-    '  - _Depends on: none_',
-    `  - _Requirements: ${changeRequest.id}_`,
-    `  - _Evidence: HUMAN_INPUT.md ${changeRequest.id}; ${CHANGE_REQUESTS_LOG_FILE} latest entry_`,
-    `  - _Verification: ${buildChangeRequestVerification(changeRequest)}_`,
-  ].join('\n');
-}
-
-function patchStandardChangeRequestImplementationPlan(
-  specDir: string,
-  changeRequest: ChangeRequestRecord,
-): boolean {
-  const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
-  const plan = loadImplementationPlanFromFilesSync(planPath) as ShardableImplementationPlan | null;
-  if (!plan) {
-    return false;
-  }
-
-  if (!Array.isArray(plan.phases)) {
-    plan.phases = [];
-  }
-
-  const phaseId = buildChangeRequestPlanPhaseId(changeRequest);
-  const existingPhase = plan.phases.find((phase) =>
-    String(phase.id ?? phase.phase ?? '') === phaseId
-  );
-  if (existingPhase) {
-    return true;
-  }
-
-  const referencedSubtaskIds = extractReferencedSubtaskIds(changeRequest.feedback);
-  const revisedCount = markReferencedSubtasksForRevision(plan, referencedSubtaskIds, changeRequest);
-  const summary = buildFollowupSummary(changeRequest.feedback) || changeRequest.id;
-  const phaseNumber = plan.phases.length + 1;
-  plan.phases.push({
-    id: phaseId,
-    phase: phaseNumber,
-    name: `Change request ${changeRequest.id}`,
-    type: 'iteration',
-    depends_on: [],
-    subtasks: [
-      {
-        id: `${phaseId}.1`,
-        title: `Address ${summary}`,
-        description: [
-          `Apply the same-task change request ${changeRequest.id}.`,
-          `Feedback: ${compactChangeRequestFeedback(changeRequest.feedback, 600)}`,
-          revisedCount > 0
-            ? `Previously completed affected subtasks reset for revision: ${referencedSubtaskIds.join(', ')}.`
-            : 'Preserve completed work that still satisfies the updated requirement; only revise affected behavior.',
-        ].join('\n'),
-        status: 'pending',
-        files_to_modify: [],
-        depends_on: [],
-        requirements: [changeRequest.id],
-        evidence: `HUMAN_INPUT.md ${changeRequest.id}; ${CHANGE_REQUESTS_LOG_FILE} latest entry`,
-        verification: {
-          type: 'targeted',
-          run: buildChangeRequestVerification(changeRequest),
-        },
-      },
-    ],
-  });
-
-  plan.status = 'in_progress';
-  plan.planStatus = 'in_progress';
-  plan.reviewReason = undefined;
-  plan.xstateState = 'coding';
-  plan.executionPhase = 'coding';
-  plan.updated_at = new Date().toISOString();
-  saveImplementationPlanToFilesSync(planPath, plan);
-  return true;
-}
-
-function markReferencedSubtasksForRevision(
-  plan: ShardableImplementationPlan,
-  referencedSubtaskIds: string[],
-  changeRequest: ChangeRequestRecord,
-): number {
-  if (referencedSubtaskIds.length === 0) {
-    return 0;
-  }
-
-  const idSet = new Set(referencedSubtaskIds);
-  let revised = 0;
-  for (const phase of plan.phases ?? []) {
-    const subtasks = Array.isArray(phase.subtasks)
-      ? phase.subtasks
-      : Array.isArray(phase.chunks)
-        ? phase.chunks
-        : [];
-    for (const subtask of subtasks) {
-      const id = String(subtask.id ?? subtask.subtask_id ?? '');
-      if (!idSet.has(id)) {
-        continue;
-      }
-      subtask.status = 'pending';
-      subtask.completed_at = null;
-      subtask.duration_ms = null;
-      const existingDescription = typeof subtask.description === 'string' ? subtask.description : '';
-      if (!existingDescription.includes(changeRequest.id)) {
-        subtask.description = [
-          existingDescription,
-          `Needs revision for ${changeRequest.id}: ${compactChangeRequestFeedback(changeRequest.feedback, 400)}`,
-        ].filter(Boolean).join('\n\n');
-      }
-      revised += 1;
-    }
-  }
-  return revised;
-}
-
-function extractReferencedSubtaskIds(feedback: string): string[] {
-  const ids = new Set<string>();
-  for (const match of feedback.matchAll(/\b(?:subtask|task|work package|任务|子任务)?\s*([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)+)\b/gi)) {
-    ids.add(match[1]);
-  }
-  return Array.from(ids);
-}
-
-function buildChangeRequestPlanPhaseId(changeRequest: ChangeRequestRecord): string {
-  const digits = changeRequest.id.replace(/\D/g, '').slice(-8) || '1';
-  return `CR${digits}`;
 }
 
 function buildChangeRequestVerification(changeRequest: ChangeRequestRecord): string {
@@ -1143,6 +1218,23 @@ export function registerTaskExecutionHandlers(
     runtimeAdapter.isRuntimeRunning?.(taskId, projectId) ?? false;
   const stopRuntime = (taskId: string, projectId?: string): Promise<void> | void =>
     runtimeAdapter.stopRuntime(taskId, projectId);
+  const getRuntimeStartErrorMessage = (error: unknown): string =>
+    error instanceof Error ? error.message : 'Failed to start task runtime';
+  const rollbackFailedRuntimeStart = (
+    taskId: string,
+    task: Task,
+    project: Project,
+    planFilePaths: string[],
+    logPrefix: string,
+  ): void => {
+    const hasPlan = hasPlanSubtasksInAnyPath(planFilePaths);
+    taskStateManager.handleUiEvent(taskId, { type: 'USER_STOPPED', hasPlan }, task, project);
+    persistStoppedReviewStatusAcrossPlanPaths(planFilePaths, logPrefix);
+    projectStore.invalidateTasksCache(project.id);
+    fileWatcher.unwatch(taskId, project.id).catch((err) => {
+      console.error(`${logPrefix} Failed to unwatch after failed runtime start for ${taskId}:`, err);
+    });
+  };
 
   const startTaskExecutionFromCurrentPlan = async (
     taskId: string,
@@ -1154,6 +1246,7 @@ export function registerTaskExecutionHandlers(
     const specsBaseDir = getSpecsDir(project.autoBuildPath);
     const specDir = path.join(project.path, specsBaseDir, task.specId);
     const planPath = getPlanPath(project, task);
+    const planFilePaths = getPlanFilePathsForTask(project, task, specsBaseDir);
 
     const resetResult = await resetStuckSubtasks(planPath, project.id);
     if (resetResult.success && resetResult.resetCount > 0) {
@@ -1167,9 +1260,7 @@ export function registerTaskExecutionHandlers(
 
     const specFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
     const hasSpec = existsSync(specFilePath);
-    const planHasSubtasks = options.forcePlanning
-      ? false
-      : hasPlanSubtasksInAnyPath(getPlanFilePathsForTask(project, task, specsBaseDir));
+    const planHasSubtasks = hasPlanSubtasksInAnyPath(planFilePaths);
     const runtimePlan = createRuntimePlanForTask({
       taskId,
       task,
@@ -1192,7 +1283,20 @@ export function registerTaskExecutionHandlers(
     );
 
     console.warn(`${logPrefix} Starting ${getAutocodeAgentRuntimeModeLabel(runtimePlan.mode)} for:`, task.specId);
-    await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
+    const runtimeExecutionPhase = runtimePlan.mode === 'spec' || runtimePlan.mode === 'planning' ? 'planning' : 'coding';
+    persistRuntimeStartedStatusAcrossPlanPaths(planFilePaths, runtimeExecutionPhase, logPrefix, project.id);
+    try {
+      await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
+    } catch (error) {
+      rollbackFailedRuntimeStart(
+        taskId,
+        task,
+        project,
+        planFilePaths,
+        logPrefix,
+      );
+      throw error;
+    }
   };
 
   /**
@@ -1285,11 +1389,6 @@ export function registerTaskExecutionHandlers(
 
       console.warn('[TASK_START] Found task:', task.specId, 'status:', task.status, 'reviewReason:', task.reviewReason, 'subtasks:', task.subtasks.length);
 
-      // Clear stale tracking state from any previous execution so that:
-      // - terminalEventSeen doesn't suppress future PROCESS_EXITED events
-      // - lastSequenceByTask doesn't drop events from the new process
-      taskStateManager.prepareForRestart(taskId, project.id);
-
       // Check if implementation_plan.md has valid subtasks BEFORE XState handling.
       // This is more reliable than task.subtasks.length which may not be loaded yet.
       const specsBaseDir = getSpecsDir(project.autoBuildPath);
@@ -1298,7 +1397,41 @@ export function registerTaskExecutionHandlers(
         specsBaseDir,
         task.specId
       );
-      const planHasSubtasks = hasPlanSubtasksInAnyPath(getPlanFilePathsForTask(project, task, specsBaseDir));
+      const planFilePaths = getPlanFilePathsForTask(project, task, specsBaseDir);
+      const syncedStoppedState = syncStoppedReviewStatusAcrossPlanPaths(planFilePaths, '[TASK_START]');
+      const recoveredCodingStatuses = recoverCodingWorkItemStatusesAcrossPlanPaths(planFilePaths, task.specId, '[TASK_START]');
+      if (syncedStoppedState || recoveredCodingStatuses) {
+        projectStore.invalidateTasksCache(project.id);
+        taskStateManager.clearTask(taskId, project.id);
+      }
+
+      const isCompletedHumanReviewStart =
+        task.status === 'human_review' &&
+        (!task.reviewReason || task.reviewReason === 'completed') &&
+        isLatestPlanFullyCompleted(planFilePaths);
+      if (isCompletedHumanReviewStart) {
+        console.warn('[TASK_START] Task is already fully complete; keeping human_review completed without starting runtime:', taskId);
+        persistCompletedReviewStatusAcrossPlanPaths(planFilePaths, '[TASK_START]');
+        projectStore.invalidateTasksCache(project.id);
+        taskStateManager.clearTask(taskId, project.id);
+        emitCompletedReviewStatus(mainWindow, taskId, project.id);
+        return;
+      }
+
+      // Clear stale tracking state from any previous execution so that:
+      // - terminalEventSeen doesn't suppress future PROCESS_EXITED events
+      // - lastSequenceByTask doesn't drop events from the new process
+      taskStateManager.prepareForRestart(taskId, project.id);
+
+      const taskForStart: Task = syncedStoppedState
+        ? {
+            ...task,
+            status: 'human_review',
+            reviewReason: 'stopped',
+            executionProgress: { phase: 'stopped', phaseProgress: 0, overallProgress: 0 },
+          }
+        : task;
+      const planHasSubtasks = hasPlanSubtasksInAnyPath(planFilePaths);
 
       // Immediately mark as started so the UI moves the card to In Progress.
       // Use XState actor state as source of truth (if actor exists), with task data as fallback.
@@ -1306,46 +1439,78 @@ export function registerTaskExecutionHandlers(
       // - human_review/error: User resuming, send USER_RESUMED
       // - backlog/other: Fresh start, send PLANNING_STARTED
       const currentXState = taskStateManager.getCurrentState(taskId, project.id);
-      console.warn('[TASK_START] Current XState:', currentXState, '| Task status:', task.status, task.reviewReason);
+      const forcePlanningIteration = shouldForceStandardPlanningIterationOnStart(
+        taskForStart,
+        currentXState,
+        planFilePaths,
+      );
+      console.warn(
+        '[TASK_START] Current XState:',
+        currentXState,
+        '| Task status:',
+        taskForStart.status,
+        taskForStart.reviewReason,
+        '| forcePlanningIteration:',
+        forcePlanningIteration,
+      );
 
-      const startEvent = resolveAutocodeTaskStartEvent({
-        task,
-        currentState: currentXState,
-        planHasSubtasks,
-      });
+      const startEvent = forcePlanningIteration
+        ? { type: 'PLANNING_STARTED' } as TaskEvent
+        : resolveAutocodeTaskStartEvent({
+            task: taskForStart,
+            currentState: currentXState,
+            planHasSubtasks,
+          });
       console.warn('[TASK_START] Runtime start event:', startEvent.type);
-      taskStateManager.handleUiEvent(taskId, startEvent as TaskEvent, task, project);
+      try {
+        taskStateManager.handleUiEvent(taskId, startEvent as TaskEvent, taskForStart, project);
 
-      // Reset any stuck subtasks before starting execution
-      // This handles recovery from previous rate limits or crashes
-      const planPath = getPlanPath(project, task);
-      const resetResult = await resetStuckSubtasks(planPath, project.id);
-      if (resetResult.success && resetResult.resetCount > 0) {
-        console.warn(`[TASK_START] Reset ${resetResult.resetCount} stuck subtask(s) before starting`);
+        // Reset any stuck subtasks before starting execution
+        // This handles recovery from previous rate limits or crashes
+        for (const planPath of planFilePaths) {
+          const resetResult = await resetStuckSubtasks(planPath, project.id);
+          if (resetResult.success && resetResult.resetCount > 0) {
+            console.warn(`[TASK_START] Reset ${resetResult.resetCount} stuck subtask(s) before starting in ${planPath}`);
+          }
+        }
+
+        // Start file watcher for this task
+        // Use worktree path if it exists, since the backend writes implementation_plan.md there
+        const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
+        fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
+          console.error(`[TASK_START] Failed to watch spec dir for ${taskId}:`, err);
+        });
+
+        // Check if spec.md exists (indicates spec creation was already done or in progress)
+        // Check main project path for spec file (spec is created before worktree)
+        const specFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
+        const hasSpec = existsSync(specFilePath);
+
+        const runtimePlan = createRuntimePlanForTask({
+          taskId,
+          task: taskForStart,
+          project,
+          specDir,
+          hasSpec,
+          planHasSubtasks,
+          forcePlanning: forcePlanningIteration,
+        });
+        console.warn('[TASK_START] Runtime mode:', runtimePlan.mode, 'label:', getAutocodeAgentRuntimeModeLabel(runtimePlan.mode));
+        const runtimeExecutionPhase = runtimePlan.mode === 'spec' || runtimePlan.mode === 'planning' ? 'planning' : 'coding';
+        persistRuntimeStartedStatusAcrossPlanPaths(planFilePaths, runtimeExecutionPhase, '[TASK_START]', project.id);
+        await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
+      } catch (error) {
+        const message = getRuntimeStartErrorMessage(error);
+        console.error('[TASK_START] Failed to start task runtime:', error);
+        rollbackFailedRuntimeStart(taskId, taskForStart, project, planFilePaths, '[TASK_START]');
+        mainWindow.webContents.send(
+          IPC_CHANNELS.TASK_ERROR,
+          taskId,
+          message,
+          project.id,
+        );
+        return;
       }
-
-      // Start file watcher for this task
-      // Use worktree path if it exists, since the backend writes implementation_plan.md there
-      const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
-      fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
-        console.error(`[TASK_START] Failed to watch spec dir for ${taskId}:`, err);
-      });
-
-      // Check if spec.md exists (indicates spec creation was already done or in progress)
-      // Check main project path for spec file (spec is created before worktree)
-      const specFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
-      const hasSpec = existsSync(specFilePath);
-
-      const runtimePlan = createRuntimePlanForTask({
-        taskId,
-        task,
-        project,
-        specDir,
-        hasSpec,
-        planHasSubtasks,
-      });
-      console.warn('[TASK_START] Runtime mode:', runtimePlan.mode, 'label:', getAutocodeAgentRuntimeModeLabel(runtimePlan.mode));
-      await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
     }
   );
 
@@ -1764,23 +1929,23 @@ export function registerTaskExecutionHandlers(
 
         if (needsImplementationRestart) {
           const reviewFeedback = feedback || '';
-          const initialScope: ChangeRequestScope = 'implementation';
+          const initialScope: ChangeRequestScope = isStandardWorkflowTask(task) ? 'planning' : 'implementation';
           const changeImpacts = classifyChangeRequestImpact(task, reviewFeedback, initialScope);
-          const regeneratePlan = shouldRegeneratePlanForFeedback(task, changeImpacts, reviewFeedback);
+          const runPlanningIteration = shouldRunPlanningIterationForFeedback(task, changeImpacts, reviewFeedback);
           const changeRequest = createChangeRequestRecord({
             task,
             feedback: reviewFeedback || 'No feedback provided',
             imageReferences,
-            scope: regeneratePlan ? 'planning' : 'implementation',
+            scope: runPlanningIteration ? 'planning' : 'implementation',
             impacts: changeImpacts,
           });
-          if (!regeneratePlan && !feedbackRequiresImplementationRestart(reviewFeedback)) {
+          if (!runPlanningIteration && !feedbackRequiresImplementationRestart(reviewFeedback)) {
             console.warn('[TASK_REVIEW] Human review rejected - creating follow-up coding subtask.');
           }
           const humanInputContent = buildHumanInputContent(
             reviewFeedback || 'No feedback provided',
             imageReferences,
-            regeneratePlan ? 'planning' : 'implementation',
+            runPlanningIteration ? 'planning' : 'implementation',
             changeRequest,
           );
           const humanInputPaths = new Set<string>([
@@ -1798,57 +1963,8 @@ export function registerTaskExecutionHandlers(
             }
           }
 
-          if (regeneratePlan) {
-            const localPatchResult = isStandardWorkflowTask(task)
-              ? applyStandardChangeRequestLocalPatch([targetSpecDir, specDir], changeRequest)
-              : { applied: false, patchedSpecDirs: [], patchedFiles: [], reason: 'Not a Standard task.' };
-            if (localPatchResult.applied) {
-              const codingInputContent = buildLocalPatchedStandardInputContent(
-                reviewFeedback || 'No feedback provided',
-                imageReferences,
-                changeRequest,
-                localPatchResult,
-              );
-              for (const humanInputPath of humanInputPaths) {
-                try {
-                  writeFileSync(humanInputPath, codingInputContent, 'utf-8');
-                } catch (error) {
-                  console.error('[TASK_REVIEW] Failed to rewrite HUMAN_INPUT.md after local Standard patch:', error);
-                  return { success: false, error: 'Failed to write human input file' };
-                }
-              }
-
-              console.warn(
-                '[TASK_REVIEW] Applied local Standard change patch; resuming implementation without full planning.',
-                {
-                  patchedSpecDirs: localPatchResult.patchedSpecDirs,
-                  patchedFiles: localPatchResult.patchedFiles,
-                },
-              );
-              taskStateManager.prepareForRestart(taskId, project.id);
-              taskStateManager.handleUiEvent(
-                taskId,
-                { type: 'USER_RESUMED' },
-                task,
-                project
-              );
-              projectStore.invalidateTasksCache(project.id);
-
-              try {
-                await startTaskExecutionFromCurrentPlan(taskId, task, project, '[TASK_REVIEW]');
-              } catch (error) {
-                console.error('[TASK_REVIEW] Failed to restart execution after local Standard change patch:', error);
-                return {
-                  success: false,
-                  error: error instanceof Error ? error.message : 'Failed to restart task execution'
-                };
-              }
-
-              return { success: true };
-            }
-
-            console.warn('[TASK_REVIEW] Local Standard change patch unavailable; restarting planning.', localPatchResult.reason);
-            console.warn('[TASK_REVIEW] Review feedback changes planning artifacts - restarting planning.');
+          if (runPlanningIteration) {
+            console.warn('[TASK_REVIEW] Standard review feedback requires incremental task iteration planning.');
             taskStateManager.prepareForRestart(taskId, project.id);
             taskStateManager.handleUiEvent(
               taskId,
@@ -1872,7 +1988,6 @@ export function registerTaskExecutionHandlers(
 
             return { success: true };
           }
-
           const reopenedWorktreePlan = reopenCompletedPlanForFollowupFix(
             path.join(targetSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
             reviewFeedback || 'Address the reported human review issues.'
@@ -2162,39 +2277,67 @@ export function registerTaskExecutionHandlers(
           // This prevents the stale timer from incorrectly stopping the newly started task
           cancelFallbackTimer(taskId, project.id);
 
-          // Reset any stuck subtasks before starting execution
-          // This handles recovery from previous rate limits or crashes
-          const resetResult = await resetStuckSubtasks(planPath, project.id);
-          if (resetResult.success && resetResult.resetCount > 0) {
-            console.warn(`[TASK_UPDATE_STATUS] Reset ${resetResult.resetCount} stuck subtask(s) before starting`);
+          try {
+            // Reset any stuck subtasks before starting execution
+            // This handles recovery from previous rate limits or crashes
+            const resetResult = await resetStuckSubtasks(planPath, project.id);
+            if (resetResult.success && resetResult.resetCount > 0) {
+              console.warn(`[TASK_UPDATE_STATUS] Reset ${resetResult.resetCount} stuck subtask(s) before starting`);
+            }
+
+            // Start file watcher for this task
+            // Use worktree path if it exists, since the backend writes implementation_plan.md there
+            const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
+            fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
+              console.error(`[TASK_UPDATE_STATUS] Failed to watch spec dir for ${taskId}:`, err);
+            });
+
+            // Check if spec.md exists
+            const specFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
+            const hasSpec = existsSync(specFilePath);
+            // FIX (#1562): Check actual plan file for subtasks, not just task.subtasks.length
+            const updatePlanFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+            let updatePlanHasSubtasks = false;
+            const updatePlan = loadImplementationPlanFromFilesSync(updatePlanFilePath);
+            updatePlanHasSubtasks = updatePlan ? checkSubtasksCompletion(updatePlan).totalCount > 0 : false;
+            const runtimePlan = createRuntimePlanForTask({
+              taskId,
+              task,
+              project,
+              specDir,
+              hasSpec,
+              planHasSubtasks: updatePlanHasSubtasks,
+            });
+
+            console.warn('[TASK_UPDATE_STATUS] Runtime mode:', runtimePlan.mode, 'label:', getAutocodeAgentRuntimeModeLabel(runtimePlan.mode));
+            const runtimeExecutionPhase = runtimePlan.mode === 'spec' || runtimePlan.mode === 'planning' ? 'planning' : 'coding';
+            persistRuntimeStartedStatusAcrossPlanPaths(
+              getPlanFilePathsForTask(project, task, specsBaseDir),
+              runtimeExecutionPhase,
+              '[TASK_UPDATE_STATUS]',
+              project.id,
+            );
+            await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
+          } catch (error) {
+            const message = getRuntimeStartErrorMessage(error);
+            console.error('[TASK_UPDATE_STATUS] Failed to auto-start task runtime:', error);
+            rollbackFailedRuntimeStart(
+              taskId,
+              task,
+              project,
+              getPlanFilePathsForTask(project, task, specsBaseDir),
+              '[TASK_UPDATE_STATUS]',
+            );
+            if (mainWindow) {
+              mainWindow.webContents.send(
+                IPC_CHANNELS.TASK_ERROR,
+                taskId,
+                message,
+                project.id,
+              );
+            }
+            return { success: false, error: message };
           }
-
-          // Start file watcher for this task
-          // Use worktree path if it exists, since the backend writes implementation_plan.md there
-          const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
-          fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
-            console.error(`[TASK_UPDATE_STATUS] Failed to watch spec dir for ${taskId}:`, err);
-          });
-
-          // Check if spec.md exists
-          const specFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
-          const hasSpec = existsSync(specFilePath);
-          // FIX (#1562): Check actual plan file for subtasks, not just task.subtasks.length
-          const updatePlanFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
-          let updatePlanHasSubtasks = false;
-          const updatePlan = loadImplementationPlanFromFilesSync(updatePlanFilePath);
-          updatePlanHasSubtasks = updatePlan ? checkSubtasksCompletion(updatePlan).totalCount > 0 : false;
-          const runtimePlan = createRuntimePlanForTask({
-            taskId,
-            task,
-            project,
-            specDir,
-            hasSpec,
-            planHasSubtasks: updatePlanHasSubtasks,
-          });
-
-          console.warn('[TASK_UPDATE_STATUS] Runtime mode:', runtimePlan.mode, 'label:', getAutocodeAgentRuntimeModeLabel(runtimePlan.mode));
-          await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
 
           // Notify renderer about status change
           if (mainWindow) {
@@ -2362,15 +2505,48 @@ export function registerTaskExecutionHandlers(
       }
       console.log(`[Recovery] Will update ${planPathsToUpdate.length} plan file(s):`, planPathsToUpdate);
 
+      const syncedStoppedState = syncStoppedReviewStatusAcrossPlanPaths(planPathsToUpdate, '[Recovery]');
+      if (syncedStoppedState) {
+        projectStore.invalidateTasksCache(project.id);
+        taskStateManager.clearTask(taskId, project.id);
+      }
+
       try {
         // Read the plan to analyze subtask progress
         // Using safe read to avoid TOCTOU race conditions
         let plan: Record<string, unknown> | null = null;
         plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
 
+        if (plan) {
+          const taskLogs = readAutocodeTaskLogsFromSpecDir(specDir, task.specId);
+          const recovery = recoverAutocodeCodingWorkItemStatusesFromLogs({ plan, logs: taskLogs });
+          if (recovery.recoveredCount > 0 && recovery.plan) {
+            plan = recovery.plan;
+            let recoveryWriteSucceeded = false;
+            for (const pathToUpdate of planPathsToUpdate) {
+              try {
+                saveImplementationPlanToFilesSync(pathToUpdate, plan as ShardableImplementationPlan);
+                recoveryWriteSucceeded = true;
+                console.log(`[Recovery] Recovered ${recovery.recoveredCount} work item status(es) from task logs in: ${pathToUpdate}`);
+              } catch (writeError) {
+                console.error(`[Recovery] Failed to write task-log status recovery at ${pathToUpdate}:`, writeError);
+              }
+            }
+            if (!recoveryWriteSucceeded) {
+              return {
+                success: false,
+                error: 'Failed to write task-log status recovery before stuck-task reset'
+              };
+            }
+            projectStore.invalidateTasksCache(project.id);
+          }
+        }
+
         // Determine the target status intelligently based on subtask progress
-        // If targetStatus is explicitly provided, use it; otherwise calculate from subtasks
-        let newStatus: TaskStatus = targetStatus || 'backlog';
+        // If targetStatus is explicitly provided, use it; otherwise calculate from subtasks.
+        // Interrupted coding work should be resumable, not moved back to backlog/planning.
+        let newStatus: TaskStatus = targetStatus || 'human_review';
+        let newReviewReason: Task['reviewReason'] | undefined = targetStatus ? undefined : 'stopped';
 
         if (!targetStatus && plan?.phases && Array.isArray(plan.phases)) {
           // Analyze subtask statuses to determine appropriate recovery status
@@ -2379,19 +2555,24 @@ export function registerTaskExecutionHandlers(
           if (totalCount > 0) {
             if (allCompleted) {
               // All subtasks completed - should go to review (ai_review or human_review based on source)
-              // For recovery, human_review is safer as it requires manual verification
+              // For recovery, human_review is safer as it requires manual verification.
               newStatus = 'human_review';
-            } else if (completedCount > 0) {
-              // Some subtasks completed, some still pending - task is in progress
-              newStatus = 'in_progress';
+              newReviewReason = 'completed';
+            } else {
+              // No process is running, so show this as stopped/resumable instead of pending planning.
+              // Auto-restart will set it back to in_progress only after launch succeeds.
+              newStatus = 'human_review';
+              newReviewReason = 'stopped';
             }
-            // else: no subtasks completed, stay with 'backlog'
           }
         }
 
         if (plan) {
           // Update status
           plan.status = newStatus;
+          if (newStatus === 'human_review' && newReviewReason) {
+            plan.reviewReason = newReviewReason;
+          }
           plan.planStatus = newStatus === 'done' ? 'completed'
             : newStatus === 'in_progress' ? 'in_progress'
             : newStatus === 'ai_review' ? 'review'
@@ -2404,12 +2585,17 @@ export function registerTaskExecutionHandlers(
           // priority over xstateState) when loading tasks, causing the Kanban spinner
           // to persist even though the task status has been corrected.
           plan.xstateState = newStatus;
-          if (newStatus === 'human_review' || newStatus === 'done') {
+          if (newStatus === 'human_review' && newReviewReason === 'stopped') {
+            plan.executionPhase = 'stopped';
+          } else if (newStatus === 'human_review' || newStatus === 'done') {
             plan.executionPhase = 'complete';
           } else if (newStatus === 'backlog') {
             plan.executionPhase = 'idle';
           } else if (newStatus === 'in_progress') {
             plan.executionPhase = 'coding';
+          }
+          if (newStatus !== 'human_review' && newStatus !== 'ai_review') {
+            delete plan.reviewReason;
           }
 
           // Add recovery note
@@ -2424,6 +2610,8 @@ export function registerTaskExecutionHandlers(
             // Just update status in plan file (project store reads from file, no separate update needed)
             plan.status = 'human_review';
             plan.planStatus = 'review';
+            plan.reviewReason = 'completed';
+            newReviewReason = 'completed';
             plan.executionPhase = 'complete';
             plan.xstateState = 'human_review';
 
@@ -2499,6 +2687,64 @@ export function registerTaskExecutionHandlers(
           }
 
           console.log(`[Recovery] Total ${totalResetCount} subtask(s) reset across all locations`);
+
+          // resetStuckSubtasks reloads and writes the plan file independently, so
+          // re-apply the top-level recovery status after subtask reset. Without
+          // this, a stopped coding task can fall back to backlog/planning on
+          // refresh or when auto-restart preflight exits early.
+          let recoveryStatusWriteSucceeded = false;
+          for (const pathToUpdate of planPathsToUpdate) {
+            try {
+              const recoveredPlan = loadImplementationPlanFromFilesSync(pathToUpdate) as Record<string, unknown> | null;
+              if (!recoveredPlan) {
+                continue;
+              }
+
+              recoveredPlan.status = newStatus;
+              recoveredPlan.planStatus = newStatus === 'done' ? 'completed'
+                : newStatus === 'in_progress' ? 'in_progress'
+                : newStatus === 'ai_review' ? 'review'
+                : newStatus === 'human_review' ? 'review'
+                : 'pending';
+              recoveredPlan.xstateState = newStatus;
+              recoveredPlan.updated_at = new Date().toISOString();
+              recoveredPlan.recoveryNote = `Task recovered from stuck state at ${new Date().toISOString()}`;
+
+              if (newStatus === 'human_review' && newReviewReason) {
+                recoveredPlan.reviewReason = newReviewReason;
+              } else if (newStatus !== 'ai_review') {
+                delete recoveredPlan.reviewReason;
+              }
+
+              if (newStatus === 'human_review' && newReviewReason === 'stopped') {
+                recoveredPlan.executionPhase = 'stopped';
+              } else if (newStatus === 'human_review' || newStatus === 'done') {
+                recoveredPlan.executionPhase = 'complete';
+              } else if (newStatus === 'backlog') {
+                recoveredPlan.executionPhase = 'idle';
+              } else if (newStatus === 'in_progress') {
+                recoveredPlan.executionPhase = 'coding';
+              }
+
+              saveImplementationPlanToFilesSync(pathToUpdate, recoveredPlan as ShardableImplementationPlan);
+              if (pathToUpdate === planPath) {
+                plan = recoveredPlan;
+              }
+              recoveryStatusWriteSucceeded = true;
+              console.log(`[Recovery] Re-applied recovered task status to: ${pathToUpdate}`);
+            } catch (writeError) {
+              console.error(`[Recovery] Failed to re-apply recovered task status at ${pathToUpdate}:`, writeError);
+            }
+          }
+
+          if (!recoveryStatusWriteSucceeded) {
+            return {
+              success: false,
+              error: 'Failed to persist recovered task status after subtask reset'
+            };
+          }
+
+          projectStore.invalidateTasksCache(project.id);
 
           // Clear attempt_history.json to break infinite recovery loops.
           // Without this, the backend re-reads stuck markers from attempt_history
@@ -2611,28 +2857,26 @@ export function registerTaskExecutionHandlers(
             // This prevents the stale timer from incorrectly stopping the restarted task
             cancelFallbackTimer(taskId, project.id);
 
-            // Set status to in_progress for the restart
-            newStatus = 'in_progress';
-
-            // Update plan status for restart - write to ALL locations
-            if (plan) {
-              plan.status = 'in_progress';
-              plan.planStatus = 'in_progress';
-              for (const pathToUpdate of planPathsToUpdate) {
-                try {
-                  saveImplementationPlanToFilesSync(pathToUpdate, plan as ShardableImplementationPlan);
-                  console.log(`[Recovery] Wrote restart status to: ${pathToUpdate}`);
-                } catch (writeError) {
-                  console.error(`[Recovery] Failed to write plan file for restart at ${pathToUpdate}:`, writeError);
-                  // Continue with restart attempt even if file write fails
-                  // The plan status will be updated by the agent when it starts
-                }
-              }
-
-              // CRITICAL: Invalidate cache AFTER file writes complete
-              // This ensures getTasks() returns fresh data reflecting the restart status
-              projectStore.invalidateTasksCache(project.id);
-            }
+            // Move the XState actor out of human_review/error before restarting.
+            // Otherwise the first CODING_STARTED event from the new process is ignored,
+            // and the UI can snap back to human review even though a restart was requested.
+            newStatus = 'human_review';
+            newReviewReason = 'stopped';
+            const planHasSubtasksForRestart = hasPlanSubtasksInAnyPath(planPathsToUpdate);
+            const taskForRestart: Task = {
+              ...task,
+              status: newStatus,
+              reviewReason: newReviewReason,
+              executionProgress: { phase: 'stopped', phaseProgress: 0, overallProgress: 0 },
+            };
+            const currentXStateForRestart = taskStateManager.getCurrentState(taskId, project.id);
+            const restartEvent = resolveAutocodeTaskStartEvent({
+              task: taskForRestart,
+              currentState: currentXStateForRestart,
+              planHasSubtasks: planHasSubtasksForRestart,
+            });
+            console.warn(`[Recovery] Runtime start event: ${restartEvent.type}`);
+            taskStateManager.handleUiEvent(taskId, restartEvent as TaskEvent, taskForRestart, project);
 
             // Start the task execution
             // Start file watcher for this task
@@ -2653,17 +2897,64 @@ export function registerTaskExecutionHandlers(
               project,
               specDir: mainSpecDir,
               hasSpec,
-              planHasSubtasks: hasPlanSubtasksInAnyPath(planPathsToUpdate),
+              planHasSubtasks: planHasSubtasksForRestart,
             });
 
             console.warn(`[Recovery] Starting ${getAutocodeAgentRuntimeModeLabel(runtimePlan.mode)} for: ${task.specId}`);
+            const runtimeExecutionPhase = runtimePlan.mode === 'spec' || runtimePlan.mode === 'planning' ? 'planning' : 'coding';
+            persistRuntimeStartedStatusAcrossPlanPaths(planPathsToUpdate, runtimeExecutionPhase, '[Recovery]', project.id);
             await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
+
+            newStatus = 'in_progress';
+            newReviewReason = undefined;
+
+            if (plan) {
+              plan.status = 'in_progress';
+              plan.planStatus = 'in_progress';
+              plan.xstateState = 'coding';
+              plan.executionPhase = 'coding';
+              plan.updated_at = new Date().toISOString();
+              delete plan.reviewReason;
+              for (const pathToUpdate of planPathsToUpdate) {
+                try {
+                  saveImplementationPlanToFilesSync(pathToUpdate, plan as ShardableImplementationPlan);
+                  console.log(`[Recovery] Wrote restart status to: ${pathToUpdate}`);
+                } catch (writeError) {
+                  console.error(`[Recovery] Failed to write plan file for restart at ${pathToUpdate}:`, writeError);
+                }
+              }
+              projectStore.invalidateTasksCache(project.id);
+            }
 
             autoRestarted = true;
             console.warn(`[Recovery] Auto-restarted task ${taskId}`);
           } catch (restartError) {
             console.error('Failed to auto-restart task after recovery:', restartError);
-            // Recovery succeeded but restart failed - still report success
+            taskStateManager.handleUiEvent(
+              taskId,
+              { type: 'USER_STOPPED', hasPlan: hasPlanSubtasksInAnyPath(planPathsToUpdate) } as TaskEvent,
+              task,
+              project,
+            );
+            newStatus = 'human_review';
+            newReviewReason = 'stopped';
+            if (plan) {
+              plan.status = 'human_review';
+              plan.planStatus = 'review';
+              plan.reviewReason = 'stopped';
+              plan.xstateState = 'human_review';
+              plan.executionPhase = 'stopped';
+              plan.updated_at = new Date().toISOString();
+              for (const pathToUpdate of planPathsToUpdate) {
+                try {
+                  saveImplementationPlanToFilesSync(pathToUpdate, plan as ShardableImplementationPlan);
+                } catch (writeError) {
+                  console.error(`[Recovery] Failed to roll back restart status at ${pathToUpdate}:`, writeError);
+                }
+              }
+              projectStore.invalidateTasksCache(project.id);
+            }
+            // Recovery succeeded, but restart did not. Leave the task restartable instead of running.
           }
         }
 
@@ -2674,7 +2965,8 @@ export function registerTaskExecutionHandlers(
             IPC_CHANNELS.TASK_STATUS_CHANGE,
             taskId,
             newStatus,
-            project.id
+            project.id,
+            newReviewReason
           );
         }
 

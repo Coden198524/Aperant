@@ -53,6 +53,7 @@ export interface CreateAutocodeTaskRunPlanInput {
   model?: string;
   bypassPermissions?: boolean;
   phase?: AutocodeTaskRunPhase;
+  forcePlanning?: boolean;
   language?: AutocodeAgentLanguage;
   directCliContinuationStrategy?: AutocodeCliContinuationStrategy;
   directCliJsonEventParser?: AutocodeCliJsonEventParser;
@@ -99,7 +100,8 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
     dataDirName: input.dataDirName,
     specId: task.specId,
   });
-  const phase = input.phase ?? resolveRunPhase(specDir, task);
+  const resolvedPhase = resolveRunPhase(specDir, task);
+  const phase = input.phase ?? (input.forcePlanning === true && resolvedPhase !== 'direct' ? 'planning' : resolvedPhase);
   const runtimeConcurrency = resolveAutocodeTaskRuntimeConcurrency(task.metadata);
   const prompt = buildTaskRunPrompt({
     task,
@@ -128,6 +130,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
       args: cliInvocation.args,
       promptFilePath,
       phase,
+      forcePlanning: input.forcePlanning === true,
       specDir,
       taskTitle: task.title,
       taskDescription: compactTaskRunTaskDescription(task.description || task.title),
@@ -422,7 +425,7 @@ function buildTaskRunPrompt(input: {
       '- 在 Node 24+ 中，不要在 node -e、stdin 或 eval 脚本里混用 require(...) 和顶层 await；请使用 async IIFE，或配合 node --input-type=module 使用 ESM import。',
       '- 避免针对任务初始状态或瞬时状态编写脆弱的冒烟断言；重试和恢复可能推进状态。除非任务明确修改状态机代码，否则验证最终行为或持久化文件。',
       buildCliMemoryNotesInstruction(input.language),
-      `- 在 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} 留下一段简短实现总结，或在最终回复中包含完成详情。`,
+      '- \u5728\u6700\u7ec8\u56de\u590d\u4e2d\u5305\u542b\u7b80\u77ed\u5b8c\u6210\u8be6\u60c5\u3002',
     ].join('\n')}`;
   }
 
@@ -438,7 +441,7 @@ function buildTaskRunPrompt(input: {
     '- The runner invokes you once per runtime work package. In each invocation, implement only the Current Work Item section.',
     '- Do not start later work packages early, even if they look related.',
     '- Do not edit implementation_plan.md status checkboxes during coding; the runner owns status updates after this invocation.',
-    '- Put completion details in your final response or the implementation summary, not by editing plan status.',
+    '- Put completion details in your final response, not by editing plan status or creating Direct-mode artifacts.',
     '- Run the most relevant validation command for the project.',
     '- When HUMAN_INPUT.md or change_requests.jsonl exists, treat the latest change request as a same-task iteration: satisfy its validation guidance and keep the changes ready for the normal task commit flow after tests pass.',
     '- Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread the surrounding lines once before retrying.',
@@ -447,7 +450,7 @@ function buildTaskRunPrompt(input: {
     '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
     '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the task explicitly changes state-machine code.',
     buildCliMemoryNotesInstruction(input.language),
-    `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} or include completion details in your final response.`,
+    '- Include a short completion summary in your final response.',
   ].join('\n')}`;
 }
 
@@ -784,6 +787,7 @@ function buildNodeRunnerScript(input: {
   args: string[];
   promptFilePath: string;
   phase: AutocodeTaskRunPhase;
+  forcePlanning?: boolean;
   specDir: string;
   taskTitle: string;
   taskDescription: string;
@@ -802,6 +806,7 @@ function buildNodeRunnerScript(input: {
   return `const { spawn, spawnSync } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
 const { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } = require('node:fs');
+const { tmpdir } = require('node:os');
 const { basename, dirname, isAbsolute, join, relative, resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { TextDecoder } = require('node:util');
@@ -826,6 +831,7 @@ const directTaskSummaryModulePath = ${JSON.stringify(resolveOptionalRunnerDepend
 const libsqlSqlite3ModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@libsql/client/sqlite3'))};
 const promptFilePath = ${JSON.stringify(input.promptFilePath)};
 const phase = ${JSON.stringify(input.phase)};
+const forcePlanning = ${JSON.stringify(input.forcePlanning === true)};
 const specDir = ${JSON.stringify(input.specDir)};
 const projectDataRelativeDir = inferRunnerProjectDataRelativeDir();
 const taskTitle = ${JSON.stringify(input.taskTitle)};
@@ -861,6 +867,14 @@ const DEFAULT_CLI_JSON_TOOL_SUCCESS_FIELDS = ['success'];
 const DEFAULT_CLI_JSON_TOOL_EXIT_CODE_FIELDS = ['exit_code', 'exitCode'];
 const DEFAULT_CLI_JSON_TOOL_STATUS_FIELDS = ['status'];
 const activeFileWriteLockDirs = new Set();
+const FILE_WRITE_LOCK_TIMEOUT_MS = readPositiveInteger(
+  process.env.AUTOCODE_FILE_WRITE_LOCK_TIMEOUT_MS,
+  120 * 1000,
+);
+const FILE_WRITE_LOCK_RETRY_MS = readPositiveInteger(
+  process.env.AUTOCODE_FILE_WRITE_LOCK_RETRY_MS,
+  100,
+);
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
 const maxDirectRetries = phase === 'direct' ? 2 : 0;
 const DIRECT_QUALITY_RETRY_FEEDBACK_MAX_CHARS = 1600;
@@ -886,9 +900,11 @@ const startMessage = logPhase === 'coding'
 emitPhase(executionPhase, startMessage, 0);
 updatePlanRunningState();
 updateTaskLogs(logPhase, 'active', startMessage);
+writeRunStartedResult();
 runCliPreflightActions();
 
 let finalized = false;
+let shutdownInProgress = false;
 let tokenUsageEventCount = 0;
 let tokenUsageImplicitSessionCounted = false;
 let lastTokenUsageLogTotal = 0;
@@ -905,8 +921,10 @@ const activeCodingAttempts = new Map();
 const activeCodingSubtaskIds = new Set();
 const completedCodingSubtaskIds = new Set();
 const failedCodingSubtaskIds = new Set();
+const reportedCodingConflictWaitKeys = new Set();
 const codingFailures = [];
 let nextCodingWorkerId = 0;
+registerRunnerShutdownHandlers();
 const MODEL_OUTPUT_FLUSH_MS = 750;
 const MODEL_OUTPUT_MAX_CHARS = 3500;
 const CLI_MEMORY_CONTEXT_MAX_CHARS = 1800;
@@ -963,6 +981,7 @@ const CODING_WORKER_COMPLETION_GRACE_MS = readPositiveInteger(
   process.env.AUTOCODE_WORKER_COMPLETION_GRACE_MS,
   45 * 1000,
 );
+
 const DIRECT_ATTEMPT_COMPLETION_GRACE_MS = readPositiveInteger(
   process.env.AUTOCODE_DIRECT_COMPLETION_GRACE_MS,
   CODING_WORKER_COMPLETION_GRACE_MS,
@@ -997,6 +1016,8 @@ const CLI_RATE_LIMIT_SIGNAL_PATTERNS = [
   /\\busage[_\\s-]*limit[_\\s-]*(?:exceeded|reached)\\b/i,
   /\\brate\\s*limit\\b/i,
   /\\btoo\\s*many\\s*requests\\b/i,
+  /(?:selected\\s+)?model\\s+(?:is\\s+)?at\\s+capacity/i,
+  /at\\s+capacity[\\s\\S]{0,120}?try\\s+a\\s+different\\s+model/i,
   /\\bquota\\s*(?:exceeded|reached)\\b/i,
 ];
 
@@ -1740,6 +1761,7 @@ function startAttempt(attemptPrompt, subtaskId) {
   const state = defaultAttemptState;
   resetMainAttemptStateForRetry(state);
   state.attemptId = currentAttemptId;
+  state.startedAt = Date.now();
   state.subtaskId = subtaskId;
   const invocation = buildAttemptInvocation(currentAttemptId);
   if (invocation.retryContinuationError) {
@@ -1772,7 +1794,7 @@ function startAttempt(attemptPrompt, subtaskId) {
       .catch((finalizeError) => finishRun(1, undefined, finalizeError instanceof Error ? finalizeError.message : String(finalizeError), undefined));
   });
   child.on('close', (code, signal) => {
-    if (state.finalizing && isDirectMainAttempt(state)) {
+    if (state.finalizing) {
       return;
     }
     if (signal) {
@@ -1788,6 +1810,7 @@ function startAttempt(attemptPrompt, subtaskId) {
 
 function resetMainAttemptStateForRetry(state) {
   clearAttemptTimers(state);
+  state.startedAt = Date.now();
   state.child = null;
   state.lastCliMessageText = '';
   state.pendingModelOutput = '';
@@ -2124,6 +2147,10 @@ function recordDirectAttemptActiveDuration() {
 }
 async function finishRun(exitCode, signal, explicitError, validationError) {
   if (finalized) return;
+  if (phase === 'coding') {
+    failActiveCodingAttempts('Coding run ended before all active workers completed.');
+    reconcileCodingWorkItemLogStatuses();
+  }
   let failed = exitCode !== 0 || Boolean(explicitError) || Boolean(validationError);
   const failureMessage = failed
     ? explicitError || validationError || summarizeCliFailureReason(defaultAttemptState, exitCode, signal)
@@ -2256,8 +2283,22 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
   }
 
   persistDirectSessionState(result, now, directQuality, directChangedFiles);
+  let finalPlanStatusError = '';
+  try {
+    updatePlanStatus(failed, result.message, now, directQuality, result);
+  } catch (error) {
+    finalPlanStatusError = 'Failed to update final plan status: ' + (error instanceof Error ? error.message : String(error));
+    if (!failed) {
+      failed = true;
+      result.exitCode = 1;
+      result.status = 'error';
+      result.message = finalPlanStatusError;
+    }
+  }
   writeJson(join(specDir, artifacts.runResult), result);
-  updatePlanStatus(failed, result.message, now, directQuality, result);
+  if (finalPlanStatusError) {
+    appendTaskLogEntry(logPhase, 'error', finalPlanStatusError);
+  }
   if (phase === 'direct' && !failed) {
     emitTaskEvent('DIRECT_COMPLETED', {
       outcome: 'completed',
@@ -2282,6 +2323,8 @@ function createAttemptState(label, subtaskId) {
     label,
     subtaskId,
     attemptId: 0,
+    startedAt: Date.now(),
+    gitChangeBaseline: null,
     child: null,
     lastOutputAt: Date.now(),
     pendingModelOutput: '',
@@ -2566,7 +2609,201 @@ function readNonNegativeInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
 }
 
+function writeRunStartedResult() {
+  const now = new Date(runStartedAt).toISOString();
+  writeJson(join(specDir, artifacts.runResult), {
+    phase,
+    command,
+    args,
+    exitCode: null,
+    signal: null,
+    status: 'running',
+    message: startMessage,
+    updatedAt: now,
+    attemptCount: 0,
+  });
+}
+function registerRunnerShutdownHandlers() {
+  process.once('SIGINT', () => handleRunnerShutdownSignal('SIGINT'));
+  process.once('SIGTERM', () => handleRunnerShutdownSignal('SIGTERM'));
+  process.once('SIGHUP', () => handleRunnerShutdownSignal('SIGHUP'));
+  process.once('uncaughtException', (error) => {
+    const message = 'Autocode runner crashed before completion: ' + formatErrorMessage(error);
+    console.error(message);
+    handleRunnerFatalShutdown(message);
+  });
+  process.once('unhandledRejection', (reason) => {
+    const message = 'Autocode runner rejected before completion: ' + formatErrorMessage(reason);
+    console.error(message);
+    handleRunnerFatalShutdown(message);
+  });
+}
+
+function handleRunnerShutdownSignal(signal) {
+  const message = 'Autocode runner received ' + signal + ' before completion.';
+  console.error(message);
+  handleRunnerFatalShutdown(message, signal);
+}
+
+function handleRunnerFatalShutdown(message, signal) {
+  if (shutdownInProgress) {
+    return;
+  }
+  shutdownInProgress = true;
+  finalizeInterruptedRunner(message, signal)
+    .catch((error) => {
+      const fallbackMessage = 'Autocode runner failed while writing interrupted state: ' + formatErrorMessage(error);
+      console.error(fallbackMessage);
+      try {
+        updateTaskLogs(logPhase, 'failed', fallbackMessage);
+      } catch {
+        // Ignore secondary shutdown logging failures.
+      }
+      process.exit(1);
+    });
+}
+
+async function finalizeInterruptedRunner(message, signal) {
+  if (finalized) {
+    process.exit(1);
+    return;
+  }
+  if (defaultAttemptState.child) {
+    defaultAttemptState.finalizing = true;
+    clearAttemptTimers(defaultAttemptState);
+    flushCliJsonOutput(defaultAttemptState);
+    flushModelOutput(defaultAttemptState);
+    terminateAttemptChild(defaultAttemptState, 'runner interrupted');
+  }
+  if (phase === 'coding') {
+    failActiveCodingAttempts(message);
+    reconcileCodingWorkItemLogStatuses();
+  }
+  await finishRun(1, signal, message, undefined);
+}
+
+function failActiveCodingAttempts(reason) {
+  if (phase !== 'coding' || activeCodingAttempts.size === 0) {
+    return;
+  }
+  for (const [currentAttemptId, attempt] of Array.from(activeCodingAttempts.entries())) {
+    attempt.state.finalizing = true;
+    clearAttemptTimers(attempt.state);
+    flushCliJsonOutput(attempt.state);
+    flushModelOutput(attempt.state);
+    terminateAttemptChild(attempt.state, 'runner interrupted');
+    activeCodingAttempts.delete(currentAttemptId);
+    activeCodingSubtaskIds.delete(attempt.subtask.id);
+    failedCodingSubtaskIds.add(attempt.subtask.id);
+    const failureReason = 'Interrupted before completion: ' + reason;
+    const failureEntry = attempt.subtask.id + ': ' + failureReason;
+    if (!codingFailures.includes(failureEntry)) {
+      codingFailures.push(failureEntry);
+    }
+    appendTaskLogEntry(
+      'coding',
+      'error',
+      'Work item ' + attempt.subtask.id + ' interrupted: ' + reason,
+      undefined,
+      buildAttemptLogExtra(attempt.state),
+    );
+    const durationMs = Number.isFinite(attempt.state.startedAt)
+      ? Date.now() - attempt.state.startedAt
+      : undefined;
+    const statusResult = markPlanSubtaskStatusSafely(attempt.subtask.id, 'failed', failureReason, durationMs);
+    if (!statusResult.ok) {
+      appendTaskLogEntry(
+        'coding',
+        'error',
+        formatPlanSubtaskStatusPersistFailure(attempt.subtask.id, 'failed', statusResult.reason),
+        undefined,
+        buildAttemptLogExtra(attempt.state),
+      );
+    }
+  }
+}
+
+function reconcileCodingWorkItemLogStatuses(options = {}) {
+  if (phase !== 'coding') {
+    return;
+  }
+  const items = readPlanItems().filter((item) => item.isSubtask);
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const events = readCodingWorkItemStatusEventsFromTaskLogs();
+  for (const event of events.values()) {
+    const item = itemById.get(event.id);
+    if (!item || item.status === event.status) {
+      continue;
+    }
+    const eventTime = Date.parse(event.timestamp || '');
+    const eventInCurrentRun = Number.isFinite(eventTime) && eventTime >= runStartedAt - 1000;
+    if (!eventInCurrentRun && item.status !== 'in_progress') {
+      continue;
+    }
+    const note = event.status === 'completed'
+      ? 'Recovered completed status from task log.'
+      : 'Recovered failed status from task log.';
+    const statusResult = markPlanSubtaskStatusSafely(event.id, event.status, note);
+    if (!statusResult.ok) {
+      appendTaskLogEntry(
+        'coding',
+        'error',
+        formatPlanSubtaskStatusPersistFailure(event.id, event.status, statusResult.reason),
+      );
+      continue;
+    }
+    if (event.status === 'completed') {
+      completedCodingSubtaskIds.add(event.id);
+      failedCodingSubtaskIds.delete(event.id);
+    } else if (eventInCurrentRun && options.recordCurrentRunFailures !== false) {
+      failedCodingSubtaskIds.add(event.id);
+      const failureEntry = event.id + ': Recovered failed status from task log.';
+      if (!codingFailures.includes(failureEntry)) {
+        codingFailures.push(failureEntry);
+      }
+    }
+    appendTaskLogEntry('coding', 'info', 'Recovered work item ' + event.id + ' ' + event.status + ' status from task log.');
+  }
+}
+
+function readCodingWorkItemStatusEventsFromTaskLogs() {
+  const logsPath = join(specDir, artifacts.taskLogs);
+  let content = '';
+  try {
+    content = readFileSync(logsPath, 'utf8');
+  } catch {
+    return new Map();
+  }
+  const events = new Map();
+  for (const line of content.replace(/\\r\\n/g, '\\n').split('\\n')) {
+    if (!line.trim()) {
+      continue;
+    }
+    let record = null;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const entry = record && record.entry && typeof record.entry === 'object' ? record.entry : null;
+    if (!entry || entry.phase !== 'coding') {
+      continue;
+    }
+    const text = String(entry.content || '');
+    const match = /\\bWork item\\s+([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)\\s+(completed|failed)\\b/i.exec(text);
+    if (!match) {
+      continue;
+    }
+    events.set(match[1], {
+      id: match[1],
+      status: match[2].toLowerCase() === 'completed' ? 'completed' : 'failed',
+      timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : typeof record.timestamp === 'string' ? record.timestamp : '',
+    });
+  }
+  return events;
+}
 function startCodingWorkQueue() {
+  reconcileCodingWorkItemLogStatuses({ recordCurrentRunFailures: false });
   resetInProgressCodingSubtasks();
   const progress = getCodingProgress();
   if (progress.total === 0) {
@@ -2605,9 +2842,20 @@ function startCodingWorkerAttempt(subtask) {
   const currentAttemptId = ++attemptId;
   const state = createAttemptState('worker-' + workerId, subtask.id);
   state.attemptId = currentAttemptId;
+  state.startedAt = Date.now();
+  state.gitChangeBaseline = collectRunnerGitChangedFileSnapshot();
   activeCodingSubtaskIds.add(subtask.id);
   activeCodingAttempts.set(currentAttemptId, { state, subtask, workerId });
-  markPlanSubtaskStatus(subtask.id, 'in_progress');
+  const statusResult = markPlanSubtaskStatusSafely(subtask.id, 'in_progress');
+  if (!statusResult.ok) {
+    activeCodingAttempts.delete(currentAttemptId);
+    activeCodingSubtaskIds.delete(subtask.id);
+    failedCodingSubtaskIds.add(subtask.id);
+    const reason = formatPlanSubtaskStatusPersistFailure(subtask.id, 'in_progress', statusResult.reason);
+    codingFailures.push(subtask.id + ': ' + reason);
+    appendTaskLogEntry('coding', 'error', reason, undefined, buildAttemptLogExtra(state));
+    return;
+  }
   restoreKnownCodingStatuses(subtask.id);
 
   const progress = getCodingProgress();
@@ -2677,20 +2925,89 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
       undefined,
       buildAttemptLogExtra(attempt.state),
     );
-    markPlanSubtaskStatus(attempt.subtask.id, 'failed', reason);
+    const statusNote = /^CLI work item run failed\b/i.test(reason)
+      ? reason
+      : 'CLI work item run failed: ' + reason;
+    const statusResult = markPlanSubtaskStatusSafely(attempt.subtask.id, 'failed', statusNote);
+    if (!statusResult.ok) {
+      const statusReason = formatPlanSubtaskStatusPersistFailure(attempt.subtask.id, 'failed', statusResult.reason);
+      codingFailures.push(attempt.subtask.id + ': ' + statusReason);
+      appendTaskLogEntry('coding', 'error', statusReason, undefined, buildAttemptLogExtra(attempt.state));
+    }
     recordCliWorkItemMemory(attempt.subtask, 'failure', reason, memoryNotes);
   } else {
     const memoryNotes = extractCliMemoryNotes(attempt.state.lastCliMessageText);
-    completedCodingSubtaskIds.add(attempt.subtask.id);
-    appendTaskLogEntry(
-      'coding',
-      'success',
-      'Work item ' + attempt.subtask.id + ' completed.',
-      undefined,
-      buildAttemptLogExtra(attempt.state),
+    const statusResult = markPlanSubtaskStatusSafely(
+      attempt.subtask.id,
+      'completed',
+      'Completed by Autocode CLI runner.',
     );
-    markPlanSubtaskStatus(attempt.subtask.id, 'completed', 'Completed by Autocode CLI runner.');
-    recordCliWorkItemMemory(attempt.subtask, 'success', 'Completed by Autocode CLI runner.', memoryNotes);
+    if (!statusResult.ok) {
+      const reason = formatPlanSubtaskStatusPersistFailure(attempt.subtask.id, 'completed', statusResult.reason);
+      failedCodingSubtaskIds.add(attempt.subtask.id);
+      codingFailures.push(attempt.subtask.id + ': ' + reason);
+      appendTaskLogEntry(
+        'coding',
+        'error',
+        'Work item ' + attempt.subtask.id + ' finished, but Autocode could not mark it completed: ' + reason,
+        undefined,
+        buildAttemptLogExtra(attempt.state),
+      );
+      recordCliWorkItemMemory(attempt.subtask, 'failure', reason, memoryNotes);
+    } else {
+      const commitResult = commitCompletedCodingWorkItem(attempt);
+      if (commitResult.status === 'failed') {
+        const reason = 'Local git commit failed after work item completion: ' + commitResult.reason;
+        failedCodingSubtaskIds.add(attempt.subtask.id);
+        codingFailures.push(attempt.subtask.id + ': ' + reason);
+        markPlanSubtaskStatusSafely(attempt.subtask.id, 'failed', reason);
+        appendTaskLogEntry(
+          'coding',
+          'error',
+          'Work item ' + attempt.subtask.id + ' completed, but Autocode could not commit its local changes: ' + commitResult.reason,
+          undefined,
+          buildAttemptLogExtra(attempt.state),
+        );
+        recordCliWorkItemMemory(attempt.subtask, 'failure', reason, memoryNotes);
+      } else {
+        completedCodingSubtaskIds.add(attempt.subtask.id);
+        const extra = commitResult.status === 'committed'
+          ? {
+            git_commit: commitResult.commit,
+            changed_files: commitResult.files,
+          }
+          : {
+            git_commit_skipped: commitResult.reason,
+          };
+        appendTaskLogEntry(
+          'coding',
+          'success',
+          'Work item ' + attempt.subtask.id + ' completed.',
+          undefined,
+          buildAttemptLogExtra(attempt.state, extra),
+        );
+        if (commitResult.status === 'committed') {
+          appendTaskLogEntry(
+            'coding',
+            'info',
+            'Committed local changes for work item ' + attempt.subtask.id +
+              (commitResult.commit ? ' at ' + commitResult.commit : '') +
+              ' (' + commitResult.files.length + ' file(s)).',
+            undefined,
+            buildAttemptLogExtra(attempt.state),
+          );
+        } else if (commitResult.reason && commitResult.reason !== 'no source changes detected') {
+          appendTaskLogEntry(
+            'coding',
+            'info',
+            'Skipped local git commit for work item ' + attempt.subtask.id + ': ' + commitResult.reason,
+            undefined,
+            buildAttemptLogExtra(attempt.state),
+          );
+        }
+        recordCliWorkItemMemory(attempt.subtask, 'success', 'Completed by Autocode CLI runner.', memoryNotes);
+      }
+    }
   }
 
   restoreKnownCodingStatuses(attempt.subtask.id);
@@ -2737,16 +3054,44 @@ function finishCodingWorkQueue() {
 
 function restoreKnownCodingStatuses(currentSubtaskId) {
   for (const subtaskId of completedCodingSubtaskIds) {
-    markPlanSubtaskStatus(subtaskId, 'completed', 'Completed by Autocode CLI runner.');
+    if (subtaskId === currentSubtaskId) continue;
+    markPlanSubtaskStatusSafely(subtaskId, 'completed', 'Completed by Autocode CLI runner.');
   }
   for (const subtaskId of failedCodingSubtaskIds) {
-    markPlanSubtaskStatus(subtaskId, 'failed', 'CLI work item run failed.');
+    if (subtaskId === currentSubtaskId) continue;
+    markPlanSubtaskStatusSafely(subtaskId, 'failed', 'CLI work item run failed.');
   }
   for (const subtaskId of activeCodingSubtaskIds) {
     if (subtaskId !== currentSubtaskId && !completedCodingSubtaskIds.has(subtaskId) && !failedCodingSubtaskIds.has(subtaskId)) {
-      markPlanSubtaskStatus(subtaskId, 'in_progress');
+      markPlanSubtaskStatusSafely(subtaskId, 'in_progress');
     }
   }
+}
+
+function markPlanSubtaskStatusSafely(subtaskId, status, note, durationMs) {
+  try {
+    const updated = markPlanSubtaskStatus(subtaskId, status, note, durationMs);
+    if (updated || isPlanSubtaskStatusPersisted(subtaskId, status)) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      reason: 'implementation_plan.md was not updated for status ' + status + '.',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function isPlanSubtaskStatusPersisted(subtaskId, status) {
+  return readPlanItems().some((item) => item.id === subtaskId && item.status === status);
+}
+
+function formatPlanSubtaskStatusPersistFailure(subtaskId, status, reason) {
+  return 'Failed to persist ' + status + ' status for work item ' + subtaskId + ': ' + reason;
 }
 
 function buildFocusedSubtaskPrompt(subtask) {
@@ -2763,6 +3108,7 @@ function buildFocusedSubtaskPrompt(subtask) {
         '- In legacy Windows game projects, assume files with Chinese comments or mojibake may be non-UTF-8; verify or preserve encoding before editing.',
         '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
         '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless this work package explicitly changes state-machine code.',
+        '- Keep validation commands scoped to their test runner: Vitest/unit commands must not collect Playwright/e2e specs; use tests/unit globs, command arguments, or runner config when both unit and e2e tests exist.',
       ]
     : [
         '- Implement only this current subtask.',
@@ -2775,6 +3121,7 @@ function buildFocusedSubtaskPrompt(subtask) {
         '- In legacy Windows game projects, assume files with Chinese comments or mojibake may be non-UTF-8; verify or preserve encoding before editing.',
         '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
         '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless this subtask explicitly changes state-machine code.',
+        '- Keep validation commands scoped to their test runner: Vitest/unit commands must not collect Playwright/e2e specs; use tests/unit globs, command arguments, or runner config when both unit and e2e tests exist.',
       ];
   const fields = [
     '# Current Work Item',
@@ -2812,7 +3159,39 @@ function findNextRunnableSubtask() {
       !failedCodingSubtaskIds.has(item.id)
     );
   const analysis = analyzeRunnerWorkDependencies(candidates, getPlanItemStatusMap(planItems));
-  return analysis.runnable.find((item) => !conflictsWithActiveCodingWork(item)) || null;
+  return selectRunnableSubtaskForCurrentDependencyDepth(analysis.runnable, planItems);
+}
+
+function selectRunnableSubtaskForCurrentDependencyDepth(runnableItems, planItems) {
+  if (runnableItems.length === 0) {
+    return null;
+  }
+
+  const dependencyDepthById = getRunnerWorkDependencyDepths(planItems);
+  const getDepth = (item) => dependencyDepthById.get(item.id) ?? 0;
+  const blockedByConflict = [];
+  const depths = Array.from(new Set(runnableItems.map((item) => getDepth(item))))
+    .sort((left, right) => left - right);
+
+  for (const depth of depths) {
+    const currentDepthItems = runnableItems.filter((item) => getDepth(item) === depth);
+
+    for (const item of currentDepthItems) {
+      const conflict = getActiveCodingWorkConflict(item);
+      if (!conflict) {
+        for (const blocked of blockedByConflict) {
+          appendCodingConflictWaitLog(blocked.item, blocked.conflict);
+        }
+        return item;
+      }
+      blockedByConflict.push({ item, conflict });
+    }
+  }
+
+  for (const blocked of blockedByConflict) {
+    appendCodingConflictWaitLog(blocked.item, blocked.conflict);
+  }
+  return null;
 }
 
 function countRetryableCodingWorkItems() {
@@ -2837,6 +3216,10 @@ function summarizeRunnerPlanItems(items) {
 }
 
 function conflictsWithActiveCodingWork(candidate) {
+  return Boolean(getActiveCodingWorkConflict(candidate));
+}
+
+function getActiveCodingWorkConflict(candidate) {
   const candidateFiles = getWorkItemFiles(candidate);
 
   const activeItems = readPlanItems()
@@ -2846,11 +3229,75 @@ function conflictsWithActiveCodingWork(candidate) {
     if (candidateFiles.length === 0 || activeFiles.length === 0) {
       continue;
     }
-    if (candidateFiles.some((file) => activeFiles.some((activeFile) => workItemPathsOverlap(file, activeFile)))) {
-      return true;
+    for (const file of candidateFiles) {
+      for (const activeFile of activeFiles) {
+        if (workItemPathsOverlap(file, activeFile)) {
+          return {
+            activeId: active.id,
+            activeTitle: active.title,
+            file,
+            activeFile,
+          };
+        }
+      }
     }
   }
-  return false;
+  return null;
+}
+
+function appendCodingConflictWaitLog(item, conflict) {
+  const pathLabel = conflict.file === conflict.activeFile
+    ? conflict.file
+    : conflict.file + ' (active: ' + conflict.activeFile + ')';
+  const key = [item.id, conflict.activeId, conflict.file, conflict.activeFile].join('|');
+  if (reportedCodingConflictWaitKeys.has(key)) {
+    return;
+  }
+  reportedCodingConflictWaitKeys.add(key);
+  appendTaskLogEntry(
+    'coding',
+    'info',
+    'Coding work item ' + item.id + ' is ready but waiting for active work item ' +
+      conflict.activeId + ' on ' + pathLabel + '.',
+  );
+}
+
+function getRunnerWorkDependencyDepths(items) {
+  const itemById = new Map(items.filter((item) => item.isSubtask).map((item) => [item.id, item]));
+  const depthById = new Map();
+  const visiting = new Set();
+
+  const visit = (itemId) => {
+    if (depthById.has(itemId)) {
+      return depthById.get(itemId);
+    }
+    if (visiting.has(itemId)) {
+      return 0;
+    }
+
+    const item = itemById.get(itemId);
+    if (!item) {
+      depthById.set(itemId, 0);
+      return 0;
+    }
+
+    visiting.add(itemId);
+    let depth = 0;
+    for (const dependencyId of normalizeRunnerWorkDependencyIds(item.dependsOn)) {
+      if (dependencyId === itemId || !itemById.has(dependencyId)) {
+        continue;
+      }
+      depth = Math.max(depth, visit(dependencyId) + 1);
+    }
+    visiting.delete(itemId);
+    depthById.set(itemId, depth);
+    return depth;
+  };
+
+  for (const item of itemById.values()) {
+    visit(item.id);
+  }
+  return depthById;
 }
 
 function getPlanItemStatusMap(items) {
@@ -3041,7 +3488,12 @@ function getWorkItemFiles(item) {
 }
 
 function normalizeWorkItemFileIntent(file) {
-  const normalized = String(file || '').trim().replace(/\\\\/g, '/').replace(/\\/+/g, '/').toLowerCase();
+  const normalized = String(file || '')
+    .trim()
+    .replace(/\`/g, '')
+    .replace(/\\\\/g, '/')
+    .replace(/\\/+/g, '/')
+    .toLowerCase();
   if (!normalized || normalized === '.') {
     return '';
   }
@@ -3496,18 +3948,15 @@ function withFileWriteLock(filePath, ownerId, callback) {
 
 function acquireFileWriteLock(filePath, ownerId) {
   const normalizedFilePath = normalizeLockPath(filePath);
-  const lockRoot = join(fileWriteLockScope.projectRoot, fileWriteLockScope.dataDirName, '.locks', 'runtime-file-writes');
-  const lockDir = join(lockRoot, createHash('sha256').update(normalizedFilePath).digest('hex').slice(0, 32) + '.lock');
-  const metadataPath = join(lockDir, 'metadata.json');
+  let attempt = prepareFileWriteLockAttempt(normalizedFilePath, createFileWriteLockAttempt(normalizedFilePath));
   const token = randomUUID();
-  const deadline = Date.now() + 120000;
-  mkdirSync(lockRoot, { recursive: true });
+  const deadline = Date.now() + FILE_WRITE_LOCK_TIMEOUT_MS;
 
   while (true) {
     try {
-      mkdirSync(lockDir);
+      mkdirSync(attempt.lockDir);
       try {
-        writeFileSync(metadataPath, JSON.stringify({
+        writeFileSync(attempt.metadataPath, JSON.stringify({
           filePath: normalizedFilePath,
           ownerId: ownerId || 'autocode-runner',
           token,
@@ -3515,28 +3964,78 @@ function acquireFileWriteLock(filePath, ownerId) {
           processId: process.pid,
         }, null, 2), 'utf8');
       } catch (metadataError) {
-        rmSync(lockDir, { recursive: true, force: true });
+        rmSync(attempt.lockDir, { recursive: true, force: true });
         throw metadataError;
       }
-      activeFileWriteLockDirs.add(lockDir);
-      return { lockDir, metadataPath, token };
+      activeFileWriteLockDirs.add(attempt.lockDir);
+      return { lockDir: attempt.lockDir, metadataPath: attempt.metadataPath, token };
     } catch (error) {
       if (!error || error.code !== 'EEXIST') {
+        const fallbackAttempt = maybeFallbackFileWriteLockAttempt(normalizedFilePath, attempt, error);
+        if (fallbackAttempt) {
+          attempt = fallbackAttempt;
+          continue;
+        }
         throw error;
       }
-      if (isFileWriteLockHeldByThisProcess(lockDir)) {
+      if (isFileWriteLockHeldByThisProcess(attempt.lockDir)) {
         throw new Error('Write lock on ' + normalizedFilePath + ' is already held by this process. Avoid nested writes to the same file.');
       }
-      if (isFileWriteLockStale(lockDir)) {
-        rmSync(lockDir, { recursive: true, force: true });
+      if (isFileWriteLockStale(attempt.lockDir)) {
+        rmSync(attempt.lockDir, { recursive: true, force: true });
         continue;
       }
       if (Date.now() >= deadline) {
         throw new Error('Timed out waiting for write lock on ' + normalizedFilePath + '.');
       }
-      waitForFileWriteLock(100);
+      waitForFileWriteLock(FILE_WRITE_LOCK_RETRY_MS);
     }
   }
+}
+
+function createFileWriteLockAttempt(normalizedFilePath, lockRootOverride) {
+  const lockRoot = lockRootOverride || join(fileWriteLockScope.projectRoot, fileWriteLockScope.dataDirName, '.locks', 'runtime-file-writes');
+  const lockDir = join(lockRoot, createHash('sha256').update(normalizedFilePath).digest('hex').slice(0, 32) + '.lock');
+  return {
+    lockRoot,
+    lockDir,
+    metadataPath: join(lockDir, 'metadata.json'),
+    usesFallbackLockRoot: Boolean(lockRootOverride),
+  };
+}
+
+function prepareFileWriteLockAttempt(normalizedFilePath, attempt) {
+  try {
+    mkdirSync(attempt.lockRoot, { recursive: true });
+    return attempt;
+  } catch (error) {
+    const fallbackAttempt = maybeFallbackFileWriteLockAttempt(normalizedFilePath, attempt, error);
+    if (fallbackAttempt) {
+      return fallbackAttempt;
+    }
+    throw error;
+  }
+}
+
+function maybeFallbackFileWriteLockAttempt(normalizedFilePath, attempt, error) {
+  if (attempt.usesFallbackLockRoot || !isFileWriteLockStorageError(error)) {
+    return null;
+  }
+  const fallbackAttempt = createFileWriteLockAttempt(normalizedFilePath, getFallbackFileWriteLockRoot());
+  mkdirSync(fallbackAttempt.lockRoot, { recursive: true });
+  return fallbackAttempt;
+}
+
+function getFallbackFileWriteLockRoot() {
+  const scopeKey = createHash('sha256')
+    .update(normalizeLockPath(fileWriteLockScope.projectRoot) + '\0' + (fileWriteLockScope.dataDirName || ''))
+    .digest('hex')
+    .slice(0, 32);
+  return join(tmpdir(), 'autocode-runtime-file-write-locks', scopeKey, 'runtime-file-writes');
+}
+
+function isFileWriteLockStorageError(error) {
+  return Boolean(error && ['EACCES', 'ENAMETOOLONG', 'ENOENT', 'ENOTDIR', 'EPERM', 'EROFS'].includes(error.code));
 }
 
 function releaseFileWriteLock(lock) {
@@ -4759,6 +5258,117 @@ function persistDirectSessionState(result, now, quality, changedFiles = []) {
   });
 }
 
+function commitCompletedCodingWorkItem(attempt) {
+  if (!isRunnerGitWorkspace()) {
+    return { status: 'skipped', reason: 'not a git workspace' };
+  }
+  try {
+    return withFileWriteLock(
+      join(specDir, 'autocode-work-item-git-commit.lock'),
+      'runner:git-commit:' + attempt.subtask.id,
+      () => commitCompletedCodingWorkItemLocked(attempt),
+    );
+  } catch (error) {
+    return {
+      status: 'failed',
+      reason: compactRunnerGitOutput(error instanceof Error ? error.message : String(error)),
+    };
+  }
+}
+
+function commitCompletedCodingWorkItemLocked(attempt) {
+  const selection = selectCodingWorkItemCommitFiles(attempt);
+  if (selection.files.length === 0) {
+    return { status: 'skipped', reason: selection.reason || 'no source changes detected' };
+  }
+
+  const addResult = runRunnerGitCommand(['add', '--all', '--', ...selection.files], 10000);
+  if (addResult.status !== 0) {
+    return { status: 'failed', reason: formatRunnerGitCommandFailure('git add', addResult) };
+  }
+
+  const stagedFiles = collectRunnerGitStagedFiles(selection.files);
+  if (stagedFiles.length === 0) {
+    return { status: 'skipped', reason: 'no staged source changes after git add' };
+  }
+
+  const commitSubject = sanitizeRunnerGitCommitMessageLine('chore(autocode): complete work item ' + attempt.subtask.id);
+  const commitBody = sanitizeRunnerGitCommitMessageLine(attempt.subtask.title || '');
+  const commitArgs = ['commit', '-m', commitSubject];
+  if (commitBody) {
+    commitArgs.push('-m', commitBody);
+  }
+  commitArgs.push('--', ...stagedFiles);
+
+  const commitResult = runRunnerGitCommand(commitArgs, 30000);
+  if (commitResult.status !== 0) {
+    return { status: 'failed', reason: formatRunnerGitCommandFailure('git commit', commitResult) };
+  }
+
+  const hashResult = runRunnerGitCommand(['rev-parse', '--short', 'HEAD'], 5000);
+  return {
+    status: 'committed',
+    commit: hashResult.status === 0 ? compactRunnerGitOutput(hashResult.stdout) : '',
+    files: stagedFiles,
+  };
+}
+
+function selectCodingWorkItemCommitFiles(attempt) {
+  const changedFiles = collectRunnerFilesChangedSinceBaseline(attempt.state.gitChangeBaseline);
+  if (changedFiles.length === 0) {
+    return { files: [], reason: 'no source changes detected' };
+  }
+
+  const declaredFiles = getWorkItemFiles(attempt.subtask);
+  if (declaredFiles.length > 0) {
+    const files = changedFiles.filter((filePath) => isRunnerPathCoveredByWorkItemFiles(filePath, declaredFiles));
+    return files.length > 0
+      ? { files, reason: '' }
+      : { files: [], reason: 'no changed files matched declared work item file targets' };
+  }
+
+  if (activeCodingAttempts.size > 0) {
+    return {
+      files: [],
+      reason: 'other coding workers are still active and this work item declares no file targets',
+    };
+  }
+
+  return { files: changedFiles, reason: '' };
+}
+
+function isRunnerPathCoveredByWorkItemFiles(filePath, workItemFiles) {
+  const normalized = normalizeWorkItemFileIntent(filePath);
+  return Boolean(normalized && workItemFiles.some((workItemFile) => workItemPathsOverlap(normalized, workItemFile)));
+}
+
+function collectRunnerGitStagedFiles(paths) {
+  if (!paths || paths.length === 0) {
+    return [];
+  }
+  return uniqueRunnerProjectPaths(
+    runRunnerGitListCommand(['diff', '--cached', '--name-only', '--diff-filter=ACMRTD', '--', ...paths])
+      .split(/\\r?\\n/),
+  );
+}
+
+function sanitizeRunnerGitCommitMessageLine(value) {
+  return String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 160);
+}
+
+function formatRunnerGitCommandFailure(commandLabel, result) {
+  const details = [
+    result.stderr,
+    result.stdout,
+    result.errorMessage,
+  ].map(compactRunnerGitOutput).filter(Boolean).join(' ');
+  return commandLabel + ' exited with code ' + result.status + (details ? ': ' + details : '');
+}
+
+function compactRunnerGitOutput(value) {
+  return String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 600);
+}
+
 function collectRunnerGitChangedFileSnapshot() {
   return {
     files: new Set(collectRunnerGitChangedFiles()),
@@ -4776,34 +5386,38 @@ function collectRunnerGitChangedFiles() {
     return [];
   }
   const outputs = [
-    runRunnerGitListCommand(['diff', '--name-only', '--diff-filter=ACMRT', '--']),
-    runRunnerGitListCommand(['diff', '--cached', '--name-only', '--diff-filter=ACMRT', '--']),
+    runRunnerGitListCommand(['diff', '--name-only', '--diff-filter=ACMRTD', '--']),
+    runRunnerGitListCommand(['diff', '--cached', '--name-only', '--diff-filter=ACMRTD', '--']),
     runRunnerGitListCommand(['ls-files', '--others', '--exclude-standard']),
   ];
   return uniqueRunnerProjectPaths(outputs.flatMap((output) => output.split(/\\r?\\n/)));
 }
 
 function isRunnerGitWorkspace() {
-  const result = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 3000,
-    windowsHide: true,
-  });
+  const result = runRunnerGitCommand(['rev-parse', '--is-inside-work-tree'], 3000);
   return result.status === 0;
 }
 
 function runRunnerGitListCommand(args) {
+  const result = runRunnerGitCommand(args, 5000);
+  return result.status === 0 ? result.stdout : '';
+}
+
+function runRunnerGitCommand(args, timeoutMs) {
   const result = spawnSync('git', args, {
     cwd,
     encoding: 'utf8',
-    timeout: 5000,
+    timeout: timeoutMs || 5000,
     maxBuffer: 1024 * 1024,
     windowsHide: true,
   });
-  return result.status === 0 ? String(result.stdout || '') : '';
+  return {
+    status: typeof result.status === 'number' ? result.status : 1,
+    stdout: String(result.stdout || ''),
+    stderr: String(result.stderr || ''),
+    errorMessage: result.error ? String(result.error.message || result.error) : '',
+  };
 }
-
 function uniqueRunnerProjectPaths(paths) {
   const seen = new Set();
   const result = [];
@@ -5444,9 +6058,17 @@ function hasOnlyStandardPlanRecoverableQualityErrors(planQuality, errors) {
     return false;
   }
   return errors.every((error) =>
-    isStandardPlanTaskGranularityError(planQuality, error) ||
+    isStandardPlanRecoverableQualityError(planQuality, error) ||
     isStandardPlanEvidenceScaffoldError(error),
   );
+}
+
+function isStandardPlanRecoverableQualityError(planQuality, error) {
+  if (typeof planQuality.isAutocodePlanRecoverableQualityError === 'function') {
+    return planQuality.isAutocodePlanRecoverableQualityError(error) === true;
+  }
+  return isStandardPlanTaskGranularityError(planQuality, error) ||
+    isStandardPlanArchitectureGuidanceError(planQuality, error);
 }
 
 function isStandardPlanTaskGranularityError(planQuality, error) {
@@ -5454,6 +6076,15 @@ function isStandardPlanTaskGranularityError(planQuality, error) {
     return planQuality.isAutocodePlanTaskGranularityError(error) === true;
   }
   return /\\btasks\\.md task \\S+ is too broad;/.test(String(error || ''));
+}
+
+function isStandardPlanArchitectureGuidanceError(planQuality, error) {
+  if (typeof planQuality.isAutocodePlanArchitectureGuidanceError === 'function') {
+    return planQuality.isAutocodePlanArchitectureGuidanceError(error) === true;
+  }
+  const text = String(error || '');
+  return /\\btasks\\.md Architecture And Design Pattern References (?:is too thin|needs at least three actionable bullets|must say where)/.test(text) ||
+    /\\btasks\\.md complex task\\(s\\) missing _Architecture: \\.\\.\\._ guidance/.test(text);
 }
 
 function isStandardPlanEvidenceScaffoldError(error) {
@@ -5475,6 +6106,27 @@ function readOptionalArtifact(fileName) {
   }
 }
 
+function hasNonEmptyRunnerArtifact(fileName) {
+  try {
+    return readFileSync(join(specDir, fileName), 'utf8').trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function shouldPreserveCompletedTasksInStandardPlanning() {
+  if (phase !== 'spec' && phase !== 'planning') {
+    return false;
+  }
+  const mode = String(taskMetadata?.developmentMode || '').toLowerCase();
+  if (mode !== 'standard') {
+    return false;
+  }
+  return forcePlanning === true ||
+    hasNonEmptyRunnerArtifact('HUMAN_INPUT.md') ||
+    hasNonEmptyRunnerArtifact('change_requests.jsonl');
+}
+
 async function deriveRuntimePlanFromStandardTasksIfNeeded() {
   if (phase !== 'spec' && phase !== 'planning') {
     return undefined;
@@ -5491,16 +6143,30 @@ async function deriveRuntimePlanFromStandardTasksIfNeeded() {
   try {
     const moduleUrl = pathToFileURL(workPackagesModulePath).href;
     const workPackages = await import(moduleUrl);
-    const plan = workPackages.buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
+    const shouldPreserveCompletedState = shouldPreserveCompletedTasksInStandardPlanning();
+    const previousImplementationPlanMarkdown = shouldPreserveCompletedState
+      ? readOptionalArtifact(artifacts.implementationPlan)
+      : undefined;
+    let plan = workPackages.buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
       readFileSync(tasksPath, 'utf8'),
       {
         now: new Date().toISOString(),
         language,
         sourcePath: artifacts.tasks || 'tasks.md',
         requireTaskEvidence: true,
-        includeCompletedTasks: false,
+        includeCompletedTasks: shouldPreserveCompletedState,
+        preserveCompletedStateFromPreviousPlanMarkdown: previousImplementationPlanMarkdown,
       },
     );
+    if (
+      previousImplementationPlanMarkdown &&
+      typeof workPackages.preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown === 'function'
+    ) {
+      plan = workPackages.preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown(
+        plan,
+        previousImplementationPlanMarkdown,
+      );
+    }
     const existingPlanMetadata = readExistingPlanMachineMetadata();
     if (existingPlanMetadata.tokenUsage) {
       plan.tokenUsage = existingPlanMetadata.tokenUsage;

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   acquireAutocodeRuntimeFileWriteLock,
+  acquireAutocodeRuntimeFileWriteLockSync,
   AutocodeRuntimeWorkspaceClaimManager,
   releaseAutocodeRuntimeFileWriteLock,
 } from './workspace-claims.js';
@@ -75,6 +76,34 @@ describe('Autocode runtime file write locks', () => {
     }
   });
 
+  it('falls back to a temp lock root when project lock storage is not writable', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-file-lock-fallback-'));
+    const dataDirName = '.autocode';
+    writeFileSync(join(projectRoot, dataDirName), 'not a directory');
+    const filePath = join(projectRoot, dataDirName, 'specs', '001-task', 'implementation_plan.md');
+    let lock: ReturnType<typeof acquireAutocodeRuntimeFileWriteLockSync> | null = null;
+
+    try {
+      lock = acquireAutocodeRuntimeFileWriteLockSync({
+        projectRoot,
+        dataDirName,
+        filePath,
+        ownerId: 'fallback-owner',
+        timeoutMs: 20,
+        retryMs: 1,
+      });
+
+      expect(lock.lockDir).toContain(join(tmpdir(), 'autocode-runtime-file-write-locks'));
+      expect(existsSync(join(lock.lockDir, 'metadata.json'))).toBe(true);
+    } finally {
+      if (lock) {
+        const fallbackScopeDir = dirname(lock.lockDir);
+        releaseAutocodeRuntimeFileWriteLock(lock);
+        rmSync(fallbackScopeDir, { recursive: true, force: true });
+      }
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
   it('rejects a same-owner async nested write lock immediately', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-file-lock-'));
     const filePath = join(projectRoot, 'implementation_plan.md');

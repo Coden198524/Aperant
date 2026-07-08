@@ -28,6 +28,7 @@ const PHASE_COLORS: Record<ExecutionPhase, { color: string; bgColor: string }> =
   qa_fixing: { color: 'bg-orange-500', bgColor: 'bg-orange-500/20' },
   complete: { color: 'bg-success', bgColor: 'bg-success/20' },
   failed: { color: 'bg-destructive', bgColor: 'bg-destructive/20' },
+  stopped: { color: 'bg-muted-foreground', bgColor: 'bg-muted' },
 };
 
 // Phase label translation keys
@@ -41,6 +42,7 @@ const PHASE_LABEL_KEYS: Record<ExecutionPhase, string> = {
   qa_fixing: 'execution.phases.fixing',
   complete: 'execution.phases.complete',
   failed: 'execution.phases.failed',
+  stopped: 'execution.phases.stopped',
 };
 
 /**

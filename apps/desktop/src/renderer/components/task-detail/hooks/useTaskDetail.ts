@@ -143,7 +143,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
   const isActiveTask = task.status === 'in_progress' || task.status === 'ai_review';
   const needsReview = task.status === 'human_review';
   const executionPhase = task.executionProgress?.phase;
-  const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed';
+  const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed' && executionPhase !== 'stopped';
   const isIncomplete = isIncompleteHumanReview(task);
   const taskProgress = getTaskProgress(task);
 

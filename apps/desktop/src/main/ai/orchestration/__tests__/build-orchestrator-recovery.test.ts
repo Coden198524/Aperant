@@ -883,6 +883,77 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(logs.some((log) => log.includes('Force planning requested'))).toBe(true);
   });
 
+  it('preserves completed runtime work packages during force planning iteration', async () => {
+    const tasksMarkdown = [
+      '# Tasks',
+      '',
+      'Feature: Preserve completed iteration work',
+      'Workflow: feature',
+      'Status: pending',
+      '',
+      '- [ ] 1. Completed baseline',
+      '',
+      '  - [x] 1.1 Preserve completed baseline work',
+      '    - Preserve the existing completed implementation result without scheduling it for another coding pass.',
+      '    - _Files to modify: src/baseline.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '    - _Done when: completed baseline work remains represented as completed_',
+      '    - _Verification: npm test -- baseline.test.ts_',
+      '',
+      '- [ ] 2. Change request follow-up',
+      '',
+      '  - [ ] 2.1 Apply focused change request',
+      '    - Apply only the new focused change requested by the reviewer.',
+      '    - _Files to modify: src/follow-up.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R2, AC2_',
+      '    - _Evidence: HUMAN_INPUT.md latest change request; spec.md Requirements R2; requirements.md Evidence Sources_',
+      '    - _Done when: the focused change request is ready for coding_',
+      '    - _Verification: npm test -- follow-up.test.ts_',
+      '',
+    ].join('\n');
+    const files = new Map<string, string>([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/tasks.md', tasksMarkdown],
+      ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
+    ]);
+    const normalizePath = (path: string) => path.replace(/\\/g, '/');
+
+    mockReadFile.mockImplementation((path: string) => {
+      const normalizedPath = normalizePath(path);
+      if (files.has(normalizedPath)) {
+        return Promise.resolve(files.get(normalizedPath));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation(async (path: string, content: unknown) => {
+      files.set(normalizePath(path), String(content));
+    });
+
+    const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+
+    const implementationPlan = JSON.parse(files.get('/spec/implementation_plan.md') ?? '{"phases":[]}') as {
+      phases?: Array<{ subtasks?: Array<{ status?: string; upstream_task_ids?: string[] }> }>;
+    };
+    const subtasks = implementationPlan.phases?.flatMap((phase) => phase.subtasks ?? []) ?? [];
+
+    expect(outcome.success).toBe(true);
+    expect(outcome.finalPhase).toBe('planning');
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+    expect(subtasks.some((subtask) =>
+      subtask.status === 'completed' && subtask.upstream_task_ids?.includes('1.1')
+    )).toBe(true);
+    expect(subtasks.some((subtask) =>
+      subtask.status === 'pending' && subtask.upstream_task_ids?.includes('2.1')
+    )).toBe(true);
+  });
   it('continues planning when the main implementation plan becomes executable', async () => {
     let plannerRuns = 0;
     let codingRuns = 0;

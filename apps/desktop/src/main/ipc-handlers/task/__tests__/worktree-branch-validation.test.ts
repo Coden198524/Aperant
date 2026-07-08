@@ -13,6 +13,7 @@ import {
   buildCliDetectionCandidatesForRoutes,
   createAddedFilePatchFromContent,
   GIT_BRANCH_REGEX,
+  normalizeWorktreeFilePathForPreview,
   shouldHideTaskGitChangePath,
   validateWorktreeBranch,
 } from '../worktree-handlers';
@@ -214,6 +215,29 @@ describe('createAddedFilePatchFromContent', () => {
   });
 });
 
+describe('normalizeWorktreeFilePathForPreview', () => {
+  it('maps absolute project and worktree paths to git-relative paths', () => {
+    expect(normalizeWorktreeFilePathForPreview(
+      '/repo/project/src/app.ts',
+      '/repo/project/.autocode/worktrees/tasks/001-task',
+      '/repo/project',
+    )).toBe('src/app.ts');
+
+    expect(normalizeWorktreeFilePathForPreview(
+      '/repo/project/.autocode/worktrees/tasks/001-task/src/app.ts',
+      '/repo/project/.autocode/worktrees/tasks/001-task',
+      '/repo/project',
+    )).toBe('src/app.ts');
+  });
+
+  it('normalizes decorated Windows paths from plan metadata', () => {
+    expect(normalizeWorktreeFilePathForPreview(
+      '`E:\\Work\\Project\\src\\app.ts`',
+      'E:\\Work\\Project\\.autocode\\worktrees\\tasks\\001-task',
+      'E:\\Work\\Project',
+    )).toBe('src/app.ts');
+  });
+});
 describe('shouldHideTaskGitChangePath', () => {
   it('hides internal task and agent metadata directories', () => {
     expect(shouldHideTaskGitChangePath('.git/index')).toBe(true);

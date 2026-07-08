@@ -57,19 +57,19 @@ describe('NoWorkspaceMessage', () => {
     expect(mockPersistTaskStatus).not.toHaveBeenCalled();
   });
 
-  it('allows continuing execution for completed review tasks', async () => {
+  it('shows mark as done for completed review tasks', async () => {
     render(
       <NoWorkspaceMessage
         task={createTask({ reviewReason: 'completed' })}
       />
     );
 
-    const button = screen.getByRole('button', { name: /continue execution/i });
+    const button = screen.getByRole('button', { name: /mark as done/i });
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(mockStartTaskOrQueue).toHaveBeenCalledWith('task-1', 'project-1');
+      expect(mockPersistTaskStatus).toHaveBeenCalledWith('task-1', 'done', { projectId: 'project-1' });
     });
-    expect(mockPersistTaskStatus).not.toHaveBeenCalled();
+    expect(mockStartTaskOrQueue).not.toHaveBeenCalled();
   });
 });

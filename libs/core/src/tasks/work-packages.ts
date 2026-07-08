@@ -50,6 +50,7 @@ export interface BuildAutocodeRuntimeWorkPackagePhasesInput {
   sourcePath?: string;
   requireTaskEvidence?: boolean;
   includeCompletedTasks?: boolean;
+  preserveCompletedStateFromPreviousPlanMarkdown?: string;
   emptyTasksFallback?: MutableAutocodePlanSubtask;
 }
 
@@ -63,6 +64,7 @@ export interface BuildAutocodeRuntimeImplementationPlanFromTasksInput {
   upstreamOwner?: string;
   requireTaskEvidence?: boolean;
   includeCompletedTasks?: boolean;
+  preserveCompletedStateFromPreviousPlanMarkdown?: string;
 }
 
 const AUTOCODE_WORK_PACKAGE_MAX_TASKS = 5;
@@ -85,6 +87,7 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
     sourcePath,
     requireTaskEvidence: input.requireTaskEvidence,
     includeCompletedTasks: input.includeCompletedTasks,
+    preserveCompletedStateFromPreviousPlanMarkdown: input.preserveCompletedStateFromPreviousPlanMarkdown,
   });
 
   if (!hasRuntimeWorkPackages(phases)) {
@@ -118,16 +121,236 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
   };
 }
 
+export function preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown(
+  plan: MutableAutocodePlan,
+  previousPlanMarkdown: string | undefined,
+): MutableAutocodePlan {
+  if (!previousPlanMarkdown?.trim()) {
+    return plan;
+  }
+
+  try {
+    return preserveAutocodeRuntimePlanCompletedState(
+      plan,
+      parseAutocodeImplementationPlanMarkdown(previousPlanMarkdown),
+    );
+  } catch {
+    return plan;
+  }
+}
+
+export function preserveAutocodeRuntimePlanCompletedState(
+  plan: MutableAutocodePlan,
+  previousPlan: MutableAutocodePlan | null | undefined,
+): MutableAutocodePlan {
+  if (!previousPlan) {
+    return plan;
+  }
+
+  const completedBySignature = new Map<string, MutableAutocodePlanSubtask>();
+  for (const previousSubtask of getRuntimePlanSubtasks(previousPlan)) {
+    if (previousSubtask.status !== 'completed') {
+      continue;
+    }
+    const signature = buildRuntimePlanSubtaskContentSignature(previousSubtask);
+    if (signature) {
+      completedBySignature.set(signature, previousSubtask);
+    }
+  }
+
+  if (completedBySignature.size === 0) {
+    return plan;
+  }
+
+  for (const subtask of getRuntimePlanSubtasks(plan)) {
+    const signature = buildRuntimePlanSubtaskContentSignature(subtask);
+    const previousCompleted = signature ? completedBySignature.get(signature) : undefined;
+    if (!previousCompleted) {
+      continue;
+    }
+    applyCompletedRuntimePlanSubtaskState(subtask, previousCompleted);
+  }
+
+  return plan;
+}
+
+const COMPLETED_RUNTIME_SUBTASK_STATE_FIELDS = [
+  'completed_at',
+  'completion_summary',
+  'completionSummary',
+  'completed_summary',
+  'notes',
+  'actual_output',
+  'duration_ms',
+  'started_at',
+] as const;
+
+function applyCompletedRuntimePlanSubtaskState(
+  subtask: MutableAutocodePlanSubtask,
+  previousCompleted: MutableAutocodePlanSubtask,
+): void {
+  subtask.status = 'completed';
+  const target = subtask as Record<string, unknown>;
+  const source = previousCompleted as Record<string, unknown>;
+  for (const field of COMPLETED_RUNTIME_SUBTASK_STATE_FIELDS) {
+    if (source[field] !== undefined) {
+      target[field] = source[field];
+    }
+  }
+}
+
+function getRuntimePlanSubtasks(plan: MutableAutocodePlan): MutableAutocodePlanSubtask[] {
+  return (plan.phases ?? []).flatMap((phase) => Array.isArray(phase.subtasks)
+    ? phase.subtasks
+    : Array.isArray(phase.chunks)
+      ? phase.chunks
+      : []);
+}
+
+function buildRuntimePlanSubtaskContentSignature(subtask: MutableAutocodePlanSubtask): string {
+  const upstreamTaskIds = toStringArray(subtask.upstream_task_ids).sort();
+  if (upstreamTaskIds.length === 0) {
+    return '';
+  }
+
+  return JSON.stringify({
+    upstreamTaskIds,
+    title: singleLine(stringFrom(subtask.title)),
+    filesToCreate: toStringArray(subtask.files_to_create).sort(),
+    filesToModify: toStringArray(subtask.files_to_modify).sort(),
+    patternFiles: toStringArray(subtask.pattern_files).sort(),
+    requirements: toStringArray(subtask.requirements).sort(),
+    architecture: normalizeRuntimePlanSignatureText(stringFrom(subtask.architecture)),
+    verification: stableRuntimePlanSignatureValue(subtask.verification),
+    upstreamSource: singleLine(stringFrom(subtask.upstream_source)),
+    workPackage: subtask.work_package === true,
+  });
+}
+
+function normalizeRuntimePlanSignatureText(value: string): string {
+  return value.replace(/\s+/gu, ' ').trim();
+}
+
+function stableRuntimePlanSignatureValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableRuntimePlanSignatureValue);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, stableRuntimePlanSignatureValue(entry)]),
+    );
+  }
+  return value ?? null;
+}
+function preserveAutocodeRuntimeTaskCompletedStateFromPreviousMarkdown(
+  tasks: AutocodeRuntimeTask[],
+  previousPlanMarkdown: string | undefined,
+): AutocodeRuntimeTask[] {
+  if (!previousPlanMarkdown?.trim()) {
+    return tasks;
+  }
+
+  let previousPlan: MutableAutocodePlan;
+  try {
+    previousPlan = parseAutocodeImplementationPlanMarkdown(previousPlanMarkdown);
+  } catch {
+    return tasks;
+  }
+
+  const completedSubtasksByUpstreamId = new Map<string, MutableAutocodePlanSubtask[]>();
+  for (const previousSubtask of getRuntimePlanSubtasks(previousPlan)) {
+    if (previousSubtask.status !== 'completed') {
+      continue;
+    }
+    for (const upstreamTaskId of toStringArray(previousSubtask.upstream_task_ids)) {
+      const existing = completedSubtasksByUpstreamId.get(upstreamTaskId) ?? [];
+      existing.push(previousSubtask);
+      completedSubtasksByUpstreamId.set(upstreamTaskId, existing);
+    }
+  }
+
+  if (completedSubtasksByUpstreamId.size === 0) {
+    return tasks;
+  }
+
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    if (task.status === 'completed') {
+      return task;
+    }
+    const completedCandidates = completedSubtasksByUpstreamId.get(task.id) ?? [];
+    const matchingCompletedSubtask = completedCandidates.find((candidate) =>
+      isAutocodeRuntimeTaskCompatibleWithCompletedSubtask(task, candidate),
+    );
+    if (!matchingCompletedSubtask) {
+      return task;
+    }
+    changed = true;
+    return {
+      ...task,
+      status: 'completed',
+    };
+  });
+
+  return changed ? nextTasks : tasks;
+}
+
+function isAutocodeRuntimeTaskCompatibleWithCompletedSubtask(
+  task: AutocodeRuntimeTask,
+  completedSubtask: MutableAutocodePlanSubtask,
+): boolean {
+  const completedDescription = stringFrom(completedSubtask.description);
+  if (
+    !normalizedRuntimePlanSignatureIncludes(completedDescription, task.id) ||
+    !normalizedRuntimePlanSignatureIncludes(completedDescription, task.title) ||
+    !normalizedRuntimePlanSignatureIncludes(completedDescription, task.description)
+  ) {
+    return false;
+  }
+
+  return runtimeTaskStringsAreCoveredBySubtask(task.filesToCreate, completedSubtask.files_to_create) &&
+    runtimeTaskStringsAreCoveredBySubtask(task.filesToModify, completedSubtask.files_to_modify) &&
+    runtimeTaskStringsAreCoveredBySubtask(task.patternFiles, completedSubtask.pattern_files) &&
+    runtimeTaskStringsAreCoveredBySubtask(task.requirements, completedSubtask.requirements) &&
+    normalizedRuntimePlanSignatureIncludes(stringFrom(completedSubtask.architecture), task.architecture || '') &&
+    normalizedRuntimePlanSignatureIncludes(stringFrom(completedSubtask.evidence), task.evidence || '') &&
+    normalizedRuntimePlanSignatureIncludes(
+      stringifyAutocodeRuntimeVerification(completedSubtask.verification),
+      stringifyAutocodeRuntimeVerification(task.verification),
+    );
+}
+
+function runtimeTaskStringsAreCoveredBySubtask(values: string[], completedValues: unknown): boolean {
+  const completed = new Set(toStringArray(completedValues).map(normalizeRuntimePlanSignatureText));
+  return values
+    .map(normalizeRuntimePlanSignatureText)
+    .filter(Boolean)
+    .every((value) => completed.has(value));
+}
+
+function normalizedRuntimePlanSignatureIncludes(value: string, expected: string): boolean {
+  const normalizedExpected = normalizeRuntimePlanSignatureText(expected).toLowerCase();
+  if (!normalizedExpected) {
+    return true;
+  }
+  return normalizeRuntimePlanSignatureText(value).toLowerCase().includes(normalizedExpected);
+}
 export function buildAutocodeRuntimeWorkPackagePhases(
   input: BuildAutocodeRuntimeWorkPackagePhasesInput,
 ): MutableAutocodePlanPhase[] {
   const flattenedTasks = flattenAutocodeRuntimeTasks(input.parsedPhases, input.language, input.sourceName);
+  const completionPreservedTasks = preserveAutocodeRuntimeTaskCompletedStateFromPreviousMarkdown(
+    flattenedTasks,
+    input.preserveCompletedStateFromPreviousPlanMarkdown,
+  );
   const evidenceReadyTasks = input.requireTaskEvidence
-    ? normalizeAutocodeRuntimeTaskEvidenceMetadata(flattenedTasks, {
+    ? normalizeAutocodeRuntimeTaskEvidenceMetadata(completionPreservedTasks, {
         sourceName: input.sourceName || 'Autocode',
         sourcePath: input.sourcePath || AUTOCODE_TASK_ARTIFACTS.tasks,
       })
-    : flattenedTasks;
+    : completionPreservedTasks;
   if (input.requireTaskEvidence) {
     const evidenceErrors = validateAutocodeRuntimeTaskEvidenceMetadata(
       evidenceReadyTasks,
@@ -938,9 +1161,10 @@ function getAutocodeRuntimePackableTaskDependencySignature(
     return '';
   }
 
-  return task.dependsOn.length > 0
+  const dependencySignature = task.dependsOn.length > 0
     ? task.dependsOn.slice().sort().join('|')
     : '__no_dependencies__';
+  return `${task.status}:${dependencySignature}`;
 }
 
 function packAutocodeRuntimeIndependentTasksByEstimatedEffort(
@@ -1145,6 +1369,9 @@ function getAutocodeRuntimeTaskOrder(tasks: AutocodeRuntimeTask[], taskId: strin
 }
 
 function canGroupAutocodeRuntimeTaskDependency(task: AutocodeRuntimeTask, dependency: AutocodeRuntimeTask): boolean {
+  if (task.status !== dependency.status) {
+    return false;
+  }
   return task.phaseId === dependency.phaseId || (isTopLevelAutocodeRuntimeTask(task) && isTopLevelAutocodeRuntimeTask(dependency));
 }
 

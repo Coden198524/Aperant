@@ -19,6 +19,7 @@ export const AUTOCODE_EXECUTION_PHASE_WEIGHTS: Readonly<Record<ExecutionPhase, {
   qa_fixing: { start: 80, end: 95 },
   complete: { start: 100, end: 100 },
   failed: { start: 0, end: 0 },
+  stopped: { start: 0, end: 0 },
 };
 
 export interface AutocodePhaseParseResult<TPhase extends string = string> {

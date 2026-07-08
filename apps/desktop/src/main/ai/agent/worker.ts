@@ -720,15 +720,15 @@ function readPlanReviewFeedback(session: SerializableSessionConfig): string | nu
   }
 }
 
-function buildPlanReviewRegenerationDirective(session: SerializableSessionConfig): string {
+function buildPlanReviewIterationDirective(session: SerializableSessionConfig): string {
   const promptSpecDir = formatPathForPrompt(session.specDir);
   const feedback = readPlanReviewFeedback(session);
   const lines = [
-    '## PLAN REVIEW REGENERATION',
-    'This run was started from Request Changes in plan review.',
+    '## STANDARD ITERATION PLANNING',
+    'This run was started from Request Changes and must update the existing task plan incrementally before coding.',
     `Read ${promptSpecDir}/HUMAN_INPUT.md and treat it as required reviewer feedback.`,
     `If ${promptSpecDir}/change_requests.jsonl exists, use its latest entry as the active same-task iteration contract.`,
-    `Update ${promptSpecDir}/spec.md, ${promptSpecDir}/requirements.md, and ${promptSpecDir}/tasks.md where the feedback changes requirements, acceptance criteria, design decisions, task scope, or verification.`,
+    `Update only affected parts of ${promptSpecDir}/spec.md, ${promptSpecDir}/requirements.md, and ${promptSpecDir}/tasks.md where the feedback changes requirements, acceptance criteria, design decisions, task scope, or verification.`,
     `Do not edit ${promptSpecDir}/implementation_plan.md directly; the runtime derives it from validated tasks.md after the Standard artifacts are updated.`,
     `Do not make ${promptSpecDir}/implementation_plan.md the only changed planning artifact when the feedback changes requirements, design, user behavior, or task scope.`,
     'Only edit affected requirement IDs, design notes, risks, acceptance criteria, and task checklist items. Keep unaffected sections stable.',
@@ -737,7 +737,7 @@ function buildPlanReviewRegenerationDirective(session: SerializableSessionConfig
     'Every new or revised requirement/design/task must carry Evidence; if evidence is missing, add an assumption/open question or validation task instead of guessing.',
     'Add or update focused verification commands for every new or revised task so the next coding pass can test and commit through the normal task flow.',
     'Keep this as a planning-only run: do not implement code, do not run coding subtasks, and do not mark subtasks completed.',
-    'Preserve useful parts of the previous Autocode Standard documents only when they still match the reviewer feedback; otherwise replace them.',
+    'Preserve useful parts of the previous Autocode Standard documents when they still match the reviewer feedback. Do not regenerate unaffected requirements or task sections.',
   ];
 
   if (feedback) {
@@ -889,7 +889,7 @@ async function assemblePrompt(
       promptWithLanguage += `\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n${planRequirement}`;
     }
     if (session.forcePlanning === true) {
-      promptWithLanguage += `\n\n${buildPlanReviewRegenerationDirective(session)}`;
+      promptWithLanguage += `\n\n${buildPlanReviewIterationDirective(session)}`;
     }
   }
   if (promptName === 'spec_quick' && isAggressiveWorkflow(session)) {

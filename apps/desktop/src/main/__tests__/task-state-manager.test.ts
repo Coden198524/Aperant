@@ -244,7 +244,7 @@ describe('TaskStateManager', () => {
       // Should not throw
     });
 
-    it('preserves coding phase when a coding task is stopped', () => {
+    it('persists stopped phase when a coding task is stopped', () => {
       const codingTask = createMockTask({
         id: 'coding-stop',
         specId: '001-coding-stop',
@@ -292,7 +292,7 @@ describe('TaskStateManager', () => {
         'stopped',
         mockProject.id,
         'human_review',
-        'coding'
+        'stopped'
       );
     });
 
@@ -326,7 +326,7 @@ describe('TaskStateManager', () => {
         'stopped',
         mockProject.id,
         'human_review',
-        'coding'
+        'stopped'
       );
       expect(manager.getCurrentState(stoppedTask.id)).toBe('coding');
     });

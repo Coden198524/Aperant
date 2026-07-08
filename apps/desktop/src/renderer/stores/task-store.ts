@@ -171,7 +171,7 @@ function shouldApplyTaskLoad(projectId: string, sequence: number): boolean {
  * This prevents race conditions where stuck detection fires before process is registered.
  */
 const taskLastActivity = new Map<string, number>();
-const STUCK_ACTIVITY_THRESHOLD_MS = 60_000; // 60 seconds — matches catastrophic stuck check interval
+const STUCK_ACTIVITY_THRESHOLD_MS = 60_000; // 60 seconds - matches catastrophic stuck check interval
 
 /**
  * Record activity for a task (call this when we receive execution progress or status updates)
@@ -236,6 +236,10 @@ function updateTaskAtIndex(tasks: Task[], index: number, updater: (task: Task) =
 
 function isAllowedPhaseRegression(currentPhase: ExecutionPhase, nextPhase: ExecutionPhase): boolean {
   return currentPhase === 'qa_fixing' && nextPhase === 'qa_review';
+}
+
+function isInactiveOrTerminalExecutionPhase(phase: ExecutionPhase | undefined): boolean {
+  return !phase || phase === 'idle' || phase === 'complete' || phase === 'failed' || phase === 'stopped';
 }
 
 function mergeTokenUsageForTask(
@@ -340,7 +344,7 @@ function promoteExecutionPhaseFromPlan(
   }
 
   const currentPhase = task.executionProgress?.phase;
-  const shouldPromoteToCoding = (currentPhase === undefined || currentPhase === 'planning')
+  const shouldPromoteToCoding = (currentPhase === undefined || currentPhase === 'planning' || isInactiveOrTerminalExecutionPhase(currentPhase))
     && hasCodingActivityInSubtasks(subtasks);
 
   if (!shouldPromoteToCoding) {
@@ -349,10 +353,11 @@ function promoteExecutionPhaseFromPlan(
 
   const activeSubtask = subtasks.find((subtask) => subtask.status === 'in_progress');
 
+  const shouldCarryProgress = currentPhase === 'planning' || currentPhase === 'coding';
   return {
     phase: 'coding',
-    phaseProgress: task.executionProgress?.phaseProgress ?? 0,
-    overallProgress: task.executionProgress?.overallProgress ?? 0,
+    phaseProgress: shouldCarryProgress ? task.executionProgress?.phaseProgress ?? 0 : 0,
+    overallProgress: shouldCarryProgress ? task.executionProgress?.overallProgress ?? 0 : 0,
     currentSubtask: activeSubtask?.title ?? task.executionProgress?.currentSubtask,
     message: task.executionProgress?.message,
     startedAt: task.executionProgress?.startedAt,
@@ -402,10 +407,11 @@ function buildExecutionProgressForPlanPhase(
   task: Task,
   phase: ExecutionPhase,
 ): ExecutionProgress {
+  const samePhase = task.executionProgress?.phase === phase;
   return {
     phase,
-    phaseProgress: task.executionProgress?.phase === phase ? task.executionProgress.phaseProgress : 0,
-    overallProgress: task.executionProgress?.overallProgress ?? 0,
+    phaseProgress: samePhase ? task.executionProgress?.phaseProgress ?? 0 : 0,
+    overallProgress: samePhase ? task.executionProgress?.overallProgress ?? 0 : 0,
     currentSubtask: phase === 'coding' ? task.executionProgress?.currentSubtask : undefined,
     message: task.executionProgress?.message,
     startedAt: task.executionProgress?.startedAt,
@@ -464,11 +470,11 @@ function getExecutionProgressForStatus(
   if (status === 'backlog') {
     return { phase: 'idle', phaseProgress: 0, overallProgress: 0 };
   }
-  if (status === 'in_progress' && !current?.phase) {
+  if (status === 'in_progress' && isInactiveOrTerminalExecutionPhase(current?.phase)) {
     return { phase: 'planning', phaseProgress: 0, overallProgress: 0 };
   }
   if (status === 'human_review' && reviewReason === 'stopped') {
-    return current;
+    return { phase: 'stopped', phaseProgress: 0, overallProgress: 0 };
   }
   if (
     status === 'done' ||
@@ -510,7 +516,7 @@ function isInactiveIncomingStatus(status: TaskStatus): boolean {
 
 function hasActiveExecutionProgress(task: Task): boolean {
   const phase = task.executionProgress?.phase;
-  return Boolean(phase && phase !== 'idle' && phase !== 'complete' && phase !== 'failed');
+  return Boolean(phase && phase !== 'idle' && phase !== 'complete' && phase !== 'failed' && phase !== 'stopped');
 }
 
 function isLocallyActiveTask(task: Task): boolean {
@@ -743,7 +749,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }),
 
   updateTaskStatus: (taskId, status, reviewReason, projectId) => {
-    // Record activity for stuck detection — status changes prove the task is alive
     // Capture old status before update
     const state = get();
     const index = findTaskIndex(state.tasks, taskId, projectId);
@@ -758,8 +763,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     recordTaskActivity(taskId, resolvedProjectId);
     invalidateTaskCache(resolvedProjectId);
 
-    // Skip if status AND reviewReason are the same
-    if (oldStatus === status && oldTask.reviewReason === reviewReason) {
+    const needsInProgressRefresh = status === 'in_progress' && isInactiveOrTerminalExecutionPhase(oldTask.executionProgress?.phase);
+
+    // Skip if status AND reviewReason are the same, unless the stored progress is stale for an active restart.
+    if (oldStatus === status && oldTask.reviewReason === reviewReason && !needsInProgressRefresh) {
       debugLog('[updateTaskStatus] Status and reviewReason unchanged, skipping:', { taskId, status, reviewReason });
       return;
     }
@@ -968,6 +975,21 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           const currentPhase = existingProgress.phase;
           const nextPhase = progress.phase;
           const allowPhaseRegression = progress.allowPhaseRegression === true;
+          if (
+            t.status === 'human_review' &&
+            t.reviewReason === 'stopped' &&
+            nextPhase &&
+            nextPhase !== 'stopped' &&
+            nextPhase !== 'idle'
+          ) {
+            console.warn('[updateExecutionProgress] Dropping active phase update for stopped task:', {
+              taskId,
+              nextPhase,
+              status: t.status,
+              reviewReason: t.reviewReason
+            });
+            return t;
+          }
           const isTerminalTaskState =
             t.status === 'done' ||
             t.status === 'pr_created' ||
@@ -1084,7 +1106,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   // Batch append multiple logs at once (single state update instead of N updates)
   batchAppendLogs: (taskId, logs, projectId) => {
-    // Record activity for stuck detection — log output proves the task is alive
+    // Record activity for stuck detection - log output proves the task is alive
     return set((state) => {
       if (logs.length === 0) {
         debugLog('[TaskStore.batchAppendLogs] No logs to append for task:', taskId);
@@ -1594,15 +1616,20 @@ export interface StartTaskOrQueueResult {
   error?: string;
 }
 
+function shouldRecoverBeforeRestart(task: Task | undefined): boolean {
+  return task?.status === 'error' ||
+    (task?.status === 'human_review' &&
+      (task.reviewReason === 'stopped' || task.reviewReason === 'errors'));
+}
+
 /**
  * Start a task or queue it if parallel task capacity is full.
  * If the task is already in_progress (stuck restart), it is excluded from the
  * capacity count so restarting is always allowed.
  * Returns a result so callers can provide user-facing feedback.
  *
- * For action 'started', success indicates the IPC start command was dispatched.
- * Backend failures are surfaced asynchronously through task status change events,
- * not through this return value.
+ * For ordinary starts, success indicates the IPC start command was dispatched.
+ * For stopped/error restarts, success reflects the recover-and-restart IPC result.
  */
 export async function startTaskOrQueue(taskId: string, projectId?: string): Promise<StartTaskOrQueueResult> {
   const task = findTaskInStore(useTaskStore.getState().tasks, taskId, projectId);
@@ -1621,6 +1648,19 @@ export async function startTaskOrQueue(taskId: string, projectId?: string): Prom
       return { action: 'queued', success: false, error: result.error };
     }
     return { action: 'queued', success: true };
+  }
+
+  if (shouldRecoverBeforeRestart(task)) {
+    const result = await recoverStuckTask(
+      taskId,
+      {
+        autoRestart: true,
+        ...(resolvedProjectId ? { projectId: resolvedProjectId } : {}),
+      },
+    );
+    return result.success
+      ? { action: 'started', success: true }
+      : { action: 'started', success: false, error: result.message };
   }
 
   startTask(taskId, resolvedProjectId ? { projectId: resolvedProjectId } : undefined);
@@ -1734,6 +1774,17 @@ export async function recoverStuckTask(
     );
 
     if (result.success && result.data) {
+      if (projectId) {
+        await loadTasks(projectId, { forceRefresh: true });
+      }
+      const autoRestartExpected = options.autoRestart !== false;
+      if (autoRestartExpected && result.data.autoRestarted === false) {
+        return {
+          success: false,
+          message: result.data.message,
+          autoRestarted: false
+        };
+      }
       return {
         success: true,
         message: result.data.message,
@@ -1992,7 +2043,7 @@ export function getTaskByGitHubIssue(issueNumber: number): Task | undefined {
 export function isIncompleteHumanReview(task: Task): boolean {
   if (task.status !== 'human_review') return false;
 
-  // Any task with a known reviewReason was placed in human_review intentionally — not a crash.
+  // Any task with a known reviewReason was placed in human_review intentionally - not a crash.
   // Only tasks with NO reviewReason (or an unknown one) should be checked for incomplete subtasks.
   if (task.reviewReason) return false;
 

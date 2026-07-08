@@ -358,8 +358,21 @@ export function isAutocodePlanTaskGranularityError(error: string): boolean {
   return /\btasks\.md task \S+ is too broad;/.test(error);
 }
 
+export function isAutocodePlanArchitectureGuidanceError(error: string): boolean {
+  return /\btasks\.md Architecture And Design Pattern References (?:is too thin|needs at least three actionable bullets|must say where)/.test(error) ||
+    /\btasks\.md complex task\(s\) missing _Architecture: \.\.\._ guidance/.test(error);
+}
+
+export function isAutocodePlanRecoverableQualityError(error: string): boolean {
+  return isAutocodePlanTaskGranularityError(error) || isAutocodePlanArchitectureGuidanceError(error);
+}
+
 export function hasOnlyAutocodePlanTaskGranularityErrors(errors: string[]): boolean {
   return errors.length > 0 && errors.every(isAutocodePlanTaskGranularityError);
+}
+
+export function hasOnlyAutocodePlanRecoverableQualityErrors(errors: string[]): boolean {
+  return errors.length > 0 && errors.every(isAutocodePlanRecoverableQualityError);
 }
 
 function validateComplexPlanArchitectureReferences(input: {

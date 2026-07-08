@@ -147,7 +147,8 @@
       "reviewing": "Reviewing",
       "fixing": "Fixing",
       "complete": "Complete",
-      "failed": "Failed"
+      "failed": "Failed",
+      "stopped": "Stopped"
     },
     "labels": {
       "interrupted": "Interrupted",

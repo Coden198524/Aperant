@@ -88,7 +88,8 @@ export const EXECUTION_PHASE_LABELS: Record<string, string> = {
   qa_review: 'AI Review',
   qa_fixing: 'Fixing Issues',
   complete: 'Complete',
-  failed: 'Failed'
+  failed: 'Failed',
+  stopped: 'Stopped'
 };
 
 // Execution phase colors (for progress bars and indicators)
@@ -101,7 +102,8 @@ export const EXECUTION_PHASE_COLORS: Record<string, string> = {
   qa_review: 'bg-purple-500 text-purple-50',
   qa_fixing: 'bg-warning text-warning-foreground',
   complete: 'bg-success text-success-foreground',
-  failed: 'bg-destructive text-destructive-foreground'
+  failed: 'bg-destructive text-destructive-foreground',
+  stopped: 'bg-muted text-muted-foreground'
 };
 
 // Execution phase badge colors (outline style)
@@ -114,7 +116,8 @@ export const EXECUTION_PHASE_BADGE_COLORS: Record<string, string> = {
   qa_review: 'bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/30',
   qa_fixing: 'bg-warning/10 text-warning border-warning/30',
   complete: 'bg-success/10 text-success border-success/30',
-  failed: 'bg-destructive/10 text-destructive border-destructive/30'
+  failed: 'bg-destructive/10 text-destructive border-destructive/30',
+  stopped: 'bg-muted/50 text-muted-foreground border-muted'
 };
 
 // Execution phase progress weights (for overall progress calculation)
@@ -127,7 +130,8 @@ export const EXECUTION_PHASE_WEIGHTS: Record<string, { start: number; end: numbe
   qa_review: { start: 80, end: 95 },
   qa_fixing: { start: 80, end: 95 },  // Same range as qa_review, cycles back
   complete: { start: 100, end: 100 },
-  failed: { start: 0, end: 0 }
+  failed: { start: 0, end: 0 },
+  stopped: { start: 0, end: 0 }
 };
 
 // ============================================

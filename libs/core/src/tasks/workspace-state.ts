@@ -297,6 +297,7 @@ export function createStartedAutocodeAgentRuntime(
     model: input.model,
     bypassPermissions: input.bypassPermissions,
     phase: mapAutocodeAgentRuntimeModeToTaskRunPhase(runtimePlan.mode),
+    forcePlanning: input.forcePlanning === true,
     language: input.language,
   });
 
@@ -385,21 +386,21 @@ export function markAutocodeTaskStopped(input: AutocodeTaskActionInput & {
     projectRoot: input.projectRoot,
     dataDirName,
   }).find((candidate) => candidate.id === input.taskId || candidate.specId === input.taskId);
-  const stoppedPhase = input.phase ?? inferStoppedTaskPhase(existingTask);
+  const stoppedActivityPhase = input.phase ?? inferStoppedTaskPhase(existingTask);
   const task = updateAutocodeTaskPlanStatus({
     projectRoot: input.projectRoot,
     dataDirName,
     taskId: input.taskId,
     planStatus: 'human_review',
     reviewReason: 'stopped',
-    executionPhase: stoppedPhase,
+    executionPhase: 'stopped',
   });
 
   updateAutocodeTaskLogPhase({
     projectRoot: input.projectRoot,
     dataDirName,
     taskId: input.taskId,
-    phase: stoppedPhase,
+    phase: stoppedActivityPhase,
     status: 'active',
     message: input.message ?? 'Task stopped.',
   });

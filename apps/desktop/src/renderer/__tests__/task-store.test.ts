@@ -3,7 +3,7 @@
  * Tests Zustand store for task state management
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useTaskStore, hasRecentActivity, clearTaskActivity, isQueueAtCapacity, loadTasks, startTaskOrQueue } from '../stores/task-store';
+import { useTaskStore, hasRecentActivity, clearTaskActivity, isQueueAtCapacity, loadTasks, startTaskOrQueue, recoverStuckTask } from '../stores/task-store';
 import { useProjectStore } from '../stores/project-store';
 import type { Project, Task, TaskStatus, ImplementationPlan, TokenUsage } from '../../shared/types';
 
@@ -305,7 +305,7 @@ describe('Task Store', () => {
       expect(task.reviewReason).toBe('plan_review');
     });
 
-    it('should preserve execution phase when a coding task is stopped', () => {
+    it('should mark execution phase stopped when a coding task is stopped', () => {
       useTaskStore.setState({
         tasks: [
           createTestTask({
@@ -325,7 +325,7 @@ describe('Task Store', () => {
       const task = useTaskStore.getState().tasks[0];
       expect(task.status).toBe('human_review');
       expect(task.reviewReason).toBe('stopped');
-      expect(task.executionProgress?.phase).toBe('coding');
+      expect(task.executionProgress?.phase).toBe('stopped');
     });
 
     it('should clear reviewReason when not provided', () => {
@@ -361,6 +361,49 @@ describe('Task Store', () => {
       expect(task.reviewReason).toBe('completed');
       expect(task.executionProgress?.phase).toBe('complete');
       expect(task.executionProgress?.overallProgress).toBe(100);
+    });
+    it('should reset completed review progress when Request Changes restarts execution', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'human_review',
+          reviewReason: 'completed',
+          executionProgress: {
+            phase: 'complete',
+            phaseProgress: 100,
+            overallProgress: 100,
+          }
+        })]
+      });
+
+      useTaskStore.getState().updateTaskStatus('task-1', 'in_progress', undefined);
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.status).toBe('in_progress');
+      expect(task.reviewReason).toBeUndefined();
+      expect(task.executionProgress?.phase).toBe('planning');
+      expect(task.executionProgress?.phaseProgress).toBe(0);
+      expect(task.executionProgress?.overallProgress).toBe(0);
+    });
+
+    it('should refresh stale completed progress when in_progress status is repeated', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'in_progress',
+          executionProgress: {
+            phase: 'complete',
+            phaseProgress: 100,
+            overallProgress: 100,
+          }
+        })]
+      });
+
+      useTaskStore.getState().updateTaskStatus('task-1', 'in_progress', undefined);
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.executionProgress?.phase).toBe('planning');
+      expect(task.executionProgress?.overallProgress).toBe(0);
     });
   });
 
@@ -606,7 +649,46 @@ describe('Task Store', () => {
       expect(task.status).toBe('in_progress');
       expect(task.executionProgress?.phase).toBe('planning');
       expect(task.executionProgress?.phaseProgress).toBe(0);
+      expect(task.executionProgress?.overallProgress).toBe(0);
       expect(task.executionProgress?.currentSubtask).toBeUndefined();
+    });
+
+    it('should promote active coding plan when local progress is stale completed', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'in_progress',
+          executionProgress: {
+            phase: 'complete',
+            phaseProgress: 100,
+            overallProgress: 100,
+          }
+        })]
+      });
+
+      const plan = createTestPlan({
+        status: 'in_progress',
+        xstateState: 'coding',
+        executionPhase: 'coding',
+        phases: [
+          {
+            phase: 1,
+            name: 'Implementation',
+            type: 'implementation',
+            subtasks: [
+              { id: 'c1', title: 'Changed work', description: 'Apply Request Changes', status: 'in_progress' }
+            ]
+          }
+        ]
+      } as Partial<ImplementationPlan> & { executionPhase: string });
+
+      useTaskStore.getState().updateTaskFromPlan('task-1', plan);
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.executionProgress?.phase).toBe('coding');
+      expect(task.executionProgress?.phaseProgress).toBe(0);
+      expect(task.executionProgress?.overallProgress).toBe(0);
+      expect(task.executionProgress?.currentSubtask).toBe('Changed work');
     });
 
     it('should skip update when plan is invalid', () => {
@@ -1002,6 +1084,116 @@ describe('Task Store', () => {
 
       expect(result).toEqual({ action: 'started', success: true });
       expect(startTask).toHaveBeenCalledWith('task-b', { projectId: 'project-b' });
+    });
+
+    it('returns failure when recovery succeeds but auto-restart does not', async () => {
+      const stoppedTask = createTestTask({
+        id: 'task-1',
+        specId: '001-task',
+        projectId: 'project-1',
+        status: 'human_review',
+        reviewReason: 'stopped',
+      });
+      const recover = vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          taskId: 'task-1',
+          recovered: true,
+          newStatus: 'human_review',
+          message: 'Task recovered but cannot restart: authentication required',
+          autoRestarted: false,
+        },
+      });
+      vi.stubGlobal('window', {
+        electronAPI: {
+          recoverStuckTask: recover,
+          getTasks: vi.fn().mockResolvedValue({ success: true, data: [stoppedTask] }),
+        },
+      });
+      useTaskStore.setState({ tasks: [stoppedTask] });
+
+      const result = await recoverStuckTask('task-1', { autoRestart: true, projectId: 'project-1' });
+
+      expect(result).toEqual({
+        success: false,
+        message: 'Task recovered but cannot restart: authentication required',
+        autoRestarted: false,
+      });
+      expect(recover).toHaveBeenCalledWith('task-1', { autoRestart: true, projectId: 'project-1' });
+    });
+
+    it('uses recovery restart for stopped human-review tasks', async () => {
+      const stoppedTask = createTestTask({
+        id: 'task-1',
+        specId: '001-task',
+        projectId: 'project-1',
+        status: 'human_review',
+        reviewReason: 'stopped',
+      });
+      const recover = vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          taskId: 'task-1',
+          recovered: true,
+          newStatus: 'in_progress',
+          message: 'Task recovered and restarted',
+          autoRestarted: true,
+        },
+      });
+      const startTask = vi.fn();
+      vi.stubGlobal('window', {
+        electronAPI: {
+          recoverStuckTask: recover,
+          getTasks: vi.fn().mockResolvedValue({ success: true, data: [stoppedTask] }),
+          startTask,
+        },
+      });
+      useTaskStore.setState({ tasks: [stoppedTask] });
+
+      const result = await startTaskOrQueue('task-1', 'project-1');
+
+      expect(result).toEqual({ action: 'started', success: true });
+      expect(recover).toHaveBeenCalledWith('task-1', { autoRestart: true, projectId: 'project-1' });
+      expect(startTask).not.toHaveBeenCalled();
+    });
+
+    it('returns failure when recovery restart cannot start a stopped task', async () => {
+      const stoppedTask = createTestTask({
+        id: 'task-1',
+        specId: '001-task',
+        projectId: 'project-1',
+        status: 'human_review',
+        reviewReason: 'stopped',
+      });
+      const recover = vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          taskId: 'task-1',
+          recovered: true,
+          newStatus: 'human_review',
+          message: 'Task recovered but cannot restart: authentication required',
+          autoRestarted: false,
+        },
+      });
+      const startTask = vi.fn();
+      vi.stubGlobal('window', {
+        electronAPI: {
+          recoverStuckTask: recover,
+          getTasks: vi.fn().mockResolvedValue({ success: true, data: [stoppedTask] }),
+          startTask,
+        },
+      });
+      useTaskStore.setState({ tasks: [stoppedTask] });
+
+      const result = await startTaskOrQueue('task-1', 'project-1');
+
+      expect(result).toEqual({
+        action: 'started',
+        success: false,
+        error: 'Task recovered but cannot restart: authentication required',
+      });
+      expect(recover).toHaveBeenCalledWith('task-1', { autoRestart: true, projectId: 'project-1' });
+      expect(startTask).not.toHaveBeenCalled();
     });
 
     it('optimistically moves a newly started backlog task into planning', async () => {

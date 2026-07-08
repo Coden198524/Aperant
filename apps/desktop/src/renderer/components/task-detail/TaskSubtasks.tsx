@@ -1,8 +1,16 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react';
-import { CheckCircle2, Clock, XCircle, AlertCircle, ListChecks, FileCode, ChevronRight, ChevronsUpDown, Loader2, Trash2, ClipboardCheck, Hash } from 'lucide-react';
+import { CheckCircle2, Clock, XCircle, AlertCircle, ListChecks, FileCode, ChevronRight, ChevronsUpDown, Loader2, Trash2, ClipboardCheck, Hash, Eye } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Badge } from '../ui/badge';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn, calculateProgress } from '../../lib/utils';
 import { resolveActiveSubtaskIndex } from '../../lib/subtask-progress';
@@ -587,6 +595,11 @@ function PaneResizeHandle({
   );
 }
 
+interface ExecutionGraphTimeInterval {
+  startedMs: number;
+  completedMs: number;
+}
+
 interface ExecutionGraphNode {
   id: string;
   title: string;
@@ -595,6 +608,9 @@ interface ExecutionGraphNode {
   row: number;
   order: number;
   durationMs?: number;
+  activeDurationMs?: number;
+  activeStartedMs?: number;
+  activeIntervals?: ExecutionGraphTimeInterval[];
   startedMs?: number;
   completedMs?: number;
   timingSource?: 'recorded' | 'logs';
@@ -1057,59 +1073,114 @@ function getSubtaskRecordedTiming(subtask: Task['subtasks'][number]): {
   };
 }
 
-function getLogInferredTimingBySubtaskId(logs: TaskLogsData | null | undefined): Map<string, {
+type ExecutionGraphLogTiming = {
   startedMs: number;
-  completedMs: number;
-  durationMs: number;
-}> {
-  const timingById = new Map<string, { startedMs: number; completedMs: number; durationMs: number }>();
-  const terminalSubtaskIds = new Set<string>();
+  completedMs?: number;
+  durationMs?: number;
+  activeDurationMs?: number;
+  activeStartedMs?: number;
+  activeIntervals?: ExecutionGraphTimeInterval[];
+};
+
+function getLogInferredTimingBySubtaskId(logs: TaskLogsData | null | undefined): Map<string, ExecutionGraphLogTiming> {
+  const timingById = new Map<string, {
+    startedMs: number;
+    latestMs: number;
+    activeDurationMs: number;
+    activeStartedMs?: number;
+    activeIntervals: ExecutionGraphTimeInterval[];
+    terminal: boolean;
+  }>();
   if (!logs) {
-    return timingById;
+    return new Map();
   }
 
   const entries = [
     ...logs.phases.planning.entries,
     ...logs.phases.coding.entries,
     ...logs.phases.validation.entries,
-  ];
+  ]
+    .map(entry => ({ entry, timestamp: parseTimestampMs(entry.timestamp) }))
+    .filter((item): item is { entry: TaskLogsData['phases']['coding']['entries'][number]; timestamp: number } =>
+      Boolean(item.entry.subtask_id) && item.timestamp !== undefined
+    )
+    .sort((left, right) => left.timestamp - right.timestamp);
 
-  for (const entry of entries) {
-    if (!entry.subtask_id) {
+  for (const { entry, timestamp } of entries) {
+    const subtaskId = entry.subtask_id;
+    if (!subtaskId) {
       continue;
     }
 
-    const timestamp = parseTimestampMs(entry.timestamp);
-    if (timestamp === undefined) {
-      continue;
+    let timing = timingById.get(subtaskId);
+    if (!timing) {
+      timing = {
+        startedMs: timestamp,
+        latestMs: timestamp,
+        activeDurationMs: 0,
+        activeIntervals: [],
+        terminal: false,
+      };
+      timingById.set(subtaskId, timing);
     }
+
+    const isStart = isExecutionGraphWorkItemStartLogEntry(entry, subtaskId);
+    if (isStart) {
+      if (timing.activeStartedMs !== undefined) {
+        const completedMs = Math.max(timing.latestMs, timing.activeStartedMs);
+        timing.activeDurationMs += Math.max(0, completedMs - timing.activeStartedMs);
+        timing.activeIntervals.push({ startedMs: timing.activeStartedMs, completedMs });
+      }
+      timing.activeStartedMs = timestamp;
+      timing.terminal = false;
+    } else if (timing.activeStartedMs === undefined && !timing.terminal) {
+      timing.activeStartedMs = timestamp;
+    }
+
+    timing.startedMs = Math.min(timing.startedMs, timestamp);
+    timing.latestMs = Math.max(timing.latestMs, timestamp);
 
     if (isTerminalSubtaskLogEntry(entry)) {
-      terminalSubtaskIds.add(entry.subtask_id);
+      const activeStartedMs = timing.activeStartedMs ?? timestamp;
+      timing.activeDurationMs += Math.max(0, timestamp - activeStartedMs);
+      timing.activeIntervals.push({ startedMs: activeStartedMs, completedMs: timestamp });
+      timing.activeStartedMs = undefined;
+      timing.terminal = true;
     }
+  }
 
-    const previous = timingById.get(entry.subtask_id);
-    if (!previous) {
-      timingById.set(entry.subtask_id, {
-        startedMs: timestamp,
-        completedMs: timestamp,
-        durationMs: 0,
+  const result = new Map<string, ExecutionGraphLogTiming>();
+  for (const [subtaskId, timing] of timingById) {
+    if (!timing.terminal) {
+      result.set(subtaskId, {
+        startedMs: timing.startedMs,
+        activeDurationMs: timing.activeDurationMs,
+        ...(timing.activeStartedMs !== undefined ? { activeStartedMs: timing.activeStartedMs } : {}),
+        ...(timing.activeIntervals.length > 0 ? { activeIntervals: timing.activeIntervals } : {}),
       });
       continue;
     }
 
-    const startedMs = Math.min(previous.startedMs, timestamp);
-    const completedMs = Math.max(previous.completedMs, timestamp);
-    timingById.set(entry.subtask_id, {
-      startedMs,
-      completedMs,
-      durationMs: Math.max(0, completedMs - startedMs),
+    result.set(subtaskId, {
+      startedMs: timing.startedMs,
+      completedMs: timing.latestMs,
+      durationMs: timing.activeDurationMs,
+      ...(timing.activeIntervals.length > 0 ? { activeIntervals: timing.activeIntervals } : {}),
     });
   }
+  return result;
+}
 
-  return new Map(
-    [...timingById.entries()].filter(([subtaskId]) => terminalSubtaskIds.has(subtaskId))
-  );
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isExecutionGraphWorkItemStartLogEntry(entry: { content?: string }, subtaskId: string): boolean {
+  const escapedId = escapeRegExp(subtaskId);
+  return new RegExp(
+    `\\b(?:coding|started)\\s+(?:work\\s+(?:item|package)|subtask)\\s+${escapedId}\\b`,
+    'i',
+  ).test(String(entry.content || ''));
 }
 
 function isTerminalSubtaskLogEntry(entry: { type?: string; content?: string }): boolean {
@@ -1125,17 +1196,40 @@ function isTerminalSubtaskLogEntry(entry: { type?: string; content?: string }): 
 
 function resolveSubtaskTiming(
   subtask: Task['subtasks'][number],
-  logTimingBySubtaskId: Map<string, { startedMs: number; completedMs: number; durationMs: number }>,
-): Pick<ExecutionGraphNode, 'startedMs' | 'completedMs' | 'durationMs' | 'timingSource'> {
+  logTimingBySubtaskId: Map<string, ExecutionGraphLogTiming>,
+): Pick<ExecutionGraphNode, 'startedMs' | 'completedMs' | 'durationMs' | 'activeDurationMs' | 'activeStartedMs' | 'activeIntervals' | 'timingSource'> {
   const recorded = getSubtaskRecordedTiming(subtask);
-  if (recorded.durationMs !== undefined) {
+  const inferred = logTimingBySubtaskId.get(subtask.id);
+
+  if (subtask.status === 'in_progress') {
+    const startedMs = [recorded.startedMs, inferred?.startedMs]
+      .filter((value): value is number => value !== undefined)
+      .reduce<number | undefined>((earliest, value) => earliest === undefined ? value : Math.min(earliest, value), undefined);
+    const activeStartedMs = inferred?.activeStartedMs ?? recorded.startedMs;
+    const activeDurationMs = Math.max(
+      inferred?.activeDurationMs ?? inferred?.durationMs ?? 0,
+      recorded.durationMs ?? 0,
+    );
+
+    if (startedMs !== undefined || activeStartedMs !== undefined || recorded.completedMs !== undefined || recorded.durationMs !== undefined) {
+      return {
+        ...recorded,
+        ...(startedMs !== undefined ? { startedMs } : {}),
+        ...(activeDurationMs > 0 ? { activeDurationMs } : {}),
+        ...(activeStartedMs !== undefined ? { activeStartedMs } : {}),
+        ...(inferred?.activeIntervals ? { activeIntervals: inferred.activeIntervals } : {}),
+        timingSource: inferred ? 'logs' : 'recorded',
+      };
+    }
+  }
+
+  if (recorded.startedMs !== undefined || recorded.completedMs !== undefined || recorded.durationMs !== undefined) {
     return {
       ...recorded,
       timingSource: 'recorded',
     };
   }
 
-  const inferred = logTimingBySubtaskId.get(subtask.id);
   if (inferred) {
     return {
       ...inferred,
@@ -1145,7 +1239,6 @@ function resolveSubtaskTiming(
 
   return {};
 }
-
 function formatExecutionDuration(ms: number): string {
   if (ms <= 0) {
     return '0s';
@@ -1167,6 +1260,81 @@ function formatExecutionDuration(ms: number): string {
   return `${seconds}s`;
 }
 
+function getExecutionGraphNodeMetricLabel(node: ExecutionGraphNode, nowMs: number, t: TranslationFn): string | null {
+  if (node.status === 'pending') {
+    return t('tasks:subtasks.graphTimeSlot', {
+      count: node.level + 1,
+      defaultValue: 'Round {{count}}',
+    });
+  }
+
+  if (node.status === 'in_progress') {
+    const elapsedMs = node.activeStartedMs !== undefined
+      ? (node.activeDurationMs ?? 0) + Math.max(0, nowMs - node.activeStartedMs)
+      : node.activeDurationMs ?? (node.startedMs !== undefined ? Math.max(0, nowMs - node.startedMs) : node.durationMs);
+
+    if (elapsedMs !== undefined) {
+      return t('tasks:subtasks.graphNodeDuration', {
+        duration: formatExecutionDuration(elapsedMs),
+        defaultValue: '{{duration}}',
+      });
+    }
+
+    return null;
+  }
+
+  if (node.durationMs !== undefined) {
+    return t('tasks:subtasks.graphNodeDuration', {
+      duration: formatExecutionDuration(node.durationMs),
+      defaultValue: '{{duration}}',
+    });
+  }
+
+  return null;
+}
+
+function calculateExecutionIntervalUnionDuration(intervals: ExecutionGraphTimeInterval[]): number | undefined {
+  const normalized = intervals
+    .filter(interval => interval.completedMs >= interval.startedMs)
+    .sort((left, right) => left.startedMs - right.startedMs || left.completedMs - right.completedMs);
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  let total = 0;
+  let currentStart = normalized[0].startedMs;
+  let currentEnd = normalized[0].completedMs;
+
+  for (const interval of normalized.slice(1)) {
+    if (interval.startedMs <= currentEnd) {
+      currentEnd = Math.max(currentEnd, interval.completedMs);
+      continue;
+    }
+
+    total += Math.max(0, currentEnd - currentStart);
+    currentStart = interval.startedMs;
+    currentEnd = interval.completedMs;
+  }
+
+  return total + Math.max(0, currentEnd - currentStart);
+}
+
+function getExecutionGraphNodeCompletedIntervals(node: ExecutionGraphNode): ExecutionGraphTimeInterval[] {
+  if (node.activeIntervals && node.activeIntervals.length > 0) {
+    return node.activeIntervals;
+  }
+
+  if (
+    node.startedMs !== undefined &&
+    node.completedMs !== undefined &&
+    node.durationMs !== undefined &&
+    Math.abs(node.completedMs - node.startedMs - node.durationMs) < 1000
+  ) {
+    return [{ startedMs: node.startedMs, completedMs: node.completedMs }];
+  }
+
+  return [];
+}
 function calculateParallelDurationFromTimedNodes(
   nodes: ExecutionGraphNode[],
   dependenciesById: Map<string, string[]>,
@@ -1175,6 +1343,11 @@ function calculateParallelDurationFromTimedNodes(
   const timedNodes = nodes.filter(node => node.durationMs !== undefined);
   if (timedNodes.length !== nodes.length || timedNodes.length === 0) {
     return undefined;
+  }
+
+  const activeIntervalsByNode = timedNodes.map(getExecutionGraphNodeCompletedIntervals);
+  if (activeIntervalsByNode.every(intervals => intervals.length > 0)) {
+    return calculateExecutionIntervalUnionDuration(activeIntervalsByNode.flat());
   }
 
   const nodesWithWallClock = timedNodes.filter(node =>
@@ -1377,6 +1550,24 @@ function ExecutionGraphPanel({
 }) {
   const { t } = useTranslation(['tasks']);
   const graph = useMemo(() => analyzeSubtaskExecutionGraph(task.subtasks, modelLogs), [task.subtasks, modelLogs]);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const hasRunningTimedNode = useMemo(
+    () => graph.nodes.some(node => node.status === 'in_progress' && (node.activeStartedMs !== undefined || node.startedMs !== undefined)),
+    [graph.nodes],
+  );
+
+  useEffect(() => {
+    if (!hasRunningTimedNode) {
+      return;
+    }
+
+    setNowMs(Date.now());
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [hasRunningTimedNode]);
 
   if (task.subtasks.length === 0) {
     return null;
@@ -1565,6 +1756,7 @@ function ExecutionGraphPanel({
 
           {graph.nodes.map(node => {
             const isSelected = node.id === selectedNodeId;
+            const metricLabel = getExecutionGraphNodeMetricLabel(node, nowMs, t);
 
             return (
               <Tooltip key={node.id}>
@@ -1592,17 +1784,11 @@ function ExecutionGraphPanel({
                     }}
                   >
                     <div className="truncate text-[11px] font-semibold tabular-nums">{node.id}</div>
-                    <div className="truncate text-[10px] opacity-80">
-                      {node.durationMs !== undefined
-                        ? t('tasks:subtasks.graphNodeDuration', {
-                            duration: formatExecutionDuration(node.durationMs),
-                            defaultValue: '{{duration}}',
-                          })
-                        : t('tasks:subtasks.graphTimeSlot', {
-                            count: node.level + 1,
-                            defaultValue: 'Round {{count}}',
-                          })}
-                    </div>
+                    {metricLabel && (
+                      <div className="truncate text-[10px] opacity-80">
+                        {metricLabel}
+                      </div>
+                    )}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-xs">
@@ -1629,6 +1815,104 @@ function ExecutionGraphPanel({
   );
 }
 
+interface WorkPackageFilePreview {
+  subtaskId: string;
+  subtaskTitle: string;
+  filePath: string;
+}
+
+interface WorkPackageFileDiffDialogProps {
+  preview: WorkPackageFilePreview | null;
+  diff: string | null;
+  isLoading: boolean;
+  error: string | null;
+  onOpenChange: (open: boolean) => void;
+}
+
+function getPatchLineClassName(line: string): string {
+  if (line.startsWith('@@')) {
+    return 'bg-warning/10 text-warning';
+  }
+
+  if (line.startsWith('+')) {
+    return 'bg-success/10 text-success';
+  }
+
+  if (line.startsWith('-')) {
+    return 'bg-destructive/10 text-destructive';
+  }
+
+  if (
+    line.startsWith('diff --git')
+    || line.startsWith('index ')
+    || line.startsWith('--- ')
+    || line.startsWith('+++ ')
+    || line.startsWith('rename from ')
+    || line.startsWith('rename to ')
+    || line.startsWith('new file mode')
+    || line.startsWith('deleted file mode')
+    || line.startsWith('similarity index')
+  ) {
+    return 'text-muted-foreground';
+  }
+
+  return 'text-foreground';
+}
+
+function WorkPackageFileDiffDialog({
+  preview,
+  diff,
+  isLoading,
+  error,
+  onOpenChange,
+}: WorkPackageFileDiffDialogProps) {
+  const { t } = useTranslation(['tasks', 'common']);
+  const hasPreview = diff !== null && diff.length > 0;
+
+  return (
+    <AlertDialog open={preview !== null} onOpenChange={onOpenChange}>
+      <AlertDialogContent className="flex max-h-[85vh] max-w-5xl flex-col overflow-hidden">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <Eye className="h-5 w-5 text-info" />
+            {t('tasks:subtasks.fileDiffTitle', { defaultValue: 'File change preview' })}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="font-mono text-xs break-all">
+            {preview?.filePath ?? ''}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border/60 bg-background/70">
+          {isLoading ? (
+            <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              {t('tasks:subtasks.fileDiffLoading', { defaultValue: 'Loading file changes...' })}
+            </div>
+          ) : error ? (
+            <div className="p-4 text-sm text-destructive">{error}</div>
+          ) : hasPreview ? (
+            <div className="min-w-full p-3 text-xs font-mono">
+              {diff.split(/\r?\n/).map((line, lineIndex) => (
+                <div
+                  key={`${preview?.filePath ?? 'file'}-${lineIndex}`}
+                  className={cn('whitespace-pre rounded-sm px-2 py-0.5', getPatchLineClassName(line))}
+                >
+                  {line || ' '}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-4 text-sm text-muted-foreground">
+              {t('tasks:subtasks.fileDiffEmpty', { defaultValue: 'No preview available for this file.' })}
+            </div>
+          )}
+        </div>
+        <AlertDialogFooter className="mt-4">
+          <AlertDialogCancel>{t('common:buttons.close', { defaultValue: 'Close' })}</AlertDialogCancel>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 export function TaskSubtasks({ task }: TaskSubtasksProps) {
   const { t } = useTranslation(['tasks']);
   const progress = calculateProgress(task.subtasks);
@@ -1640,6 +1924,10 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
   const [activeResizeTarget, setActiveResizeTarget] = useState<TaskSubtasksResizeTarget>(null);
   const [deletingSubtaskId, setDeletingSubtaskId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [fileDiffPreview, setFileDiffPreview] = useState<WorkPackageFilePreview | null>(null);
+  const [fileDiffContent, setFileDiffContent] = useState<string | null>(null);
+  const [fileDiffError, setFileDiffError] = useState<string | null>(null);
+  const [isLoadingFileDiff, setIsLoadingFileDiff] = useState(false);
   const isTaskRunning = task.status === 'in_progress' || task.executionProgress?.phase === 'coding';
   const { modelLogs } = useTaskModelLogs(task);
   const isDirectTask = isDirectModeTask(task);
@@ -1839,10 +2127,50 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
     setDeletingSubtaskId(null);
   }, [deletingSubtaskId, isTaskRunning, t, task.id, task.projectId]);
 
+  const handleOpenFileDiff = useCallback(async (subtaskId: string, subtaskTitle: string, filePath: string) => {
+    setFileDiffPreview({ subtaskId, subtaskTitle, filePath });
+    setFileDiffContent(null);
+    setFileDiffError(null);
+    setIsLoadingFileDiff(true);
+
+    try {
+      const result = await window.electronAPI.getWorktreeFileDiff(task.id, filePath, task.projectId);
+      if (result.success) {
+        const previewContent = result.data ?? '';
+        setFileDiffContent(previewContent.trim().length > 0
+          ? previewContent
+          : t('tasks:subtasks.fileDiffUnavailableForFile', {
+              file: filePath,
+              defaultValue: 'No diff or current file content found for {{file}}. The file may have been deleted or no longer exists in the task worktree.',
+            }));
+      } else {
+        setFileDiffError(result.error || t('tasks:subtasks.fileDiffFailed', { defaultValue: 'Failed to load file changes' }));
+      }
+    } catch (error) {
+      setFileDiffError(error instanceof Error
+        ? error.message
+        : t('tasks:subtasks.fileDiffFailed', { defaultValue: 'Failed to load file changes' }));
+    } finally {
+      setIsLoadingFileDiff(false);
+    }
+  }, [task.id, task.projectId, t]);
+
+  const handleFileDiffOpenChange = useCallback((open: boolean) => {
+    if (open) {
+      return;
+    }
+
+    setFileDiffPreview(null);
+    setFileDiffContent(null);
+    setFileDiffError(null);
+    setIsLoadingFileDiff(false);
+  }, []);
+
   const allExpanded = expandedIds.size === task.subtasks.length && task.subtasks.length > 0;
 
   return (
-    <div ref={layoutContainerRef} className="flex h-full min-h-0 w-full overflow-hidden">
+    <>
+      <div ref={layoutContainerRef} className="flex h-full min-h-0 w-full overflow-hidden">
       <div
         className="min-w-[20rem] shrink-0 overflow-y-auto overflow-x-hidden p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
         style={{ flexBasis: `${layoutPreferences.subtasksWidthPercent}%` }}
@@ -1990,13 +2318,26 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
                         {subtask.files.map((file) => (
                           <Tooltip key={file}>
                             <TooltipTrigger asChild>
-                              <Badge
-                                variant="secondary"
-                                className="text-xs font-mono cursor-help"
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handleOpenFileDiff(
+                                    subtask.id,
+                                    subtask.title || subtask.id,
+                                    file
+                                  );
+                                }}
+                                className="inline-flex items-center rounded-md border border-transparent bg-secondary px-2.5 py-0.5 text-xs font-semibold font-mono text-secondary-foreground transition-colors hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                                aria-label={t('tasks:subtasks.previewFileDiffAriaLabel', {
+                                  file,
+                                  title: subtask.title || subtask.id,
+                                  defaultValue: 'Preview changes for {{file}} in {{title}}',
+                                })}
                               >
                                 <FileCode className="mr-1 h-3 w-3" />
                                 {file.split('/').pop()}
-                              </Badge>
+                              </button>
                             </TooltipTrigger>
                             <TooltipContent side="top" className="font-mono text-xs">
                               {file}
@@ -2054,5 +2395,13 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
         />
       </div>
     </div>
+      <WorkPackageFileDiffDialog
+        preview={fileDiffPreview}
+        diff={fileDiffContent}
+        isLoading={isLoadingFileDiff}
+        error={fileDiffError}
+        onOpenChange={handleFileDiffOpenChange}
+      />
+    </>
   );
 }

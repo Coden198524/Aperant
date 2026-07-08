@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   buildAutocodePlanQualityRetryPrompt,
   hasOnlyAutocodePlanTaskGranularityErrors,
+  hasOnlyAutocodePlanRecoverableQualityErrors,
+  isAutocodePlanArchitectureGuidanceError,
+  isAutocodePlanRecoverableQualityError,
   validateAutocodeStandardPlanArtifacts,
 } from './plan-quality.js';
 
@@ -803,12 +806,28 @@ describe('standard plan quality', () => {
   });
 
   it('classifies broad task granularity errors separately from hard metadata failures', () => {
+    const broadTaskError = 'tasks.md task 1.1 is too broad; split it into focused leaf tasks by behavior.';
+    const architectureGuidanceError = 'tasks.md complex task(s) missing _Architecture: ..._ guidance (1.3, 2.1); each non-read-only executable task must name boundary, pattern/strategy, and source/reference or labeled general guidance.';
+    const hardMetadataError = 'tasks.md task 1.2 missing _Evidence: ..._ metadata.';
+
     expect(hasOnlyAutocodePlanTaskGranularityErrors([
-      'tasks.md task 1.1 is too broad; split it into focused leaf tasks by behavior.',
+      broadTaskError,
     ])).toBe(true);
     expect(hasOnlyAutocodePlanTaskGranularityErrors([
-      'tasks.md task 1.1 is too broad; split it into focused leaf tasks by behavior.',
-      'tasks.md task 1.2 missing _Evidence: ..._ metadata.',
+      broadTaskError,
+      architectureGuidanceError,
+    ])).toBe(false);
+    expect(isAutocodePlanArchitectureGuidanceError(architectureGuidanceError)).toBe(true);
+    expect(isAutocodePlanRecoverableQualityError(broadTaskError)).toBe(true);
+    expect(isAutocodePlanRecoverableQualityError(architectureGuidanceError)).toBe(true);
+    expect(isAutocodePlanRecoverableQualityError(hardMetadataError)).toBe(false);
+    expect(hasOnlyAutocodePlanRecoverableQualityErrors([
+      broadTaskError,
+      architectureGuidanceError,
+    ])).toBe(true);
+    expect(hasOnlyAutocodePlanRecoverableQualityErrors([
+      broadTaskError,
+      hardMetadataError,
     ])).toBe(false);
   });
 

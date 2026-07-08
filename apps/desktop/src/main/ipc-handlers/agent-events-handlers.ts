@@ -2,7 +2,13 @@
 import { ipcMain } from "electron";
 import path from "path";
 import { copyFileSync, existsSync, mkdirSync, statSync } from "fs";
-import { AUTOCODE_TASK_ARTIFACTS, loadAutocodeImplementationPlanSync } from "@autocode/core";
+import {
+  AUTOCODE_TASK_ARTIFACTS,
+  loadAutocodeImplementationPlanSync,
+  readAutocodeTaskLogsFromSpecDir,
+  recoverAutocodeCodingWorkItemStatusesFromLogs,
+  saveAutocodeImplementationPlanSync,
+} from "@autocode/core";
 import { IPC_CHANNELS, TASK_REFRESH_SENTINEL, getSpecsDir } from "../../shared/constants";
 import type {
   SDKRateLimitInfo,
@@ -118,6 +124,73 @@ function getDirectTaskSpecDirs(project: Project, task: Task): string[] {
     ? [path.join(worktreePath, specsBaseDir, task.specId), mainSpecDir]
     : [mainSpecDir];
   return [...new Set(specDirs)];
+}
+
+function getStandardTaskSpecDirs(project: Project, task: Task): string[] {
+  const specsBaseDir = getSpecsDir(project.autoBuildPath);
+  const mainSpecDir = path.join(project.path, specsBaseDir, task.specId);
+  const worktreePath = findTaskWorktree(project.path, task.specId);
+  const specDirs = worktreePath
+    ? [path.join(worktreePath, specsBaseDir, task.specId), mainSpecDir]
+    : [mainSpecDir];
+  return [...new Set(specDirs)];
+}
+
+function recoverStandardCodingStatusesFromLogs(project: Project, task: Task, fallbackPlan: ImplementationPlan | null): ImplementationPlan | null {
+  const specDirs = getStandardTaskSpecDirs(project, task);
+  const logsBySpecDir = specDirs
+    .map((specDir) => {
+      try {
+        return readAutocodeTaskLogsFromSpecDir(specDir, task.specId);
+      } catch (error) {
+        console.warn(`[agent-events-handlers] Failed to read task logs for ${task.id}:`, error);
+        return null;
+      }
+    })
+    .filter((logs): logs is NonNullable<ReturnType<typeof readAutocodeTaskLogsFromSpecDir>> => Boolean(logs));
+
+  if (logsBySpecDir.length === 0) {
+    return fallbackPlan;
+  }
+
+  let latestRecoveredPlan: ImplementationPlan | null = fallbackPlan;
+
+  for (const specDir of specDirs) {
+    const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+    if (!existsSync(planPath)) {
+      continue;
+    }
+
+    try {
+      let plan = loadAutocodeImplementationPlanSync(planPath) as ImplementationPlan | null;
+      if (!plan) {
+        continue;
+      }
+
+      let recoveredCount = 0;
+      for (const logs of logsBySpecDir) {
+        const recovery = recoverAutocodeCodingWorkItemStatusesFromLogs({ plan: plan as unknown as Record<string, unknown>, logs });
+        if (recovery.recoveredCount > 0 && recovery.plan) {
+          plan = recovery.plan as unknown as ImplementationPlan;
+          recoveredCount += recovery.recoveredCount;
+        }
+      }
+
+      if (recoveredCount > 0) {
+        saveAutocodeImplementationPlanSync(planPath, plan as never);
+        latestRecoveredPlan = plan;
+        console.warn(
+          `[agent-events-handlers] Recovered ${recoveredCount} Standard work item status(es) from logs for ${task.id}: ${planPath}`
+        );
+      } else if (!latestRecoveredPlan) {
+        latestRecoveredPlan = plan;
+      }
+    } catch (error) {
+      console.warn(`[agent-events-handlers] Failed to recover Standard work item statuses for ${task.id}:`, error);
+    }
+  }
+
+  return latestRecoveredPlan;
 }
 
 function loadLatestDirectFallbackPlan(
@@ -491,13 +564,13 @@ export function registerAgenteventsHandlers(
                 }
               }
             } else {
+              const recoveredPlan = recoverStandardCodingStatusesFromLogs(checkProject, checkTask, null);
+              const hasPlan = Boolean(recoveredPlan) || hasPlanWithSubtasks(checkProject, checkTask);
               console.warn(
                 `[agent-events-handlers] Task ${taskId} still in XState ${currentState} ` +
-                `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing QA_PASSED`
+                `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing USER_STOPPED (hasPlan: ${hasPlan})`
               );
-              taskStateManager.handleUiEvent(taskId, {
-                type: 'QA_PASSED', iteration: 0, testsRun: {}
-              }, checkTask, checkProject);
+              taskStateManager.handleUiEvent(taskId, { type: 'USER_STOPPED', hasPlan }, checkTask, checkProject);
             }
           } else {
             // Non-zero exit code 鈥?task was stopped or crashed
@@ -600,6 +673,15 @@ export function registerAgenteventsHandlers(
         }
       }
     }
+    if (
+      processType === 'task-execution' &&
+      exitTask &&
+      exitProject &&
+      !isDirectModeTask(exitTask, finalPlan)
+    ) {
+      finalPlan = recoverStandardCodingStatusesFromLogs(exitProject, exitTask, finalPlan);
+    }
+
     if (finalPlan) {
       safeSendToRenderer(
         getMainWindow,

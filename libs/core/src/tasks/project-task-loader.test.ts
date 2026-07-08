@@ -105,6 +105,217 @@ describe('project task loading', () => {
     }
   });
 
+  it('adds completed review reason for fully completed human review tasks missing it', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
+    try {
+      const specDir = join(projectRoot, '.autocode', 'specs', '001-complete-missing-reason');
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, 'implementation_plan.md'), [
+        '# Implementation Plan',
+        'Feature: Complete missing reason',
+        'Status: human_review',
+        'Execution Phase: complete',
+        'Created: 2026-06-20T00:00:00.000Z',
+        'Updated: 2026-06-20T00:00:00.000Z',
+        '<!-- autocode-plan-meta: {"planStatus":"review","xstateState":"human_review","executionPhase":"complete"} -->',
+        '',
+        '- [ ] 1. Implementation',
+        '  - [x] wp-1 Completed package',
+        '  - [x] wp-2 Completed package',
+        '',
+      ].join('\n'), 'utf8');
+
+      const [task] = loadAutocodeProjectTasks({
+        projectRoot,
+        dataDirName: '.autocode',
+      });
+
+      expect(task.status).toBe('human_review');
+      expect(task.reviewReason).toBe('completed');
+      expect(task.executionProgress?.phase).toBe('complete');
+      const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+      expect(rawPlan).toContain('Status: human_review');
+      expect(rawPlan).toContain('Review Reason: completed');
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+  it('recovers in-progress coding work item status from durable task logs', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
+    try {
+      const specDir = join(projectRoot, '.autocode', 'specs', '001-log-recovery');
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, 'implementation_plan.md'), [
+        '# Implementation Plan',
+        'Feature: Log recovery',
+        'Status: in_progress',
+        'Execution Phase: coding',
+        'Created: 2026-06-20T00:00:00.000Z',
+        'Updated: 2026-06-20T00:00:30.000Z',
+        '<!-- autocode-plan-meta: {"planStatus":"in_progress","xstateState":"coding"} -->',
+        '',
+        '- [/] wp. Run work packages',
+        '  - [/] wp-1 Logged package',
+        '    - _Started: 2026-06-20T00:00:00.000Z_',
+        '  - [/] wp-2 Still active package',
+        '    - _Started: 2026-06-20T00:00:10.000Z_',
+        '',
+      ].join('\n'), 'utf8');
+      writeFileSync(join(specDir, 'task_logs.jsonl'), [
+        JSON.stringify({
+          record_type: 'phase',
+          timestamp: '2026-06-20T00:00:00.000Z',
+          phase: 'coding',
+          status: 'active',
+          started_at: '2026-06-20T00:00:00.000Z',
+          completed_at: null,
+        }),
+        JSON.stringify({
+          record_type: 'entry',
+          entry: {
+            timestamp: '2026-06-20T00:01:00.000Z',
+            type: 'success',
+            content: 'Work item wp-1 completed.',
+            phase: 'coding',
+            subtask_id: 'wp-1',
+          },
+        }),
+      ].join('\n') + '\n', 'utf8');
+
+      const [task] = loadAutocodeProjectTasks({
+        projectRoot,
+        dataDirName: '.autocode',
+      });
+
+      expect(task.status).toBe('in_progress');
+      expect(task.subtasks.map((subtask) => [subtask.id, subtask.status])).toEqual([
+        ['wp-1', 'completed'],
+        ['wp-2', 'in_progress'],
+      ]);
+      expect(task.subtasks[0]?.completedAt).toBe('2026-06-20T00:01:00.000Z');
+      const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+      expect(rawPlan).toContain('  - [x] wp-1 Logged package');
+      expect(rawPlan).toContain('  - [/] wp-2 Still active package');
+      expect(rawPlan).toContain('Recovered completed status from task log.');
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+  it('keeps stopped review tasks out of active coding progress even with active coding logs', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
+    try {
+      const specDir = join(projectRoot, '.autocode', 'specs', '001-stopped-review');
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, 'implementation_plan.md'), [
+        '# Implementation Plan',
+        'Feature: Stopped review',
+        'Status: human_review',
+        'Review Reason: stopped',
+        'Execution Phase: coding',
+        'Created: 2026-06-20T00:00:00.000Z',
+        'Updated: 2026-06-20T00:00:30.000Z',
+        '<!-- autocode-plan-meta: {"planStatus":"review","xstateState":"human_review"} -->',
+        '',
+        '- [/] wp. Run work packages',
+        '  - [/] wp-1 Interrupted package',
+        '    - _Started: 2026-06-20T00:00:00.000Z_',
+        '',
+      ].join('\n'), 'utf8');
+      writeFileSync(join(specDir, 'task_logs.jsonl'), [
+        JSON.stringify({
+          record_type: 'phase',
+          timestamp: '2026-06-20T00:00:00.000Z',
+          phase: 'coding',
+          status: 'active',
+          started_at: '2026-06-20T00:00:00.000Z',
+          completed_at: null,
+        }),
+      ].join('\n') + '\n', 'utf8');
+
+      const [task] = loadAutocodeProjectTasks({
+        projectRoot,
+        dataDirName: '.autocode',
+      });
+
+      expect(task.status).toBe('human_review');
+      expect(task.reviewReason).toBe('stopped');
+      expect(task.executionProgress?.phase).toBe('stopped');
+      expect(task.executionProgress?.overallProgress).toBe(0);
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+  it('recovers worktree coding work item status from worktree task logs', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
+    try {
+      const specId = '001-worktree-log-recovery';
+      const mainSpecDir = join(projectRoot, '.autocode', 'specs', specId);
+      const worktreesDir = join(projectRoot, '.autocode', 'worktrees', 'tasks');
+      const worktreeRoot = join(worktreesDir, specId);
+      const worktreeSpecDir = join(worktreeRoot, '.autocode', 'specs', specId);
+      mkdirSync(mainSpecDir, { recursive: true });
+      mkdirSync(worktreeSpecDir, { recursive: true });
+
+      writeFileSync(join(mainSpecDir, 'implementation_plan.md'), [
+        '# Implementation Plan',
+        'Feature: Main copy',
+        'Status: in_progress',
+        'Execution Phase: coding',
+        'Created: 2026-06-20T00:00:00.000Z',
+        'Updated: 2026-06-20T00:00:30.000Z',
+        '<!-- autocode-plan-meta: {"planStatus":"in_progress","xstateState":"coding"} -->',
+        '',
+        '- [/] wp. Run work packages',
+        '  - [/] wp-1 Main active package',
+        '    - _Started: 2026-06-20T00:00:00.000Z_',
+        '',
+      ].join('\n'), 'utf8');
+
+      writeFileSync(join(worktreeSpecDir, 'implementation_plan.md'), [
+        '# Implementation Plan',
+        'Feature: Worktree copy',
+        'Status: in_progress',
+        'Execution Phase: coding',
+        'Created: 2026-06-20T00:00:00.000Z',
+        'Updated: 2026-06-20T00:00:30.000Z',
+        '<!-- autocode-plan-meta: {"planStatus":"in_progress","xstateState":"coding"} -->',
+        '',
+        '- [/] wp. Run work packages',
+        '  - [/] wp-1 Worktree active package',
+        '    - _Started: 2026-06-20T00:00:00.000Z_',
+        '',
+      ].join('\n'), 'utf8');
+      writeFileSync(join(worktreeSpecDir, 'task_logs.jsonl'), [
+        JSON.stringify({
+          record_type: 'entry',
+          entry: {
+            timestamp: '2026-06-20T00:01:00.000Z',
+            type: 'success',
+            content: 'Work item wp-1 completed.',
+            phase: 'coding',
+            subtask_id: 'wp-1',
+          },
+        }),
+      ].join('\n') + '\n', 'utf8');
+
+      const [task] = loadAutocodeProjectTasks({
+        projectRoot,
+        dataDirName: '.autocode',
+        worktreesDir,
+      });
+
+      expect(task.location).toBe('worktree');
+      expect(task.specsPath).toBe(worktreeSpecDir);
+      expect(task.subtasks.map((subtask) => [subtask.id, subtask.status])).toEqual([
+        ['wp-1', 'completed'],
+      ]);
+      const rawWorktreePlan = readFileSync(join(worktreeSpecDir, 'implementation_plan.md'), 'utf8');
+      expect(rawWorktreePlan).toContain('  - [x] wp-1 Worktree active package');
+      expect(rawWorktreePlan).toContain('Recovered completed status from task log.');
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
   it('keeps plan review tasks in human review even when runtime subtasks are pending', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
     try {

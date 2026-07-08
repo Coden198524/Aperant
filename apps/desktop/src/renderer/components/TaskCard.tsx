@@ -184,7 +184,7 @@ export const TaskCard = memo(function TaskCard({
     rawExecutionPhase === 'complete' ||
     (task.status === 'human_review' && task.reviewReason === 'completed');
   const executionPhase = isCompletedTerminal ? 'complete' : rawExecutionPhase;
-  const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed';
+  const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed' && executionPhase !== 'stopped';
   const cardPhaseProgress = isCompletedTerminal ? 100 : task.executionProgress?.phaseProgress;
   const activeBatchCount = taskView.activeSubtaskCount;
   const hasParallelSubtasks = isRunning && taskView.hasParallelSubtasks;
@@ -372,6 +372,12 @@ export const TaskCard = memo(function TaskCard({
     const result = await recoverStuckTask(task.id, { autoRestart: true, projectId: task.projectId });
     if (result.success) {
       setIsStuck(false);
+    } else {
+      toast({
+        title: t('tasks:detail.recoverFailed', { defaultValue: 'Recovery failed' }),
+        description: result.message,
+        variant: 'destructive',
+      });
     }
     setIsRecovering(false);
   };

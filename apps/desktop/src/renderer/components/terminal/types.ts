@@ -54,4 +54,5 @@ export const PHASE_CONFIG: Record<ExecutionPhase, { label: string; color: string
   qa_fixing: { label: 'Fixing', color: 'bg-warning/20 text-warning', icon: Wrench },
   complete: { label: 'Complete', color: 'bg-success/20 text-success', icon: CheckCircle2 },
   failed: { label: 'Failed', color: 'bg-destructive/20 text-destructive', icon: AlertCircle },
+  stopped: { label: 'Stopped', color: 'bg-muted text-muted-foreground', icon: PauseCircle },
 };

@@ -213,6 +213,11 @@ export function resolveAutocodeTaskStartEvent(
   if (input.currentState === 'plan_review') {
     return { type: 'PLAN_APPROVED' };
   }
+  if (input.currentState === 'human_review' || input.currentState === 'error') {
+    return input.planHasSubtasks
+      ? { type: 'USER_RESUMED' }
+      : { type: 'PLANNING_STARTED' };
+  }
   if (
     input.planHasSubtasks &&
     (input.currentState === 'planning' ||
@@ -223,15 +228,6 @@ export function resolveAutocodeTaskStartEvent(
       input.task.status === 'queue')
   ) {
     return codingStartedEvent();
-  }
-  if (input.currentState === 'human_review' && !input.planHasSubtasks) {
-    return { type: 'PLANNING_STARTED' };
-  }
-  if (input.currentState === 'error' && !input.planHasSubtasks) {
-    return { type: 'PLANNING_STARTED' };
-  }
-  if (input.currentState === 'human_review' || input.currentState === 'error') {
-    return { type: 'USER_RESUMED' };
   }
   if (input.currentState) {
     return { type: 'PLANNING_STARTED' };
