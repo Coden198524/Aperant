@@ -51,7 +51,8 @@ import type {
   ImageAttachment,
   ReviewReason,
   MergeProgress,
-  TokenUsage
+  TokenUsage,
+  WorkPackageFileDiff
 } from './task';
 import type {
   TerminalCreateOptions,
@@ -267,6 +268,7 @@ export interface ElectronAPI {
   getWorktreeChangedFiles: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>>;
   getWorktreeCommits: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number; parents?: string[]; refs?: string[]; isMerge?: boolean }>>>;
   getWorktreeFileDiff: (taskId: string, filePath: string, projectId?: string) => Promise<IPCResult<string>>;
+  getWorkPackageFileDiff: (taskId: string, workPackageId: string, filePath: string, projectId?: string) => Promise<IPCResult<WorkPackageFileDiff>>;
   getWorktreeCommitFiles: (taskId: string, commitHash: string, projectId?: string) => Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>>;
   getWorktreeCommitFileDiff: (taskId: string, commitHash: string, filePath: string, projectId?: string) => Promise<IPCResult<string>>;
 

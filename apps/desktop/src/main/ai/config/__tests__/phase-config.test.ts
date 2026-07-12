@@ -78,6 +78,14 @@ describe('sanitizeThinkingLevel', () => {
     expect(sanitizeThinkingLevel('none')).toBe('low');
   });
 
+  it('maps legacy max to xhigh', () => {
+    expect(sanitizeThinkingLevel('max')).toBe('xhigh');
+  });
+
+  it('maps legacy ultra to xhigh', () => {
+    expect(sanitizeThinkingLevel('ultra')).toBe('xhigh');
+  });
+
   it('should default unknown values to "medium"', () => {
     expect(sanitizeThinkingLevel('invalid')).toBe('medium');
     expect(sanitizeThinkingLevel('')).toBe('medium');

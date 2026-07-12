@@ -66,6 +66,25 @@ const GENERIC_STANDARD_SPEC_EVIDENCE_PATTERN =
 const MANUAL_STANDARD_SPEC_SEED_PATTERN =
   /\bStandard mode task\b|Standard 标准模式任务|\bUse Standard Autocode planning\b|使用 Autocode Standard 规范流程|Follow the Autocode Standard spec-driven flow/iu;
 
+const CONCRETE_STANDARD_SPEC_SECTION_HEADINGS = [
+  'Requirements',
+  'Requirement Index',
+  'User Requirements',
+  'Design Notes',
+  'Key Decisions',
+  'Implementation Notes',
+  'Success Criteria',
+  'Acceptance Criteria',
+  '需求',
+  '需求索引',
+  '用户需求',
+  '设计说明',
+  '关键决策',
+  '实现说明',
+  '成功标准',
+  '验收标准',
+] as const;
+
 const TRACEABLE_EVIDENCE_PATTERN =
   /\b(spec\.md|requirements\.md|context\.md|research\.md|agents\.md|readme|official|standard|docs?|source|project)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/i;
 
@@ -329,28 +348,18 @@ export function buildAutocodePlanQualityRetryPrompt(errors: string[]): string {
     ...formatAutocodeRetryErrorLines(errors, { maxCharsPerError: 160 }),
     '',
     'Repair only the affected artifacts with the Write/Edit tools.',
-    `- Keep ${AUTOCODE_TASK_ARTIFACTS.specFile} as a compact decision index, not a full analysis dump.`,
-    `- Keep ${AUTOCODE_TASK_ARTIFACTS.requirements} focused on requirements, acceptance criteria, constraints, evidence sources, standards, and assumptions.`,
-    `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} detailed but compact: split broad work into focused leaf tasks while keeping each task guidance short.`,
-    '- A leaf task should cover one independently reviewable behavior or contract and one focused verification path.',
-    '- Split tasks that cover more than three behaviors, more than three requirement/acceptance references, or more than four write-intent files.',
-    '- If split tasks touch the same file, keep them as separate leaf tasks and add _Depends on: ..._ only for real data, contract, or verification order; the runtime file-conflict scheduler will queue overlapping writes safely.',
-    '- Replace generic task text with concrete behavior, affected project boundary, likely files/APIs, and the existing pattern to follow.',
-    `- If ${AUTOCODE_TASK_ARTIFACTS.specFile} is still a manual Standard planning seed, replace it with a compact spec: concrete requirements, key decisions or assumptions, evidence, and acceptance/verification notes needed for coding.`,
-    `- Generic Standard Evidence scaffolding is not enough by itself; ${AUTOCODE_TASK_ARTIFACTS.specFile} Evidence must cite the user request, concrete requirements, project files/docs, or verified standards that prove scope and acceptance criteria.`,
-    '- For complex or high-risk plans only, include a detailed but compact Architecture And Design Pattern References section in spec.md or tasks.md: 4-8 bullets covering affected boundaries/layers, recommended pattern or strategy, source/docs/Project Memory reference or labeled general guidance, and which task IDs/boundaries should apply it.',
-    '- For complex or high-risk plans, each non-read-only executable task must include one short _Architecture: boundary; pattern/strategy; source/reference_ line so implementation agents can apply the guidance directly.',
-    '- Use exactly one architecture metadata line per task and keep the metadata key in English: _Architecture: ..._. Do not use localized keys such as _架构: ..._ or include both labels.',
-    '- For runnable/user-facing deliverables, add runtime-readiness verification that starts/opens the artifact, exercises the primary path, and checks console/resource loading/blank-screen/startup/exit status; node --check, lint, typecheck, file existence, or inspect-only review is not enough.',
-    '- Never prefix executable task titles with revision, obsolete, or other state labels. Do not introduce revision/history markers unless real human Request Changes context already requires them.',
-    `- ${AUTOCODE_TASK_ARTIFACTS.requirements} must include concrete User Requirements and Acceptance Criteria; do not leave either section as None when ${AUTOCODE_TASK_ARTIFACTS.tasks} derives requirements or acceptance criteria.`,
-    `- Do not keep the only concrete Requirement Index inside ${AUTOCODE_TASK_ARTIFACTS.tasks}; mirror concrete requirements and acceptance criteria into ${AUTOCODE_TASK_ARTIFACTS.requirements}.`,
-    '- Every executable task must include _Requirements: ..._, _Evidence: ..._, a done signal such as _Done when: ..._, and _Verification: ..._.',
-    '- Preserve requirement IDs and unaffected design/task content during Request Changes iterations.',
-    '- Use Evidence references instead of copying source code or long research notes.',
-    '- If evidence is missing, add an assumption/open question or validation task instead of inventing implementation work.',
-    '- For analysis, investigation, report, or documentation-only tasks, keep the final Markdown reader-first: early Conclusion Snapshot, early Main Flow, scenario-based sections, and evidence/verification templates near the end or in appendices.',
-    '- Do not use implementation-contract headings such as inputs/outputs/side effects/lifecycle/errors as the top-level structure for documentation deliverables unless the user explicitly asks for that format.',
+    '- Preserve unaffected requirement IDs, decisions, completed tasks, and Request Changes history.',
+    `- Keep ${AUTOCODE_TASK_ARTIFACTS.specFile} compact and concrete: requirements, key decisions/assumptions, traceable evidence, and acceptance/verification notes. Replace any manual Standard seed.`,
+    `- Keep ${AUTOCODE_TASK_ARTIFACTS.requirements} focused on User Requirements, Acceptance Criteria, constraints, and Evidence Sources; mirror concrete requirements referenced by tasks.`,
+    `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} detailed but compact. Each executable leaf should cover one reviewable behavior or contract and one focused verification path.`,
+    '- Split a leaf that covers more than three behaviors, three requirement/acceptance references, or four write-intent files.',
+    '- Every executable leaf needs concrete files/APIs or boundaries plus _Depends on_, _Requirements_, traceable _Evidence_, _Done when_, and _Verification_ metadata.',
+    '- Use dependencies only for real data, contract, or verification order. Overlapping file writes are queued by the runtime scheduler.',
+    '- Evidence must cite the user request, concrete requirements, project files/docs, or verified standards. If evidence is missing, record an assumption/open question or validation task.',
+    '- For complex/high-risk work, add a compact Architecture And Design Pattern References section and one _Architecture: boundary; strategy; source/reference_ line per write task.',
+    '- Runnable or user-facing work needs runtime-readiness verification: start/open it, exercise the primary path, and check console/resources/blank screen/startup/exit status; static checks alone are insufficient.',
+    '- Do not prefix executable titles with revision/obsolete state labels or invent history markers without real Request Changes context.',
+    '- Documentation-only outputs must be reader-first: early Conclusion Snapshot, early Main Flow, scenario-based sections, and evidence/verification templates near the end or in appendices; avoid implementation-contract top-level headings unless requested.',
   ].join('\n');
 }
 
@@ -732,10 +741,9 @@ function hasOnlyGenericStandardSpecEvidence(evidenceSection: string): boolean {
 
 function isManualStandardSpecSeed(specMarkdown: string): boolean {
   return MANUAL_STANDARD_SPEC_SEED_PATTERN.test(specMarkdown) &&
-    !hasSectionContent(specMarkdown, 'Requirements') &&
-    !hasSectionContent(specMarkdown, 'Design Notes') &&
-    !hasSectionContent(specMarkdown, 'Implementation Notes') &&
-    !hasSectionContent(specMarkdown, 'Success Criteria');
+    !CONCRETE_STANDARD_SPEC_SECTION_HEADINGS.some((heading) =>
+      hasSectionContent(specMarkdown, heading),
+    );
 }
 
 function validateRequirementsEvidence(requirementsMarkdown: string): string[] {
@@ -1573,7 +1581,7 @@ function sectionContainsEvidence(markdown: string, heading: string): boolean {
 
 function getMarkdownSection(markdown: string, heading: string): string {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = new RegExp(`^##\\s+${escaped}\\b[^\\n]*\\n([\\s\\S]*?)(?=^##\\s+|(?![\\s\\S]))`, 'im').exec(markdown);
+  const match = new RegExp(`^##\\s+${escaped}(?=\\s|$)[^\\n]*\\n([\\s\\S]*?)(?=^##\\s+|(?![\\s\\S]))`, 'im').exec(markdown);
   return match?.[1]?.trim() ?? '';
 }
 

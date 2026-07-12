@@ -16,6 +16,7 @@ export const AUTOCODE_TASK_ARTIFACTS = {
   critiqueReport: 'critique_report.md',
   qaReport: 'qa_report.md',
   runResult: 'autocode-run-result.json',
+  planningTransaction: 'planning-transaction.json',
 } as const;
 
 export type AutocodeTaskArtifactName = keyof typeof AUTOCODE_TASK_ARTIFACTS;

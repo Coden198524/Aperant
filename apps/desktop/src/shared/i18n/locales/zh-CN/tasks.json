@@ -482,6 +482,12 @@
     "resizeSubtasksPane": "调整子任务区域宽度",
     "resizeGraphPane": "调整执行图区域高度"
   },
+  "workPackageDiff": {
+    "historyUnavailable": "未记录该工作包对应的本地提交，因此无法将它的修改与其他工作包隔离显示。",
+    "noSourceChanges": "该工作包完成时没有提交源码修改。",
+    "fileNotChanged": "所选工作包没有修改此文件。",
+    "commitUnavailable": "该工作包对应的本地提交已不可用。"
+  },
   "bulkPR": {
     "selectAllInColumn": "选择当前列中的所有任务",
     "deselectAllInColumn": "取消选择所有任务",

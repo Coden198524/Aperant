@@ -1,4 +1,4 @@
-﻿import type { BrowserWindow } from "electron";
+import type { BrowserWindow } from "electron";
 import { ipcMain } from "electron";
 import path from "path";
 import { copyFileSync, existsSync, mkdirSync, statSync } from "fs";
@@ -34,7 +34,7 @@ import {
   persistPlanPhaseSync,
   persistPlanStatusAndReasonSync,
   persistPlanTokenUsageSync,
-  syncPlanPhasesToMainSync,
+  syncCanonicalPlanToMainSync,
   type DirectFallbackSubtaskState,
 } from "./task/plan-file-utils";
 import { findTaskWorktree } from "../worktree-paths";
@@ -56,6 +56,13 @@ const STUCK_TASK_FALLBACK_TIMEOUT_MS = 500;
 // Map to store active fallback timers so they can be cancelled on task restart
 const fallbackTimers = new Map<string, NodeJS.Timeout>();
 
+interface PlanningContinuationRequest {
+  subtaskCount?: number;
+  incompleteSubtaskCount?: number;
+}
+
+const planningContinuationRequests = new Map<string, PlanningContinuationRequest>();
+
 function getTaskEventScopeKey(taskId: string, projectId?: string): string {
   return projectId ? `${projectId}::${taskId}` : taskId;
 }
@@ -69,6 +76,93 @@ function getMatchingTaskEventScopeKeys(taskId: string, projectId?: string): stri
     taskId,
     ...[...fallbackTimers.keys()].filter((key) => key === taskId || key.endsWith(suffix)),
   ])];
+}
+
+function getTaskEventRecord(event: unknown): Record<string, unknown> {
+  return event && typeof event === 'object' ? event as Record<string, unknown> : {};
+}
+
+function getTaskEventNumber(event: Record<string, unknown>, field: string): number | undefined {
+  const value = event[field];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function getPlanningContinuationRequest(event: unknown): PlanningContinuationRequest | null {
+  const eventRecord = getTaskEventRecord(event);
+  if (
+    eventRecord.type !== 'PLANNING_COMPLETE' ||
+    eventRecord.continueAfterPlanning !== true ||
+    eventRecord.requireReviewBeforeCoding === true
+  ) {
+    return null;
+  }
+
+  return {
+    subtaskCount: getTaskEventNumber(eventRecord, 'subtaskCount'),
+    incompleteSubtaskCount: getTaskEventNumber(eventRecord, 'incompleteSubtaskCount'),
+  };
+}
+
+function getTaskPlanWatchSpecDir(project: Project, task: Task): string {
+  const specsBaseDir = getSpecsDir(project.autoBuildPath);
+  const worktreePath = findTaskWorktree(project.path, task.specId);
+  if (worktreePath) {
+    const worktreeSpecDir = path.join(worktreePath, specsBaseDir, task.specId);
+    const worktreePlanPath = path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+    if (existsSync(worktreePlanPath)) {
+      return worktreeSpecDir;
+    }
+  }
+  return path.join(project.path, specsBaseDir, task.specId);
+}
+
+function continueTaskExecutionAfterPlanning(input: {
+  agentManager: AgentManager;
+  getMainWindow: () => BrowserWindow | null;
+  taskId: string;
+  task: Task;
+  project: Project;
+  continuation: PlanningContinuationRequest;
+  finalPlan: ImplementationPlan | null;
+}): void {
+  const { agentManager, getMainWindow, taskId, task, project, continuation, finalPlan } = input;
+  const incompleteLabel = continuation.incompleteSubtaskCount !== undefined && continuation.subtaskCount !== undefined
+    ? `${continuation.incompleteSubtaskCount}/${continuation.subtaskCount}`
+    : 'unknown';
+
+  console.warn(
+    `[agent-events-handlers] Planning iteration completed for ${taskId}; ` +
+    `continuing task coding (${incompleteLabel} incomplete work package(s)).`,
+  );
+
+  cancelFallbackTimer(taskId, project.id);
+  taskStateManager.prepareForRestart(taskId, project.id);
+
+  const watchSpecDir = getTaskPlanWatchSpecDir(project, task);
+  fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
+    console.error(`[agent-events-handlers] Failed to watch spec dir before planning continuation for ${taskId}:`, err);
+  });
+
+  Promise.resolve(agentManager.startTaskExecution(
+    taskId,
+    project.path,
+    task.specId,
+    {
+      baseBranch: task.metadata?.baseBranch || project.settings?.mainBranch,
+      useWorktree: task.metadata?.useWorktree,
+      useLocalBranch: task.metadata?.useLocalBranch,
+      pushNewBranches: task.metadata?.pushNewBranches,
+      forcePlanning: false,
+    },
+    project.id,
+  )).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[agent-events-handlers] Failed to continue coding after planning for ${taskId}:`, error);
+    safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_ERROR, taskId, message, project.id);
+    const hasPlan = Boolean(finalPlan?.phases?.some((phase) => (phase.subtasks || []).length > 0)) ||
+      hasPlanWithSubtasks(project, task);
+    taskStateManager.handleUiEvent(taskId, { type: 'USER_STOPPED', hasPlan }, task, project);
+  });
 }
 
 function isDirectModeTask(task: Task | undefined, plan?: ImplementationPlan | null): boolean {
@@ -493,6 +587,11 @@ export function registerAgenteventsHandlers(
     const { task: exitTask, project: exitProject } = findTaskAndProject(taskId, projectId);
     const exitProjectId = exitProject?.id || projectId;
     const eventScopeKey = getTaskEventScopeKey(taskId, exitProjectId);
+    const planningContinuation = planningContinuationRequests.get(eventScopeKey);
+    const shouldContinueAfterPlanning = processType === "task-execution" && code === 0 && Boolean(planningContinuation);
+    if (planningContinuation && !shouldContinueAfterPlanning) {
+      planningContinuationRequests.delete(eventScopeKey);
+    }
 
     // Skip handleProcessExited for successful spec-creation exits 鈥?the spec 鈫?build
     // transition (line 132+) will start a new agent, and calling handleProcessExited
@@ -509,11 +608,11 @@ export function registerAgenteventsHandlers(
     // would incorrectly force USER_STOPPED on the newly started execution process.
     // We check XState's current state directly to avoid stale cache issues from projectStore.
     // Store timer reference so it can be cancelled if task restarts within the window.
-    if (isSpecToBuildTransition) {
+    if (isSpecToBuildTransition || shouldContinueAfterPlanning) {
       // Cancel any existing timer and skip setting a new one
       cancelFallbackTimer(taskId, exitProjectId);
     }
-    const timer = !isSpecToBuildTransition ? setTimeout(() => {
+    const timer = !isSpecToBuildTransition && !shouldContinueAfterPlanning ? setTimeout(() => {
       const currentState = taskStateManager.getCurrentState(taskId, exitProjectId);
 
       if (currentState && XSTATE_ACTIVE_STATES.has(currentState)) {
@@ -696,7 +795,31 @@ export function registerAgenteventsHandlers(
     // The agent writes subtask statuses to the worktree; the main plan's phases
     // may be stale. Syncing ensures getTasks() dedup (which prefers main) sees correct data.
     if (finalPlan?.phases && exitTask && exitProject) {
-      syncPlanPhasesToMainSync(getPlanPath(exitProject, exitTask), finalPlan.phases, exitProjectId);
+      const canonicalSpecDir = getTaskPlanWatchSpecDir(exitProject, exitTask);
+      const canonicalPlanPath = path.join(
+        canonicalSpecDir,
+        AUTOCODE_TASK_ARTIFACTS.implementationPlan,
+      );
+      syncCanonicalPlanToMainSync(
+        canonicalPlanPath,
+        getPlanPath(exitProject, exitTask),
+        finalPlan,
+        exitProjectId,
+      );
+    }
+
+    if (shouldContinueAfterPlanning && exitTask && exitProject && planningContinuation) {
+      planningContinuationRequests.delete(eventScopeKey);
+      continueTaskExecutionAfterPlanning({
+        agentManager,
+        getMainWindow,
+        taskId,
+        task: exitTask,
+        project: exitProject,
+        continuation: planningContinuation,
+        finalPlan,
+      });
+      return;
     }
 
     fileWatcher.unwatch(taskId, exitProjectId).catch((err) => {
@@ -860,6 +983,14 @@ export function registerAgenteventsHandlers(
       if (existsSync(worktreePlanPath)) {
         persistPlanLastEventSync(worktreePlanPath, event);
       }
+    }
+
+    const planningContinuation = getPlanningContinuationRequest(event);
+    if (planningContinuation) {
+      planningContinuationRequests.set(
+        getTaskEventScopeKey(taskId, project.id),
+        planningContinuation,
+      );
     }
   });
 

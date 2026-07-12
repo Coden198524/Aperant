@@ -79,6 +79,7 @@ const PLAN_MACHINE_META_PATTERN = /^<!--\s*autocode-plan-meta:\s*(\{.*\})\s*-->\
 const planUpdateQueues = new Map<string, Promise<void>>();
 
 const MACHINE_META_KEYS = [
+  'planRevision',
   'planStatus',
   'xstateState',
   'last_updated',
@@ -430,6 +431,13 @@ export function updateAutocodePlanSubtask(
         continue;
       }
       subtask.status = normalizeMarkdownStatus(input.status);
+      if (subtask.status === 'in_progress') {
+        subtask.started_at = subtask.started_at || now;
+        subtask.active_started_at = subtask.active_started_at || now;
+        subtask.completed_at = undefined;
+      } else if (subtask.active_started_at !== undefined) {
+        subtask.active_started_at = undefined;
+      }
       if (input.notes) {
         subtask.notes = compactStoredPlanNoteField(input.notes);
       }
@@ -574,8 +582,10 @@ function collectSubtaskMachineMetadata(plan: MutableAutocodePlan): Record<string
         'notes',
         'completed_at',
         'started_at',
+        'active_started_at',
         'duration_ms',
         'work_package',
+        'history_only',
         'upstream_task_ids',
         'upstream_source',
         'files',
@@ -624,8 +634,10 @@ function applySubtaskMachineMetadata(plan: MutableAutocodePlan): void {
         'notes',
         'completed_at',
         'started_at',
+        'active_started_at',
         'duration_ms',
         'work_package',
+        'history_only',
         'upstream_task_ids',
         'upstream_source',
         'files',

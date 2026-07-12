@@ -68,6 +68,17 @@ describe('taskMachine', () => {
       expect(snapshot.value).toBe('human_review');
       expect(snapshot.context.reviewReason).toBe('completed');
     });
+
+    it('should complete a planning-only iteration when QA_PASSED arrives from planning', () => {
+      const events: TaskEvent[] = [
+        { type: 'PLANNING_STARTED' },
+        { type: 'QA_PASSED', iteration: 1, testsRun: { planningOnly: true } }
+      ];
+
+      const snapshot = runEvents(events);
+      expect(snapshot.value).toBe('human_review');
+      expect(snapshot.context.reviewReason).toBe('completed');
+    });
   });
 
   describe('direct mode completion', () => {

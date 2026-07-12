@@ -181,11 +181,17 @@ export const TaskCard = memo(function TaskCard({
   const isCompletedTerminal =
     task.status === 'done' ||
     task.status === 'pr_created' ||
-    rawExecutionPhase === 'complete' ||
     (task.status === 'human_review' && task.reviewReason === 'completed');
-  const executionPhase = isCompletedTerminal ? 'complete' : rawExecutionPhase;
+  const hasStaleTerminalProgress =
+    isExecutionActive &&
+    (rawExecutionPhase === 'complete' || rawExecutionPhase === 'failed' || rawExecutionPhase === 'stopped');
+  const executionPhase = isCompletedTerminal
+    ? 'complete'
+    : hasStaleTerminalProgress
+      ? (task.subtasks.some((subtask) => subtask.status === 'in_progress') ? 'coding' : 'planning')
+      : rawExecutionPhase;
   const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed' && executionPhase !== 'stopped';
-  const cardPhaseProgress = isCompletedTerminal ? 100 : task.executionProgress?.phaseProgress;
+  const cardPhaseProgress = isCompletedTerminal ? 100 : hasStaleTerminalProgress ? 0 : task.executionProgress?.phaseProgress;
   const activeBatchCount = taskView.activeSubtaskCount;
   const hasParallelSubtasks = isRunning && taskView.hasParallelSubtasks;
   const developmentMode = resolveCardDevelopmentMode(task);

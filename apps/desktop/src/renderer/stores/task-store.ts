@@ -403,6 +403,32 @@ function getActiveExecutionPhaseFromPlan(plan: ImplementationPlan): ExecutionPha
   return undefined;
 }
 
+function isCompletedTerminalTask(task: Task): boolean {
+  return task.status === 'done' ||
+    task.status === 'pr_created' ||
+    (task.status === 'human_review' && task.reviewReason === 'completed');
+}
+
+function getPlanReviewStateFromPlan(plan: ImplementationPlan): {
+  status: TaskStatus;
+  reviewReason: ReviewReason;
+  executionProgress: ExecutionProgress;
+} | undefined {
+  if (plan.status !== 'human_review' || plan.reviewReason !== 'plan_review') {
+    return undefined;
+  }
+
+  return {
+    status: 'human_review',
+    reviewReason: 'plan_review',
+    executionProgress: {
+      phase: 'planning',
+      phaseProgress: 100,
+      overallProgress: 100,
+    },
+  };
+}
+
 function buildExecutionProgressForPlanPhase(
   task: Task,
   phase: ExecutionPhase,
@@ -497,6 +523,10 @@ function getExecutionProgressForStatus(
 
 function shouldPromoteTaskStatusFromPlan(task: Task, plan: ImplementationPlan): boolean {
   return (task.status === 'backlog' || task.status === 'queue') && isActivePlanStatus(plan);
+}
+
+function shouldReopenCompletedTaskFromActivePlan(task: Task, activePlanPhase: ExecutionPhase | undefined): boolean {
+  return isCompletedTerminalTask(task) && activePlanPhase !== undefined;
 }
 
 function taskTimestamp(value: unknown): number {
@@ -859,7 +889,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                 description,
                 completionSummary: getPlanSubtaskCompletionSummary(subtask),
                 ...(subtask.started_at ? { startedAt: subtask.started_at } : {}),
+                ...(subtask.active_started_at ? { activeStartedAt: subtask.active_started_at } : {}),
                 ...(subtask.completed_at ? { completedAt: subtask.completed_at } : {}),
+                ...(subtask.updated_at ? { updatedAt: subtask.updated_at } : {}),
                 ...(typeof durationMs === 'number' ? { durationMs } : {}),
                 status,
                 files: [
@@ -897,35 +929,45 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           // XState is the source of truth for active transitions - it emits TASK_STATUS_CHANGE.
           // The task metadata/spec title is the source of truth for the user-facing title.
           // Plan updates only update subtasks/execution fields, with narrow fallbacks for
-          // missed IPC: active plan can promote backlog/queue, terminal plan can clear a
+          // missed IPC: active plan can promote backlog/queue or reopen completed
+          // review, terminal plan can clear a
           // stale blue/running state after Direct/CLI completion.
-          const terminalState = getTerminalTaskStateFromPlan(plan);
-          const shouldPromoteStatus = shouldPromoteTaskStatusFromPlan(t, plan);
-          const nextStatus = terminalState?.status ?? (shouldPromoteStatus ? 'in_progress' : t.status);
-          const nextReviewReason = terminalState
-            ? terminalState.reviewReason
-            : nextStatus === t.status
-              ? t.reviewReason
-              : undefined;
-          const executionProgressTask = shouldPromoteStatus
-            ? { ...t, status: nextStatus as TaskStatus }
-            : t;
           const activePlanPhase = getActiveExecutionPhaseFromPlan(plan);
+          const planReviewState = getPlanReviewStateFromPlan(plan);
+          const shouldReopenCompletedTask = shouldReopenCompletedTaskFromActivePlan(t, activePlanPhase);
+          const terminalState = shouldReopenCompletedTask || planReviewState
+            ? undefined
+            : getTerminalTaskStateFromPlan(plan);
+          const shouldPromoteStatus = shouldReopenCompletedTask || shouldPromoteTaskStatusFromPlan(t, plan);
+          const nextStatus = planReviewState?.status ?? terminalState?.status ?? (shouldPromoteStatus ? 'in_progress' : t.status);
+          const nextReviewReason = planReviewState?.reviewReason ?? (terminalState
+            ? terminalState.reviewReason
+            : nextStatus === t.status && !shouldReopenCompletedTask
+              ? t.reviewReason
+              : undefined);
+          const executionProgressTask = shouldPromoteStatus
+            ? {
+                ...t,
+                status: nextStatus as TaskStatus,
+                reviewReason: nextReviewReason,
+                executionProgress: shouldReopenCompletedTask ? undefined : t.executionProgress,
+              }
+            : t;
           const planExplicitlyRestartedPlanning = nextStatus === 'in_progress' && activePlanPhase === 'planning';
-          let executionProgress = terminalState?.executionProgress ?? (planExplicitlyRestartedPlanning
+          let executionProgress = planReviewState?.executionProgress ?? terminalState?.executionProgress ?? (planExplicitlyRestartedPlanning
             ? buildExecutionProgressForPlanPhase(executionProgressTask, 'planning')
             : promoteExecutionPhaseFromPlan(executionProgressTask, subtasks));
 
           if (shouldPromoteStatus && (!executionProgress || executionProgress.phase === 'idle')) {
             executionProgress = {
               phase: activePlanPhase ?? 'planning',
-              phaseProgress: t.executionProgress?.phaseProgress ?? 0,
-              overallProgress: t.executionProgress?.overallProgress ?? 0,
-              currentSubtask: t.executionProgress?.currentSubtask,
-              message: t.executionProgress?.message,
-              startedAt: t.executionProgress?.startedAt,
-              sequenceNumber: t.executionProgress?.sequenceNumber,
-              completedPhases: t.executionProgress?.completedPhases,
+              phaseProgress: shouldReopenCompletedTask ? 0 : (t.executionProgress?.phaseProgress ?? 0),
+              overallProgress: shouldReopenCompletedTask ? 0 : (t.executionProgress?.overallProgress ?? 0),
+              currentSubtask: shouldReopenCompletedTask ? undefined : t.executionProgress?.currentSubtask,
+              message: shouldReopenCompletedTask ? undefined : t.executionProgress?.message,
+              startedAt: shouldReopenCompletedTask ? undefined : t.executionProgress?.startedAt,
+              sequenceNumber: shouldReopenCompletedTask ? undefined : t.executionProgress?.sequenceNumber,
+              completedPhases: shouldReopenCompletedTask ? undefined : t.executionProgress?.completedPhases,
             };
           }
 

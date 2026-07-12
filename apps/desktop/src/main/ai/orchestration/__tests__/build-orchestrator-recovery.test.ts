@@ -2,8 +2,10 @@
 
 const mockReadFile = vi.fn();
 const mockWriteFile = vi.fn();
+const mockRename = vi.fn();
 const mockUnlink = vi.fn();
 const mockValidateAndNormalizeJsonFile = vi.fn();
+const mockValidateImplementationPlanLanguage = vi.fn();
 const mockRewriteImplementationPlanFiles = vi.fn();
 const mockIterateSubtasks = vi.fn();
 
@@ -19,6 +21,7 @@ async function readMockPlan(specDir: string): Promise<Record<string, unknown> | 
 vi.mock('node:fs/promises', () => ({
   readFile: (...args: unknown[]) => mockReadFile(...args),
   writeFile: (...args: unknown[]) => mockWriteFile(...args),
+  rename: (...args: unknown[]) => mockRename(...args),
   unlink: (...args: unknown[]) => mockUnlink(...args),
 }));
 
@@ -45,7 +48,7 @@ vi.mock('../../schema', () => ({
   },
   ImplementationPlanOutputSchema: {},
   validateAndNormalizeJsonFile: (...args: unknown[]) => mockValidateAndNormalizeJsonFile(...args),
-  validateImplementationPlanLanguage: vi.fn(() => []),
+  validateImplementationPlanLanguage: (...args: unknown[]) => mockValidateImplementationPlanLanguage(...args),
   repairJsonWithLLM: vi.fn(),
   buildValidationRetryPrompt: vi.fn(() => ''),
   IMPLEMENTATION_PLAN_SCHEMA_HINT: 'schema hint',
@@ -318,7 +321,7 @@ function makeBroadTasks(): string {
     '    - _Requirements: R1, R2, R3, R4, AC1, AC2_',
     '    - _Evidence: spec.md browser game requirements_',
     '    - _Done when: the browser game loop supports movement, scoring, pause, restart, and game over._',
-    '    - _Verification: Run focused gameplay check_',
+    '    - _Verification: Start the browser game, exercise the primary path, and check console errors, resource loading, blank screen, startup, and exit status._',
     '',
   ].join('\n');
 }
@@ -411,7 +414,7 @@ function makePhaseHeadingDependencyTasks(): string {
     '  - _Requirements: AC1, AC2, AC3, AC4_',
     '  - _Evidence: spec.md Acceptance Criteria; requirements.md Evidence Sources_',
     '  - _Done when: the complete browser flow is verified._',
-    '  - _Verification: run the browser smoke test_',
+    '  - _Verification: Start the browser flow, exercise the primary path, and check console errors, resource loading, blank screen, startup, and exit status._',
     '',
   ].join('\n');
 }
@@ -459,11 +462,13 @@ describe('BuildOrchestrator QA recovery', () => {
   beforeEach(() => {
     mockReadFile.mockReset();
     mockWriteFile.mockReset().mockResolvedValue(undefined);
+    mockRename.mockReset().mockResolvedValue(undefined);
     mockUnlink.mockReset().mockResolvedValue(undefined);
     mockValidateAndNormalizeJsonFile.mockReset().mockResolvedValue({
       valid: true,
       errors: [],
     });
+    mockValidateImplementationPlanLanguage.mockReset().mockReturnValue([]);
     mockRewriteImplementationPlanFiles.mockReset().mockResolvedValue(null);
     mockIterateSubtasks.mockReset();
   });
@@ -651,10 +656,18 @@ describe('BuildOrchestrator QA recovery', () => {
       return makeSessionResult('completed');
     });
 
-    const orchestrator = makeOrchestrator(runSession);
+    const orchestrator = new BuildOrchestrator({
+      specDir: '/spec',
+      projectDir: '/project',
+      generatePrompt: vi.fn().mockResolvedValue('prompt'),
+      runSession,
+      maxIterations: 2,
+    });
+    const logs: string[] = [];
+    orchestrator.on('log', (message) => logs.push(String(message)));
     const outcome = await orchestrator.run();
 
-    expect(outcome.success).toBe(true);
+    expect(outcome.success, [outcome.error, ...logs].filter(Boolean).join('\n')).toBe(true);
     expect(runSession.mock.calls.filter(([config]) => config.agentType === 'qa_reviewer')).toHaveLength(2);
     expect(runSession.mock.calls.filter(([config]) => config.agentType === 'qa_fixer')).toHaveLength(0);
     expect(mockUnlink.mock.calls.map(([filePath]) => String(filePath).replace(/\\/g, '/')))
@@ -883,6 +896,101 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(logs.some((log) => log.includes('Force planning requested'))).toBe(true);
   });
 
+  it('completes force planning when every preserved work package is already completed', async () => {
+    const files = new Map<string, string>([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/tasks.md', makeTasks(['completed'])],
+      ['/spec/implementation_plan.md', makePlanWithSchedulingMetadata(['completed'])],
+    ]);
+    const normalizePath = (filePath: string) => filePath.replace(/\\/g, '/');
+    mockReadFile.mockImplementation((filePath: string) => {
+      const normalizedPath = normalizePath(filePath);
+      return files.has(normalizedPath)
+        ? Promise.resolve(files.get(normalizedPath))
+        : Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation(async (filePath: string, content: unknown) => {
+      files.set(normalizePath(filePath), String(content));
+    });
+
+    const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+    const outcome = await orchestrator.run();
+    const implementationPlan = JSON.parse(
+      files.get('/spec/implementation_plan.md') ?? '{"phases":[]}',
+    ) as { phases?: Array<{ subtasks?: Array<{ status?: string }> }> };
+    const statuses = implementationPlan.phases
+      ?.flatMap((phase) => phase.subtasks ?? [])
+      .map((subtask) => subtask.status) ?? [];
+
+    expect(outcome.success, outcome.error).toBe(true);
+    expect(outcome.finalPhase).toBe('planning');
+    expect(statuses).toEqual(['completed']);
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+  });
+  it('resumes validated planning transaction artifacts without another planner session', async () => {
+    const files = new Map<string, string>([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/tasks.md', makeTasks(['pending'])],
+      ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
+      ['/spec/planning-transaction.json', JSON.stringify({
+        version: 1,
+        id: 'resume-build-transaction',
+        phase: 'planning',
+        status: 'active',
+        stage: 'sources_validated',
+        createdAt: '2026-07-10T00:00:00.000Z',
+        updatedAt: '2026-07-10T00:00:00.000Z',
+        artifactHashes: {},
+      })],
+    ]);
+    const normalizePath = (filePath: string) => filePath.replace(/\\/g, '/');
+    mockReadFile.mockImplementation((filePath: string) => {
+      const normalizedPath = normalizePath(filePath);
+      return files.has(normalizedPath)
+        ? Promise.resolve(files.get(normalizedPath))
+        : Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation(async (filePath: string, content: unknown) => {
+      files.set(normalizePath(filePath), String(content));
+    });
+    mockRename.mockImplementation(async (sourcePath: string, targetPath: string) => {
+      const source = normalizePath(sourcePath);
+      const target = normalizePath(targetPath);
+      const content = files.get(source);
+      if (content === undefined) {
+        throw new Error('ENOENT');
+      }
+      files.set(target, content);
+      files.delete(source);
+    });
+    mockUnlink.mockImplementation(async (filePath: string) => {
+      files.delete(normalizePath(filePath));
+    });
+
+    const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+    const outcome = await orchestrator.run();
+
+    const transaction = JSON.parse(files.get('/spec/planning-transaction.json') ?? '{}') as {
+      status?: string;
+      stage?: string;
+      checkpoint?: string;
+    };
+    expect(outcome.success).toBe(true);
+    expect(outcome.finalPhase).toBe('planning');
+    expect(runSession).not.toHaveBeenCalled();
+    expect(files.get('/spec/implementation_plan.md')).toContain('Subtask 1');
+    expect(transaction).toMatchObject({
+      status: 'completed',
+      stage: 'committed',
+      checkpoint: 'committed',
+    });
+  });
   it('preserves completed runtime work packages during force planning iteration', async () => {
     const tasksMarkdown = [
       '# Tasks',
@@ -991,7 +1099,13 @@ describe('BuildOrchestrator QA recovery', () => {
       return makeSessionResult('completed');
     });
 
-    const orchestrator = makeOrchestrator(runSession);
+    const orchestrator = new BuildOrchestrator({
+      specDir: '/spec',
+      projectDir: '/project',
+      generatePrompt: vi.fn().mockResolvedValue('prompt'),
+      runSession,
+      maxIterations: 2,
+    });
     const logs: string[] = [];
     orchestrator.on('log', (message) => logs.push(message));
 
@@ -1043,7 +1157,13 @@ describe('BuildOrchestrator QA recovery', () => {
       return makeSessionResult('completed');
     });
 
-    const orchestrator = makeOrchestrator(runSession);
+    const orchestrator = new BuildOrchestrator({
+      specDir: '/spec',
+      projectDir: '/project',
+      generatePrompt: vi.fn().mockResolvedValue('prompt'),
+      runSession,
+      maxIterations: 2,
+    });
     const logs: string[] = [];
     orchestrator.on('log', (message) => logs.push(message));
 
@@ -1096,7 +1216,7 @@ describe('BuildOrchestrator QA recovery', () => {
 
     const outcome = await orchestrator.run();
 
-    expect(outcome.success).toBe(true);
+    expect(outcome.success, outcome.error).toBe(true);
     expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(2);
     expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
   });
@@ -1357,6 +1477,78 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(mockIterateSubtasks).toHaveBeenCalled();
   });
 
+  it('repairs a manual Standard seed spec before deriving runtime work packages', async () => {
+    const seedSpec = [
+      '# Recalculate Standard board progress',
+      '',
+      '## Type',
+      'Standard mode task',
+      '',
+      '## Request',
+      'Keep the board progress synchronized with real work package progress after Request Changes planning.',
+      '',
+      '## Execution',
+      'Use compact Standard Autocode planning. Keep spec.md, tasks.md, and derived implementation_plan.md inside this task directory.',
+      'Create or repair tasks.md as the executable checklist. Do not write implementation_plan.md; the runtime derives it from tasks.md.',
+    ].join('\n');
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      '## User Requirements',
+      '',
+      '- R1: Recalculate Standard board progress from the current executable work package statuses after Request Changes planning.',
+      '',
+      '## Acceptance Criteria',
+      '',
+      '- AC1: The board progress is below 100 percent whenever any derived work package remains pending.',
+      '',
+      '## Evidence Sources',
+      '',
+      '- HUMAN_INPUT.md latest reviewer feedback for Request Changes progress behavior.',
+      '- tasks.md work package metadata for executable progress status.',
+      '',
+    ].join('\n');
+    const files = new Map<string, string>([
+      ['/spec/spec.md', seedSpec],
+      ['/spec/requirements.md', requirementsMarkdown],
+      ['/spec/tasks.md', makeTasks(['pending'])],
+      ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
+      ['/spec/HUMAN_INPUT.md', 'Request Changes: board progress should sync with detail progress.'],
+    ]);
+    const normalizePath = (path: string) => path.replace(/\\/g, '/');
+
+    mockReadFile.mockImplementation((path: string) => {
+      const normalizedPath = normalizePath(path);
+      if (files.has(normalizedPath)) {
+        return Promise.resolve(files.get(normalizedPath));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation(async (path: string, content: unknown) => {
+      files.set(normalizePath(path), String(content));
+    });
+
+    const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+    const repairedSpec = files.get('/spec/spec.md') ?? '';
+
+    expect(outcome.success).toBe(true);
+    expect(outcome.finalPhase).toBe('planning');
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(1);
+    expect(repairedSpec).toContain('## Requirements');
+    expect(repairedSpec).toContain('## Design Notes');
+    expect(repairedSpec).toContain('## Acceptance And Verification');
+    expect(repairedSpec).toContain('## Evidence');
+    expect(repairedSpec).toContain('Recalculate Standard board progress');
+    expect(repairedSpec).toContain('HUMAN_INPUT.md latest reviewer feedback');
+    expect(repairedSpec).not.toContain('Standard mode task');
+    expect(repairedSpec).not.toContain('Use compact Standard Autocode planning');
+    expect(files.get('/spec/implementation_plan.md')).toContain('"status":"pending"');
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+  });
+
   it('derives runtime work packages when tasks.md dependencies reference phase headings', async () => {
     let reviewerRuns = 0;
     const files = new Map<string, string>([
@@ -1421,6 +1613,121 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(mockIterateSubtasks).toHaveBeenCalled();
   });
 
+  it('preserves validated Standard sources while rolling back only a failed runtime plan', async () => {
+    const originalTasksMarkdown = makeTasks(['completed']);
+    const revisedTasksMarkdown = makeTasks(['pending']);
+    const originalPlanMarkdown = makePlanWithSchedulingMetadata(['completed']);
+    const files = new Map<string, string>([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/tasks.md', originalTasksMarkdown],
+      ['/spec/implementation_plan.md', originalPlanMarkdown],
+    ]);
+    const normalizePath = (filePath: string) => filePath.replace(/\\/g, '/');
+    mockReadFile.mockImplementation((filePath: string) => {
+      const normalizedPath = normalizePath(filePath);
+      return files.has(normalizedPath)
+        ? Promise.resolve(files.get(normalizedPath))
+        : Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation(async (filePath: string, content: unknown) => {
+      files.set(normalizePath(filePath), String(content));
+    });
+    mockRename.mockImplementation(async (sourcePath: string, targetPath: string) => {
+      const source = normalizePath(sourcePath);
+      const target = normalizePath(targetPath);
+      const content = files.get(source);
+      if (content === undefined) {
+        throw new Error('ENOENT');
+      }
+      files.set(target, content);
+      files.delete(source);
+    });
+    mockUnlink.mockImplementation(async (filePath: string) => {
+      files.delete(normalizePath(filePath));
+    });
+    mockValidateImplementationPlanLanguage.mockReturnValue([
+      'simulated post-derivation runtime plan validation failure',
+    ]);
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        files.set('/spec/tasks.md', revisedTasksMarkdown);
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+    const outcome = await orchestrator.run();
+
+    const transaction = JSON.parse(files.get('/spec/planning-transaction.json') ?? '{}') as {
+      status?: string;
+      stage?: string;
+      checkpoint?: string;
+    };
+    const failedTaskArtifactKeys = [...files.keys()]
+      .filter((key) => key.startsWith('/spec/tasks.md.failed-'));
+    const failedPlanArtifactKeys = [...files.keys()]
+      .filter((key) => key.startsWith('/spec/implementation_plan.md.failed-'));
+    expect(outcome.success).toBe(false);
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner'))
+      .toHaveLength(2);
+    expect(files.get('/spec/tasks.md')).toBe(revisedTasksMarkdown);
+    expect(files.get('/spec/implementation_plan.md')).toBe(originalPlanMarkdown);
+    expect(failedTaskArtifactKeys).toHaveLength(0);
+    expect(failedPlanArtifactKeys).toHaveLength(1);
+    expect(transaction).toMatchObject({
+      status: 'repair_required',
+      stage: 'repair_required',
+      checkpoint: 'plan_derived',
+    });
+  });
+  it('restores previous Standard task artifacts when Request Changes planning fails quality validation', async () => {
+    const originalTasksMarkdown = makeTasks(['completed']);
+    const failedTasksMarkdown = makeTasks(['pending'], false);
+    const originalPlanMarkdown = makePlanWithSchedulingMetadata(['completed']);
+    const files = new Map<string, string>([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/tasks.md', originalTasksMarkdown],
+      ['/spec/implementation_plan.md', originalPlanMarkdown],
+    ]);
+    const normalizePath = (path: string) => path.replace(/\\/g, '/');
+
+    mockReadFile.mockImplementation((path: string) => {
+      const normalizedPath = normalizePath(path);
+      if (files.has(normalizedPath)) {
+        return Promise.resolve(files.get(normalizedPath));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation(async (path: string, content: unknown) => {
+      files.set(normalizePath(path), String(content));
+    });
+    mockUnlink.mockImplementation(async (path: string) => {
+      files.delete(normalizePath(path));
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        files.set('/spec/tasks.md', failedTasksMarkdown);
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+    const failedTaskArtifactKeys = [...files.keys()].filter((key) => key.startsWith('/spec/tasks.md.failed-'));
+
+    expect(outcome.success).toBe(false);
+    expect(files.get('/spec/tasks.md')).toBe(originalTasksMarkdown);
+    expect(files.get('/spec/implementation_plan.md')).toBe(originalPlanMarkdown);
+    expect(failedTaskArtifactKeys).toHaveLength(1);
+    expect(files.get(failedTaskArtifactKeys[0])).not.toBe(originalTasksMarkdown);
+    expect(files.get(failedTaskArtifactKeys[0])).toContain('1.1 Subtask 1');
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+  });
   it('does not replace the runtime plan when Standard quality fails during replanning', async () => {
     let plannerRuns = 0;
 

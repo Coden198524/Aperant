@@ -122,6 +122,22 @@ function createRecoveredRunningTimedWorkPackageTask(): Task {
       : subtask),
   };
 }
+
+function createAccumulatedRunningTimedWorkPackageTask(): Task {
+  const task = createRunningTimedWorkPackageTask();
+
+  return {
+    ...task,
+    subtasks: task.subtasks.map(subtask => subtask.id === 'wp-1'
+      ? {
+          ...subtask,
+          startedAt: '2026-01-01T00:00:00.000Z',
+          activeStartedAt: '2026-01-01T00:05:00.000Z',
+          durationMs: 60_000,
+        }
+      : subtask),
+  };
+}
 function createConcurrentTaskWithRequestChangesFollowup(): Task {
   const task = createConcurrentWorkPackageTask();
 
@@ -569,6 +585,14 @@ describe('TaskSubtasks', () => {
         success: true,
         data: 'diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-old\n+new',
       })),
+      getWorkPackageFileDiff: vi.fn(async () => ({
+        success: true,
+        data: {
+          patch: 'diff --git a/src/app.ts b/src/app.ts\n@@ -1 +1 @@\n-old package\n+new package',
+          changedFiles: ['src/app.ts'],
+          commitHash: 'abc1234',
+        },
+      })),
     } as typeof window.electronAPI;
   });
 
@@ -648,6 +672,70 @@ describe('TaskSubtasks', () => {
 
     expect(await screen.findByText('export const value = 1;')).toBeInTheDocument();
     expect(screen.queryByText('No preview available for this file.')).not.toBeInTheDocument();
+  });
+  it('loads only the selected work package commit diff', async () => {
+    const task = createTask();
+    task.subtasks[0] = {
+      ...task.subtasks[0],
+      id: 'wp-1',
+      workPackage: true,
+      files: ['src/app.ts'],
+    };
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={task} />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(screen.getByText('Render summary'));
+    fireEvent.click(screen.getByRole('button', {
+      name: /Preview changes for src\/app\.ts in Render summary/i,
+    }));
+
+    await waitFor(() => {
+      expect(window.electronAPI.getWorkPackageFileDiff).toHaveBeenCalledWith(
+        'task-1',
+        'wp-1',
+        'src/app.ts',
+        'project-1',
+      );
+    });
+    expect(window.electronAPI.getWorktreeFileDiff).not.toHaveBeenCalled();
+    expect(await screen.findByText('-old package')).toBeInTheDocument();
+    expect(screen.getByText('+new package')).toBeInTheDocument();
+  });
+
+  it('does not fall back to the task-wide diff when work package history is unavailable', async () => {
+    window.electronAPI.getWorkPackageFileDiff = vi.fn(async () => ({
+      success: true,
+      data: {
+        patch: '',
+        changedFiles: [],
+        unavailableReason: 'history_unavailable',
+      },
+    })) as typeof window.electronAPI.getWorkPackageFileDiff;
+    const task = createTask();
+    task.subtasks[0] = {
+      ...task.subtasks[0],
+      id: 'wp-1',
+      workPackage: true,
+      files: ['src/app.ts'],
+    };
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={task} />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(screen.getByText('Render summary'));
+    fireEvent.click(screen.getByRole('button', {
+      name: /Preview changes for src\/app\.ts in Render summary/i,
+    }));
+
+    expect(await screen.findByText(/No local commit was recorded for this work package/)).toBeInTheDocument();
+    expect(window.electronAPI.getWorktreeFileDiff).not.toHaveBeenCalled();
   });
   it('shows markdown table supplemental text around completion summaries', () => {
     const task = createTask();
@@ -769,6 +857,26 @@ describe('TaskSubtasks', () => {
     });
 
     expect(screen.getByText('2m 6s')).toBeInTheDocument();
+  });
+
+  it('uses the current active segment when showing accumulated running execution time', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:06:00.000Z'));
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createAccumulatedRunningTimedWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('2m')).toBeInTheDocument();
+    expect(screen.queryByText('6m')).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(screen.getByText('2m 1s')).toBeInTheDocument();
   });
 
   it('excludes paused time between recovered running execution graph segments', async () => {

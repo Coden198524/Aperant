@@ -13,7 +13,12 @@ vi.mock('../../../project-store', () => ({
   },
 }));
 
-import { persistDirectFallbackPlanStateSync, persistPlanTokenUsageSync, syncPlanPhasesToMainSync } from '../plan-file-utils';
+import {
+  persistDirectFallbackPlanStateSync,
+  persistPlanTokenUsageSync,
+  syncCanonicalPlanToMainSync,
+  syncPlanPhasesToMainSync,
+} from '../plan-file-utils';
 import { projectStore } from '../../../project-store';
 
 describe('plan-file-utils token usage persistence', () => {
@@ -84,6 +89,76 @@ describe('plan-file-utils token usage persistence', () => {
     expect(projectStore.invalidateTasksCache).not.toHaveBeenCalled();
   });
 
+  it('promotes one complete canonical plan to main with the same revision and dependencies', () => {
+    const canonicalPlanPath = path.join(tempDir, 'worktree', 'implementation_plan.md');
+    const mainPlanPath = path.join(tempDir, 'main', 'implementation_plan.md');
+    saveAutocodeImplementationPlanSync(canonicalPlanPath, {
+      status: 'in_progress',
+      planStatus: 'coding',
+      planRevision: 4,
+      phases: [
+        {
+          phase: 1,
+          name: 'History',
+          subtasks: [
+            {
+              id: 'wp-history',
+              title: 'Completed history',
+              description: 'Keep completed work visible',
+              status: 'completed',
+              history_only: true,
+              depends_on: [],
+            },
+          ],
+        },
+        {
+          phase: 2,
+          name: 'Iteration',
+          subtasks: [
+            {
+              id: 'wp-new',
+              title: 'New iteration work',
+              description: 'Execute the requested change',
+              status: 'pending',
+              depends_on: ['wp-history'],
+              evidence: 'tasks.md 2.1',
+              verification: { type: 'manual', run: 'npm test' },
+            },
+          ],
+        },
+      ],
+    });
+    saveAutocodeImplementationPlanSync(mainPlanPath, {
+      status: 'human_review',
+      planRevision: 9,
+      phases: [
+        {
+          phase: 1,
+          name: 'Stale',
+          subtasks: [
+            { id: 'stale', title: 'Stale package', description: 'Old', status: 'completed' },
+          ],
+        },
+      ],
+    });
+
+    const success = syncCanonicalPlanToMainSync(
+      canonicalPlanPath,
+      mainPlanPath,
+      undefined,
+      'project-1',
+    );
+    const canonicalPlan = loadAutocodeImplementationPlanSync(canonicalPlanPath)!;
+    const mainPlan = loadAutocodeImplementationPlanSync(mainPlanPath)!;
+
+    expect(success).toBe(true);
+    expect(mainPlan).toEqual(canonicalPlan);
+    expect(mainPlan.planRevision).toBe(10);
+    expect(mainPlan.phases?.flatMap((phase) => phase.subtasks ?? []).map((item) => item.id))
+      .toEqual(['wp-history', 'wp-new']);
+    expect(mainPlan.phases?.[1]?.subtasks?.[0]?.depends_on).toEqual(['wp-history']);
+    expect(projectStore.invalidateTasksCache).toHaveBeenCalledWith('project-1');
+  });
   it('persists Direct fallback status metadata without replacing phases', () => {
     saveAutocodeImplementationPlanSync(planPath, {
       workflow_type: 'direct',

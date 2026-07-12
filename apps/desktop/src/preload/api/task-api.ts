@@ -18,7 +18,8 @@ import type {
   WorktreeCreatePRResult,
   ImageAttachment,
   ProjectDocumentType,
-  TokenUsage
+  TokenUsage,
+  WorkPackageFileDiff
 } from '../../shared/types';
 
 export interface TaskAPI {
@@ -74,6 +75,7 @@ export interface TaskAPI {
   getWorktreeChangedFiles: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>>;
   getWorktreeCommits: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number; parents?: string[]; refs?: string[]; isMerge?: boolean }>>>;
   getWorktreeFileDiff: (taskId: string, filePath: string, projectId?: string) => Promise<IPCResult<string>>;
+  getWorkPackageFileDiff: (taskId: string, workPackageId: string, filePath: string, projectId?: string) => Promise<IPCResult<WorkPackageFileDiff>>;
   getWorktreeCommitFiles: (taskId: string, commitHash: string, projectId?: string) => Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>>;
   getWorktreeCommitFileDiff: (taskId: string, commitHash: string, filePath: string, projectId?: string) => Promise<IPCResult<string>>;
 
@@ -206,6 +208,9 @@ export const createTaskAPI = (): TaskAPI => ({
 
   getWorktreeFileDiff: (taskId: string, filePath: string, projectId?: string): Promise<IPCResult<string>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_FILE_DIFF, taskId, filePath, projectId),
+
+  getWorkPackageFileDiff: (taskId: string, workPackageId: string, filePath: string, projectId?: string): Promise<IPCResult<WorkPackageFileDiff>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORK_PACKAGE_FILE_DIFF, taskId, workPackageId, filePath, projectId),
 
   getWorktreeCommitFiles: (taskId: string, commitHash: string, projectId?: string): Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_COMMIT_FILES, taskId, commitHash, projectId),

@@ -110,4 +110,33 @@ describe('Autocode task logs', () => {
     expect(logs.phases.coding.status).toBe('active');
     expect(logs.phases.coding.completed_at).toBeNull();
   });
+
+  it('preserves work package commit metadata through parse and serialization', () => {
+    const content = JSON.stringify({
+      record_type: 'entry',
+      entry: {
+        timestamp: '2026-07-01T00:00:00.000Z',
+        type: 'success',
+        phase: 'coding',
+        content: 'Work item wp-1 completed.',
+        subtask_id: 'wp-1',
+        git_commit: 'abc1234',
+        changed_files: ['src/app.ts', 'src/app.ts', 'src/styles.css'],
+      },
+    });
+
+    const parsed = parseAutocodeTaskLogs(content, '001-task');
+    const entry = parsed.phases.coding.entries[0];
+    expect(entry).toMatchObject({
+      subtask_id: 'wp-1',
+      git_commit: 'abc1234',
+      changed_files: ['src/app.ts', 'src/styles.css'],
+    });
+
+    const reparsed = parseAutocodeTaskLogs(serializeAutocodeTaskLogs(parsed), '001-task');
+    expect(reparsed.phases.coding.entries[0]).toMatchObject({
+      git_commit: 'abc1234',
+      changed_files: ['src/app.ts', 'src/styles.css'],
+    });
+  });
 });

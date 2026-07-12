@@ -24,7 +24,7 @@ describe('getProviderPreset', () => {
   it('returns correct preset for openai provider', () => {
     const result = getProviderPreset('openai', 'auto');
     expect(result).not.toBeNull();
-    expect(result?.primaryModel).toBe('gpt-5.5');
+    expect(result?.primaryModel).toBe('gpt-5.6-sol');
   });
 
   it('returns correct preset for deepseek provider', () => {
@@ -60,7 +60,7 @@ describe('getProviderPresetOrFallback', () => {
 
   it('returns openai balanced preset exactly when available', () => {
     const result = getProviderPresetOrFallback('openai', 'balanced');
-    expect(result.primaryModel).toBe('gpt-5.5');
+    expect(result.primaryModel).toBe('gpt-5.6-sol');
     expect(result.primaryThinking).toBe('medium');
   });
 
@@ -128,19 +128,26 @@ describe('getProviderPresetOrFallback', () => {
 });
 
 describe('resolveModelEquivalent', () => {
-  it('prefers gpt-5.5 for openai shorthand equivalence mappings', () => {
+  it('prefers gpt-5.6-sol for openai shorthand equivalence mappings', () => {
     const result = resolveModelEquivalent('opus', 'openai');
     expect(result).toEqual({
-      modelId: 'gpt-5.5',
+      modelId: 'gpt-5.6-sol',
       reasoning: { type: 'reasoning_effort', level: 'high' },
     });
   });
 
-  it('reuses the openai gpt-5.5 mapping for openai-compatible providers', () => {
+  it('reuses the openai gpt-5.6-sol mapping for openai-compatible providers', () => {
     const result = resolveModelEquivalent('haiku', 'openai-compatible');
     expect(result).toEqual({
-      modelId: 'gpt-5.5',
+      modelId: 'gpt-5.6-sol',
       reasoning: { type: 'reasoning_effort', level: 'low' },
+    });
+  });
+
+  it('keeps the previous GPT-5.5 model directly addressable', () => {
+    expect(resolveModelEquivalent('gpt-5.5', 'openai')).toEqual({
+      modelId: 'gpt-5.5',
+      reasoning: { type: 'reasoning_effort', level: 'high' },
     });
   });
 

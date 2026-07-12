@@ -22,6 +22,18 @@ describe('Autocode CLI catalog', () => {
     });
   });
 
+  it('normalizes legacy Codex reasoning effort overrides', () => {
+    expect(resolveAutocodeCliTaskRunInvocation({
+      cli: 'codex',
+      model: 'gpt-test',
+      thinkingLevel: 'ultra',
+      bypassPermissions: false,
+    })).toEqual({
+      command: 'codex',
+      args: ['exec', '--json', '-m', 'gpt-test', '-c', 'model_reasoning_effort=xhigh', '-'],
+    });
+  });
+
 
   it('resolves custom task-run invocation from route configuration', () => {
     expect(resolveAutocodeCliTaskRunInvocation({

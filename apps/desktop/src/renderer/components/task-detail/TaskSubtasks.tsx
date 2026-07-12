@@ -15,7 +15,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn, calculateProgress } from '../../lib/utils';
 import { resolveActiveSubtaskIndex } from '../../lib/subtask-progress';
 import { deleteSubtask } from '../../stores/task-store';
-import type { Task, TaskLogs as TaskLogsData } from '../../../shared/types';
+import type {
+  Task,
+  TaskLogs as TaskLogsData,
+  WorkPackageFileDiffUnavailableReason,
+} from '../../../shared/types';
 import {
   TaskRuntimeLogs,
   shouldSplitConcurrentWorkPackageLogs,
@@ -1042,19 +1046,27 @@ function parseTimestampMs(value: unknown): number | undefined {
 
 function getSubtaskRecordedTiming(subtask: Task['subtasks'][number]): {
   startedMs?: number;
+  activeStartedMs?: number;
   completedMs?: number;
+  updatedMs?: number;
   durationMs?: number;
 } {
   const timedSubtask = subtask as Task['subtasks'][number] & {
     startedAt?: unknown;
+    activeStartedAt?: unknown;
     completedAt?: unknown;
+    updatedAt?: unknown;
     started_at?: unknown;
+    active_started_at?: unknown;
     completed_at?: unknown;
+    updated_at?: unknown;
     durationMs?: unknown;
     duration_ms?: unknown;
   };
   const startedMs = parseTimestampMs(timedSubtask.startedAt ?? timedSubtask.started_at);
+  const activeStartedMs = parseTimestampMs(timedSubtask.activeStartedAt ?? timedSubtask.active_started_at);
   const completedMs = parseTimestampMs(timedSubtask.completedAt ?? timedSubtask.completed_at);
+  const updatedMs = parseTimestampMs(timedSubtask.updatedAt ?? timedSubtask.updated_at);
   const rawDuration = typeof timedSubtask.durationMs === 'number'
     ? timedSubtask.durationMs
     : typeof timedSubtask.duration_ms === 'number'
@@ -1068,7 +1080,9 @@ function getSubtaskRecordedTiming(subtask: Task['subtasks'][number]): {
 
   return {
     ...(startedMs !== undefined ? { startedMs } : {}),
+    ...(activeStartedMs !== undefined ? { activeStartedMs } : {}),
     ...(completedMs !== undefined ? { completedMs } : {}),
+    ...(updatedMs !== undefined ? { updatedMs } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
   };
 }
@@ -1205,7 +1219,7 @@ function resolveSubtaskTiming(
     const startedMs = [recorded.startedMs, inferred?.startedMs]
       .filter((value): value is number => value !== undefined)
       .reduce<number | undefined>((earliest, value) => earliest === undefined ? value : Math.min(earliest, value), undefined);
-    const activeStartedMs = inferred?.activeStartedMs ?? recorded.startedMs;
+    const activeStartedMs = inferred?.activeStartedMs ?? recorded.activeStartedMs ?? (recorded.durationMs === undefined ? recorded.startedMs : undefined);
     const activeDurationMs = Math.max(
       inferred?.activeDurationMs ?? inferred?.durationMs ?? 0,
       recorded.durationMs ?? 0,
@@ -1819,6 +1833,7 @@ interface WorkPackageFilePreview {
   subtaskId: string;
   subtaskTitle: string;
   filePath: string;
+  workPackage: boolean;
 }
 
 interface WorkPackageFileDiffDialogProps {
@@ -1826,6 +1841,7 @@ interface WorkPackageFileDiffDialogProps {
   diff: string | null;
   isLoading: boolean;
   error: string | null;
+  unavailableMessage: string | null;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -1864,6 +1880,7 @@ function WorkPackageFileDiffDialog({
   diff,
   isLoading,
   error,
+  unavailableMessage,
   onOpenChange,
 }: WorkPackageFileDiffDialogProps) {
   const { t } = useTranslation(['tasks', 'common']);
@@ -1889,6 +1906,8 @@ function WorkPackageFileDiffDialog({
             </div>
           ) : error ? (
             <div className="p-4 text-sm text-destructive">{error}</div>
+          ) : unavailableMessage ? (
+            <div className="p-4 text-sm text-muted-foreground">{unavailableMessage}</div>
           ) : hasPreview ? (
             <div className="min-w-full p-3 text-xs font-mono">
               {diff.split(/\r?\n/).map((line, lineIndex) => (
@@ -1927,6 +1946,7 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
   const [fileDiffPreview, setFileDiffPreview] = useState<WorkPackageFilePreview | null>(null);
   const [fileDiffContent, setFileDiffContent] = useState<string | null>(null);
   const [fileDiffError, setFileDiffError] = useState<string | null>(null);
+  const [fileDiffUnavailableMessage, setFileDiffUnavailableMessage] = useState<string | null>(null);
   const [isLoadingFileDiff, setIsLoadingFileDiff] = useState(false);
   const isTaskRunning = task.status === 'in_progress' || task.executionProgress?.phase === 'coding';
   const { modelLogs } = useTaskModelLogs(task);
@@ -2127,13 +2147,61 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
     setDeletingSubtaskId(null);
   }, [deletingSubtaskId, isTaskRunning, t, task.id, task.projectId]);
 
-  const handleOpenFileDiff = useCallback(async (subtaskId: string, subtaskTitle: string, filePath: string) => {
-    setFileDiffPreview({ subtaskId, subtaskTitle, filePath });
+  const handleOpenFileDiff = useCallback(async (
+    subtaskId: string,
+    subtaskTitle: string,
+    filePath: string,
+    workPackage: boolean,
+  ) => {
+    setFileDiffPreview({ subtaskId, subtaskTitle, filePath, workPackage });
     setFileDiffContent(null);
     setFileDiffError(null);
+    setFileDiffUnavailableMessage(null);
     setIsLoadingFileDiff(true);
 
     try {
+      if (workPackage) {
+        const result = await window.electronAPI.getWorkPackageFileDiff(
+          task.id,
+          subtaskId,
+          filePath,
+          task.projectId,
+        );
+        if (!result.success) {
+          setFileDiffError(result.error || t('tasks:subtasks.fileDiffFailed', {
+            defaultValue: 'Failed to load file changes',
+          }));
+          return;
+        }
+
+        const scopedDiff = result.data;
+        if (scopedDiff?.patch) {
+          setFileDiffContent(scopedDiff.patch);
+          return;
+        }
+
+        const reason = scopedDiff?.unavailableReason;
+        const messages: Record<WorkPackageFileDiffUnavailableReason, string> = {
+          history_unavailable: t('tasks:workPackageDiff.historyUnavailable', {
+            defaultValue: 'No local commit was recorded for this work package, so its changes cannot be isolated from other work packages.',
+          }),
+          no_source_changes: t('tasks:workPackageDiff.noSourceChanges', {
+            defaultValue: 'This work package completed without committed source changes.',
+          }),
+          file_not_changed: t('tasks:workPackageDiff.fileNotChanged', {
+            file: filePath,
+            defaultValue: 'This file was not changed by the selected work package.',
+          }),
+          commit_unavailable: t('tasks:workPackageDiff.commitUnavailable', {
+            defaultValue: 'The local commit for this work package is no longer available.',
+          }),
+        };
+        setFileDiffUnavailableMessage(reason
+          ? messages[reason]
+          : messages.history_unavailable);
+        return;
+      }
+
       const result = await window.electronAPI.getWorktreeFileDiff(task.id, filePath, task.projectId);
       if (result.success) {
         const previewContent = result.data ?? '';
@@ -2163,6 +2231,7 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
     setFileDiffPreview(null);
     setFileDiffContent(null);
     setFileDiffError(null);
+    setFileDiffUnavailableMessage(null);
     setIsLoadingFileDiff(false);
   }, []);
 
@@ -2325,7 +2394,8 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
                                   void handleOpenFileDiff(
                                     subtask.id,
                                     subtask.title || subtask.id,
-                                    file
+                                    file,
+                                    subtask.workPackage === true
                                   );
                                 }}
                                 className="inline-flex items-center rounded-md border border-transparent bg-secondary px-2.5 py-0.5 text-xs font-semibold font-mono text-secondary-foreground transition-colors hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
@@ -2400,6 +2470,7 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
         diff={fileDiffContent}
         isLoading={isLoadingFileDiff}
         error={fileDiffError}
+        unavailableMessage={fileDiffUnavailableMessage}
         onOpenChange={handleFileDiffOpenChange}
       />
     </>

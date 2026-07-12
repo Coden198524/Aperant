@@ -196,6 +196,37 @@ describe('TaskDetailModal', () => {
     expect(screen.queryByTestId('task-files')).not.toBeInTheDocument();
   });
 
+  it('uses subtask progress instead of stale planning progress after Request Changes subtasks exist', () => {
+    const task = createTask();
+    task.executionProgress = {
+      phase: 'planning',
+      phaseProgress: 100,
+      overallProgress: 100,
+      message: 'Generating implementation plan...',
+    };
+    task.subtasks = [
+      { id: 'old-1', title: 'Already done', description: 'Already done', status: 'completed', files: [] },
+      { id: 'new-1', title: 'Requested change', description: 'Requested change', status: 'pending', files: [] },
+    ];
+    mockUseTaskDetail.mockReturnValue({
+      ...createTaskDetailState(),
+      executionPhase: 'planning',
+      hasActiveExecution: true,
+      taskProgress: { completed: 1, total: 2, percentage: 50 },
+    } as unknown as ReturnType<typeof useTaskDetail>);
+
+    render(
+      <TaskDetailModal
+        open={true}
+        task={task}
+        onOpenChange={vi.fn()}
+      />
+    );
+
+    expect(screen.getAllByText('1/2 subtasks').length).toBeGreaterThan(0);
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    expect(screen.queryByText('100%')).not.toBeInTheDocument();
+  });
   it('shows completed human review as 100% in the header', () => {
     const task = createTask();
     task.status = 'human_review';

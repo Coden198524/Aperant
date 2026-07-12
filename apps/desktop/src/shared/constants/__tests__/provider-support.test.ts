@@ -42,7 +42,10 @@ describe('provider model support matrix', () => {
     const byProvider = new Map(matrix.map((entry) => [entry.provider, entry]));
 
     expect(byProvider.get('anthropic')?.supportLevel).toBe('built-in-catalog');
-    expect(byProvider.get('openai')?.catalogModels.some((model) => model.value === 'gpt-5.5')).toBe(true);
+    expect(byProvider.get('openai')?.catalogModels.slice(0, 2).map((model) => model.value)).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.5',
+    ]);
     expect(byProvider.get('openai-compatible')?.supportLevel).toBe('custom-endpoint');
     expect(byProvider.get('openai-compatible')?.catalogModels).toEqual([]);
     expect(byProvider.get('ollama')?.supportLevel).toBe('local-runtime');
@@ -57,6 +60,7 @@ describe('provider model support matrix', () => {
     expect(markdown).toContain(`# Provider Model Support Matrix\n\nVersion: ${PROVIDER_MODEL_SUPPORT_POLICY_VERSION}`);
     expect(markdown).toContain('| OpenAI | `built-in-catalog` |');
     expect(markdown).toContain('| Custom Endpoint | `custom-endpoint` |');
+    expect(markdown).toContain('`gpt-5.6-sol` | GPT-5.6 SOL');
     expect(markdown).toContain('`gpt-5.5` | GPT-5.5');
     expect(markdown).toContain('## Cost Display Policy');
     expect(markdown).toContain('Monetary cost estimates remain unconfigured');

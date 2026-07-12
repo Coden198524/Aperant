@@ -56,6 +56,7 @@ export const IPC_CHANNELS = {
   TASK_WORKTREE_CHANGED_FILES: 'task:worktreeChangedFiles',  // Get list of changed files
   TASK_WORKTREE_COMMITS: 'task:worktreeCommits',  // Get commit history
   TASK_WORKTREE_FILE_DIFF: 'task:worktreeFileDiff',  // Get diff for specific file
+  TASK_WORK_PACKAGE_FILE_DIFF: 'task:workPackageFileDiff',  // Get diff scoped to one work package commit
   TASK_WORKTREE_COMMIT_FILES: 'task:worktreeCommitFiles',  // Get list of files in a specific commit
   TASK_WORKTREE_COMMIT_FILE_DIFF: 'task:worktreeCommitFileDiff',  // Get diff for specific file in a specific commit
   TASK_LIST_WORKTREES: 'task:listWorktrees',

@@ -10,6 +10,7 @@ import {
   ADAPTIVE_THINKING_MODELS,
   EFFORT_LEVEL_MAP,
   THINKING_BUDGET_MAP,
+  normalizeThinkingLevel,
   type EffortLevel,
   type ThinkingLevel,
 } from '../config/types.js';
@@ -43,12 +44,13 @@ export function getThinkingKwargsForModel(
   modelId: string,
   thinkingLevel: ThinkingLevel,
 ): { maxThinkingTokens: number; effortLevel?: EffortLevel } {
+  const normalizedThinkingLevel = normalizeThinkingLevel(thinkingLevel);
   const result: { maxThinkingTokens: number; effortLevel?: EffortLevel } = {
-    maxThinkingTokens: THINKING_BUDGET_MAP[thinkingLevel],
+    maxThinkingTokens: THINKING_BUDGET_MAP[normalizedThinkingLevel],
   };
 
   if (isAdaptiveModel(modelId)) {
-    result.effortLevel = EFFORT_LEVEL_MAP[thinkingLevel] as EffortLevel;
+    result.effortLevel = EFFORT_LEVEL_MAP[normalizedThinkingLevel] as EffortLevel;
   }
 
   return result;
@@ -62,13 +64,14 @@ export function transformThinkingConfig(
   modelId: string,
   thinkingLevel: ThinkingLevel,
 ): ThinkingConfig {
+  const normalizedThinkingLevel = normalizeThinkingLevel(thinkingLevel);
   switch (provider) {
     case SupportedProviderValue.Anthropic: {
       const config: ThinkingConfig = {
-        budgetTokens: THINKING_BUDGET_MAP[thinkingLevel],
+        budgetTokens: THINKING_BUDGET_MAP[normalizedThinkingLevel],
       };
       if (isAdaptiveModel(modelId)) {
-        config.effortLevel = EFFORT_LEVEL_MAP[thinkingLevel] as EffortLevel;
+        config.effortLevel = EFFORT_LEVEL_MAP[normalizedThinkingLevel] as EffortLevel;
       }
       return config;
     }
@@ -77,12 +80,12 @@ export function transformThinkingConfig(
     case SupportedProviderValue.OpenAICompatible:
     case SupportedProviderValue.Azure:
       return {
-        reasoningEffort: thinkingLevel,
+        reasoningEffort: normalizedThinkingLevel,
       };
 
     case SupportedProviderValue.DeepSeek:
       return {
-        reasoningEffort: thinkingLevel === 'xhigh' ? 'max' : 'high',
+        reasoningEffort: normalizedThinkingLevel === 'xhigh' ? 'xhigh' : 'high',
       };
 
     default:
@@ -210,22 +213,9 @@ export function getCacheBreakpoints(
 // Legacy Thinking Level Sanitization
 // ============================================
 
-/** Valid thinking level values. */
-const VALID_THINKING_LEVELS: ReadonlySet<string> = new Set(['low', 'medium', 'high', 'xhigh']);
-
-/** Mapping from legacy/removed thinking levels to valid ones. */
-const LEGACY_THINKING_LEVEL_MAP: Record<string, ThinkingLevel> = {
-  ultrathink: 'high',
-  none: 'low',
-};
-
 /**
  * Validate and sanitize a thinking level string.
  */
 export function sanitizeThinkingLevel(thinkingLevel: string): ThinkingLevel {
-  if (VALID_THINKING_LEVELS.has(thinkingLevel)) {
-    return thinkingLevel as ThinkingLevel;
-  }
-
-  return LEGACY_THINKING_LEVEL_MAP[thinkingLevel] ?? 'medium';
+  return normalizeThinkingLevel(thinkingLevel);
 }

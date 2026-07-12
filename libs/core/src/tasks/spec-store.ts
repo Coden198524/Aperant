@@ -108,7 +108,9 @@ export interface AutocodePlanSubtask {
   status: AutocodeSubtaskStatus;
   completionSummary?: string;
   startedAt?: string;
+  activeStartedAt?: string;
   completedAt?: string;
+  updatedAt?: string;
   durationMs?: number;
   files: string[];
   dependsOn?: string[];
@@ -211,7 +213,9 @@ interface RawPlanSubtask {
   notes?: unknown;
   actual_output?: unknown;
   started_at?: unknown;
+  active_started_at?: unknown;
   completed_at?: unknown;
+  updated_at?: unknown;
   duration_ms?: unknown;
   durationMs?: unknown;
   status?: unknown;
@@ -549,7 +553,9 @@ function extractSubtasks(plan: ImplementationPlanFile | null): AutocodePlanSubta
         status: normalizeSubtaskStatus(subtask.status),
         ...(completionSummary ? { completionSummary } : {}),
         ...(optionalStringFrom(subtask.started_at) ? { startedAt: optionalStringFrom(subtask.started_at) } : {}),
+        ...(optionalStringFrom(subtask.active_started_at) ? { activeStartedAt: optionalStringFrom(subtask.active_started_at) } : {}),
         ...(optionalStringFrom(subtask.completed_at) ? { completedAt: optionalStringFrom(subtask.completed_at) } : {}),
+        ...(optionalStringFrom(subtask.updated_at) ? { updatedAt: optionalStringFrom(subtask.updated_at) } : {}),
         ...(durationMs !== undefined ? { durationMs } : {}),
         files: [
           ...toStringArray(subtask.files_to_create),

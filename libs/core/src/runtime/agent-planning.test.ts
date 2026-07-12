@@ -4,6 +4,7 @@ import {
   buildAutocodePlanningStructuredOutputRetryPrompt,
   buildAutocodePlanningStructuredOutputValidationRetryPrompt,
   buildAutocodeStandardTasksValidationRetryPrompt,
+  validateAutocodePlanningSchedulingMetadata,
 } from './agent-planning.js';
 import { buildAutocodePlanQualityRetryPrompt } from '../tasks/plan-quality.js';
 
@@ -54,5 +55,50 @@ describe('agent planning retry prompt compaction', () => {
     expect(prompt).toContain('... 3 more error(s) omitted');
     expect(prompt).not.toContain('error 10');
     expect(prompt.length).toBeLessThan(4_000);
+  });
+});
+describe('planning scheduling metadata validation', () => {
+  it('ignores missing scheduling metadata on completed historical work packages', () => {
+    const errors = validateAutocodePlanningSchedulingMetadata({
+      phases: [{
+        subtasks: [
+          {
+            id: 'wp-1',
+            status: 'completed',
+            history_only: true,
+          },
+          {
+            id: 'wp-2',
+            status: 'pending',
+            depends_on: ['wp-1'],
+            evidence: 'tasks.md 2.1 and requirements.md R2',
+            verification: { type: 'manual', run: 'npm test' },
+          },
+        ],
+      }],
+    }, {
+      developmentMode: 'standard',
+    });
+
+    expect(errors).toEqual([]);
+  });
+
+  it('still requires scheduling metadata on executable work packages', () => {
+    const errors = validateAutocodePlanningSchedulingMetadata({
+      phases: [{
+        subtasks: [{
+          id: 'wp-2',
+          status: 'pending',
+        }],
+      }],
+    }, {
+      developmentMode: 'standard',
+    });
+
+    expect(errors).toEqual([
+      'wp-2 missing _Depends on: ..._ metadata',
+      'wp-2 missing _Evidence: ..._ metadata',
+      'wp-2 missing _Verification: ..._ metadata',
+    ]);
   });
 });

@@ -34,6 +34,27 @@ export type ModelShorthand = 'opus-4.7' | 'opus' | 'opus-1m' | 'opus-4.5' | 'son
 /** Valid thinking levels */
 export type ThinkingLevel = 'low' | 'medium' | 'high' | 'xhigh';
 
+const VALID_THINKING_LEVELS: ReadonlySet<string> = new Set(['low', 'medium', 'high', 'xhigh']);
+const LEGACY_THINKING_LEVELS: Readonly<Record<string, ThinkingLevel>> = {
+  max: 'xhigh',
+  ultra: 'xhigh',
+  ultrathink: 'high',
+  none: 'low',
+  minimal: 'low',
+};
+
+/** Normalize persisted or provider-era aliases before building API parameters. */
+export function normalizeThinkingLevel(
+  value: unknown,
+  fallback: ThinkingLevel = 'medium',
+): ThinkingLevel {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (VALID_THINKING_LEVELS.has(normalized)) {
+    return normalized as ThinkingLevel;
+  }
+  return LEGACY_THINKING_LEVELS[normalized] ?? fallback;
+}
+
 /** Valid effort levels for adaptive thinking models */
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh';
 
@@ -169,16 +190,20 @@ export const MODEL_PROVIDER_MAP: Record<string, SupportedProvider> = {
 // ============================================
 
 export function resolveReasoningParams(config: ReasoningConfig): Record<string, unknown> {
+  const level = normalizeThinkingLevel(
+    config.level,
+    config.type === 'adaptive_effort' ? 'high' : 'medium',
+  );
   switch (config.type) {
     case 'thinking_tokens':
-      return { maxThinkingTokens: THINKING_BUDGET_MAP[config.level ?? 'medium'] };
+      return { maxThinkingTokens: THINKING_BUDGET_MAP[level] };
     case 'adaptive_effort':
       return {
-        maxThinkingTokens: THINKING_BUDGET_MAP[config.level ?? 'high'],
-        effortLevel: config.level ?? 'high',
+        maxThinkingTokens: THINKING_BUDGET_MAP[level],
+        effortLevel: level,
       };
     case 'reasoning_effort':
-      return { reasoningEffort: config.level ?? 'medium' };
+      return { reasoningEffort: level };
     case 'thinking_toggle':
       return { thinking: config.level !== undefined };
     case 'none':
@@ -215,7 +240,8 @@ export function buildThinkingProviderOptions(
   const provider = detectProviderFromModelId(modelId);
   if (!provider) return undefined;
 
-  const budgetTokens = THINKING_BUDGET_MAP[thinkingLevel];
+  const normalizedThinkingLevel = normalizeThinkingLevel(thinkingLevel);
+  const budgetTokens = THINKING_BUDGET_MAP[normalizedThinkingLevel];
 
   switch (provider) {
     case 'anthropic': {
@@ -239,7 +265,7 @@ export function buildThinkingProviderOptions(
           high: 'high',
           xhigh: 'high',
         };
-        return { openai: { reasoningEffort: effortMap[thinkingLevel] } };
+        return { openai: { reasoningEffort: effortMap[normalizedThinkingLevel] } };
       }
       return undefined;
     }
@@ -259,12 +285,12 @@ export function buildThinkingProviderOptions(
         low: 'high',
         medium: 'high',
         high: 'high',
-        xhigh: 'max',
+        xhigh: 'xhigh',
       };
       return {
         openaiCompatible: {
           thinking: { type: 'enabled' },
-          reasoning_effort: effortMap[thinkingLevel],
+          reasoning_effort: effortMap[normalizedThinkingLevel],
         },
       };
     }

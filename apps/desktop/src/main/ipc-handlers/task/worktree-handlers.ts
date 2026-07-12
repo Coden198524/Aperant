@@ -1,7 +1,7 @@
 import { ipcMain, shell, app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { IPC_CHANNELS, DEFAULT_APP_SETTINGS, DEFAULT_FEATURE_MODELS, DEFAULT_FEATURE_THINKING, MODEL_ID_MAP, THINKING_BUDGET_MAP } from '../../../shared/constants';
-import type { IPCResult, WorktreeStatus, WorktreeDiff, WorktreeDiffFile, WorktreeMergeResult, WorktreeDiscardResult, WorktreeListResult, WorktreeListItem, WorktreeCreatePROptions, WorktreeCreatePRResult, SupportedIDE, SupportedTerminal, SupportedCLI, AppSettings } from '../../../shared/types';
+import type { IPCResult, WorktreeStatus, WorktreeDiff, WorktreeDiffFile, WorkPackageFileDiff, WorktreeMergeResult, WorktreeDiscardResult, WorktreeListResult, WorktreeListItem, WorktreeCreatePROptions, WorktreeCreatePRResult, SupportedIDE, SupportedTerminal, SupportedCLI, AppSettings } from '../../../shared/types';
 import path from 'path';
 import { minimatch } from 'minimatch';
 import { existsSync, readdirSync, statSync, readFileSync, promises as fsPromises } from 'fs';
@@ -64,11 +64,85 @@ const PRINTABLE_CHARS_REGEX = /^[\x20-\x7E\u00A0-\uFFFF]*$/;
 const PR_CREATION_TIMEOUT_MS = 120000;
 const WORKTREE_GIT_TIMEOUT_MS = 10000;
 const MAX_UNTRACKED_PATCH_BYTES = 512 * 1024;
+const GIT_COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/i;
 
 type WorktreeDiffFileBase = Omit<WorktreeDiffFile, 'additions' | 'deletions' | 'patch'>;
 
+interface WorkPackageGitChangeRecord {
+  commitHash?: string;
+  changedFiles: string[];
+  skippedReason?: string;
+  timestamp?: string;
+}
+
 function normalizeGitPath(filePath: string): string {
   return filePath.replace(/\\/g, '/');
+}
+
+export function findLatestWorkPackageGitChangeRecord(
+  logContent: string,
+  workPackageId: string,
+): WorkPackageGitChangeRecord | null {
+  let latest: (WorkPackageGitChangeRecord & { timestampMs: number; order: number }) | null = null;
+
+  for (const [order, rawLine] of logContent.split(/\r?\n/).entries()) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    try {
+      const record = JSON.parse(line) as Record<string, unknown>;
+      const entry = record.record_type === 'entry' && record.entry && typeof record.entry === 'object'
+        ? record.entry as Record<string, unknown>
+        : null;
+      if (!entry || entry.subtask_id !== workPackageId) {
+        continue;
+      }
+
+      const rawCommitHash = typeof entry.git_commit === 'string' ? entry.git_commit.trim() : '';
+      const commitHash = GIT_COMMIT_HASH_PATTERN.test(rawCommitHash) ? rawCommitHash : undefined;
+      const skippedReason = typeof entry.git_commit_skipped === 'string'
+        ? entry.git_commit_skipped.trim()
+        : '';
+      if (!commitHash && !skippedReason) {
+        continue;
+      }
+
+      const timestamp = typeof entry.timestamp === 'string' ? entry.timestamp : undefined;
+      const parsedTimestamp = timestamp ? Date.parse(timestamp) : Number.NaN;
+      const candidate = {
+        ...(commitHash ? { commitHash } : {}),
+        changedFiles: Array.isArray(entry.changed_files)
+          ? Array.from(new Set(entry.changed_files
+              .filter((filePath): filePath is string => typeof filePath === 'string')
+              .map(normalizeGitPath)
+              .filter((filePath) => filePath && !shouldHideTaskGitChangePath(filePath))))
+          : [],
+        ...(skippedReason ? { skippedReason } : {}),
+        ...(timestamp ? { timestamp } : {}),
+        timestampMs: Number.isFinite(parsedTimestamp) ? parsedTimestamp : 0,
+        order,
+      };
+
+      if (
+        !latest
+        || candidate.timestampMs > latest.timestampMs
+        || (candidate.timestampMs === latest.timestampMs && candidate.order > latest.order)
+      ) {
+        latest = candidate;
+      }
+    } catch {
+      // Ignore malformed historical JSONL records.
+    }
+  }
+
+  if (!latest) {
+    return null;
+  }
+
+  const { timestampMs: _timestampMs, order: _order, ...record } = latest;
+  return record;
 }
 
 function isWindowsAbsolutePathLike(filePath: string): boolean {
@@ -1882,6 +1956,104 @@ function getTaskDiffWorkspace(projectPath: string, specId: string, autoBuildPath
     path: worktreePath ?? projectPath,
     isWorktree: Boolean(worktreePath),
     specDir,
+  };
+}
+
+function resolveWorkPackageGitChangeFromLogs(
+  task: { specId: string; specsPath?: string },
+  project: { path: string; autoBuildPath?: string },
+  workspace: { path: string; specDir: string },
+  workPackageId: string,
+): WorkPackageGitChangeRecord | null {
+  const workspaceSpecDir = getTaskSpecDir(workspace.path, task.specId, project.autoBuildPath);
+  const logPaths = Array.from(new Set([
+    path.join(workspace.specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs),
+    ...(task.specsPath ? [path.join(task.specsPath, AUTOCODE_TASK_ARTIFACTS.taskLogs)] : []),
+    path.join(workspaceSpecDir, AUTOCODE_TASK_ARTIFACTS.taskLogs),
+  ]));
+  let latest: (WorkPackageGitChangeRecord & { timestampMs: number; order: number }) | null = null;
+
+  for (const [order, logPath] of logPaths.entries()) {
+    try {
+      const record = findLatestWorkPackageGitChangeRecord(readFileSync(logPath, 'utf-8'), workPackageId);
+      if (!record) {
+        continue;
+      }
+      const parsedTimestamp = record.timestamp ? Date.parse(record.timestamp) : Number.NaN;
+      const candidate = {
+        ...record,
+        timestampMs: Number.isFinite(parsedTimestamp) ? parsedTimestamp : 0,
+        order,
+      };
+      if (
+        !latest
+        || candidate.timestampMs > latest.timestampMs
+        || (candidate.timestampMs === latest.timestampMs && candidate.order > latest.order)
+      ) {
+        latest = candidate;
+      }
+    } catch {
+      // Missing task logs are expected for legacy work packages.
+    }
+  }
+
+  if (!latest) {
+    return null;
+  }
+  const { timestampMs: _timestampMs, order: _order, ...record } = latest;
+  return record;
+}
+
+async function readCommitChangedFiles(workspacePath: string, commitHash: string): Promise<string[]> {
+  const result = await execFileAsync(
+    getToolPath('git'),
+    ['show', '--format=', '--name-only', '--find-renames', commitHash],
+    {
+      cwd: workspacePath,
+      encoding: 'utf-8',
+      env: getIsolatedGitEnv(),
+      timeout: WORKTREE_GIT_TIMEOUT_MS,
+    }
+  );
+
+  return Array.from(new Set(((result.stdout as string) || '')
+    .split(/\r?\n/)
+    .map(normalizeGitPath)
+    .filter((filePath) => filePath && !shouldHideTaskGitChangePath(filePath))));
+}
+
+async function findWorkPackageGitChangeFromHistory(
+  workspacePath: string,
+  workPackageId: string,
+): Promise<WorkPackageGitChangeRecord | null> {
+  const result = await execFileAsync(
+    getToolPath('git'),
+    ['log', '--no-merges', '--max-count=500', '--format=%H%x00%s'],
+    {
+      cwd: workspacePath,
+      encoding: 'utf-8',
+      env: getIsolatedGitEnv(),
+      timeout: WORKTREE_GIT_TIMEOUT_MS,
+    }
+  );
+  const expectedSubject = `chore(autocode): complete work item ${workPackageId}`;
+  const matchingLine = ((result.stdout as string) || '')
+    .split(/\r?\n/)
+    .find((line) => {
+      const separatorIndex = line.indexOf('\0');
+      return separatorIndex >= 0 && line.slice(separatorIndex + 1) === expectedSubject;
+    });
+  if (!matchingLine) {
+    return null;
+  }
+
+  const commitHash = matchingLine.slice(0, matchingLine.indexOf('\0')).trim();
+  if (!GIT_COMMIT_HASH_PATTERN.test(commitHash)) {
+    return null;
+  }
+  return {
+    commitHash,
+    changedFiles: await readCommitChangedFiles(workspacePath, commitHash),
   };
 }
 
@@ -3769,6 +3941,169 @@ export function registerWorktreeHandlers(
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to get file diff',
+        };
+      }
+    }
+  );
+
+  /**
+   * Get the diff introduced by one completed work package's local commit.
+   * This must never fall back to the task-wide branch diff because that would
+   * attribute other work packages' edits to the selected package.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_WORK_PACKAGE_FILE_DIFF,
+    async (
+      _,
+      taskId: string,
+      workPackageId: string,
+      filePath: string,
+      projectId?: string,
+    ): Promise<IPCResult<WorkPackageFileDiff>> => {
+      try {
+        const { task, project } = findTaskAndProject(taskId, projectId);
+        if (!task || !project) {
+          return { success: false, error: 'Task not found' };
+        }
+
+        const workspace = getTaskDiffWorkspace(project.path, task.specId, project.autoBuildPath);
+        const normalizedFilePath = normalizeWorktreeFilePathForPreview(
+          filePath,
+          workspace.path,
+          project.path,
+        );
+        if (!normalizedFilePath || shouldHideTaskGitChangePath(normalizedFilePath)) {
+          return {
+            success: true,
+            data: {
+              patch: '',
+              changedFiles: [],
+              unavailableReason: 'file_not_changed',
+            },
+          };
+        }
+
+        let gitChange = resolveWorkPackageGitChangeFromLogs(
+          task,
+          project,
+          workspace,
+          workPackageId,
+        );
+        if (gitChange?.skippedReason) {
+          return {
+            success: true,
+            data: {
+              patch: '',
+              changedFiles: [],
+              unavailableReason: 'no_source_changes',
+            },
+          };
+        }
+
+        if (!gitChange) {
+          try {
+            gitChange = await findWorkPackageGitChangeFromHistory(workspace.path, workPackageId);
+          } catch (historyError) {
+            console.warn(
+              `[TASK_WORK_PACKAGE_FILE_DIFF] Failed to inspect git history for ${workPackageId}:`,
+              historyError,
+            );
+          }
+        }
+        if (!gitChange?.commitHash) {
+          return {
+            success: true,
+            data: {
+              patch: '',
+              changedFiles: [],
+              unavailableReason: 'history_unavailable',
+            },
+          };
+        }
+
+        let changedFiles = gitChange.changedFiles;
+        if (changedFiles.length === 0) {
+          try {
+            changedFiles = await readCommitChangedFiles(workspace.path, gitChange.commitHash);
+          } catch (commitError) {
+            console.warn(
+              `[TASK_WORK_PACKAGE_FILE_DIFF] Commit ${gitChange.commitHash} is unavailable:`,
+              commitError,
+            );
+            return {
+              success: true,
+              data: {
+                patch: '',
+                changedFiles: [],
+                commitHash: gitChange.commitHash,
+                unavailableReason: 'commit_unavailable',
+              },
+            };
+          }
+        }
+
+        if (!changedFiles.includes(normalizedFilePath)) {
+          return {
+            success: true,
+            data: {
+              patch: '',
+              changedFiles,
+              commitHash: gitChange.commitHash,
+              unavailableReason: 'file_not_changed',
+            },
+          };
+        }
+
+        try {
+          const diffResult = await execFileAsync(
+            getToolPath('git'),
+            [
+              'show',
+              '--format=',
+              '--no-color',
+              '--find-renames',
+              '--unified=3',
+              gitChange.commitHash,
+              '--',
+              normalizedFilePath,
+            ],
+            {
+              cwd: workspace.path,
+              encoding: 'utf-8',
+              env: getIsolatedGitEnv(),
+              timeout: WORKTREE_GIT_TIMEOUT_MS,
+            }
+          );
+          const patch = (diffResult.stdout as string) || '';
+          return {
+            success: true,
+            data: {
+              patch,
+              changedFiles,
+              commitHash: gitChange.commitHash,
+              ...(patch ? {} : { unavailableReason: 'file_not_changed' as const }),
+            },
+          };
+        } catch (commitError) {
+          console.warn(
+            `[TASK_WORK_PACKAGE_FILE_DIFF] Failed to load ${normalizedFilePath} from commit ${gitChange.commitHash}:`,
+            commitError,
+          );
+          return {
+            success: true,
+            data: {
+              patch: '',
+              changedFiles,
+              commitHash: gitChange.commitHash,
+              unavailableReason: 'commit_unavailable',
+            },
+          };
+        }
+      } catch (error) {
+        console.error('[TASK_WORK_PACKAGE_FILE_DIFF] Error:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get work package file diff',
         };
       }
     }

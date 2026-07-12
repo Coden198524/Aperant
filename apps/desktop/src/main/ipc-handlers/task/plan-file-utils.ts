@@ -738,6 +738,60 @@ export function syncPlanPhasesToMainSync(
 }
 
 /**
+ * Promote the complete worktree plan to the main project using one canonical
+ * plan object. Both copies receive the same revision and serialized content.
+ */
+export function syncCanonicalPlanToMainSync(
+  canonicalPlanPath: string,
+  mainPlanPath: string,
+  sourcePlan?: { phases?: unknown[]; planRevision?: unknown } | null,
+  projectId?: string,
+): boolean {
+  try {
+    const canonicalPlan = sourcePlan ?? loadImplementationPlanFromFilesSync(canonicalPlanPath);
+    if (!canonicalPlan) {
+      console.warn('[plan-file-utils] Canonical plan is unreadable: ' + canonicalPlanPath);
+      return false;
+    }
+
+    const mainPlan = loadImplementationPlanFromFilesSync(mainPlanPath);
+    if (!canSyncAutocodePlanPhases(mainPlan?.phases, canonicalPlan.phases)) {
+      const canonicalSubtaskCount = countAutocodePlanSubtasks(canonicalPlan.phases);
+      console.warn(
+        '[plan-file-utils] Skipping canonical plan sync from ' + canonicalPlanPath +
+        ': canonical plan has ' + canonicalSubtaskCount + ' subtask(s)',
+      );
+      return false;
+    }
+
+    const canonicalRevision = Number(canonicalPlan.planRevision) || 0;
+    const mainRevision = Number(mainPlan?.planRevision) || 0;
+    const synchronizedPlan = JSON.parse(JSON.stringify(canonicalPlan)) as MutableAutocodePlan;
+    synchronizedPlan.planRevision = Math.max(canonicalRevision, mainRevision) + 1;
+    synchronizedPlan.updated_at = new Date().toISOString();
+
+    saveImplementationPlanToFilesSync(canonicalPlanPath, synchronizedPlan);
+    if (path.resolve(mainPlanPath) !== path.resolve(canonicalPlanPath)) {
+      saveImplementationPlanToFilesSync(mainPlanPath, synchronizedPlan);
+    }
+
+    if (projectId) {
+      projectStore.invalidateTasksCache(projectId);
+    }
+    return true;
+  } catch (err) {
+    if (isFileNotFoundError(err)) {
+      return false;
+    }
+    console.warn(
+      '[plan-file-utils] Could not synchronize canonical plan ' + canonicalPlanPath +
+      ' to ' + mainPlanPath + ':',
+      err,
+    );
+    return false;
+  }
+}
+/**
  * Check if a task has a valid implementation plan with subtasks.
  * A plan is considered valid if it has at least one subtask across all phases.
  *

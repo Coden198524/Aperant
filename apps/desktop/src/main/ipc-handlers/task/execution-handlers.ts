@@ -561,17 +561,226 @@ const STANDARD_PLANNING_ITERATION_MARKERS = [
   '"scope":"planning"',
 ];
 
+interface StandardPlanningRequestMarker {
+  id: string;
+  createdAtMs: number;
+  order: number;
+}
+
+interface StandardPlanningTransactionMarker {
+  changeRequestId?: string;
+  status: string;
+  stage: string;
+  updatedAtMs: number;
+  order: number;
+}
+
+function readLatestStandardPlanningRequest(
+  content: string,
+): StandardPlanningRequestMarker | null {
+  let latest: StandardPlanningRequestMarker | null = null;
+  let order = 0;
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    order += 1;
+    try {
+      const record = JSON.parse(trimmed) as Record<string, unknown>;
+      const iteration = record.iteration && typeof record.iteration === 'object'
+        ? record.iteration as Record<string, unknown>
+        : null;
+      if (record.scope !== 'planning' && iteration?.mode !== 'standard-planning') {
+        continue;
+      }
+      const id = typeof record.id === 'string' ? record.id.trim() : '';
+      if (!id) {
+        continue;
+      }
+      const parsedCreatedAt = typeof record.createdAt === 'string'
+        ? Date.parse(record.createdAt)
+        : Number.NaN;
+      const candidate = {
+        id,
+        createdAtMs: Number.isFinite(parsedCreatedAt) ? parsedCreatedAt : 0,
+        order,
+      };
+      if (
+        !latest ||
+        candidate.createdAtMs > latest.createdAtMs ||
+        (candidate.createdAtMs === latest.createdAtMs && candidate.order > latest.order)
+      ) {
+        latest = candidate;
+      }
+    } catch {
+      // Ignore malformed historical JSONL entries.
+    }
+  }
+  return latest;
+}
+
+function readStandardPlanningTransaction(
+  content: string | null,
+  order: number,
+): StandardPlanningTransactionMarker | null {
+  if (!content) {
+    return null;
+  }
+  try {
+    const transaction = JSON.parse(content) as Record<string, unknown>;
+    if (transaction.phase !== 'planning') {
+      return null;
+    }
+    const rawUpdatedAt = typeof transaction.updatedAt === 'string'
+      ? transaction.updatedAt
+      : typeof transaction.createdAt === 'string'
+        ? transaction.createdAt
+        : '';
+    const parsedUpdatedAt = rawUpdatedAt ? Date.parse(rawUpdatedAt) : Number.NaN;
+    const changeRequestId = typeof transaction.changeRequestId === 'string'
+      ? transaction.changeRequestId.trim()
+      : typeof transaction.change_request_id === 'string'
+        ? transaction.change_request_id.trim()
+        : '';
+    return {
+      ...(changeRequestId ? { changeRequestId } : {}),
+      status: typeof transaction.status === 'string' ? transaction.status : '',
+      stage: typeof transaction.stage === 'string' ? transaction.stage : '',
+      updatedAtMs: Number.isFinite(parsedUpdatedAt) ? parsedUpdatedAt : 0,
+      order,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function hasStandardPlanningIterationInput(planFilePaths: string[]): boolean {
   const specDirs = Array.from(new Set(planFilePaths.map(getSpecDirFromPlanFilePath)));
+  let hasPlanningMarker = false;
+  let latestPlanningRequest: StandardPlanningRequestMarker | null = null;
+  const transactions: StandardPlanningTransactionMarker[] = [];
 
-  return specDirs.some((specDir) => {
+  for (const [index, specDir] of specDirs.entries()) {
     const humanInput = safeReadFileSync(path.join(specDir, 'HUMAN_INPUT.md')) ?? '';
     const changeRequests = safeReadFileSync(path.join(specDir, CHANGE_REQUESTS_LOG_FILE)) ?? '';
     const text = `${humanInput}\n${changeRequests}`;
-    return STANDARD_PLANNING_ITERATION_MARKERS.some((marker) => text.includes(marker));
-  });
+    hasPlanningMarker = hasPlanningMarker ||
+      STANDARD_PLANNING_ITERATION_MARKERS.some((marker) => text.includes(marker));
+
+    const request = readLatestStandardPlanningRequest(changeRequests);
+    if (
+      request &&
+      (
+        !latestPlanningRequest ||
+        request.createdAtMs > latestPlanningRequest.createdAtMs ||
+        (
+          request.createdAtMs === latestPlanningRequest.createdAtMs &&
+          request.order > latestPlanningRequest.order
+        )
+      )
+    ) {
+      latestPlanningRequest = request;
+    }
+
+    const transaction = readStandardPlanningTransaction(
+      safeReadFileSync(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.planningTransaction)),
+      index,
+    );
+    if (transaction) {
+      transactions.push(transaction);
+    }
+  }
+
+  const relevantTransactions = latestPlanningRequest
+    ? transactions.filter((transaction) =>
+        transaction.changeRequestId === latestPlanningRequest?.id ||
+        (
+          !transaction.changeRequestId &&
+          transaction.updatedAtMs >= latestPlanningRequest.createdAtMs
+        ),
+      )
+    : transactions;
+  const latestTransaction = relevantTransactions
+    .sort((left, right) =>
+      right.updatedAtMs - left.updatedAtMs || right.order - left.order,
+    )[0];
+
+  if (latestTransaction) {
+    if (
+      latestTransaction.status === 'completed' &&
+      latestTransaction.stage === 'committed'
+    ) {
+      return false;
+    }
+    if (
+      latestTransaction.status === 'active' ||
+      latestTransaction.status === 'repair_required'
+    ) {
+      return true;
+    }
+  }
+
+  return hasPlanningMarker;
 }
 
+function markInterruptedPlanningRuntimeArtifacts(
+  specDirs: string[],
+  logPrefix: string,
+): void {
+  const now = new Date().toISOString();
+  for (const specDir of new Set(specDirs)) {
+    const runResultPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.runResult);
+    try {
+      const result = JSON.parse(readFileSync(runResultPath, 'utf-8')) as Record<string, unknown>;
+      if (
+        result.status === 'running' &&
+        (result.phase === 'planning' || result.phase === 'spec')
+      ) {
+        result.status = 'interrupted';
+        result.message = 'Planning process ended before completion; resume from the persisted planning transaction.';
+        result.updatedAt = now;
+        writeFileAtomicSync(runResultPath, JSON.stringify(result, null, 2) + '\n');
+        console.warn(logPrefix + ' Marked stale planning run as interrupted: ' + runResultPath);
+      }
+    } catch {
+      // A missing or malformed run result is handled by the normal recovery path.
+    }
+
+    const transactionPath = path.join(
+      specDir,
+      AUTOCODE_TASK_ARTIFACTS.planningTransaction,
+    );
+    try {
+      const transaction = JSON.parse(
+        readFileSync(transactionPath, 'utf-8'),
+      ) as Record<string, unknown>;
+      if (
+        transaction.phase === 'planning' &&
+        transaction.status === 'active'
+      ) {
+        const interruptedStage = typeof transaction.stage === 'string'
+          ? transaction.stage
+          : undefined;
+        if (
+          !transaction.checkpoint &&
+          interruptedStage &&
+          ['sources_validated', 'plan_derived', 'plan_validated'].includes(interruptedStage)
+        ) {
+          transaction.checkpoint = interruptedStage;
+        }
+        transaction.status = 'repair_required';
+        transaction.interruptedFromStage = interruptedStage;
+        transaction.stage = 'interrupted';
+        transaction.updatedAt = now;
+        transaction.detail = 'Recovered after the planning process stopped before finalization.';
+        writeFileAtomicSync(transactionPath, JSON.stringify(transaction, null, 2) + '\n');
+      }
+    } catch {
+      // The next planning run can create a fresh journal when none is usable.
+    }
+  }
+}
 function shouldForceStandardPlanningIterationOnStart(
   task: Task,
   currentXState: string | undefined,
@@ -2297,9 +2506,15 @@ export function registerTaskExecutionHandlers(
             const hasSpec = existsSync(specFilePath);
             // FIX (#1562): Check actual plan file for subtasks, not just task.subtasks.length
             const updatePlanFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+            const updatePlanFilePaths = getPlanFilePathsForTask(project, task, specsBaseDir);
             let updatePlanHasSubtasks = false;
             const updatePlan = loadImplementationPlanFromFilesSync(updatePlanFilePath);
             updatePlanHasSubtasks = updatePlan ? checkSubtasksCompletion(updatePlan).totalCount > 0 : false;
+            const updateForcePlanningIteration = shouldForceStandardPlanningIterationOnStart(
+              task,
+              taskStateManager.getCurrentState(taskId, project.id),
+              updatePlanFilePaths,
+            );
             const runtimePlan = createRuntimePlanForTask({
               taskId,
               task,
@@ -2307,12 +2522,20 @@ export function registerTaskExecutionHandlers(
               specDir,
               hasSpec,
               planHasSubtasks: updatePlanHasSubtasks,
+              forcePlanning: updateForcePlanningIteration,
             });
 
-            console.warn('[TASK_UPDATE_STATUS] Runtime mode:', runtimePlan.mode, 'label:', getAutocodeAgentRuntimeModeLabel(runtimePlan.mode));
+            console.warn(
+              '[TASK_UPDATE_STATUS] Runtime mode:',
+              runtimePlan.mode,
+              'label:',
+              getAutocodeAgentRuntimeModeLabel(runtimePlan.mode),
+              'forcePlanningIteration:',
+              updateForcePlanningIteration,
+            );
             const runtimeExecutionPhase = runtimePlan.mode === 'spec' || runtimePlan.mode === 'planning' ? 'planning' : 'coding';
             persistRuntimeStartedStatusAcrossPlanPaths(
-              getPlanFilePathsForTask(project, task, specsBaseDir),
+              updatePlanFilePaths,
               runtimeExecutionPhase,
               '[TASK_UPDATE_STATUS]',
               project.id,
@@ -2504,6 +2727,11 @@ export function registerTaskExecutionHandlers(
         planPathsToUpdate.push(path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
       }
       console.log(`[Recovery] Will update ${planPathsToUpdate.length} plan file(s):`, planPathsToUpdate);
+
+      markInterruptedPlanningRuntimeArtifacts(
+        planPathsToUpdate.map((planFilePath) => path.dirname(planFilePath)),
+        '[Recovery]',
+      );
 
       const syncedStoppedState = syncStoppedReviewStatusAcrossPlanPaths(planPathsToUpdate, '[Recovery]');
       if (syncedStoppedState) {
@@ -2870,12 +3098,23 @@ export function registerTaskExecutionHandlers(
               executionProgress: { phase: 'stopped', phaseProgress: 0, overallProgress: 0 },
             };
             const currentXStateForRestart = taskStateManager.getCurrentState(taskId, project.id);
-            const restartEvent = resolveAutocodeTaskStartEvent({
-              task: taskForRestart,
-              currentState: currentXStateForRestart,
-              planHasSubtasks: planHasSubtasksForRestart,
-            });
-            console.warn(`[Recovery] Runtime start event: ${restartEvent.type}`);
+            const restartForcePlanningIteration = shouldForceStandardPlanningIterationOnStart(
+              taskForRestart,
+              currentXStateForRestart,
+              planPathsToUpdate,
+            );
+            const restartEvent = restartForcePlanningIteration
+              ? { type: 'PLANNING_STARTED' } as TaskEvent
+              : resolveAutocodeTaskStartEvent({
+                  task: taskForRestart,
+                  currentState: currentXStateForRestart,
+                  planHasSubtasks: planHasSubtasksForRestart,
+                });
+            console.warn(
+              `[Recovery] Runtime start event: ${restartEvent.type}`,
+              '| forcePlanningIteration:',
+              restartForcePlanningIteration,
+            );
             taskStateManager.handleUiEvent(taskId, restartEvent as TaskEvent, taskForRestart, project);
 
             // Start the task execution
@@ -2893,14 +3132,19 @@ export function registerTaskExecutionHandlers(
             const hasSpec = existsSync(specFilePath);
             const runtimePlan = createRuntimePlanForTask({
               taskId,
-              task,
+              task: taskForRestart,
               project,
               specDir: mainSpecDir,
               hasSpec,
               planHasSubtasks: planHasSubtasksForRestart,
+              forcePlanning: restartForcePlanningIteration,
             });
 
-            console.warn(`[Recovery] Starting ${getAutocodeAgentRuntimeModeLabel(runtimePlan.mode)} for: ${task.specId}`);
+            console.warn(
+              `[Recovery] Starting ${getAutocodeAgentRuntimeModeLabel(runtimePlan.mode)} for: ${task.specId}`,
+              '| forcePlanningIteration:',
+              restartForcePlanningIteration,
+            );
             const runtimeExecutionPhase = runtimePlan.mode === 'spec' || runtimePlan.mode === 'planning' ? 'planning' : 'coding';
             persistRuntimeStartedStatusAcrossPlanPaths(planPathsToUpdate, runtimeExecutionPhase, '[Recovery]', project.id);
             await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
@@ -2909,12 +3153,11 @@ export function registerTaskExecutionHandlers(
             newReviewReason = undefined;
 
             if (plan) {
-              plan.status = 'in_progress';
-              plan.planStatus = 'in_progress';
-              plan.xstateState = 'coding';
-              plan.executionPhase = 'coding';
-              plan.updated_at = new Date().toISOString();
-              delete plan.reviewReason;
+              plan = applyRuntimeStartedPlanStatus(
+                plan,
+                runtimeExecutionPhase,
+                new Date().toISOString(),
+              );
               for (const pathToUpdate of planPathsToUpdate) {
                 try {
                   saveImplementationPlanToFilesSync(pathToUpdate, plan as ShardableImplementationPlan);

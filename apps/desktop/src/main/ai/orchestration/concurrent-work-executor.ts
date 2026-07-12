@@ -95,6 +95,7 @@ interface PlanSubtask {
   completion_summary?: string;
   completed_at?: string;
   started_at?: string;
+  active_started_at?: string;
   duration_ms?: number;
   updated_at?: string;
   files_to_create?: string[];
@@ -960,20 +961,28 @@ async function recordWorkItemSessionDuration(
   runtime: ExecutionRuntime,
 ): Promise<void> {
   const durationMs = getSessionDurationMs(result);
-  if (durationMs <= 0) {
-    return;
-  }
 
   let updated = false;
+  const now = new Date().toISOString();
   await updateImplementationPlanInFiles(config.specDir, (plan) => {
     for (const phase of (plan as unknown as ImplementationPlan).phases ?? []) {
       for (const subtask of phase.subtasks ?? []) {
         if (subtask.id !== workItemId) {
           continue;
         }
-        subtask.duration_ms = getExistingDurationMs(subtask) + durationMs;
-        subtask.updated_at = new Date().toISOString();
-        updated = true;
+        let subtaskUpdated = false;
+        if (durationMs > 0) {
+          subtask.duration_ms = getExistingDurationMs(subtask) + durationMs;
+          subtaskUpdated = true;
+        }
+        if (subtask.active_started_at) {
+          delete subtask.active_started_at;
+          subtaskUpdated = true;
+        }
+        if (subtaskUpdated) {
+          subtask.updated_at = now;
+          updated = true;
+        }
       }
     }
     return updated ? plan : false;
@@ -1125,6 +1134,7 @@ async function resetRoundInProgressWorkItems(
       for (const subtask of phase.subtasks ?? []) {
         if (subtask.status === 'in_progress') {
           subtask.status = 'pending';
+          delete subtask.active_started_at;
           updated = true;
         }
       }
@@ -1152,13 +1162,15 @@ async function markWorkItemsInProgress(
   await updateImplementationPlanInFiles(config.specDir, (plan) => {
     for (const phase of (plan as unknown as ImplementationPlan).phases ?? []) {
       for (const subtask of phase.subtasks ?? []) {
-        if (activeIds.has(subtask.id) && subtask.status !== 'in_progress') {
-          subtask.status = 'in_progress';
-          subtask.started_at = subtask.started_at || now;
-          subtask.completed_at = undefined;
-          subtask.updated_at = now;
-          updated = true;
+        if (!activeIds.has(subtask.id)) {
+          continue;
         }
+        subtask.status = 'in_progress';
+        subtask.started_at = subtask.started_at || now;
+        subtask.active_started_at = subtask.active_started_at || now;
+        subtask.completed_at = undefined;
+        subtask.updated_at = now;
+        updated = true;
       }
     }
     return updated ? plan : false;
@@ -1185,6 +1197,7 @@ async function resetCancelledInProgressWorkItems(
       for (const subtask of phase.subtasks ?? []) {
         if (cancelledIds.has(subtask.id) && subtask.status === 'in_progress') {
           subtask.status = 'pending';
+          delete subtask.active_started_at;
           subtask.updated_at = now;
           updated = true;
         }
@@ -1253,6 +1266,10 @@ async function updateWorkItemStatuses(
           updated = true;
         } else if (status !== 'completed' && subtask.completed_at) {
           subtask.completed_at = undefined;
+          updated = true;
+        }
+        if (subtask.active_started_at) {
+          delete subtask.active_started_at;
           updated = true;
         }
         subtask.updated_at = now;

@@ -16,6 +16,7 @@ export interface MutableAutocodePlanSubtask extends Record<string, unknown> {
   id?: string;
   status?: string;
   started_at?: string | null;
+  active_started_at?: string | null;
   completed_at?: string | null;
   completion_summary?: string | null;
   duration_ms?: number | null;
@@ -31,6 +32,7 @@ export interface MutableAutocodePlan extends Record<string, unknown> {
   description?: string;
   created_at?: string;
   updated_at?: string;
+  planRevision?: number;
   status?: string;
   planStatus?: string;
   reviewReason?: string;
@@ -231,6 +233,7 @@ export function resetAutocodeStuckSubtasksInPlan(plan: MutableAutocodePlan): {
       if (subtask.status === 'in_progress' || subtask.status === 'failed' || subtask.status === 'blocked') {
         subtask.status = 'pending';
         subtask.started_at = null;
+        subtask.active_started_at = null;
         subtask.completed_at = null;
         subtask.completion_summary = null;
         resetCount++;

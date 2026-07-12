@@ -22,6 +22,7 @@ export interface AutocodeRuntimeTask {
   title: string;
   description: string;
   status: string;
+  titleState?: 'obsolete' | 'needs_revision';
   phaseId: string;
   phaseName: string;
   filesToCreate: string[];
@@ -98,7 +99,7 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
     ? parsedTasks.source_task as Record<string, unknown>
     : {};
 
-  return {
+  const runtimePlan: MutableAutocodePlan = {
     ...parsedTasks,
     feature: input.title || parsedTasks.feature || getAutocodeRuntimePlanFeatureFallback(input.language),
     description: input.description || parsedTasks.description || '',
@@ -119,6 +120,11 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
       },
     },
   };
+
+  return preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown(
+    runtimePlan,
+    input.preserveCompletedStateFromPreviousPlanMarkdown,
+  );
 }
 
 export function preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown(
@@ -158,20 +164,110 @@ export function preserveAutocodeRuntimePlanCompletedState(
     }
   }
 
-  if (completedBySignature.size === 0) {
+  if (completedBySignature.size > 0) {
+    for (const subtask of getRuntimePlanSubtasks(plan)) {
+      const signature = buildRuntimePlanSubtaskContentSignature(subtask);
+      const previousCompleted = signature ? completedBySignature.get(signature) : undefined;
+      if (!previousCompleted) {
+        continue;
+      }
+      applyCompletedRuntimePlanSubtaskState(subtask, previousCompleted);
+    }
+  }
+
+  return appendOmittedCompletedRuntimeSubtasks(plan, previousPlan);
+}
+
+function appendOmittedCompletedRuntimeSubtasks(
+  plan: MutableAutocodePlan,
+  previousPlan: MutableAutocodePlan,
+): MutableAutocodePlan {
+  const previousCompletedSubtasks = getRuntimePlanSubtasks(previousPlan)
+    .filter((subtask) => subtask.status === 'completed');
+  if (previousCompletedSubtasks.length === 0) {
     return plan;
   }
 
-  for (const subtask of getRuntimePlanSubtasks(plan)) {
-    const signature = buildRuntimePlanSubtaskContentSignature(subtask);
-    const previousCompleted = signature ? completedBySignature.get(signature) : undefined;
-    if (!previousCompleted) {
-      continue;
-    }
-    applyCompletedRuntimePlanSubtaskState(subtask, previousCompleted);
+  const currentSubtasks = getRuntimePlanSubtasks(plan);
+  const currentSignatures = new Set(
+    currentSubtasks
+      .map(buildRuntimePlanSubtaskContentSignature)
+      .filter(Boolean),
+  );
+  const omittedCompletedSubtasks = previousCompletedSubtasks
+    .filter((previousSubtask) => {
+      const signature = buildRuntimePlanSubtaskContentSignature(previousSubtask);
+      if (signature && currentSignatures.has(signature)) {
+        return false;
+      }
+      return true;
+    })
+    .map((previousSubtask) => {
+      const historicalSubtask = cloneMutableAutocodePlanSubtask(previousSubtask);
+      historicalSubtask.history_only = true;
+      historicalSubtask.depends_on = toStringArray(historicalSubtask.depends_on);
+      return historicalSubtask;
+    });
+
+  if (omittedCompletedSubtasks.length === 0) {
+    return plan;
   }
 
+  const phases = plan.phases ?? [];
+  if (phases.length === 0) {
+    phases.push({ id: 'wp', name: 'Work Packages', subtasks: [] });
+    plan.phases = phases;
+  }
+
+  const targetPhase = phases[0];
+  const targetSubtasks = Array.isArray(targetPhase.subtasks) ? targetPhase.subtasks : [];
+  targetPhase.subtasks = targetSubtasks;
+
+  const reservedIds = new Set(omittedCompletedSubtasks.map((subtask) => stringFrom(subtask.id)).filter(Boolean));
+  const idRemaps = new Map<string, string>();
+  for (const subtask of targetSubtasks) {
+    const id = stringFrom(subtask.id);
+    if (!id) {
+      continue;
+    }
+    if (!reservedIds.has(id)) {
+      reservedIds.add(id);
+      continue;
+    }
+    const nextId = getNextAvailableRuntimeWorkPackageSubtaskId(reservedIds);
+    idRemaps.set(id, nextId);
+    subtask.id = nextId;
+    reservedIds.add(nextId);
+  }
+
+  if (idRemaps.size > 0) {
+    for (const subtask of getRuntimePlanSubtasks(plan)) {
+      const dependsOn = toStringArray(subtask.depends_on);
+      if (dependsOn.length === 0) {
+        continue;
+      }
+      subtask.depends_on = dependsOn.map((dependencyId) => idRemaps.get(dependencyId) ?? dependencyId);
+    }
+  }
+
+  targetPhase.subtasks = [
+    ...omittedCompletedSubtasks,
+    ...targetSubtasks,
+  ];
+
   return plan;
+}
+
+function getNextAvailableRuntimeWorkPackageSubtaskId(reservedIds: Set<string>): string {
+  let index = 1;
+  while (reservedIds.has(`wp-${index}`)) {
+    index += 1;
+  }
+  return `wp-${index}`;
+}
+
+function cloneMutableAutocodePlanSubtask(subtask: MutableAutocodePlanSubtask): MutableAutocodePlanSubtask {
+  return JSON.parse(JSON.stringify(subtask)) as MutableAutocodePlanSubtask;
 }
 
 const COMPLETED_RUNTIME_SUBTASK_STATE_FIELDS = [
@@ -243,6 +339,18 @@ function stableRuntimePlanSignatureValue(value: unknown): unknown {
     );
   }
   return value ?? null;
+}
+function hasCompletedAutocodeRuntimePlanSubtasks(previousPlanMarkdown: string | undefined): boolean {
+  if (!previousPlanMarkdown?.trim()) {
+    return false;
+  }
+
+  try {
+    const previousPlan = parseAutocodeImplementationPlanMarkdown(previousPlanMarkdown);
+    return getRuntimePlanSubtasks(previousPlan).some((subtask) => subtask.status === 'completed');
+  } catch {
+    return false;
+  }
 }
 function preserveAutocodeRuntimeTaskCompletedStateFromPreviousMarkdown(
   tasks: AutocodeRuntimeTask[],
@@ -341,10 +449,19 @@ export function buildAutocodeRuntimeWorkPackagePhases(
   input: BuildAutocodeRuntimeWorkPackagePhasesInput,
 ): MutableAutocodePlanPhase[] {
   const flattenedTasks = flattenAutocodeRuntimeTasks(input.parsedPhases, input.language, input.sourceName);
-  const completionPreservedTasks = preserveAutocodeRuntimeTaskCompletedStateFromPreviousMarkdown(
-    flattenedTasks,
-    input.preserveCompletedStateFromPreviousPlanMarkdown,
+  const previousCompletionSourceMarkdown = input.preserveCompletedStateFromPreviousPlanMarkdown;
+  const shouldUsePreviousPlanAsCompletionSource = hasCompletedAutocodeRuntimePlanSubtasks(
+    previousCompletionSourceMarkdown,
   );
+  const tasksReadyForCompletionPreservation = shouldUsePreviousPlanAsCompletionSource
+    ? resetAutocodeRuntimeTaskCompletedStatusForIteration(flattenedTasks)
+    : flattenedTasks;
+  const completionPreservedTasks = shouldUsePreviousPlanAsCompletionSource
+    ? preserveAutocodeRuntimeTaskCompletedStateFromPreviousMarkdown(
+        tasksReadyForCompletionPreservation,
+        previousCompletionSourceMarkdown,
+      )
+    : tasksReadyForCompletionPreservation;
   const evidenceReadyTasks = input.requireTaskEvidence
     ? normalizeAutocodeRuntimeTaskEvidenceMetadata(completionPreservedTasks, {
         sourceName: input.sourceName || 'Autocode',
@@ -396,6 +513,21 @@ export function buildAutocodeRuntimeWorkPackagePhases(
   ];
 }
 
+function resetAutocodeRuntimeTaskCompletedStatusForIteration(tasks: AutocodeRuntimeTask[]): AutocodeRuntimeTask[] {
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    if (task.status !== 'completed' || task.titleState === 'obsolete') {
+      return task;
+    }
+    changed = true;
+    return {
+      ...task,
+      status: 'pending',
+    };
+  });
+
+  return changed ? nextTasks : tasks;
+}
 function omitCompletedAutocodeRuntimeTasks(tasks: AutocodeRuntimeTask[]): AutocodeRuntimeTask[] {
   const completedTaskIds = new Set(
     tasks
@@ -451,6 +583,7 @@ export function flattenAutocodeRuntimeTasks(
         title,
         description,
         status: titleState === 'obsolete' ? 'completed' : stringFrom(subtask.status) || 'pending',
+        ...(titleState ? { titleState } : {}),
         phaseId,
         phaseName,
         filesToCreate: toStringArray(subtask.files_to_create),
@@ -608,7 +741,9 @@ export function groupAutocodeRuntimeTasksIntoWorkPackages(
 
   for (const phaseTasks of groupAutocodeRuntimeTasksByPhase(tasks)) {
     for (const packageTasks of buildAutocodeRuntimeTaskDependencyChains(phaseTasks)) {
-      pushPackage(packageTasks);
+      for (const statusAlignedPackageTasks of splitAutocodeRuntimeWorkPackageTasksByCompletionStatus(packageTasks)) {
+        pushPackage(statusAlignedPackageTasks);
+      }
     }
   }
 
@@ -617,6 +752,33 @@ export function groupAutocodeRuntimeTasksIntoWorkPackages(
   return packages;
 }
 
+function splitAutocodeRuntimeWorkPackageTasksByCompletionStatus(
+  tasks: AutocodeRuntimeTask[],
+): AutocodeRuntimeTask[][] {
+  if (tasks.length <= 1) {
+    return [tasks];
+  }
+
+  const groups: AutocodeRuntimeTask[][] = [];
+  let active: AutocodeRuntimeTask[] = [];
+  let activeCompleted: boolean | undefined;
+
+  for (const task of tasks) {
+    const completed = task.status === 'completed';
+    if (active.length > 0 && activeCompleted !== completed) {
+      groups.push(active);
+      active = [];
+    }
+    active.push(task);
+    activeCompleted = completed;
+  }
+
+  if (active.length > 0) {
+    groups.push(active);
+  }
+
+  return groups;
+}
 export function estimateAutocodeRuntimeTaskEffort(task: AutocodeRuntimeTask): number {
   const text = singleLine(`${task.title} ${task.description}`).toLowerCase();
   const wordCount = text.split(/\s+/u).filter(Boolean).length;

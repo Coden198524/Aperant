@@ -13,6 +13,8 @@ export type TaskEvent =
       type: 'PLANNING_COMPLETE';
       hasSubtasks: boolean;
       subtaskCount: number;
+      incompleteSubtaskCount?: number;
+      continueAfterPlanning?: boolean;
       requireReviewBeforeCoding: boolean;
     }
   | { type: 'PLAN_APPROVED' }

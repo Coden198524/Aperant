@@ -417,6 +417,15 @@ const browserMockAPI: ElectronAPI = {
     data: ''
   }),
 
+  getWorkPackageFileDiff: async () => ({
+    success: true,
+    data: {
+      patch: '',
+      changedFiles: [],
+      unavailableReason: 'history_unavailable' as const
+    }
+  }),
+
   getWorktreeCommitFiles: async () => ({
     success: true,
     data: []

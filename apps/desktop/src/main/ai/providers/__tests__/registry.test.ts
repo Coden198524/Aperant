@@ -179,7 +179,7 @@ describe('transformThinkingConfig', () => {
   it('maps DeepSeek thinking levels to supported reasoning efforts', () => {
     expect(transformThinkingConfig('deepseek', 'deepseek-v4-flash', 'low').reasoningEffort).toBe('high');
     expect(transformThinkingConfig('deepseek', 'deepseek-v4-pro', 'medium').reasoningEffort).toBe('high');
-    expect(transformThinkingConfig('deepseek', 'deepseek-v4-pro', 'xhigh').reasoningEffort).toBe('max');
+    expect(transformThinkingConfig('deepseek', 'deepseek-v4-pro', 'xhigh').reasoningEffort).toBe('xhigh');
   });
 
   it('returns empty config for unsupported provider', () => {
@@ -202,6 +202,14 @@ describe('sanitizeThinkingLevel', () => {
 
   it('maps none to low', () => {
     expect(sanitizeThinkingLevel('none')).toBe('low');
+  });
+
+  it('maps legacy max to xhigh', () => {
+    expect(sanitizeThinkingLevel('max')).toBe('xhigh');
+  });
+
+  it('maps legacy ultra to xhigh', () => {
+    expect(sanitizeThinkingLevel('ultra')).toBe('xhigh');
   });
 
   it('defaults unknown values to medium', () => {

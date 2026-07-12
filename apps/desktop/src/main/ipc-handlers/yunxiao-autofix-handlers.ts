@@ -86,7 +86,7 @@ function getDefaultAutoFixConfig(): YunxiaoAutoFixConfig {
   return {
     enabled: false,
     requireHumanApproval: true,
-    model: model || 'gpt-5.4',
+    model: model || 'gpt-5.6-sol',
     thinkingLevel: thinkingLevel || 'medium',
   };
 }
@@ -291,7 +291,7 @@ function getOpenIssues(project: Project): YunxiaoIssue[] {
 function getAnalyzeSettings(): { model: ModelShorthand; thinkingLevel: ThinkingLevel } {
   const { model, thinkingLevel } = getActiveProviderFeatureSettings('utility');
   return {
-    model: (model || 'gpt-5.4') as ModelShorthand,
+    model: (model || 'gpt-5.6-sol') as ModelShorthand,
     thinkingLevel: (thinkingLevel || 'medium') as ThinkingLevel,
   };
 }

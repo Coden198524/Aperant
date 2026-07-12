@@ -11,7 +11,8 @@
  * defined in phase-protocol.ts.
  */
 
-import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { EventEmitter } from 'events';
 
@@ -73,6 +74,24 @@ const AUTO_CONTINUE_DELAY_MS = 500;
 const PRE_QA_RETURN_ISSUE_LIMIT = 6;
 const PRE_QA_RETURN_ISSUE_MAX_CHARS = 240;
 const PRE_QA_RETURN_REASON_MAX_CHARS = 1_800;
+const STANDARD_SPEC_SEED_ERROR_PREFIX =
+  `${AUTOCODE_TASK_ARTIFACTS.specFile} is still the manual Standard planning seed`;
+const STANDARD_PLANNING_SOURCE_ARTIFACTS = [
+  AUTOCODE_TASK_ARTIFACTS.specFile,
+  AUTOCODE_TASK_ARTIFACTS.requirements,
+  AUTOCODE_TASK_ARTIFACTS.tasks,
+  AUTOCODE_TASK_ARTIFACTS.context,
+] as const;
+const STANDARD_PLANNING_TRANSACTION_ARTIFACTS = [
+  ...STANDARD_PLANNING_SOURCE_ARTIFACTS,
+  AUTOCODE_TASK_ARTIFACTS.implementationPlan,
+] as const;
+const STANDARD_PLANNING_CHECKPOINTS = new Set([
+  'sources_validated',
+  'plan_derived',
+  'plan_validated',
+  'committed',
+]);
 const TRACEABLE_PLANNING_EVIDENCE_PATTERN =
   /\b(spec\.md|requirements\.md|context\.md|research\.md|agents\.md|readme|official|standard|docs?|source|project)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/i;
 
@@ -116,6 +135,268 @@ function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
     subtask.completion_summary.trim().length > 0;
 }
 
+function uniqueNonEmptyStrings(values: readonly string[], maxItems: number): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = compactMarkdownBulletText(value);
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(normalized);
+    if (result.length >= maxItems) {
+      break;
+    }
+  }
+  return result;
+}
+
+function compactMarkdownBulletText(value: string, maxChars = 180): string {
+  const compacted = value
+    .replace(/\r\n/g, '\n')
+    .replace(/^\s*(?:[-*]|\d+\.)\s+/, '')
+    .replace(/^\s*\[[ xX/!-]\]\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!compacted || /^(?:none|n\/a|na|unknown|todo|tbd)$/i.test(compacted)) {
+    return '';
+  }
+  if (compacted.length <= maxChars) {
+    return compacted;
+  }
+  return `${compacted.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function appendEvidenceSuffix(value: string, evidence: string): string {
+  const compacted = compactMarkdownBulletText(value);
+  if (!compacted) {
+    return '';
+  }
+  if (/\bEvidence\s*:/i.test(compacted)) {
+    return compacted;
+  }
+  return `${compacted} (Evidence: ${evidence})`;
+}
+
+function getLocalMarkdownSection(markdown: string | null | undefined, heading: string): string {
+  if (!markdown) {
+    return '';
+  }
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^##\\s+${escaped}\\b[^\\n]*\\n([\\s\\S]*?)(?=^##\\s+|(?![\\s\\S]))`, 'im')
+    .exec(markdown.replace(/\r\n/g, '\n'));
+  return match?.[1]?.trim() ?? '';
+}
+
+function getMarkdownListItems(markdown: string): string[] {
+  return markdown
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.match(/^\s*(?:[-*]|\d+\.)\s+(.*?)\s*$/)?.[1] ?? '')
+    .map((line) => line.replace(/^\[[ xX/!-]\]\s+/, '').trim())
+    .filter(Boolean);
+}
+
+function getSectionListItems(markdown: string | null | undefined, headings: readonly string[]): string[] {
+  return headings.flatMap((heading) => getMarkdownListItems(getLocalMarkdownSection(markdown, heading)));
+}
+
+function getFirstMarkdownHeading(markdown: string | null | undefined): string {
+  if (!markdown) {
+    return '';
+  }
+  for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    const match = /^#\s+(.+?)\s*$/.exec(line);
+    if (match) {
+      const title = compactMarkdownBulletText(match[1], 120);
+      if (title && !/\bStandard mode task\b/i.test(title) && !/^(?:Requirements|Tasks)$/i.test(title)) {
+        return title;
+      }
+    }
+  }
+  return '';
+}
+
+function getTasksFeatureTitle(tasksMarkdown: string | null | undefined): string {
+  if (!tasksMarkdown) {
+    return '';
+  }
+  const match = /^Feature:\s*(.+?)\s*$/im.exec(tasksMarkdown);
+  return compactMarkdownBulletText(match?.[1] ?? '', 120);
+}
+
+function stringifyCompactPlanValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return compactMarkdownBulletText(value);
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return compactMarkdownBulletText(value.map(stringifyCompactPlanValue).filter(Boolean).join(', '));
+  }
+  const record = asRecord(value);
+  if (record) {
+    const preferred = stringFrom(
+      record.run ??
+      record.command ??
+      record.description ??
+      record.proves ??
+      record.path ??
+      record.type ??
+      record.name,
+    );
+    if (preferred) {
+      return compactMarkdownBulletText(preferred);
+    }
+    try {
+      return compactMarkdownBulletText(JSON.stringify(value), 180);
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+interface StandardSpecTaskSummary {
+  id: string;
+  title: string;
+  description: string;
+  verification: string;
+  completion: string;
+  files: string[];
+}
+
+function extractStandardSpecTaskSummaries(tasksMarkdown: string | null | undefined): StandardSpecTaskSummary[] {
+  if (!tasksMarkdown) {
+    return [];
+  }
+
+  try {
+    const parsed = parseAutocodeImplementationPlanMarkdown(tasksMarkdown);
+    const phases = Array.isArray(parsed.phases) ? parsed.phases : [];
+    const summaries: StandardSpecTaskSummary[] = [];
+    for (const phase of phases) {
+      const phaseRecord = asRecord(phase);
+      const subtasks = Array.isArray(phaseRecord?.subtasks)
+        ? phaseRecord.subtasks
+        : Array.isArray(phaseRecord?.chunks)
+          ? phaseRecord.chunks
+          : [];
+      for (const rawSubtask of subtasks) {
+        const subtask = asRecord(rawSubtask);
+        if (!subtask) {
+          continue;
+        }
+        const id = stringFrom(subtask.id ?? subtask.subtask_id);
+        const title = compactMarkdownBulletText(stringFrom(subtask.title ?? subtask.description), 140);
+        const description = compactMarkdownBulletText(stringFrom(subtask.description), 180);
+        const files = uniqueNonEmptyStrings([
+          ...stringArrayFrom(subtask.files_to_create),
+          ...stringArrayFrom(subtask.files_to_modify),
+          ...stringArrayFrom(subtask.files),
+        ], 4);
+        summaries.push({
+          id,
+          title: title || description || (id ? `Work package ${id}` : 'Work package'),
+          description,
+          verification: stringifyCompactPlanValue(subtask.verification),
+          completion: stringifyCompactPlanValue(subtask.completion_summary ?? subtask.notes),
+          files,
+        });
+      }
+    }
+    return summaries;
+  } catch {
+    return [];
+  }
+}
+
+function buildCompactStandardSpecFromArtifacts(input: {
+  specMarkdown: string | null;
+  requirementsMarkdown: string | null;
+  tasksMarkdown: string | null;
+  humanInputMarkdown: string | null;
+}): string | null {
+  const taskSummaries = extractStandardSpecTaskSummaries(input.tasksMarkdown);
+  const seedRequest = compactMarkdownBulletText(getLocalMarkdownSection(input.specMarkdown, 'Request'), 180);
+  const humanInput = compactMarkdownBulletText(input.humanInputMarkdown ?? '', 180);
+  const requirements = uniqueNonEmptyStrings([
+    ...getSectionListItems(input.requirementsMarkdown, ['User Requirements', 'Requirements']),
+    ...taskSummaries.map((task) => task.title),
+    seedRequest,
+    humanInput ? `Address latest reviewer feedback: ${humanInput}` : '',
+  ], 6).map((item) => appendEvidenceSuffix(
+    item,
+    item === humanInput || item.startsWith('Address latest reviewer feedback')
+      ? 'HUMAN_INPUT.md'
+      : item === seedRequest
+        ? 'spec.md Request'
+        : 'requirements.md; tasks.md',
+  )).filter(Boolean);
+
+  const acceptance = uniqueNonEmptyStrings([
+    ...getSectionListItems(input.requirementsMarkdown, ['Acceptance Criteria', 'Success Criteria']),
+    ...taskSummaries.map((task) => task.completion || task.verification || task.description || task.title),
+  ], 6).map((item) => appendEvidenceSuffix(item, 'requirements.md; tasks.md')).filter(Boolean);
+
+  const designNotes = uniqueNonEmptyStrings([
+    taskSummaries.length > 0
+      ? 'Use tasks.md as the executable work package source; implementation_plan.md is derived from those tasks.'
+      : '',
+    taskSummaries.some((task) => task.files.length > 0)
+      ? `Affected files are constrained by tasks.md metadata: ${uniqueNonEmptyStrings(taskSummaries.flatMap((task) => task.files), 6).join(', ')}.`
+      : '',
+    humanInput
+      ? 'Treat HUMAN_INPUT.md as same-task iteration feedback when deciding which work packages need rerun.'
+      : '',
+  ], 4).map((item) => appendEvidenceSuffix(item, 'tasks.md; HUMAN_INPUT.md')).filter(Boolean);
+
+  const evidence = uniqueNonEmptyStrings([
+    humanInput ? `HUMAN_INPUT.md latest reviewer feedback: ${humanInput}` : '',
+    seedRequest ? `spec.md Request: ${seedRequest}` : '',
+    ...requirements.slice(0, 2).map((item) => `requirements.md requirement: ${item.replace(/\s+\(Evidence:.*?\)\s*$/i, '')}`),
+    ...taskSummaries.slice(0, 3).map((task) => `tasks.md work package ${task.id || ''}: ${task.title}`),
+  ], 8);
+
+  if (requirements.length === 0 && acceptance.length === 0 && evidence.length === 0) {
+    return null;
+  }
+
+  const title = getTasksFeatureTitle(input.tasksMarkdown) ||
+    getFirstMarkdownHeading(input.specMarkdown) ||
+    getFirstMarkdownHeading(input.requirementsMarkdown) ||
+    'Standard Task Spec';
+
+  const lines = [
+    `# ${title}`,
+    '',
+    '## Requirements',
+    '',
+    ...(requirements.length > 0 ? requirements.map((item) => `- ${item}`) : ['- Implement the scoped Standard task. (Evidence: spec.md Request)']),
+    '',
+    '## Design Notes',
+    '',
+    ...(designNotes.length > 0 ? designNotes.map((item) => `- ${item}`) : ['- Keep planning compact and derive runtime work packages from tasks.md. (Evidence: tasks.md)']),
+    '',
+    '## Acceptance And Verification',
+    '',
+    ...(acceptance.length > 0 ? acceptance.map((item) => `- ${item}`) : ['- Complete each executable tasks.md work package and record focused verification. (Evidence: tasks.md)']),
+    '',
+    '## Evidence',
+    '',
+    ...(evidence.length > 0 ? evidence.map((item) => `- ${item}`) : ['- spec.md Request and tasks.md define the scoped Standard task.']),
+    '',
+  ];
+
+  return lines.join('\n');
+}
+
 export function formatPreQAReturnToCodingReason(
   issues: readonly string[],
   attempt: number,
@@ -145,6 +426,148 @@ export function formatPreQAReturnToCodingReason(
 
 /** Build phase mapped to agent type */
 type BuildPhase = 'planning' | 'coding' | 'qa_review' | 'qa_fixing';
+
+interface StandardPlanningArtifactSnapshot {
+  suffix: string;
+  artifacts: Array<{
+    fileName: string;
+    content: string | null;
+  }>;
+}
+
+interface StandardPlanningTransactionState {
+  version: 1;
+  id: string;
+  phase: 'planning';
+  status: 'active' | 'repair_required' | 'failed' | 'completed';
+  stage: string;
+  createdAt: string;
+  updatedAt: string;
+  resumedAt?: string;
+  resumedFromStage?: string;
+  checkpoint?: string;
+  detail?: string;
+  baselineArtifactHashes: Record<string, string | null>;
+  artifactHashes: Record<string, string | null>;
+}
+
+async function getStandardPlanningArtifactHashes(
+  specDir: string,
+): Promise<Record<string, string | null>> {
+  const entries = await Promise.all(STANDARD_PLANNING_TRANSACTION_ARTIFACTS.map(async (fileName) => {
+    try {
+      const content = await readFile(join(specDir, fileName), 'utf-8');
+      return [fileName, createHash('sha256').update(content, 'utf8').digest('hex')] as const;
+    } catch {
+      return [fileName, null] as const;
+    }
+  }));
+  return Object.fromEntries(entries);
+}
+
+async function writeStandardPlanningTransaction(
+  specDir: string,
+  transaction: StandardPlanningTransactionState,
+): Promise<void> {
+  const filePath = join(specDir, AUTOCODE_TASK_ARTIFACTS.planningTransaction);
+  const tempPath = filePath + '.' + process.pid + '.' + randomUUID() + '.tmp';
+  await writeFile(tempPath, JSON.stringify(transaction, null, 2) + '\n', 'utf-8');
+  try {
+    await rename(tempPath, filePath);
+  } catch {
+    await unlink(filePath).catch(() => undefined);
+    await rename(tempPath, filePath);
+  }
+}
+
+async function beginStandardPlanningTransaction(
+  specDir: string,
+): Promise<StandardPlanningTransactionState> {
+  const filePath = join(specDir, AUTOCODE_TASK_ARTIFACTS.planningTransaction);
+  const now = new Date().toISOString();
+  let previous: StandardPlanningTransactionState | null = null;
+  try {
+    const parsed = JSON.parse(await readFile(filePath, 'utf-8')) as StandardPlanningTransactionState;
+    if (parsed?.version === 1 && parsed.phase === 'planning' && parsed.status !== 'completed') {
+      previous = parsed;
+    }
+  } catch {
+    // A missing or malformed journal starts a new planning transaction.
+  }
+
+  const artifactHashes = await getStandardPlanningArtifactHashes(specDir);
+  const previousCheckpoint = previous?.checkpoint ?? (
+    previous && STANDARD_PLANNING_CHECKPOINTS.has(previous.stage) ? previous.stage : undefined
+  );
+  const transaction: StandardPlanningTransactionState = previous
+    ? {
+        ...previous,
+        status: 'active',
+        stage: 'resumed',
+        resumedAt: now,
+        resumedFromStage: previous.stage,
+        checkpoint: previousCheckpoint,
+        updatedAt: now,
+        baselineArtifactHashes:
+          previous.baselineArtifactHashes ?? previous.artifactHashes ?? artifactHashes,
+        artifactHashes,
+      }
+    : {
+        version: 1,
+        id: randomUUID(),
+        phase: 'planning',
+        status: 'active',
+        stage: 'started',
+        createdAt: now,
+        updatedAt: now,
+        baselineArtifactHashes: artifactHashes,
+        artifactHashes,
+      };
+  await writeStandardPlanningTransaction(specDir, transaction);
+  return transaction;
+}
+async function updateStandardPlanningTransaction(
+  specDir: string,
+  transaction: StandardPlanningTransactionState,
+  stage: string,
+  status: StandardPlanningTransactionState['status'],
+  detail?: string,
+): Promise<void> {
+  transaction.stage = stage;
+  transaction.status = status;
+  if (STANDARD_PLANNING_CHECKPOINTS.has(stage)) {
+    transaction.checkpoint = stage;
+  }
+  transaction.updatedAt = new Date().toISOString();
+  transaction.artifactHashes = await getStandardPlanningArtifactHashes(specDir);
+  if (detail) {
+    transaction.detail = detail.replace(/\s+/g, ' ').trim().slice(0, 500);
+  } else {
+    delete transaction.detail;
+  }
+  await writeStandardPlanningTransaction(specDir, transaction);
+}
+
+function shouldResumeStandardPlanningFromExistingSources(
+  transaction: StandardPlanningTransactionState,
+): boolean {
+  if (!transaction.resumedAt) {
+    return false;
+  }
+  if (
+    transaction.checkpoint === 'sources_validated' ||
+    transaction.checkpoint === 'plan_derived' ||
+    transaction.checkpoint === 'plan_validated'
+  ) {
+    return true;
+  }
+
+  return STANDARD_PLANNING_SOURCE_ARTIFACTS.some((fileName) => {
+    const currentHash = transaction.artifactHashes[fileName];
+    const baselineHash = transaction.baselineArtifactHashes[fileName];
+    return currentHash !== null && currentHash !== baselineHash;
+  });
+}
 
 /** Maps build phases to their agent types */
 const PHASE_AGENT_MAP: Record<BuildPhase, AgentType> = {
@@ -523,7 +946,7 @@ export class BuildOrchestrator extends EventEmitter {
         }
 
         if (this.config.forcePlanning === true) {
-          this.emitTyped('log', 'Incremental planning completed from human review feedback; waiting for plan approval');
+          this.emitTyped('log', 'Incremental planning completed from human review feedback; returning to continue affected work packages');
           return this.buildOutcome(true, Date.now() - startTime);
         }
       }
@@ -639,6 +1062,9 @@ export class BuildOrchestrator extends EventEmitter {
     const tasksPath = join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks);
     try {
       const tasksMarkdown = await readFile(tasksPath, 'utf-8');
+      const previousPlanMarkdown = this.config.forcePlanning === true
+        ? await this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.implementationPlan) ?? undefined
+        : undefined;
       const now = new Date().toISOString();
       const plan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(tasksMarkdown, {
         now,
@@ -646,6 +1072,7 @@ export class BuildOrchestrator extends EventEmitter {
         sourcePath: AUTOCODE_TASK_ARTIFACTS.tasks,
         requireTaskEvidence: true,
         includeCompletedTasks: this.config.forcePlanning === true,
+        preserveCompletedStateFromPreviousPlanMarkdown: previousPlanMarkdown,
       });
       await saveImplementationPlanToFiles(this.config.specDir, plan as never);
       this.emitTyped('log', translateLogMessage('Generated runtime work packages from tasks.md', this.config.language));
@@ -712,6 +1139,77 @@ export class BuildOrchestrator extends EventEmitter {
     }
   }
 
+  private async captureStandardPlanningArtifactSnapshot(): Promise<StandardPlanningArtifactSnapshot> {
+    const suffix = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+    const artifacts = await Promise.all(STANDARD_PLANNING_TRANSACTION_ARTIFACTS.map(async (fileName) => ({
+      fileName,
+      content: await this.readOptionalPlanArtifact(fileName),
+    })));
+
+    return { suffix, artifacts };
+  }
+
+  private async restoreStandardPlanningArtifactSnapshot(
+    snapshot: StandardPlanningArtifactSnapshot,
+    reason: string,
+    options: { preserveValidatedSources?: boolean } = {},
+  ): Promise<void> {
+    let restoredCount = 0;
+    let savedFailedCount = 0;
+
+    for (const artifact of snapshot.artifacts) {
+      if (options.preserveValidatedSources && artifact.fileName !== AUTOCODE_TASK_ARTIFACTS.implementationPlan) {
+        continue;
+      }
+      const filePath = join(this.config.specDir, artifact.fileName);
+      const currentContent = await this.readOptionalPlanArtifact(artifact.fileName);
+
+      if (currentContent !== null && currentContent !== artifact.content) {
+        try {
+          await writeFile(
+            join(this.config.specDir, `${artifact.fileName}.failed-${snapshot.suffix}`),
+            currentContent,
+            'utf-8',
+          );
+          savedFailedCount++;
+        } catch (error) {
+          this.emitTyped('log', `Failed to save failed Standard planning artifact ${artifact.fileName}: ${error}`);
+        }
+      }
+
+      if (artifact.content === null) {
+        if (currentContent === null) {
+          continue;
+        }
+        try {
+          await unlink(filePath);
+          restoredCount++;
+        } catch {
+          // The failed artifact may already be gone; restoration is best-effort.
+        }
+        continue;
+      }
+
+      if (currentContent === artifact.content) {
+        continue;
+      }
+
+      try {
+        await writeFile(filePath, artifact.content, 'utf-8');
+        restoredCount++;
+      } catch (error) {
+        this.emitTyped('log', `Failed to restore Standard planning artifact ${artifact.fileName}: ${error}`);
+      }
+    }
+
+    if (restoredCount > 0 || savedFailedCount > 0) {
+      this.emitTyped(
+        'log',
+        `Restored previous Standard planning artifacts after failed planning (${reason}); saved ${savedFailedCount} failed artifact(s).`,
+      );
+    }
+  }
+
   private async readOptionalJsonPlanArtifact(fileName: string): Promise<unknown> {
     const content = await this.readOptionalPlanArtifact(fileName);
     if (!content) {
@@ -747,6 +1245,11 @@ export class BuildOrchestrator extends EventEmitter {
 
   private async repairStandardPlanEvidenceArtifacts(errors: readonly string[]): Promise<boolean> {
     let repaired = false;
+
+    const shouldReplaceSpecSeed = errors.some((error) => error.startsWith(STANDARD_SPEC_SEED_ERROR_PREFIX));
+    if (shouldReplaceSpecSeed) {
+      repaired = await this.replaceManualStandardSpecSeed() || repaired;
+    }
 
     const shouldRepairSpec = errors.some((error) =>
       error === `${AUTOCODE_TASK_ARTIFACTS.specFile} missing "## Evidence" section.` ||
@@ -788,6 +1291,32 @@ export class BuildOrchestrator extends EventEmitter {
     }
 
     return repaired;
+  }
+
+  private async replaceManualStandardSpecSeed(): Promise<boolean> {
+    const [specMarkdown, requirementsMarkdown, tasksMarkdown, humanInputMarkdown] = await Promise.all([
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.specFile),
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.requirements),
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.tasks),
+      this.readOptionalPlanArtifact('HUMAN_INPUT.md'),
+    ]);
+
+    const replacement = buildCompactStandardSpecFromArtifacts({
+      specMarkdown,
+      requirementsMarkdown,
+      tasksMarkdown,
+      humanInputMarkdown,
+    });
+    if (!replacement || replacement.trim() === specMarkdown?.replace(/\r\n/g, '\n').trim()) {
+      return false;
+    }
+
+    await writeFile(
+      join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.specFile),
+      replacement,
+      'utf-8',
+    );
+    return true;
   }
 
   private async ensureMarkdownEvidenceSection(
@@ -980,10 +1509,65 @@ export class BuildOrchestrator extends EventEmitter {
     // Get retry limit from workflow config
     const retryLimits = getRetryLimits(this.config.workflowConfig ?? DEFAULT_WORKFLOW_CONFIG);
     const maxPlanningRetries = retryLimits.planning;
+    const artifactSnapshot = await this.captureStandardPlanningArtifactSnapshot();
+    const planningTransaction = await beginStandardPlanningTransaction(this.config.specDir);
+    let validatedPlanningSources = false;
+    const completePlanning = async (): Promise<{ success: true }> => {
+      await updateStandardPlanningTransaction(
+        this.config.specDir,
+        planningTransaction,
+        'committed',
+        'completed',
+      );
+      return { success: true };
+    };
+    const failPlanning = async (error: string): Promise<{ success: false; error: string }> => {
+      await this.restoreStandardPlanningArtifactSnapshot(
+        artifactSnapshot,
+        error.replace(/\s+/g, ' ').slice(0, 180),
+        { preserveValidatedSources: validatedPlanningSources },
+      );
+      await updateStandardPlanningTransaction(
+        this.config.specDir,
+        planningTransaction,
+        validatedPlanningSources ? 'repair_required' : 'failed',
+        validatedPlanningSources ? 'repair_required' : 'failed',
+        error,
+      );
+      return { success: false, error };
+    };
+
+    if (shouldResumeStandardPlanningFromExistingSources(planningTransaction)) {
+      this.emitTyped(
+        'log',
+        'Resuming interrupted Standard planning from persisted artifacts before starting another planner session.',
+      );
+      const resumedResult = await this.tryCompletePlanningFromExistingStandardArtifacts(
+        'interrupted planning recovery',
+        true,
+      );
+      if (resumedResult.success) {
+        validatedPlanningSources = true;
+        await updateStandardPlanningTransaction(
+          this.config.specDir,
+          planningTransaction,
+          'plan_validated',
+          'active',
+        );
+        return completePlanning();
+      }
+      planningRetryContext = buildAutocodeStandardTasksValidationRetryPrompt([
+        resumedResult.error ?? 'Persisted Standard planning artifacts require repair.',
+      ]);
+      this.emitTyped(
+        'log',
+        `Persisted Standard planning artifacts require focused repair: ${resumedResult.error ?? 'unknown validation error'}`,
+      );
+    }
 
     for (let attempt = 0; attempt < maxPlanningRetries + 1; attempt++) {
       if (this.aborted) {
-        return { success: false, error: 'Build cancelled' };
+        return failPlanning('Build cancelled');
       }
 
       this.iteration++;
@@ -1010,11 +1594,11 @@ export class BuildOrchestrator extends EventEmitter {
       this.emitTyped('session-complete', result, 'planning');
 
       if (result.outcome === 'cancelled') {
-        return { success: false, error: 'Build cancelled' };
+        return failPlanning('Build cancelled');
       }
 
       if (result.outcome === 'auth_failure' || result.outcome === 'rate_limited') {
-        return { success: false, error: result.error?.message ?? 'Planning session failed' };
+        return failPlanning(result.error?.message ?? 'Planning session failed');
       }
 
       if (result.outcome === 'error') {
@@ -1027,7 +1611,7 @@ export class BuildOrchestrator extends EventEmitter {
           )
           : null;
         if (existingArtifactResult?.success) {
-          return { success: true };
+          return completePlanning();
         }
         if (
           attempt < maxPlanningRetries &&
@@ -1038,12 +1622,9 @@ export class BuildOrchestrator extends EventEmitter {
           this.emitTyped('log', 'Planning failed while writing tasks.md; retrying with Markdown guidance...');
           continue;
         }
-        return {
-          success: false,
-          error: existingArtifactResult?.error
-            ? `${errorMessage}; ${existingArtifactResult.error}`
-            : errorMessage,
-        };
+        return failPlanning(existingArtifactResult?.error
+          ? `${errorMessage}; ${existingArtifactResult.error}`
+          : errorMessage);
       }
 
       // If the provider returned structured output via constrained decoding,
@@ -1064,23 +1645,30 @@ export class BuildOrchestrator extends EventEmitter {
       if (artifactQualityErrors.length > 0) {
         validationFailures++;
         this.emitTyped('log', `Standard plan artifact quality failed (attempt ${validationFailures}): ${artifactQualityErrors.join(', ')}`);
-        if (validationFailures >= maxPlanningRetries) {
+        if (validationFailures > maxPlanningRetries) {
           if (hasOnlyAutocodePlanTaskGranularityErrors(artifactQualityErrors)) {
             this.emitTyped(
               'log',
               `Standard plan artifact quality still has task granularity warnings after ${validationFailures} attempts; continuing with the generated plan.`,
             );
           } else {
-            return {
-              success: false,
-              error: `Standard plan artifact quality failed after ${validationFailures} attempts: ${artifactQualityErrors.join(', ')}`,
-            };
+            return failPlanning(
+              `Standard plan artifact quality failed after ${validationFailures} attempts: ${artifactQualityErrors.join(', ')}`,
+            );
           }
         } else {
           planningRetryContext = buildAutocodePlanQualityRetryPrompt(artifactQualityErrors);
           continue;
         }
       }
+
+      validatedPlanningSources = true;
+      await updateStandardPlanningTransaction(
+        this.config.specDir,
+        planningTransaction,
+        'sources_validated',
+        'active',
+      );
 
       const derivedPlan = await this.deriveRuntimePlanFromStandardTasks();
       if (!derivedPlan.success) {
@@ -1090,18 +1678,29 @@ export class BuildOrchestrator extends EventEmitter {
         if (repairedTasksEvidence) {
           const repairedDerivedPlan = await this.deriveRuntimePlanFromStandardTasks();
           if (repairedDerivedPlan.success) {
+            await updateStandardPlanningTransaction(
+              this.config.specDir,
+              planningTransaction,
+              'plan_derived',
+              'active',
+            );
             const finalizedPlan = await this.finalizeDerivedRuntimePlan();
             if (finalizedPlan.success) {
-              return { success: true };
+              await updateStandardPlanningTransaction(
+                this.config.specDir,
+                planningTransaction,
+                'plan_validated',
+                'active',
+              );
+              return completePlanning();
             }
             const validationErrors = finalizedPlan.errors;
             validationFailures++;
             this.emitTyped('log', `Plan validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}. Retrying with Markdown plan guidance...`);
-            if (validationFailures >= maxPlanningRetries) {
-              return {
-                success: false,
-                error: `Implementation plan validation failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
-              };
+            if (validationFailures > maxPlanningRetries) {
+              return failPlanning(
+                `Implementation plan validation failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
+              );
             }
             planningRetryContext = buildAutocodePlanningStructuredOutputValidationRetryPrompt(validationErrors);
             this.emitTyped('log', `Falling back to full re-plan (attempt ${validationFailures + 1})...`);
@@ -1111,22 +1710,34 @@ export class BuildOrchestrator extends EventEmitter {
         const validationErrors = [`${AUTOCODE_TASK_ARTIFACTS.tasks} is missing or invalid: ${derivedPlan.error}`];
         validationFailures++;
         this.emitTyped('log', `Standard planning validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}`);
-        if (validationFailures >= maxPlanningRetries) {
-          return {
-            success: false,
-            error: `Standard task planning failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
-          };
+        if (validationFailures > maxPlanningRetries) {
+          return failPlanning(
+            `Standard task planning failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
+          );
         }
         planningRetryContext = buildAutocodeStandardTasksValidationRetryPrompt(validationErrors);
         continue;
       }
+
+      await updateStandardPlanningTransaction(
+        this.config.specDir,
+        planningTransaction,
+        'plan_derived',
+        'active',
+      );
 
       // Validate + normalize the implementation plan using Zod schema.
       // Zod coercion handles LLM field name variations (title→description,
       // subtask_id→id, status normalization, etc.) and writes back canonical data.
       const finalizedPlan = await this.finalizeDerivedRuntimePlan();
       if (finalizedPlan.success) {
-        return { success: true };
+        await updateStandardPlanningTransaction(
+          this.config.specDir,
+          planningTransaction,
+          'plan_validated',
+          'active',
+        );
+        return completePlanning();
       }
       const validationErrors = finalizedPlan.errors;
 
@@ -1136,11 +1747,10 @@ export class BuildOrchestrator extends EventEmitter {
       this.emitTyped('log', `Plan validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}. Retrying with Markdown plan guidance...`);
 
       // Lightweight repair failed or unavailable — fall back to full re-plan
-      if (validationFailures >= maxPlanningRetries) {
-        return {
-          success: false,
-          error: `Implementation plan validation failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
-        };
+      if (validationFailures > maxPlanningRetries) {
+        return failPlanning(
+          `Implementation plan validation failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
+        );
       }
 
       // Build retry context for the full re-plan (last resort)
@@ -1149,7 +1759,7 @@ export class BuildOrchestrator extends EventEmitter {
       this.emitTyped('log', `Falling back to full re-plan (attempt ${validationFailures + 1})...`);
     }
 
-    return { success: false, error: 'Planning exhausted all retries' };
+    return failPlanning('Planning exhausted all retries');
   }
 
   /**

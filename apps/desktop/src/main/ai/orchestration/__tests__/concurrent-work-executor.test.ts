@@ -355,7 +355,9 @@ describe('executeConcurrentWorkItems', () => {
     try {
       const { getPlanState } = setupPlanState(['a.ts']);
       let runs = 0;
+      const activeStartedAtValues: Array<string | undefined> = [];
       const runWorkItemSession = vi.fn().mockImplementation(async () => {
+        activeStartedAtValues.push((getPlanState().phases[0].subtasks[0] as { active_started_at?: string }).active_started_at);
         runs++;
         if (runs === 1) {
           writeFileSync(join(specDir, RESUME_FILE), '', 'utf8');
@@ -368,7 +370,9 @@ describe('executeConcurrentWorkItems', () => {
 
       expect(result.success).toBe(true);
       expect(runs).toBe(2);
+      expect(activeStartedAtValues.every(Boolean)).toBe(true);
       expect((getPlanState().phases[0].subtasks[0] as { duration_ms?: number }).duration_ms).toBe(3000);
+      expect((getPlanState().phases[0].subtasks[0] as { active_started_at?: string }).active_started_at).toBeUndefined();
     } finally {
       rmSync(specDir, { recursive: true, force: true });
     }

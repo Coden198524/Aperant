@@ -31,6 +31,7 @@ export interface AutocodePlanningScheduleSubtask {
   depends_on?: unknown;
   evidence?: unknown;
   verification?: unknown;
+  history_only?: unknown;
 }
 
 export interface AutocodePlanningSchedulingValidationOptions {
@@ -93,13 +94,14 @@ export function validateAutocodePlanningSchedulingMetadata(
       const hasVerificationMetadata = Object.hasOwn(subtask, 'verification') &&
         subtask.verification !== undefined;
 
-      if (!hasDependencyMetadata) {
+      const requiresSchedulingMetadata = subtask.status !== 'completed';
+      if (requiresSchedulingMetadata && !hasDependencyMetadata) {
         errors.push(`${subtask.id} missing _Depends on: ..._ metadata`);
       }
-      if (requireEvidence && !hasEvidenceMetadata) {
+      if (requiresSchedulingMetadata && requireEvidence && !hasEvidenceMetadata) {
         errors.push(`${subtask.id} missing _Evidence: ..._ metadata`);
       }
-      if (!hasVerificationMetadata) {
+      if (requiresSchedulingMetadata && !hasVerificationMetadata) {
         errors.push(`${subtask.id} missing _Verification: ..._ metadata`);
       }
     }

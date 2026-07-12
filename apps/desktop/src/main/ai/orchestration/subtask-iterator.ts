@@ -130,6 +130,7 @@ interface PlanSubtask {
   completion_summary?: string;
   completed_at?: string;
   started_at?: string;
+  active_started_at?: string;
   duration_ms?: number;
   updated_at?: string;
   files_to_create?: string[];
@@ -172,6 +173,7 @@ type ProtectedSubtaskField =
   | 'completion_summary'
   | 'completed_at'
   | 'started_at'
+  | 'active_started_at'
   | 'duration_ms'
   | 'updated_at';
 
@@ -189,6 +191,7 @@ const PROTECTED_SUBTASK_FIELDS: ProtectedSubtaskField[] = [
   'completion_summary',
   'completed_at',
   'started_at',
+  'active_started_at',
   'duration_ms',
   'updated_at',
 ];
@@ -737,9 +740,6 @@ async function recordSubtaskSessionDuration(
   result: SessionResult,
 ): Promise<void> {
   const durationMs = getSessionDurationMs(result);
-  if (durationMs <= 0) {
-    return;
-  }
 
   try {
     const plan = await loadImplementationPlan(config.specDir);
@@ -747,6 +747,7 @@ async function recordSubtaskSessionDuration(
       return;
     }
 
+    const now = new Date().toISOString();
     let updated = false;
     for (const phase of plan.phases) {
       for (const subtask of phase.subtasks) {
@@ -754,9 +755,19 @@ async function recordSubtaskSessionDuration(
         if (id !== subtaskId) {
           continue;
         }
-        subtask.duration_ms = getExistingDurationMs(subtask) + durationMs;
-        subtask.updated_at = new Date().toISOString();
-        updated = true;
+        let subtaskUpdated = false;
+        if (durationMs > 0) {
+          subtask.duration_ms = getExistingDurationMs(subtask) + durationMs;
+          subtaskUpdated = true;
+        }
+        if (subtask.active_started_at) {
+          delete subtask.active_started_at;
+          subtaskUpdated = true;
+        }
+        if (subtaskUpdated) {
+          subtask.updated_at = now;
+          updated = true;
+        }
       }
     }
 
@@ -840,10 +851,16 @@ async function ensureSubtaskMarkedCompleted(
         }
 
         // Mark this specific subtask as completed if it isn't already
-        if (subtask.id === subtaskId && subtask.status !== 'completed') {
-          subtask.status = 'completed';
-          (subtask as PlanSubtask & { completed_at?: string }).completed_at = now;
-          updated = true;
+        if (subtask.id === subtaskId) {
+          if (subtask.status !== 'completed') {
+            subtask.status = 'completed';
+            (subtask as PlanSubtask & { completed_at?: string }).completed_at = now;
+            updated = true;
+          }
+          if (subtask.active_started_at) {
+            delete subtask.active_started_at;
+            updated = true;
+          }
         }
 
         if (subtask.id === subtaskId && completionSummary && !subtask.completion_summary) {
@@ -942,12 +959,13 @@ async function markSubtaskInProgress(
           updated = true;
         }
 
-        if (
-          subtask.id === subtaskId &&
-          subtask.status === 'pending' &&
-          !hasSubtaskCompletionEvidence(subtask)
-        ) {
+        if (subtask.id === subtaskId && !hasSubtaskCompletionEvidence(subtask)) {
+          const now = new Date().toISOString();
           subtask.status = 'in_progress';
+          subtask.started_at = subtask.started_at || now;
+          subtask.active_started_at = subtask.active_started_at || now;
+          delete subtask.completed_at;
+          subtask.updated_at = now;
           updated = true;
         }
       }
@@ -983,6 +1001,7 @@ async function markSubtaskNeedsRetry(
         }
 
         subtask.status = 'in_progress';
+        delete subtask.active_started_at;
         delete subtask.completed_at;
         delete subtask.completion_summary;
         subtask.notes = [reason, subtask.notes]
@@ -1027,6 +1046,10 @@ async function markSubtaskFailed(
 
         if (subtask.status !== 'failed') {
           subtask.status = 'failed';
+          updated = true;
+        }
+        if (subtask.active_started_at) {
+          delete subtask.active_started_at;
           updated = true;
         }
         if (!subtask.notes || !subtask.notes.includes(reason)) {
@@ -1356,12 +1379,18 @@ async function normalizeCompletedSubtasks(
         updated = true;
       }
 
-      if (hasSubtaskCompletionEvidence(subtask) && subtask.status !== 'completed') {
-        subtask.status = 'completed';
-        if (!subtask.completed_at) {
-          subtask.completed_at = new Date().toISOString();
+      if (hasSubtaskCompletionEvidence(subtask)) {
+        if (subtask.status !== 'completed') {
+          subtask.status = 'completed';
+          if (!subtask.completed_at) {
+            subtask.completed_at = new Date().toISOString();
+          }
+          updated = true;
         }
-        updated = true;
+        if (subtask.active_started_at) {
+          delete subtask.active_started_at;
+          updated = true;
+        }
       }
     }
   }

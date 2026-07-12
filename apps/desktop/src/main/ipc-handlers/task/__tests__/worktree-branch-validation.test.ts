@@ -12,11 +12,42 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCliDetectionCandidatesForRoutes,
   createAddedFilePatchFromContent,
+  findLatestWorkPackageGitChangeRecord,
   GIT_BRANCH_REGEX,
   normalizeWorktreeFilePathForPreview,
   shouldHideTaskGitChangePath,
   validateWorktreeBranch,
 } from '../worktree-handlers';
+
+describe('findLatestWorkPackageGitChangeRecord', () => {
+  it('returns the latest commit and only its visible changed files', () => {
+    const content = [
+      '{"record_type":"entry","entry":{"timestamp":"2026-07-01T00:00:00.000Z","type":"success","phase":"coding","subtask_id":"wp-1","git_commit":"abc1234","changed_files":["src/old.ts"]}}',
+      '{"record_type":"entry","entry":{"timestamp":"2026-07-01T00:01:00.000Z","type":"success","phase":"coding","subtask_id":"wp-2","git_commit":"def5678","changed_files":["src/other.ts"]}}',
+      '{"record_type":"entry","entry":{"timestamp":"2026-07-01T00:02:00.000Z","type":"success","phase":"coding","subtask_id":"wp-1","git_commit":"1234abc","changed_files":["src/app.ts",".autocode/specs/001-task/task_logs.jsonl","src/app.ts"]}}',
+    ].join('\n');
+
+    expect(findLatestWorkPackageGitChangeRecord(content, 'wp-1')).toEqual({
+      commitHash: '1234abc',
+      changedFiles: ['src/app.ts'],
+      timestamp: '2026-07-01T00:02:00.000Z',
+    });
+  });
+
+  it('does not reuse an older commit when the latest run recorded no source changes', () => {
+    const content = [
+      '{"record_type":"entry","entry":{"timestamp":"2026-07-01T00:00:00.000Z","type":"success","phase":"coding","subtask_id":"wp-1","git_commit":"abc1234","changed_files":["src/app.ts"]}}',
+      'malformed historical line',
+      '{"record_type":"entry","entry":{"timestamp":"2026-07-01T00:03:00.000Z","type":"success","phase":"coding","subtask_id":"wp-1","git_commit_skipped":"no source changes detected"}}',
+    ].join('\n');
+
+    expect(findLatestWorkPackageGitChangeRecord(content, 'wp-1')).toEqual({
+      changedFiles: [],
+      skippedReason: 'no source changes detected',
+      timestamp: '2026-07-01T00:03:00.000Z',
+    });
+  });
+});
 
 describe('buildCliDetectionCandidatesForRoutes', () => {
   it('adds settings-defined future CLI route candidates without source-code registration', () => {

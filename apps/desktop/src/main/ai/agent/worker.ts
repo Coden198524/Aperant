@@ -737,6 +737,8 @@ function buildPlanReviewIterationDirective(session: SerializableSessionConfig): 
     'Every new or revised requirement/design/task must carry Evidence; if evidence is missing, add an assumption/open question or validation task instead of guessing.',
     'Add or update focused verification commands for every new or revised task so the next coding pass can test and commit through the normal task flow.',
     'Keep this as a planning-only run: do not implement code, do not run coding subtasks, and do not mark subtasks completed.',
+    'If a previous iteration planning attempt was interrupted, continue from the existing Standard artifacts. Read the current tasks.md first, repair partial/truncated/inconsistent checklist content in place, and keep the original planning direction unless the latest feedback explicitly changes it.',
+    'Do not discard tasks.md or restart planning from scratch during recovery. Preserve completed, obsolete, and unaffected task history for reviewability; only reset or add the work items required by the current change request.',
     'Preserve useful parts of the previous Autocode Standard documents when they still match the reviewer feedback. Do not regenerate unaffected requirements or task sections.',
   ];
 
@@ -747,15 +749,31 @@ function buildPlanReviewIterationDirective(session: SerializableSessionConfig): 
   return lines.join('\n');
 }
 
-function countPlanSubtasks(plan: ShardableImplementationPlan | null): number {
-  return (plan?.phases ?? []).reduce((total, phase) => {
+function getPlanWorkItems(plan: ShardableImplementationPlan | null): Array<Record<string, unknown>> {
+  return (plan?.phases ?? []).flatMap((phase) => {
     const subtasks = Array.isArray(phase.subtasks)
       ? phase.subtasks
       : Array.isArray(phase.chunks)
         ? phase.chunks
         : [];
-    return total + subtasks.length;
-  }, 0);
+    return subtasks.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'));
+  });
+}
+
+function getPlanWorkItemCompletion(plan: ShardableImplementationPlan | null): {
+  totalCount: number;
+  completedCount: number;
+  incompleteCount: number;
+  allCompleted: boolean;
+} {
+  const items = getPlanWorkItems(plan);
+  const completedCount = items.filter((item) => item.status === 'completed').length;
+  return {
+    totalCount: items.length,
+    completedCount,
+    incompleteCount: Math.max(0, items.length - completedCount),
+    allCompleted: items.length > 0 && completedCount === items.length,
+  };
 }
 
 function syncRegeneratedPlanToSource(session: SerializableSessionConfig): void {
@@ -2112,10 +2130,19 @@ async function runBuildOrchestrator(
   if (outcome.success && session.forcePlanning === true && outcome.finalPhase === 'planning') {
     syncRegeneratedPlanToSource(session);
     const plan = loadImplementationPlanFromFilesSync(session.specDir);
-    const subtaskCount = countPlanSubtasks(plan);
+    const completion = getPlanWorkItemCompletion(plan);
+    postLog(
+      completion.allCompleted
+        ? `Planning iteration completed with no work packages requiring execution; ` +
+          `waiting for manual review (${completion.completedCount}/${completion.totalCount} already completed).`
+        : `Planning iteration updated ${completion.incompleteCount}/${completion.totalCount} incomplete ` +
+          `work package(s); waiting for manual review before coding.`,
+    );
     postTaskEvent('PLANNING_COMPLETE', {
-      hasSubtasks: subtaskCount > 0,
-      subtaskCount,
+      hasSubtasks: completion.totalCount > 0,
+      subtaskCount: completion.totalCount,
+      incompleteSubtaskCount: completion.incompleteCount,
+      continueAfterPlanning: false,
       requireReviewBeforeCoding: true,
     });
   } else if (outcome.success) {

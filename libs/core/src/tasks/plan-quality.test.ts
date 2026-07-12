@@ -94,6 +94,34 @@ describe('standard plan quality', () => {
     expect(result.errors.join('\n')).toContain('manual Standard planning seed');
   });
 
+  it('accepts a concrete Chinese Standard spec that retains the seed type label', () => {
+    const result = validateAutocodeStandardPlanArtifacts({
+      requireSpecEvidence: true,
+      specMarkdown: [
+        '# 实现浏览器射击游戏',
+        '',
+        '## 类型',
+        'Standard 标准模式任务',
+        '',
+        '## 需求索引',
+        '- R1: 默认关卡目录扩展到至少 16 个连续编号关卡。',
+        '',
+        '## 验收标准',
+        '- AC1: 最大关卡和胜利结算从目录长度动态派生。',
+        '',
+        '## 关键决策',
+        '- D1: 沿用 src/game.js 的数据驱动关卡目录。',
+        '',
+        '## Evidence',
+        '- src/game.js contains the current stage catalog and progression implementation.',
+        '',
+      ].join('\n'),
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.valid).toBe(true);
+  });
+
   it('rejects placeholder Standard requirements even when task description and evidence exist', () => {
     const result = validateAutocodeStandardPlanArtifacts({
       requireRequirementsEvidence: true,

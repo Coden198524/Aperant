@@ -2037,9 +2037,10 @@ async function main() {
     });
     assert.equal(
       core.transformThinkingConfig('deepseek', 'deepseek-v4-pro', 'xhigh').reasoningEffort,
-      'max',
+      'xhigh',
     );
     assert.equal(core.sanitizeThinkingLevel('xhigh'), 'xhigh');
+    assert.equal(core.sanitizeThinkingLevel('max'), 'xhigh');
     assert.equal(core.sanitizeThinkingLevel('ultrathink'), 'high');
     assert.equal(core.normalizeToolId('openai', 'a'.repeat(80)).length, 64);
     assert.equal(core.meetsCacheThreshold('anthropic', 'toolDefinitions', 1024), true);

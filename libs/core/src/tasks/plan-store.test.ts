@@ -85,6 +85,65 @@ describe('implementation plan markdown', () => {
     expect(rewritten).toContain('## Description\n\n# 增强记忆筛选和待审处理反馈\n\n为记忆视图增加分组数量');
   });
 
+  it('roundtrips active work item timing metadata', () => {
+    const markdown = stringifyAutocodeImplementationPlanMarkdown({
+      feature: 'Timing metadata',
+      status: 'in_progress',
+      phases: [
+        {
+          id: '1',
+          name: 'Implementation',
+          subtasks: [
+            {
+              id: '1.1',
+              title: 'Run active work item',
+              description: 'Exercise active_started_at persistence.',
+              status: 'in_progress',
+              started_at: '2026-01-01T00:00:00.000Z',
+              active_started_at: '2026-01-01T00:05:00.000Z',
+              duration_ms: 60000,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(markdown).toContain('active_started_at');
+    const parsed = parseAutocodeImplementationPlanMarkdown(markdown);
+    expect(parsed.phases[0].subtasks[0].active_started_at).toBe('2026-01-01T00:05:00.000Z');
+  });
+
+  it('roundtrips plan revision and historical work package metadata', () => {
+    const markdown = stringifyAutocodeImplementationPlanMarkdown({
+      feature: 'Planning synchronization',
+      planRevision: 12,
+      phases: [
+        {
+          id: '1',
+          name: 'History',
+          subtasks: [
+            {
+              id: 'history-1',
+              title: 'Completed historical package',
+              description: 'Keep prior work visible during iteration.',
+              status: 'completed',
+              history_only: true,
+              depends_on: [],
+            },
+          ],
+        },
+      ],
+    });
+
+    const parsed = parseAutocodeImplementationPlanMarkdown(markdown);
+    expect(parsed.planRevision).toBe(12);
+    expect(parsed.phases[0].subtasks[0]).toMatchObject({
+      id: 'history-1',
+      status: 'completed',
+      history_only: true,
+      depends_on: [],
+    });
+  });
   it('parses combined create/modify file metadata as write intent', () => {
     const parsed = parseAutocodeImplementationPlanMarkdown([
       '# Tasks',
@@ -196,6 +255,35 @@ describe('implementation plan markdown', () => {
     expect(subtask.completion_summary).toContain('| Item | Details |');
     expect(subtask.completion_summary?.length).toBeLessThanOrEqual(1200);
     expect(subtask.notes).toBe(subtask.completion_summary);
+  });
+
+  it('stamps and clears active work item timing when updating subtask status', () => {
+    const plan = {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Implementation',
+          subtasks: [
+            { id: '1.1', title: 'Run active work item', status: 'pending' },
+          ],
+        },
+      ],
+    };
+
+    expect(updateAutocodePlanSubtask(plan, '1.1', {
+      status: 'in_progress',
+      now: '2026-01-01T00:05:00.000Z',
+    })).toBe(true);
+    const activeSubtask = plan.phases[0].subtasks[0] as { started_at?: string; active_started_at?: string };
+    expect(activeSubtask.started_at).toBe('2026-01-01T00:05:00.000Z');
+    expect(activeSubtask.active_started_at).toBe('2026-01-01T00:05:00.000Z');
+
+    expect(updateAutocodePlanSubtask(plan, '1.1', {
+      status: 'completed',
+      now: '2026-01-01T00:06:00.000Z',
+      completionSummary: '| Item | Details |\n| --- | --- |\n| What changed | Done. |\n| Verification | Checked. |\n| Review notes | Ready. |',
+    })).toBe(true);
+    expect(activeSubtask.active_started_at).toBeUndefined();
   });
 
   it('folds repeated stored completion summary lines before updating plans', () => {

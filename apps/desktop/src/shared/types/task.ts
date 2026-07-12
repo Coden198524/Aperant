@@ -43,7 +43,9 @@ export interface Subtask {
   description: string;
   completionSummary?: string;
   startedAt?: string;
+  activeStartedAt?: string;
   completedAt?: string;
+  updatedAt?: string;
   durationMs?: number;
   status: SubtaskStatus;
   files: string[];
@@ -104,6 +106,9 @@ export interface TaskLogEntry {
   tool_call_id?: string;
   subtask_id?: string;
   session?: number;
+  git_commit?: string;
+  git_commit_skipped?: string;
+  changed_files?: string[];
   // Fields for expandable detail view
   detail?: string;  // Full content that can be expanded (e.g., file contents, command output)
   subphase?: string;  // Subphase grouping (e.g., "PROJECT DISCOVERY", "CONTEXT GATHERING")
@@ -392,7 +397,9 @@ export interface PlanSubtask {
   description: string;
   completion_summary?: string;
   started_at?: string;
+  active_started_at?: string;
   completed_at?: string;
+  updated_at?: string;
   duration_ms?: number;
   durationMs?: number;
   notes?: string;
@@ -436,6 +443,19 @@ export interface WorktreeDiffFile {
   deletions: number;
   previousPath?: string;
   patch?: string;
+}
+
+export type WorkPackageFileDiffUnavailableReason =
+  | 'history_unavailable'
+  | 'no_source_changes'
+  | 'file_not_changed'
+  | 'commit_unavailable';
+
+export interface WorkPackageFileDiff {
+  patch: string;
+  changedFiles: string[];
+  commitHash?: string;
+  unavailableReason?: WorkPackageFileDiffUnavailableReason;
 }
 
 // Conflict severity levels from merge system

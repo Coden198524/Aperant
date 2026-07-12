@@ -1,3 +1,5 @@
+import { normalizeThinkingLevel } from '../config/types.js';
+
 export const BUILTIN_AUTOCODE_CLIS = [
   'claude-code',
   'gemini',
@@ -411,6 +413,7 @@ export function resolveAutocodeCliTaskRunInvocation(input: {
   cli: AutocodeCli;
   customCommand?: string;
   model?: string;
+  thinkingLevel?: string;
   bypassPermissions: boolean;
   permissionBypassArgs?: string[];
   taskRunStrategy?: AutocodeCliTaskRunStrategy;
@@ -435,12 +438,16 @@ export function resolveAutocodeCliTaskRunInvocation(input: {
   const modelArgs = strategy.modelFlag && input.model
     ? [strategy.modelFlag, input.model]
     : [];
+  const thinkingArgs = input.cli === 'codex' && input.thinkingLevel
+    ? ['-c', `model_reasoning_effort=${normalizeThinkingLevel(input.thinkingLevel)}`]
+    : [];
   return {
     command: invocation.command,
     args: [
       ...invocation.args,
       ...(strategy.args ?? []),
       ...modelArgs,
+      ...thinkingArgs,
       ...permissionArgs,
       ...(strategy.promptStdinArg ? [strategy.promptStdinArg] : []),
     ],

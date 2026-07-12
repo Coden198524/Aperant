@@ -184,6 +184,45 @@ describe('Autocode CLI runner prompt', () => {
       '--stdin',
     ]);
   });
+
+  it('passes the normalized task phase thinking level to Codex', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-codex-phase-thinking',
+      title: 'Use task phase thinking',
+      description: 'Task phase settings must override stale global Codex reasoning values.',
+      metadata: {
+        developmentMode: 'standard',
+        isAutoProfile: true,
+        phaseThinking: {
+          spec: 'medium',
+          planning: 'medium',
+          coding: 'low',
+          qa: 'low',
+        },
+      },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-codex-phase-thinking',
+      cli: 'codex',
+      model: 'gpt-test',
+      phase: 'planning',
+    });
+
+    expect(plan.args).toEqual([
+      'exec',
+      '--json',
+      '-m',
+      'gpt-test',
+      '-c',
+      'model_reasoning_effort=medium',
+      '-',
+    ]);
+  });
   it('generates a shell-free Windows spawn wrapper for Direct CLI runs', () => {
     createAutocodeTask({
       projectRoot,
@@ -562,6 +601,33 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('validationRetryCount >= maxValidationRetries');
   });
 
+  it('retries Standard scheduling metadata validation after artifact retries are exhausted', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-scheduling-retry',
+      title: 'Retry derived scheduling metadata repair',
+      description: 'Planning should repair tasks.md when derived work packages lack scheduling metadata.',
+      metadata: { developmentMode: 'standard' },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-standard-scheduling-retry',
+      cli: 'codex',
+      phase: 'planning',
+    });
+    const runner = readFileSync(plan.runnerFilePath, 'utf8');
+
+    expect(runner).toContain('const maxSchedulingMetadataRetries = phase === \'spec\' || phase === \'planning\' ? 1 : 0;');
+    expect(runner).toContain('let schedulingMetadataRetryCount = 0;');
+    expect(runner).toContain('const canUseSchedulingRetry = schedulingMetadataError && schedulingMetadataRetryCount < maxSchedulingMetadataRetries;');
+    expect(runner).toContain('function isPlanningSchedulingMetadataValidationError(value)');
+    expect(runner).toContain('implementation_plan\\.md missing scheduling metadata');
+    expect(runner).toContain('The derived implementation_plan.md is missing runtime scheduling metadata. Repair tasks.md');
+    expect(runner).toContain('make every executable tasks.md item carry metadata that can be copied into derived runtime work packages');
+  });
   it('repairs missing Standard spec evidence before deriving runtime work packages', () => {
     createAutocodeTask({
       projectRoot,
@@ -663,10 +729,10 @@ describe('Autocode CLI runner prompt', () => {
       phase: 'planning',
     });
 
-    execFileSync(process.execPath, [plan.runnerFilePath], {
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
       cwd: projectRoot,
       env: { ...process.env, GRAPHITI_ENABLED: 'false' },
-      stdio: 'pipe',
+      encoding: 'utf8',
       timeout: 15_000,
     });
 
@@ -675,8 +741,476 @@ describe('Autocode CLI runner prompt', () => {
     expect(repairedSpec).toContain('requirements.md captures the user request');
     const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
     expect(implementationPlan?.phases?.[0]?.subtasks?.[0]?.title).toContain('Update evidence repair path');
+    const planningEvent = stdout
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('__TASK_EVENT__:'))
+      .map((line) => JSON.parse(line.slice('__TASK_EVENT__:'.length)) as Record<string, unknown>)
+      .find((event) => event.type === 'PLANNING_COMPLETE');
+    expect(planningEvent).toMatchObject({
+      type: 'PLANNING_COMPLETE',
+      hasSubtasks: true,
+      subtaskCount: 1,
+      incompleteSubtaskCount: 1,
+      continueAfterPlanning: true,
+      requireReviewBeforeCoding: false,
+    });
   });
 
+  it('requires manual review after force planning when every work package is already complete', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-force-planning-all-complete',
+      title: 'Review completed iteration planning',
+      description: 'Force planning must stop for review even when no coding remains.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-force-planning-all-complete',
+    });
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      '## User Requirements',
+      '- R1: Completed iteration planning requires manual review.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: Planning emits a review event before any completion transition.',
+      '',
+      '## Evidence Sources',
+      '- The existing completed runtime work package.',
+      '',
+    ].join('\n');
+    const specMarkdown = [
+      '# Specification: Review completed iteration planning',
+      '',
+      '## Requirements',
+      '- R1: Stop force planning for manual review even when all work is complete.',
+      '  - Evidence: requirements.md R1 and the existing completed plan.',
+      '',
+      '## Evidence',
+      '- requirements.md records the mandatory review policy.',
+      '',
+    ].join('\n');
+    const tasksMarkdown = [
+      '# Tasks',
+      '',
+      'Feature: Review completed iteration planning',
+      'Workflow: feature',
+      'Status: completed',
+      '',
+      '- [x] 1. Existing implementation',
+      '',
+      '  - [x] 1.1 Preserve completed implementation',
+      '    - Keep the completed implementation unchanged during review-only planning.',
+      '    - _Files to modify: src/completed.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '    - _Architecture: Boundary: planning state; strategy: preserve completed history; source/reference: spec.md R1_',
+      '    - _Done when: the completed work package remains completed_',
+      '    - _Verification: npm test -- completed.test.ts_',
+      '',
+    ].join('\n');
+    writeFileSync(join(specDir, 'requirements.md'), requirementsMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'spec.md'), specMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'tasks.md'), tasksMarkdown, 'utf8');
+    writeFileSync(
+      join(specDir, 'implementation_plan.md'),
+      stringifyAutocodeImplementationPlanMarkdown(
+        buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(tasksMarkdown, {
+          now: '2026-07-12T00:00:00.000Z',
+          sourcePath: 'tasks.md',
+          requireTaskEvidence: true,
+          includeCompletedTasks: true,
+        }),
+      ),
+      'utf8',
+    );
+
+    const fakeCliPath = join(projectRoot, 'successful-review-only-planner.cjs');
+    writeFileSync(fakeCliPath, "process.stdout.write('planning complete\\n');\n", 'utf8');
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-standard-force-planning-all-complete',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+      forcePlanning: true,
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    const events = stdout
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('__TASK_EVENT__:'))
+      .map((line) => JSON.parse(line.slice('__TASK_EVENT__:'.length)) as Record<string, unknown>);
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'PLANNING_COMPLETE',
+      incompleteSubtaskCount: 0,
+      continueAfterPlanning: false,
+      requireReviewBeforeCoding: true,
+    }));
+    expect(events.some((event) => event.type === 'QA_PASSED')).toBe(false);
+  });
+
+  it('restores previous Standard tasks.md when runner planning validation fails', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-planning-rollback',
+      title: 'Rollback failed planning artifacts',
+      description: 'Request Changes should not leave a partial tasks.md when planning validation fails.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-planning-rollback',
+    });
+
+    const originalTasksMarkdown = [
+      '# Tasks',
+      '',
+      'Feature: Rollback failed planning artifacts',
+      'Workflow: feature',
+      'Status: pending',
+      '',
+      '- [ ] 1. Completed baseline',
+      '',
+      '  - [x] 1.1 Preserve completed baseline work',
+      '    - Preserve the previously completed Standard task list when replanning fails.',
+      '    - _Files to modify: src/baseline.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '    - _Done when: completed baseline work remains visible after failed planning_',
+      '    - _Verification: npm test -- baseline.test.ts_',
+      '',
+    ].join('\n');
+    const originalRuntimePlan = stringifyAutocodeImplementationPlanMarkdown(
+      buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(originalTasksMarkdown, {
+        now: '2026-07-09T00:00:00.000Z',
+        sourcePath: 'tasks.md',
+        requireTaskEvidence: true,
+        includeCompletedTasks: true,
+      }),
+    );
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      '## User Requirements',
+      '- R1: Failed Request Changes planning restores the previous Standard task list.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: tasks.md equals the pre-run content after validation fails.',
+      '',
+      '## Evidence Sources',
+      '- spec.md Requirements R1.',
+      '',
+    ].join('\n');
+    const specMarkdown = [
+      '# Specification: Rollback failed planning artifacts',
+      '',
+      '## Requirements',
+      '1. Failed planning restores previous Standard artifacts.',
+      '   - Evidence: requirements.md R1.',
+      '',
+      '## Evidence',
+      '- requirements.md records the rollback requirement.',
+      '',
+    ].join('\n');
+    const invalidTasksMarkdown = [
+      '# Tasks',
+      '',
+      '- [ ] 1. Partial rewrite',
+      '  - [ ] 1.1 Missing required metadata',
+      '    - This half-written task list should not survive failed validation.',
+      '',
+    ].join('\n');
+
+    writeFileSync(join(specDir, 'requirements.md'), requirementsMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'spec.md'), specMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'tasks.md'), originalTasksMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'implementation_plan.md'), originalRuntimePlan, 'utf8');
+    writeFileSync(join(specDir, 'HUMAN_INPUT.md'), 'Please make a focused Request Changes update.\n', 'utf8');
+
+    const fakeCliPath = join(projectRoot, 'write-invalid-standard-artifacts.cjs');
+    writeFileSync(fakeCliPath, [
+      "const { writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      'const specDir = process.argv[2];',
+      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(invalidTasksMarkdown)}, 'utf8');`,
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-standard-planning-rollback',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}" "${specDir.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+      forcePlanning: true,
+    });
+
+    let failed = false;
+    let failureOutput = '';
+    try {
+      execFileSync(process.execPath, [plan.runnerFilePath], {
+        cwd: projectRoot,
+        env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+        stdio: 'pipe',
+        timeout: 15_000,
+      });
+    } catch (error) {
+      failed = true;
+      const outputError = error as { stdout?: Buffer; stderr?: Buffer; message?: string };
+      failureOutput = [
+        outputError.message,
+        outputError.stdout?.toString('utf8'),
+        outputError.stderr?.toString('utf8'),
+      ].filter(Boolean).join('\n');
+    }
+
+    const failedTaskBackups = readdirSync(specDir).filter((file) => file.startsWith('tasks.md.failed-'));
+    expect(failed, failureOutput).toBe(true);
+    expect(readFileSync(join(specDir, 'tasks.md'), 'utf8')).toBe(originalTasksMarkdown);
+    expect(readFileSync(join(specDir, 'implementation_plan.md'), 'utf8')).toContain('Preserve completed baseline work');
+    expect(failedTaskBackups).toHaveLength(1);
+    expect(readFileSync(join(specDir, failedTaskBackups[0]), 'utf8')).toContain('Missing required metadata');
+  });
+  it('resumes validated Standard planning artifacts without starting another CLI session', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-planning-resume',
+      title: 'Resume validated planning artifacts',
+      description: 'Continue interrupted Standard planning from validated tasks.md.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-planning-resume',
+    });
+    const specMarkdown = [
+      '# Specification: Resume validated planning artifacts',
+      '',
+      '## Requirements',
+      '- R1: Continue from the validated Standard task source after interruption.',
+      '  - Evidence: requirements.md R1 and the user Request Changes instruction.',
+      '',
+      '## Evidence',
+      '- The user request and requirements.md define the recovery behavior.',
+      '',
+    ].join('\n');
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      '## User Requirements',
+      '- R1: Resume interrupted planning without invoking a second planner when tasks.md is valid.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: A runtime work package is derived from the persisted tasks.md source.',
+      '',
+      '## Evidence Sources',
+      '- spec.md Requirements R1 and the persisted planning transaction.',
+      '',
+    ].join('\n');
+    const tasksMarkdown = [
+      '# Tasks',
+      '',
+      'Feature: Resume validated planning artifacts',
+      'Workflow: feature',
+      'Status: pending',
+      '',
+      '- [ ] 1. Planning recovery',
+      '',
+      '  - [ ] 1.1 Derive the persisted parser work package',
+      '    - Update the configuration parser contract from the validated planning source.',
+      '    - _Files to modify: src/parser.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '    - _Done when: the parser work package is present in implementation_plan.md_',
+      '    - _Verification: npm test -- parser.test.ts_',
+      '',
+    ].join('\n');
+    writeFileSync(join(specDir, 'spec.md'), specMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'requirements.md'), requirementsMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'tasks.md'), tasksMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'planning-transaction.json'), JSON.stringify({
+      version: 1,
+      id: 'resume-transaction',
+      phase: 'planning',
+      status: 'active',
+      stage: 'sources_validated',
+      createdAt: '2026-07-10T00:00:00.000Z',
+      updatedAt: '2026-07-10T00:00:00.000Z',
+      artifactHashes: {},
+    }, null, 2), 'utf8');
+
+    const markerPath = join(projectRoot, 'planner-started.txt');
+    const fakeCliPath = join(projectRoot, 'unexpected-planner.cjs');
+    writeFileSync(fakeCliPath, [
+      "const { writeFileSync } = require('node:fs');",
+      `writeFileSync(${JSON.stringify(markerPath)}, 'started', 'utf8');`,
+      'process.exit(9);',
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-standard-planning-resume',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+      forcePlanning: true,
+    });
+
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    }).toString('utf8');
+
+    const transaction = JSON.parse(
+      readFileSync(join(specDir, 'planning-transaction.json'), 'utf8'),
+    ) as { status?: string; stage?: string; checkpoint?: string };
+    expect(existsSync(markerPath)).toBe(false);
+    expect(stdout).toContain('"progress":100');
+    expect(readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8'))
+      .toContain('Recovered interrupted Standard planning');
+    expect(readFileSync(join(specDir, 'implementation_plan.md'), 'utf8'))
+      .toContain('Derive the persisted parser work package');
+    expect(transaction).toMatchObject({
+      status: 'completed',
+      stage: 'committed',
+      checkpoint: 'committed',
+    });
+  });
+  it('accepts legacy completed work packages without new scheduling metadata during iteration', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-legacy-history',
+      title: 'Preserve legacy planning history',
+      description: 'Keep completed legacy packages while planning one new change.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-legacy-history',
+    });
+    writeFileSync(join(specDir, 'spec.md'), [
+      '# Specification: Preserve legacy planning history',
+      '',
+      '## Requirements',
+      '- R1: Preserve completed work and add the requested parser change.',
+      '  - Evidence: requirements.md R1 and the Request Changes input.',
+      '',
+      '## Evidence',
+      '- The existing implementation plan records completed historical work.',
+      '',
+    ].join('\n'), 'utf8');
+    writeFileSync(join(specDir, 'requirements.md'), [
+      '# Requirements',
+      '',
+      '## User Requirements',
+      '- R1: Existing completed work remains visible after iteration planning.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: The new parser package remains executable while legacy history stays completed.',
+      '',
+      '## Evidence Sources',
+      '- spec.md Requirements R1 and the previous implementation plan.',
+      '',
+    ].join('\n'), 'utf8');
+    writeFileSync(join(specDir, 'tasks.md'), [
+      '# Tasks',
+      '',
+      'Feature: Preserve legacy planning history',
+      'Workflow: feature',
+      'Status: pending',
+      '',
+      '- [ ] 2. Iteration',
+      '',
+      '  - [ ] 2.1 Update parser behavior',
+      '    - Add the focused parser behavior requested by the iteration.',
+      '    - _Files to modify: src/parser.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '    - _Done when: the parser behavior has a runnable work package_',
+      '    - _Verification: npm test -- parser.test.ts_',
+      '',
+    ].join('\n'), 'utf8');
+    writeFileSync(join(specDir, 'implementation_plan.md'),
+      stringifyAutocodeImplementationPlanMarkdown({
+        feature: 'Legacy completed plan',
+        phases: [
+          {
+            id: 'legacy',
+            name: 'Legacy history',
+            subtasks: [
+              {
+                id: 'legacy-1',
+                title: 'Legacy completed package',
+                description: 'Completed before scheduling metadata was introduced.',
+                status: 'completed',
+              },
+            ],
+          },
+        ],
+      }),
+      'utf8',
+    );
+
+    const fakeCliPath = join(projectRoot, 'successful-planner.cjs');
+    writeFileSync(fakeCliPath, "process.stdout.write('planning complete\\n');\n", 'utf8');
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-standard-legacy-history',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+      forcePlanning: true,
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const implementationPlan = loadAutocodeImplementationPlanSync(specDir)!;
+    const subtasks = implementationPlan.phases
+      ?.flatMap((phase) => phase.subtasks ?? []) ?? [];
+    expect(subtasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'legacy-1',
+        status: 'completed',
+        history_only: true,
+        depends_on: [],
+      }),
+      expect.objectContaining({
+        upstream_task_ids: ['2.1'],
+        status: 'pending',
+      }),
+    ]));
+  });
   it('preserves completed Standard work packages during force planning iteration', () => {
     createAutocodeTask({
       projectRoot,
@@ -780,11 +1314,22 @@ describe('Autocode CLI runner prompt', () => {
 
     expect(readFileSync(plan.runnerFilePath, 'utf8')).toContain('const forcePlanning = true;');
 
-    execFileSync(process.execPath, [plan.runnerFilePath], {
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
       cwd: projectRoot,
       env: { ...process.env, GRAPHITI_ENABLED: 'false' },
       stdio: 'pipe',
       timeout: 15_000,
+    }).toString('utf8');
+
+    const planningEvent = stdout
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('__TASK_EVENT__:'))
+      .map((line) => JSON.parse(line.slice('__TASK_EVENT__:'.length)) as Record<string, unknown>)
+      .find((event) => event.type === 'PLANNING_COMPLETE');
+    expect(planningEvent).toMatchObject({
+      type: 'PLANNING_COMPLETE',
+      continueAfterPlanning: false,
+      requireReviewBeforeCoding: true,
     });
 
     const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
@@ -3556,8 +4101,8 @@ describe('Autocode CLI runner prompt', () => {
     });
 
     const argvLines = readFileSync(argvPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line) as string[]);
-    expect(argvLines[0]).toEqual(['exec', '--json', '-m', 'gpt-test', '-']);
-    expect(argvLines[1]).toEqual(['exec', 'resume', '--json', '-m', 'gpt-test', 'codex-session-retry', '-']);
+    expect(argvLines[0]).toEqual(['exec', '--json', '-m', 'gpt-test', '-c', 'model_reasoning_effort=medium', '-']);
+    expect(argvLines[1]).toEqual(['exec', 'resume', '--json', '-m', 'gpt-test', '-c', 'model_reasoning_effort=medium', 'codex-session-retry', '-']);
     expect(readFileSync(attemptPath, 'utf8')).toBe('2');
     expect(stdout).toContain('"type":"DIRECT_COMPLETED"');
     const directSession = JSON.parse(readFileSync(join(specDir, 'direct_session.json'), 'utf8')) as {

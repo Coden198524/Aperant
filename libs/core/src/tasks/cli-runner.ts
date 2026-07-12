@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
+import { normalizeThinkingLevel } from '../config/types.js';
 import { buildAutocodeProjectDocsReferencePrompt } from '../project/project-docs.js';
 import {
   type AutocodeAgentLanguage,
@@ -10,6 +11,7 @@ import {
   DIRECT_PROJECT_DOCS_REFERENCE_MAX_BYTES,
 } from '../runtime/agent-messages.js';
 import { AUTOCODE_TASK_EVENT_PREFIX } from '../runtime/agent-events.js';
+import { resolveAutocodePhaseThinking } from '../runtime/agent-phase-config.js';
 import {
   type AutocodeTaskRuntimeConcurrencyResolved,
   resolveAutocodeTaskRuntimeConcurrency,
@@ -102,6 +104,10 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
   });
   const resolvedPhase = resolveRunPhase(specDir, task);
   const phase = input.phase ?? (input.forcePlanning === true && resolvedPhase !== 'direct' ? 'planning' : resolvedPhase);
+  const thinkingLevel = normalizeThinkingLevel(resolveAutocodePhaseThinking({
+    metadata: task.metadata,
+    phase: phase === 'direct' ? 'coding' : phase,
+  }));
   const runtimeConcurrency = resolveAutocodeTaskRuntimeConcurrency(task.metadata);
   const prompt = buildTaskRunPrompt({
     task,
@@ -117,6 +123,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
     cli: input.cli,
     customCommand: input.customCommand,
     model: input.model,
+    thinkingLevel,
     bypassPermissions: input.bypassPermissions === true,
     permissionBypassArgs: input.directCliPermissionBypassArgs,
     taskRunStrategy: input.directCliTaskRunStrategy,
@@ -620,6 +627,8 @@ function buildPlanningIterationContextLines(input: {
       `- 当最新变更请求改变结构化需求或验收标准时，更新 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements}。`,
       '- 如果既有工作确实需要按最新人审反馈修订，编辑原清单项并重置为待办；needs_revision 只能出现在详情说明或元数据行，不能写进任务标题。',
       '- 只为真正新增的需求或验证缺口添加新待办任务；记录变更后，移除或压缩过时的可执行清单项，避免重复任务。',
+      '- If a previous iteration planning attempt was interrupted, continue from the existing Standard artifacts. Read the current tasks.md first, repair partial/truncated/inconsistent checklist content in place, and keep the original planning direction unless the latest feedback explicitly changes it.',
+      '- Do not discard tasks.md or restart planning from scratch during recovery. Preserve completed, obsolete, and unaffected task history for reviewability; only reset or add the work items required by the current change request.',
     ];
   }
 
@@ -636,6 +645,8 @@ function buildPlanningIterationContextLines(input: {
     '- Only because valid human review feedback exists, treat this planning pass as a same-task RequestChanges iteration.',
     `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} when feedback changes requirements, acceptance criteria, user-visible behavior, or constraints.`,
     `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} when the latest change request changes structured requirements or acceptance criteria.`,
+    '- If a previous iteration planning attempt was interrupted, continue from the existing Standard artifacts. Read the current tasks.md first, repair partial/truncated/inconsistent checklist content in place, and keep the original planning direction unless the latest feedback explicitly changes it.',
+    '- Do not discard tasks.md or restart planning from scratch during recovery. Preserve completed, obsolete, and unaffected task history for reviewability; only reset or add the work items required by the current change request.',
     '- If existing work truly needs revision for the latest human feedback, edit that checklist item in place, reset it to pending, and put any needs_revision marker only in a detail note or metadata line, never in the task title.',
     '- Add pending tasks only for genuinely new requirements or verification gaps. After recording the change request, remove or compact obsolete executable checklist items to avoid duplicate tasks.',
   ];
@@ -841,6 +852,26 @@ const projectId = ${JSON.stringify(input.projectId)};
 const language = ${JSON.stringify(input.language)};
 const runtimeConcurrency = ${JSON.stringify(input.runtimeConcurrency)};
 const artifacts = ${JSON.stringify(AUTOCODE_TASK_ARTIFACTS)};
+const standardPlanningSourceArtifacts = [
+  artifacts.specFile,
+  artifacts.requirements,
+  artifacts.tasks || 'tasks.md',
+  artifacts.context || 'context.md',
+].filter(Boolean);
+const standardPlanningTransactionArtifacts = [
+  ...standardPlanningSourceArtifacts,
+  artifacts.implementationPlan,
+].filter(Boolean);
+const standardPlanningCheckpoints = new Set([
+  'sources_validated',
+  'plan_derived',
+  'plan_validated',
+  'committed',
+]);
+const planningArtifactSnapshot = captureStandardPlanningArtifactSnapshot();
+const planningTransactionPath = join(specDir, artifacts.planningTransaction || 'planning-transaction.json');
+const planningTransaction = beginStandardPlanningTransaction();
+let standardPlanningSourcesValidated = false;
 const directSessionStateVersion = ${JSON.stringify(AUTOCODE_DIRECT_SESSION_STATE_VERSION)};
 const taskEventPrefix = ${JSON.stringify(AUTOCODE_TASK_EVENT_PREFIX)};
 const fileWriteLockScope = inferFileWriteLockScope();
@@ -876,6 +907,7 @@ const FILE_WRITE_LOCK_RETRY_MS = readPositiveInteger(
   100,
 );
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
+const maxSchedulingMetadataRetries = phase === 'spec' || phase === 'planning' ? 1 : 0;
 const maxDirectRetries = phase === 'direct' ? 2 : 0;
 const DIRECT_QUALITY_RETRY_FEEDBACK_MAX_CHARS = 1600;
 const DIRECT_QUALITY_RETRY_FILE_PREVIEW_LIMIT = 12;
@@ -883,6 +915,7 @@ const VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS = 6000;
 const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
 const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
+let schedulingMetadataRetryCount = 0;
 let directRetryCount = 0;
 const directFailureSignatures = [];
 let attemptId = 0;
@@ -1027,7 +1060,7 @@ initializeCliMemoryRuntime()
     if (phase === 'coding') {
       startCodingWorkQueue();
     } else {
-      startAttempt(buildPromptWithMemoryContext(prompt));
+      void startNonCodingRuntimeWithPlanningRecovery(buildPromptWithMemoryContext(prompt));
     }
   })
   .catch((error) => {
@@ -1035,7 +1068,7 @@ initializeCliMemoryRuntime()
     if (phase === 'coding') {
       startCodingWorkQueue();
     } else {
-      startAttempt(prompt);
+      void startNonCodingRuntimeWithPlanningRecovery(prompt);
     }
   });
 
@@ -2113,26 +2146,37 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
   flushModelOutput(defaultAttemptState);
 
   const validationError = exitCode === 0 ? await validateExpectedArtifacts() : undefined;
-  if (validationError && validationRetryCount < maxValidationRetries) {
-    const retryContinuationBlocker = blockDirectCliRetryWithoutContinuation(currentAttemptId + 1, validationError);
-    if (retryContinuationBlocker) {
-      finishRun(1, undefined, retryContinuationBlocker, validationError);
+  if (validationError) {
+    const schedulingMetadataError = isPlanningSchedulingMetadataValidationError(validationError);
+    const canUseStandardRetry = !schedulingMetadataError && validationRetryCount < maxValidationRetries;
+    const canUseSchedulingRetry = schedulingMetadataError && schedulingMetadataRetryCount < maxSchedulingMetadataRetries;
+    if (canUseStandardRetry || canUseSchedulingRetry) {
+      const retryContinuationBlocker = blockDirectCliRetryWithoutContinuation(currentAttemptId + 1, validationError);
+      if (retryContinuationBlocker) {
+        finishRun(1, undefined, retryContinuationBlocker, validationError);
+        return;
+      }
+      if (canUseStandardRetry) {
+        validationRetryCount += 1;
+      } else {
+        schedulingMetadataRetryCount += 1;
+      }
+      const retry = canUseStandardRetry ? validationRetryCount : schedulingMetadataRetryCount;
+      const maxRetries = canUseStandardRetry ? maxValidationRetries : maxSchedulingMetadataRetries;
+      const retryMessage = localizeMessage(
+        'validationRetry',
+        \`Autocode CLI output failed validation: \${validationError} Retrying \${retry}/\${maxRetries}...\`,
+        { validationError, retry, maxRetries },
+      );
+      appendTaskLogEntry(logPhase, 'info', retryMessage);
+      updateTaskLogs(logPhase, 'active', retryMessage);
+      updatePlanRunningState();
+      emitPhase(executionPhase, retryMessage, 0);
+      defaultAttemptState.lastCliMessageText = '';
+      defaultAttemptState.completionSummaryDetected = false;
+      startAttempt(buildPromptWithMemoryContext(buildArtifactValidationRetryPrompt(validationError)));
       return;
     }
-    validationRetryCount += 1;
-    const retryMessage = localizeMessage(
-      'validationRetry',
-      \`Autocode CLI output failed validation: \${validationError} Retrying \${validationRetryCount}/\${maxValidationRetries}...\`,
-      { validationError, retry: validationRetryCount, maxRetries: maxValidationRetries },
-    );
-    appendTaskLogEntry(logPhase, 'info', retryMessage);
-    updateTaskLogs(logPhase, 'active', retryMessage);
-    updatePlanRunningState();
-    emitPhase(executionPhase, retryMessage, 0);
-    defaultAttemptState.lastCliMessageText = '';
-    defaultAttemptState.completionSummaryDetected = false;
-    startAttempt(buildPromptWithMemoryContext(buildArtifactValidationRetryPrompt(validationError)));
-    return;
   }
 
   finishRun(exitCode, signal, explicitError, validationError);
@@ -2155,6 +2199,20 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
   const failureMessage = failed
     ? explicitError || validationError || summarizeCliFailureReason(defaultAttemptState, exitCode, signal)
     : undefined;
+  if (failed) {
+    restoreStandardPlanningArtifactSnapshot(
+      planningArtifactSnapshot,
+      failureMessage || 'failed',
+      { preserveValidatedSources: standardPlanningSourcesValidated },
+    );
+    updateStandardPlanningTransaction(
+      standardPlanningSourcesValidated ? 'repair_required' : 'failed',
+      standardPlanningSourcesValidated ? 'repair_required' : 'failed',
+      failureMessage,
+    );
+  } else {
+    updateStandardPlanningTransaction('committed', 'completed');
+  }
   const rateLimited = failed && isCliRateLimitFailure(defaultAttemptState, explicitError, validationError, failureMessage);
   const resultMessage = failed
     ? rateLimited
@@ -2312,6 +2370,33 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
       error: result.message || 'Direct CLI run failed.',
       attemptCount: directRetryCount + 1,
     });
+  } else if (!failed && (phase === 'planning' || phase === 'spec')) {
+    const planningItems = readPlanItems().filter((item) => item.isSubtask);
+    const incompletePlanningItems = planningItems.filter((item) => item.status !== 'completed');
+    if (
+      forcePlanning !== true
+      && planningItems.length > 0
+      && incompletePlanningItems.length === 0
+    ) {
+      emitTaskEvent('QA_PASSED', {
+        iteration: 0,
+        testsRun: {
+          planningOnly: true,
+          completedWorkItems: planningItems.length,
+          totalWorkItems: planningItems.length,
+        },
+      });
+    } else {
+      const requireReviewBeforeCoding =
+        forcePlanning === true || taskMetadata?.requireReviewBeforeCoding === true;
+      emitTaskEvent('PLANNING_COMPLETE', {
+        hasSubtasks: planningItems.length > 0,
+        subtaskCount: planningItems.length,
+        incompleteSubtaskCount: incompletePlanningItems.length,
+        continueAfterPlanning: !requireReviewBeforeCoding,
+        requireReviewBeforeCoding,
+      });
+    }
   }
   updateTaskLogs(logPhase, failed ? 'failed' : 'completed', result.message);
   await flushCliMemoryWrites();
@@ -5895,6 +5980,11 @@ async function validateExpectedArtifacts() {
     return qualityError;
   }
 
+  if (phase === 'spec' || phase === 'planning') {
+    standardPlanningSourcesValidated = true;
+    updateStandardPlanningTransaction('sources_validated', 'active');
+  }
+
   const derivedPlanError = await deriveRuntimePlanFromStandardTasksIfNeeded();
   if (derivedPlanError) {
     return derivedPlanError;
@@ -5920,6 +6010,9 @@ async function validateExpectedArtifacts() {
     if (metadataError) {
       return metadataError;
     }
+  }
+  if (phase === 'spec' || phase === 'planning') {
+    updateStandardPlanningTransaction('plan_validated', 'active');
   }
   return undefined;
 }
@@ -6106,6 +6199,228 @@ function readOptionalArtifact(fileName) {
   }
 }
 
+function getStandardPlanningArtifactHash(fileName) {
+  const content = readOptionalArtifact(fileName);
+  return content === undefined
+    ? null
+    : createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+function getStandardPlanningChangeRequestId() {
+  const content = readOptionalArtifact('change_requests.jsonl');
+  if (!content) {
+    return undefined;
+  }
+  const lines = content.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      const entry = JSON.parse(lines[index]);
+      if (entry && typeof entry.id === 'string' && entry.id.trim()) {
+        return entry.id.trim();
+      }
+    } catch {
+      // Ignore malformed historical entries and continue searching.
+    }
+  }
+  return undefined;
+}
+
+function getStandardPlanningArtifactHashes() {
+  return Object.fromEntries(
+    standardPlanningTransactionArtifacts.map((fileName) => [
+      fileName,
+      getStandardPlanningArtifactHash(fileName),
+    ]),
+  );
+}
+
+function beginStandardPlanningTransaction() {
+  if (phase !== 'spec' && phase !== 'planning') {
+    return null;
+  }
+  const now = new Date().toISOString();
+  const previous = readJson(planningTransactionPath);
+  const canResume = previous &&
+    typeof previous === 'object' &&
+    previous.status !== 'completed' &&
+    previous.phase === phase;
+  const artifactHashes = getStandardPlanningArtifactHashes();
+  const previousCheckpoint = canResume
+    ? previous.checkpoint || (standardPlanningCheckpoints.has(previous.stage) ? previous.stage : undefined)
+    : undefined;
+  const transaction = canResume
+    ? {
+        ...previous,
+        status: 'active',
+        stage: 'resumed',
+        resumedAt: now,
+        resumedFromStage: previous.stage,
+        checkpoint: previousCheckpoint,
+        updatedAt: now,
+        baselineArtifactHashes: previous.baselineArtifactHashes || previous.artifactHashes || artifactHashes,
+        artifactHashes,
+      }
+    : {
+        version: 1,
+        id: randomUUID(),
+        taskId: taskMetadata?.id || taskMetadata?.taskId,
+        changeRequestId: getStandardPlanningChangeRequestId(),
+        phase,
+        forcePlanning,
+        status: 'active',
+        stage: 'started',
+        createdAt: now,
+        updatedAt: now,
+        baselineArtifactHashes: artifactHashes,
+        artifactHashes,
+      };
+  writeJson(planningTransactionPath, transaction);
+  return transaction;
+}
+function updateStandardPlanningTransaction(stage, status, detail) {
+  if (!planningTransaction) {
+    return;
+  }
+  const now = new Date().toISOString();
+  planningTransaction.stage = stage;
+  planningTransaction.status = status || 'active';
+  if (standardPlanningCheckpoints.has(stage)) {
+    planningTransaction.checkpoint = stage;
+  }
+  planningTransaction.updatedAt = now;
+  planningTransaction.artifactHashes = getStandardPlanningArtifactHashes();
+  if (detail) {
+    planningTransaction.detail = compactRunnerDirectValidationReason(detail);
+  } else {
+    delete planningTransaction.detail;
+  }
+  writeJson(planningTransactionPath, planningTransaction);
+}
+
+function shouldResumeStandardPlanningFromExistingSources() {
+  if (!planningTransaction || !planningTransaction.resumedAt) {
+    return false;
+  }
+  if (
+    planningTransaction.checkpoint === 'sources_validated' ||
+    planningTransaction.checkpoint === 'plan_derived' ||
+    planningTransaction.checkpoint === 'plan_validated'
+  ) {
+    return true;
+  }
+  const baselineHashes = planningTransaction.baselineArtifactHashes || {};
+  const currentHashes = planningTransaction.artifactHashes || {};
+  return standardPlanningSourceArtifacts.some((fileName) =>
+    currentHashes[fileName] !== null && currentHashes[fileName] !== baselineHashes[fileName]
+  );
+}
+
+async function startNonCodingRuntimeWithPlanningRecovery(attemptPrompt) {
+  if (!shouldResumeStandardPlanningFromExistingSources()) {
+    startAttempt(attemptPrompt);
+    return;
+  }
+
+  appendTaskLogEntry(
+    logPhase,
+    'info',
+    'Resuming interrupted Standard planning from persisted artifacts before starting another CLI session.',
+  );
+  try {
+    const validationError = await validateExpectedArtifacts();
+    if (!validationError) {
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Recovered interrupted Standard planning from validated persisted artifacts.',
+      );
+      await finishRun(0, undefined, undefined, undefined);
+      return;
+    }
+
+    appendTaskLogEntry(
+      logPhase,
+      'info',
+      'Persisted Standard planning artifacts require focused repair: ' + validationError,
+    );
+    startAttempt(buildPromptWithMemoryContext(buildArtifactValidationRetryPrompt(validationError)));
+  } catch (error) {
+    appendTaskLogEntry(
+      logPhase,
+      'info',
+      'Could not validate persisted Standard planning artifacts before resume: ' +
+        (error instanceof Error ? error.message : String(error)),
+    );
+    startAttempt(attemptPrompt);
+  }
+}
+
+function captureStandardPlanningArtifactSnapshot() {
+  const suffix = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+  return {
+    suffix,
+    artifacts: standardPlanningTransactionArtifacts.map((fileName) => ({
+      fileName,
+      content: readOptionalArtifact(fileName),
+    })),
+  };
+}
+
+function restoreStandardPlanningArtifactSnapshot(snapshot, reason, options = {}) {
+  if (phase !== 'spec' && phase !== 'planning') {
+    return;
+  }
+  let restoredCount = 0;
+  let savedFailedCount = 0;
+  for (const artifact of snapshot.artifacts || []) {
+    if (options.preserveValidatedSources && artifact.fileName !== artifacts.implementationPlan) {
+      continue;
+    }
+    const currentContent = readOptionalArtifact(artifact.fileName);
+    const filePath = join(specDir, artifact.fileName);
+    if (currentContent !== undefined && currentContent !== artifact.content) {
+      try {
+        writeFileSync(join(specDir, artifact.fileName + '.failed-' + snapshot.suffix), currentContent, 'utf8');
+        savedFailedCount += 1;
+      } catch (error) {
+        appendTaskLogEntry(logPhase, 'error', 'Failed to save failed Standard planning artifact ' + artifact.fileName + ': ' + (error instanceof Error ? error.message : String(error)));
+      }
+    }
+    if (artifact.content === undefined) {
+      if (currentContent === undefined) {
+        continue;
+      }
+      try {
+        unlinkSync(filePath);
+        restoredCount += 1;
+      } catch {
+        // The failed artifact may already be gone; restoration is best-effort.
+      }
+      continue;
+    }
+    if (currentContent === artifact.content) {
+      continue;
+    }
+    try {
+      writeFileSync(filePath, artifact.content, 'utf8');
+      restoredCount += 1;
+    } catch (error) {
+      appendTaskLogEntry(logPhase, 'error', 'Failed to restore Standard planning artifact ' + artifact.fileName + ': ' + (error instanceof Error ? error.message : String(error)));
+    }
+  }
+  if (restoredCount > 0 || savedFailedCount > 0) {
+    appendTaskLogEntry(
+      logPhase,
+      'info',
+      'Restored previous Standard planning artifacts after failed planning (' + compactRunnerDirectValidationReason(reason || 'failed') + '); saved ' + savedFailedCount + ' failed artifact(s).',
+    );
+  }
+}
+
+function getStandardPlanningArtifactSnapshotContent(snapshot, fileName) {
+  const artifact = (snapshot.artifacts || []).find((item) => item.fileName === fileName);
+  return typeof artifact?.content === 'string' ? artifact.content : undefined;
+}
 function hasNonEmptyRunnerArtifact(fileName) {
   try {
     return readFileSync(join(specDir, fileName), 'utf8').trim().length > 0;
@@ -6145,9 +6460,9 @@ async function deriveRuntimePlanFromStandardTasksIfNeeded() {
     const workPackages = await import(moduleUrl);
     const shouldPreserveCompletedState = shouldPreserveCompletedTasksInStandardPlanning();
     const previousImplementationPlanMarkdown = shouldPreserveCompletedState
-      ? readOptionalArtifact(artifacts.implementationPlan)
+      ? getStandardPlanningArtifactSnapshotContent(planningArtifactSnapshot, artifacts.implementationPlan)
       : undefined;
-    let plan = workPackages.buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
+    const plan = workPackages.buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
       readFileSync(tasksPath, 'utf8'),
       {
         now: new Date().toISOString(),
@@ -6158,15 +6473,6 @@ async function deriveRuntimePlanFromStandardTasksIfNeeded() {
         preserveCompletedStateFromPreviousPlanMarkdown: previousImplementationPlanMarkdown,
       },
     );
-    if (
-      previousImplementationPlanMarkdown &&
-      typeof workPackages.preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown === 'function'
-    ) {
-      plan = workPackages.preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown(
-        plan,
-        previousImplementationPlanMarkdown,
-      );
-    }
     const existingPlanMetadata = readExistingPlanMachineMetadata();
     if (existingPlanMetadata.tokenUsage) {
       plan.tokenUsage = existingPlanMetadata.tokenUsage;
@@ -6176,6 +6482,7 @@ async function deriveRuntimePlanFromStandardTasksIfNeeded() {
     }
     const markdown = workPackages.stringifyAutocodeImplementationPlanMarkdown(plan);
     writeFileSync(join(specDir, artifacts.implementationPlan), markdown, 'utf8');
+    updateStandardPlanningTransaction('plan_derived', 'active');
     appendTaskLogEntry(logPhase, 'info', 'Generated runtime work packages from tasks.md.');
     return undefined;
   } catch (error) {
@@ -6205,13 +6512,14 @@ function validatePlanningSchedulingMetadata() {
   const mode = String(taskMetadata?.developmentMode || '').toLowerCase();
   const requireEvidence = mode === 'standard';
   for (const item of items) {
-    if (!item.hasDependencyMetadata) {
+    const requiresSchedulingMetadata = item.status !== 'completed';
+    if (requiresSchedulingMetadata && !item.hasDependencyMetadata) {
       errors.push(item.id + ' missing _Depends on: ..._ metadata');
     }
-    if (requireEvidence && !item.hasEvidenceMetadata) {
+    if (requiresSchedulingMetadata && requireEvidence && !item.hasEvidenceMetadata) {
       errors.push(item.id + ' missing _Evidence: ..._ metadata');
     }
-    if (!item.hasVerificationMetadata) {
+    if (requiresSchedulingMetadata && !item.hasVerificationMetadata) {
       errors.push(item.id + ' missing _Verification: ..._ metadata');
     }
   }
@@ -6348,6 +6656,9 @@ function buildDirectQualityRetryPrompt(input) {
   ].filter((line) => line !== '').join('\\n');
 }
 
+function isPlanningSchedulingMetadataValidationError(value) {
+  return /\\bimplementation_plan\\.md missing scheduling metadata:/i.test(String(value || ''));
+}
 function buildArtifactValidationRetryPrompt(validationError) {
   const standardTasksMode = phase === 'spec' || phase === 'planning';
   const compactValidationError = compactArtifactValidationError(validationError);
@@ -6373,12 +6684,15 @@ function buildArtifactValidationRetryPrompt(validationError) {
           : \`- Write or repair \${specDir}/\${artifacts.implementationPlan}.\`,
       ];
 
+  const schedulingMetadataError = isPlanningSchedulingMetadataValidationError(rawValidationError);
   const retryIntro = [
     '## Retry Required',
     '',
     \`The previous CLI attempt exited successfully, but artifact validation failed: \${compactValidationError}\`,
     '',
-    'Repair the missing or invalid artifact now. Write the file, not just an explanation.',
+    schedulingMetadataError && standardTasksMode
+      ? 'The derived implementation_plan.md is missing runtime scheduling metadata. Repair tasks.md, because implementation_plan.md is generated from tasks.md in Standard mode.'
+      : 'Repair the missing or invalid artifact now. Write the file, not just an explanation.',
   ];
 
   const planRules = [
@@ -6388,6 +6702,12 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '- Include at least one executable task numbered like 1.1, 1.2, or 2.1.',
     '- A top-level phase alone is not enough.',
     '- Each task must include _Depends on_, _Evidence_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
+    ...(schedulingMetadataError && standardTasksMode
+      ? [
+          '- For Standard mode, make every executable tasks.md item carry metadata that can be copied into derived runtime work packages: _Depends on_, _Evidence_, _Done when_, and _Verification_.',
+          '- If runtime work packages group several tasks, keep each source task traceable enough that the generated work package still has Evidence and Verification metadata.',
+        ]
+      : []),
     '- Evidence must cite spec.md, requirements.md, context.md, project source/docs, existing project patterns, or verified official/industry references.',
     '- Use Project Memory workflow recipes, pattern, decision, or module insight entries as architecture/design pattern references for similar tasks when they match current source/docs.',
     '- Do not force named architecture or design pattern guidance onto simple, single-boundary tasks.',

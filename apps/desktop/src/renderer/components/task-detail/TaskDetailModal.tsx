@@ -176,15 +176,16 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
     task.status === 'pr_created' ||
     (task.status === 'human_review' && task.reviewReason === 'completed');
   const isPlanningExecution = state.hasActiveExecution && state.executionPhase === 'planning';
+  const isPlanningExecutionWithoutSubtasks = isPlanningExecution && totalSubtasks === 0;
   const planningProgressPercent = Math.round(
     Math.max(
       0,
       Math.min(100, task.executionProgress?.phaseProgress ?? task.executionProgress?.overallProgress ?? 0)
     )
   );
-  const showHeaderProgress = isCompletedTerminal || isPlanningExecution || ((state.isRunning || completedSubtasks > 0) && totalSubtasks > 0);
-  const headerProgressPercent = isCompletedTerminal ? 100 : isPlanningExecution ? planningProgressPercent : progressPercent;
-  const headerProgressLabel = isPlanningExecution
+  const showHeaderProgress = isCompletedTerminal || isPlanningExecutionWithoutSubtasks || totalSubtasks > 0;
+  const headerProgressPercent = isCompletedTerminal ? 100 : isPlanningExecutionWithoutSubtasks ? planningProgressPercent : progressPercent;
+  const headerProgressLabel = isPlanningExecutionWithoutSubtasks
     ? (task.executionProgress?.message || getTaskExecutionPhaseLabel(t, 'planning'))
     : isCompletedTerminal
       ? t('tasks:detail.completedLabel', { defaultValue: 'Completed' })
@@ -713,7 +714,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                     value={headerProgressPercent}
                     className={cn(
                       'h-1.5',
-                      isPlanningExecution && '[&>div]:bg-amber-500',
+                      isPlanningExecutionWithoutSubtasks && '[&>div]:bg-amber-500',
                       isCompletedTerminal && '[&>div]:bg-success'
                     )}
                   />

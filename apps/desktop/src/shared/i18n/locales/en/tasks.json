@@ -446,6 +446,12 @@
     "resizeSubtasksPane": "Resize subtasks pane",
     "resizeGraphPane": "Resize execution graph pane"
   },
+  "workPackageDiff": {
+    "historyUnavailable": "No local commit was recorded for this work package, so its changes cannot be isolated from other work packages.",
+    "noSourceChanges": "This work package completed without committed source changes.",
+    "fileNotChanged": "This file was not changed by the selected work package.",
+    "commitUnavailable": "The local commit for this work package is no longer available."
+  },
   "logs": {
     "runtimeLabel": "Runtime",
     "runtimeTab": "Runtime",

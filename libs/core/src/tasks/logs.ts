@@ -32,6 +32,9 @@ export interface AutocodeTaskLogEntry {
   tool_call_id?: string;
   subtask_id?: string;
   session?: number;
+  git_commit?: string;
+  git_commit_skipped?: string;
+  changed_files?: string[];
   detail?: string;
   subphase?: string;
   collapsed?: boolean;
@@ -634,6 +637,18 @@ function sanitizeEntry(value: unknown, fallbackPhase: AutocodeTaskLogPhase): Aut
     ...(source.tool_call_id ? { tool_call_id: sanitizeText(source.tool_call_id, 200) } : {}),
     ...(source.subtask_id ? { subtask_id: sanitizeText(source.subtask_id, 200) } : {}),
     ...(typeof source.session === 'number' ? { session: source.session } : {}),
+    ...(source.git_commit ? { git_commit: sanitizeText(source.git_commit, 80) } : {}),
+    ...(source.git_commit_skipped
+      ? { git_commit_skipped: sanitizeText(source.git_commit_skipped, 600) }
+      : {}),
+    ...(Array.isArray(source.changed_files)
+      ? {
+          changed_files: Array.from(new Set(source.changed_files
+            .filter((filePath): filePath is string => typeof filePath === 'string')
+            .map((filePath) => sanitizeText(filePath, 1000))
+            .filter(Boolean))).slice(0, 200),
+        }
+      : {}),
     ...(source.subphase ? { subphase: sanitizeText(source.subphase, 200) } : {}),
     ...(source.collapsed !== undefined ? { collapsed: Boolean(source.collapsed) } : {}),
     ...(isPlainRecord(source.model) ? { model: source.model } : {}),

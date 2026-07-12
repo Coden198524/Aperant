@@ -906,6 +906,158 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
       );
     });
 
+    it("should continue coding after planning iteration when work packages remain", async () => {
+      const { setupIpcHandlers } = await import("../ipc-handlers");
+      const { projectStore } = await import("../project-store");
+      const { taskStateManager } = await import("../task-state-manager");
+      setupIpcHandlers(
+        mockAgentManager as never,
+        mockTerminalManager as never,
+        () => mockMainWindow as never
+      );
+
+      mkdirSync(path.join(TEST_PROJECT_PATH, ".autocode", "specs"), { recursive: true });
+      const addResult = await ipcMain.invokeHandler("project:add", {}, TEST_PROJECT_PATH);
+      const projectId = (addResult as { data: { id: string } }).data.id;
+
+      const createResult = await ipcMain.invokeHandler(
+        "task:create",
+        {},
+        projectId,
+        "Planning continuation task",
+        "Task description",
+        { workflowMode: "standard" }
+      );
+      expect(createResult).toHaveProperty("success", true);
+      const createdTask = (createResult as { data: { id: string; specId: string } }).data;
+
+      const specDir = path.join(TEST_PROJECT_PATH, ".autocode", "specs", createdTask.specId);
+      writeFileSync(path.join(specDir, "spec.md"), "# Spec\n");
+      writeFileSync(
+        path.join(specDir, "implementation_plan.md"),
+        createImplementationPlanMarkdown({
+          feature: "Planning continuation task",
+          status: "in_progress",
+          executionPhase: "planning",
+        }),
+        "utf-8"
+      );
+      projectStore.invalidateTasksCache(projectId);
+
+      const task = projectStore.getTasks(projectId).find((item) => item.id === createdTask.id);
+      const project = projectStore.getProject(projectId);
+      expect(task).toBeDefined();
+      expect(project).toBeDefined();
+
+      taskStateManager.handleUiEvent(createdTask.id, { type: "PLANNING_STARTED" }, task!, project!);
+      mockAgentManager.emit("task-event", createdTask.id, {
+        type: "PLANNING_COMPLETE",
+        taskId: createdTask.id,
+        specId: createdTask.specId,
+        projectId,
+        timestamp: new Date().toISOString(),
+        eventId: `${createdTask.id}-planning-complete`,
+        sequence: 1,
+        hasSubtasks: true,
+        subtaskCount: 3,
+        incompleteSubtaskCount: 1,
+        continueAfterPlanning: true,
+        requireReviewBeforeCoding: false,
+      }, projectId);
+
+      expect(taskStateManager.getCurrentState(createdTask.id, projectId)).toBe("coding");
+
+      mockAgentManager.emit("exit", createdTask.id, 0, "task-execution", projectId);
+
+      expect(mockAgentManager.startTaskExecution).toHaveBeenCalledWith(
+        createdTask.id,
+        TEST_PROJECT_PATH,
+        createdTask.specId,
+        expect.objectContaining({ forcePlanning: false }),
+        projectId
+      );
+      expect(mockMainWindow.webContents.send).not.toHaveBeenCalledWith(
+        "task:statusChange",
+        createdTask.id,
+        "human_review",
+        projectId,
+        "plan_review"
+      );
+    });
+
+    it("should wait for manual review after a forced planning iteration", async () => {
+      const { setupIpcHandlers } = await import("../ipc-handlers");
+      const { projectStore } = await import("../project-store");
+      const { taskStateManager } = await import("../task-state-manager");
+      setupIpcHandlers(
+        mockAgentManager as never,
+        mockTerminalManager as never,
+        () => mockMainWindow as never
+      );
+
+      mkdirSync(path.join(TEST_PROJECT_PATH, ".autocode", "specs"), { recursive: true });
+      const addResult = await ipcMain.invokeHandler("project:add", {}, TEST_PROJECT_PATH);
+      const projectId = (addResult as { data: { id: string } }).data.id;
+
+      const createResult = await ipcMain.invokeHandler(
+        "task:create",
+        {},
+        projectId,
+        "Forced planning review task",
+        "Task description",
+        { workflowMode: "standard" }
+      );
+      expect(createResult).toHaveProperty("success", true);
+      const createdTask = (createResult as { data: { id: string; specId: string } }).data;
+
+      const specDir = path.join(TEST_PROJECT_PATH, ".autocode", "specs", createdTask.specId);
+      writeFileSync(path.join(specDir, "spec.md"), "# Spec\n");
+      writeFileSync(
+        path.join(specDir, "implementation_plan.md"),
+        createImplementationPlanMarkdown({
+          feature: "Forced planning review task",
+          status: "in_progress",
+          executionPhase: "planning",
+        }),
+        "utf-8"
+      );
+      projectStore.invalidateTasksCache(projectId);
+
+      const task = projectStore.getTasks(projectId).find((item) => item.id === createdTask.id);
+      const project = projectStore.getProject(projectId);
+      expect(task).toBeDefined();
+      expect(project).toBeDefined();
+
+      taskStateManager.handleUiEvent(createdTask.id, { type: "PLANNING_STARTED" }, task!, project!);
+      mockAgentManager.emit("task-event", createdTask.id, {
+        type: "PLANNING_COMPLETE",
+        taskId: createdTask.id,
+        specId: createdTask.specId,
+        projectId,
+        timestamp: new Date().toISOString(),
+        eventId: `${createdTask.id}-forced-planning-complete`,
+        sequence: 1,
+        hasSubtasks: true,
+        subtaskCount: 3,
+        incompleteSubtaskCount: 1,
+        continueAfterPlanning: false,
+        requireReviewBeforeCoding: true,
+      }, projectId);
+
+      expect(taskStateManager.getCurrentState(createdTask.id, projectId)).toBe("plan_review");
+
+      mockAgentManager.emit("exit", createdTask.id, 0, "task-execution", projectId);
+
+      expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();
+      expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+        "task:statusChange",
+        createdTask.id,
+        "human_review",
+        projectId,
+        "plan_review"
+      );
+    });
+
     it("should fail planning instead of entering plan review when spec or subtasks are missing", async () => {
       const { setupIpcHandlers } = await import("../ipc-handlers");
       const { projectStore } = await import("../project-store");

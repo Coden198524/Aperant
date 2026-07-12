@@ -502,6 +502,87 @@ describe('Task Store', () => {
       expect(task.executionProgress?.phase).toBe('planning');
     });
 
+    it('should reopen completed review when Request Changes active planning plan arrives', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'human_review',
+          reviewReason: 'completed',
+          executionProgress: {
+            phase: 'complete',
+            phaseProgress: 100,
+            overallProgress: 100,
+          }
+        })]
+      });
+
+      const plan = createTestPlan({
+        status: 'in_progress',
+        xstateState: 'planning',
+        executionPhase: 'planning',
+        phases: [
+          {
+            phase: 1,
+            name: 'Request Changes iteration',
+            type: 'implementation',
+            subtasks: [
+              { id: 'old-1', title: 'Already done', description: 'Already done', status: 'completed' },
+              { id: 'new-1', title: 'Requested change', description: 'Requested change', status: 'pending' }
+            ]
+          }
+        ]
+      } as Partial<ImplementationPlan> & { executionPhase: string });
+
+      useTaskStore.getState().updateTaskFromPlan('task-1', plan);
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.status).toBe('in_progress');
+      expect(task.reviewReason).toBeUndefined();
+      expect(task.executionProgress?.phase).toBe('planning');
+      expect(task.executionProgress?.phaseProgress).toBe(0);
+      expect(task.executionProgress?.overallProgress).toBe(0);
+      expect(task.subtasks.map(subtask => subtask.status)).toEqual(['completed', 'pending']);
+    });
+
+    it('should replace completed review with plan review when Request Changes planning awaits approval', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'human_review',
+          reviewReason: 'completed',
+          executionProgress: {
+            phase: 'complete',
+            phaseProgress: 100,
+            overallProgress: 100,
+          }
+        })]
+      });
+
+      const plan = createTestPlan({
+        status: 'human_review',
+        reviewReason: 'plan_review',
+        xstateState: 'plan_review',
+        executionPhase: 'planning',
+        phases: [
+          {
+            phase: 1,
+            name: 'Replanned implementation',
+            type: 'implementation',
+            subtasks: [
+              { id: 'new-1', title: 'Requested change', description: 'Requested change', status: 'pending' }
+            ]
+          }
+        ]
+      } as Partial<ImplementationPlan> & { executionPhase: string });
+
+      useTaskStore.getState().updateTaskFromPlan('task-1', plan);
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.status).toBe('human_review');
+      expect(task.reviewReason).toBe('plan_review');
+      expect(task.executionProgress?.phase).toBe('planning');
+      expect(task.subtasks.map(subtask => subtask.status)).toEqual(['pending']);
+    });
     it('should NOT modify status from non-terminal plan (XState is source of truth)', () => {
       useTaskStore.setState({
         tasks: [createTestTask({ id: 'task-1', status: 'ai_review' })]

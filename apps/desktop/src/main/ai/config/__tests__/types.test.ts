@@ -49,7 +49,16 @@ describe('buildThinkingProviderOptions', () => {
     expect(buildThinkingProviderOptions('deepseek-v4-pro', 'xhigh')).toEqual({
       openaiCompatible: {
         thinking: { type: 'enabled' },
-        reasoning_effort: 'max',
+        reasoning_effort: 'xhigh',
+      },
+    });
+  });
+
+  it('should normalize legacy max before building provider options', () => {
+    expect(buildThinkingProviderOptions('deepseek-v4-pro', 'max' as ThinkingLevel)).toEqual({
+      openaiCompatible: {
+        thinking: { type: 'enabled' },
+        reasoning_effort: 'xhigh',
       },
     });
   });

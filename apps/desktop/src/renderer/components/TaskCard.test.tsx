@@ -167,4 +167,32 @@ describe('TaskCard', () => {
     expect(progress).toHaveAttribute('data-phase', 'complete');
     expect(progress).toHaveAttribute('data-phase-progress', '100');
   });
+
+  it('does not show stale complete progress after request changes restarts a task', () => {
+    const task = createTask();
+    task.status = 'in_progress';
+    task.reviewReason = undefined;
+    task.executionProgress = {
+      phase: 'complete',
+      phaseProgress: 100,
+      overallProgress: 100,
+      message: 'Previous run completed',
+    };
+    task.subtasks = [
+      { id: 'subtask-1', title: 'Already done', description: 'Already done', status: 'completed', files: [] },
+      { id: 'subtask-2', title: 'Requested change', description: 'Requested change', status: 'pending', files: [] },
+    ];
+
+    render(
+      <TaskCard
+        task={task}
+        onClick={vi.fn()}
+      />,
+    );
+
+    const progress = screen.getByTestId('phase-progress-indicator');
+    expect(progress).not.toHaveAttribute('data-phase', 'complete');
+    expect(progress).toHaveAttribute('data-phase', 'planning');
+    expect(progress).toHaveAttribute('data-phase-progress', '0');
+  });
 });
