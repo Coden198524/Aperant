@@ -17,7 +17,7 @@ Set `needs_self_critique: true` only for complex or high-risk work.
 
 ## Route Hints
 
-- Balanced `simple`: local Standard light plan + deterministic validation.
-- Balanced `standard` without research/self-critique: compact `quick_spec` + deterministic validation.
-- Balanced `standard` with research: requirements -> research -> spec_writing -> planning -> deterministic validation.
-- Conservative/phased keeps the fuller route; complex adds research and self-critique.
+- Every route preserves the Standard owner chain: requirements -> spec_writing -> requirement_model -> domain_model -> design -> design_model -> implementation_model -> design_review -> planning -> deterministic validation.
+- Balanced `simple` and bounded `standard` work may omit discovery, research, and self-critique, but never an owner stage.
+- Add research before spec_writing only when external evidence is required.
+- Conservative/phased may retain discovery; complex work may add research and self-critique.

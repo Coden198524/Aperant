@@ -811,7 +811,7 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
                 expect.objectContaining({
                   id: directSubtaskId,
                   status: "failed",
-                  completed_at: expect.any(String),
+                  updated_at: expect.any(String),
                 }),
               ]),
             }),
@@ -832,7 +832,7 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
         xstateState?: string;
         executionPhase?: string;
         direct_execution?: { outcome?: string; ai_coding_quality?: Record<string, unknown> };
-        phases?: Array<{ subtasks?: Array<{ id?: string; status?: string; completed_at?: string }> }>;
+        phases?: Array<{ subtasks?: Array<{ id?: string; status?: string; completed_at?: string; updated_at?: string }> }>;
       } | null;
       expect(savedPlan?.status).toBe("error");
       expect(savedPlan?.reviewReason).toBe("errors");
@@ -843,14 +843,15 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
         id: directSubtaskId,
         status: "failed",
       });
-      expect(savedPlan?.phases?.[0]?.subtasks?.[0]?.completed_at).toEqual(expect.any(String));
+      expect(savedPlan?.phases?.[0]?.subtasks?.[0]?.updated_at).toEqual(expect.any(String));
+      expect(savedPlan?.phases?.[0]?.subtasks?.[0]?.completed_at).toBeUndefined();
       expect(savedPlan?.direct_execution?.ai_coding_quality).toMatchObject({
         fallback: "clean-exit",
         fallbackReason: "direct-run-result-not-successful",
       });
     });
 
-    it("should require manual plan review before coding when requireReviewBeforeCoding is enabled", async () => {
+    it("should honor planner-required review before coding without task metadata", async () => {
       const { setupIpcHandlers } = await import("../ipc-handlers");
       const { projectStore } = await import("../project-store");
       const { taskStateManager } = await import("../task-state-manager");
@@ -870,7 +871,7 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
         projectId,
         "Require review task",
         "Task description",
-        { requireReviewBeforeCoding: true }
+        { workflowMode: "standard" }
       );
       expect(createResult).toHaveProperty("success", true);
       const createdTask = (createResult as { data: { id: string; specId: string } }).data;
@@ -893,6 +894,22 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
       expect(project).toBeDefined();
 
       taskStateManager.handleUiEvent(createdTask.id, { type: "PLANNING_STARTED" }, task!, project!);
+      mockAgentManager.emit("task-event", createdTask.id, {
+        type: "PLANNING_COMPLETE",
+        taskId: createdTask.id,
+        specId: createdTask.specId,
+        projectId,
+        timestamp: new Date().toISOString(),
+        eventId: `${createdTask.id}-planning-review-required`,
+        sequence: 1,
+        hasSubtasks: true,
+        subtaskCount: 1,
+        incompleteSubtaskCount: 1,
+        continueAfterPlanning: false,
+        requireReviewBeforeCoding: true,
+      }, projectId);
+
+      expect(taskStateManager.getCurrentState(createdTask.id, projectId)).toBe("plan_review");
       mockAgentManager.emit("exit", createdTask.id, 0, "spec-creation", projectId);
 
       expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();

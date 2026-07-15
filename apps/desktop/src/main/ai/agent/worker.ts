@@ -197,8 +197,13 @@ function getSpecPhaseDisplayName(phase: SpecPhase, language?: string): string {
         spec_writing: '\u89c4\u683c\u6587\u6863',
         self_critique: '\u81ea\u6211\u5ba1\u67e5',
         planning: '\u4efb\u52a1\u8ba1\u5212',
+        requirement_model: '\u9700\u6c42\u6a21\u578b',
+        domain_model: '\u9886\u57df\u6a21\u578b',
+        design: '\u67b6\u6784\u51b3\u7b56',
+        design_model: '\u8bbe\u8ba1\u6a21\u578b',
+        implementation_model: '\u5b9e\u73b0\u6a21\u578b',
+        design_review: '\u72ec\u7acb\u8bbe\u8ba1\u8bc4\u5ba1',
         validation: '\u8ba1\u5212\u6821\u9a8c',
-        quick_spec: '\u6807\u51c6\u8f7b\u91cf\u89c4\u5212',
       }
     : {
         complexity_assessment: 'Complexity assessment',
@@ -210,8 +215,13 @@ function getSpecPhaseDisplayName(phase: SpecPhase, language?: string): string {
         spec_writing: 'Specification writing',
         self_critique: 'Self critique',
         planning: 'Task planning',
+        requirement_model: 'Requirement model',
+        domain_model: 'Domain model',
+        design: 'Architecture decision',
+        design_model: 'Design model',
+        implementation_model: 'Implementation model',
+        design_review: 'Independent design review',
         validation: 'Plan validation',
-        quick_spec: 'Standard light planning',
       };
 
   return labels[phase] ?? phase.replace(/_/g, ' ');
@@ -728,17 +738,17 @@ function buildPlanReviewIterationDirective(session: SerializableSessionConfig): 
     'This run was started from Request Changes and must update the existing task plan incrementally before coding.',
     `Read ${promptSpecDir}/HUMAN_INPUT.md and treat it as required reviewer feedback.`,
     `If ${promptSpecDir}/change_requests.jsonl exists, use its latest entry as the active same-task iteration contract.`,
-    `Update only affected parts of ${promptSpecDir}/spec.md, ${promptSpecDir}/requirements.md, and ${promptSpecDir}/tasks.md where the feedback changes requirements, acceptance criteria, design decisions, task scope, or verification.`,
-    `Do not edit ${promptSpecDir}/implementation_plan.md directly; the runtime derives it from validated tasks.md after the Standard artifacts are updated.`,
-    `Do not make ${promptSpecDir}/implementation_plan.md the only changed planning artifact when the feedback changes requirements, design, user behavior, or task scope.`,
-    'Only edit affected requirement IDs, design notes, risks, acceptance criteria, and task checklist items. Keep unaffected sections stable.',
-    'Keep one canonical tasks.md checklist item per behavior/file/requirement boundary. If represented work needs revision, edit that item in place, reset it to pending, and put any needs_revision marker only in a detail note or metadata line instead of appending a duplicate task.',
-    'Add pending tasks only for genuinely new requirements or verification gaps, and remove or compact obsolete executable checklist items after recording the change request. Never prefix task titles or work package titles with needs_revision, obsolete, or other state labels.',
+    `Read the latest change request impacts/flowDocuments and run only the affected owner stages in order: ${promptSpecDir}/requirements.md, spec.md, requirement_model.md, domain_model.md, design.md, design_model.md, implementation_model.md, design_review.md, then tasks.md.`,
+    'Each stage writes only its own artifact. requirements.md owns facts; spec.md owns SCN-* behavior; the five-file design package separately owns RM, DOM, architecture/ADR, detailed design, and IMP mapping; tasks.md owns static work definitions.',
+    `Do not edit ${promptSpecDir}/implementation_plan.md; the runtime derives its slim status/timing/retry/failure/commit ledger after tasks.md validation.`,
+    'Reference stable IDs across artifacts instead of copying requirement, evidence, design, or task prose. Keep unaffected IDs and sections stable.',
+    'Keep every tasks.md checkbox [ ]. Completed task definitions are immutable history: preserve them unchanged and add revised work under a new task ID. Still-pending definitions may be revised in place.',
+    'Add task definitions only for genuinely new requirements, revisions, or verification gaps. Preserve unaffected dependencies and never prefix task or work-package titles with revision, obsolete, retry, or state labels.',
     'Every new or revised requirement/design/task must carry Evidence; if evidence is missing, add an assumption/open question or validation task instead of guessing.',
     'Add or update focused verification commands for every new or revised task so the next coding pass can test and commit through the normal task flow.',
     'Keep this as a planning-only run: do not implement code, do not run coding subtasks, and do not mark subtasks completed.',
     'If a previous iteration planning attempt was interrupted, continue from the existing Standard artifacts. Read the current tasks.md first, repair partial/truncated/inconsistent checklist content in place, and keep the original planning direction unless the latest feedback explicitly changes it.',
-    'Do not discard tasks.md or restart planning from scratch during recovery. Preserve completed, obsolete, and unaffected task history for reviewability; only reset or add the work items required by the current change request.',
+    'Do not discard tasks.md or restart planning from scratch during recovery. Preserve completed and unaffected definition history plus dependencies; only revise pending definitions or add new IDs required by the current change request.',
     'Preserve useful parts of the previous Autocode Standard documents when they still match the reviewer feedback. Do not regenerate unaffected requirements or task sections.',
   ];
 
@@ -901,7 +911,7 @@ async function assemblePrompt(
   }
 
   let promptWithLanguage = appendLanguageRequirement(promptWithContext, session.language);
-  if (promptName === 'planner' || promptName === 'followup_planner' || promptName === 'spec_quick') {
+  if (promptName === 'planner' || promptName === 'followup_planner') {
     const planRequirement = getImplementationPlanLanguageRequirement(session.language);
     if (planRequirement) {
       promptWithLanguage += `\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n${planRequirement}`;
@@ -909,17 +919,6 @@ async function assemblePrompt(
     if (session.forcePlanning === true) {
       promptWithLanguage += `\n\n${buildPlanReviewIterationDirective(session)}`;
     }
-  }
-  if (promptName === 'spec_quick' && isAggressiveWorkflow(session)) {
-    promptWithLanguage += [
-      '',
-      '## AGGRESSIVE WORKFLOW PLAN LIMIT',
-      'This task is running in aggressive mode. Keep the plan optimized for a single coder session.',
-      '- Write exactly 1 implementation phase.',
-      '- Write exactly 1 pending subtask unless the user explicitly requested independent staged delivery.',
-      '- Put the full implementation scope, files, and verification in that one subtask.',
-      '- Do not split by component, file, test, cleanup, or other internal implementation area for a single-deliverable task.',
-    ].join('\n');
   }
   if (promptName === 'coder' && isAggressiveWorkflow(session)) {
     promptWithLanguage += [
@@ -1970,7 +1969,9 @@ async function runBuildOrchestrator(
     agentProfile,
 
     generatePrompt: async (agentType, _phase, context) => {
-      const promptName = resolvePromptNameForAgent(agentType);
+      const promptName = context.designStage
+        ? specPhaseToPromptName(context.designStage)
+        : resolvePromptNameForAgent(agentType);
       let prompt = await assemblePrompt(promptName, session);
 
       // Inject schema validation error feedback on retry so the planner knows what to fix
@@ -1991,6 +1992,7 @@ async function runBuildOrchestrator(
         runConfig.subtaskId,
         session.language,
         session.forcePlanning === true && runConfig.phase === 'planning',
+        runConfig.specPhase,
       );
       return runSingleSession(
         runConfig.agentType,
@@ -2619,6 +2621,7 @@ function buildKickoffMessage(
   subtaskId?: string,
   language?: SerializableSessionConfig['language'],
   forcePlanning?: boolean,
+  specPhase?: string,
 ): string {
   const promptSpecDir = formatPathForPrompt(specDir);
   const promptProjectDir = formatPathForPrompt(projectDir);
@@ -2627,6 +2630,7 @@ function buildKickoffMessage(
     specDir,
     projectDir,
     subtaskId,
+    specPhase,
     language,
     forcePlanning,
     focusedCoderKickoff: subtaskId

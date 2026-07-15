@@ -144,6 +144,7 @@ function coerceSubtask(input: unknown): unknown {
     files_to_create: raw.files_to_create ?? raw.new_files ?? undefined,
     // Coerce dependency aliases into canonical string ids.
     depends_on: coerceStringArray(raw.depends_on ?? raw.dependsOn ?? raw.dependencies),
+    design_refs: coerceStringArray(raw.design_refs ?? raw.designRefs),
     // Coerce verification object: accept method as alias for type.
     // Non-object verification values (strings, etc.) are NOT coerced — let Zod
     // reject them so the validation retry loop can tell the LLM what's wrong.
@@ -159,6 +160,7 @@ export const PlanSubtaskSchema = z.preprocess(coerceSubtask, z.object({
   files_to_create: z.array(z.string()).optional(),
   files_to_modify: z.array(z.string()).optional(),
   depends_on: z.array(z.string()).optional(),
+  design_refs: z.array(z.string()).optional(),
   verification: z.object({
     type: z.string(),
     run: z.string().optional(),
@@ -248,7 +250,7 @@ function coercePlan(input: unknown): unknown {
   // If model wrote flat steps/tasks/implementation_steps instead of phases[], wrap in a single phase.
   // Many models produce a flat array of steps rather than the nested
   // phases[].subtasks[] structure our schema requires.
-  // The Standard light planning agent commonly writes "implementation_steps" as well.
+  // Older Standard planning agents commonly wrote "implementation_steps" as well.
   let phases = raw.phases;
   if (!phases && (raw.steps || raw.tasks || raw.implementation_steps)) {
     const items = (raw.steps ?? raw.tasks ?? raw.implementation_steps) as unknown[];

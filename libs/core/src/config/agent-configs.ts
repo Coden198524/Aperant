@@ -131,6 +131,8 @@ export type AgentType =
   | 'spec_orchestrator'
   | 'build_orchestrator'
   | 'planner'
+  | 'software_designer'
+  | 'design_critic'
   | 'coder'
   | 'direct_task'
   | 'qa_reviewer'
@@ -294,6 +296,18 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
       TOOL_RECORD_DISCOVERY,
     ],
     thinkingDefault: 'high',
+  },
+  software_designer: {
+    tools: [...SPEC_TOOLS],
+    mcpServers: ['context7', 'memory'],
+    autoClaudeTools: [],
+    thinkingDefault: 'xhigh',
+  },
+  design_critic: {
+    tools: [...SPEC_TOOLS],
+    mcpServers: ['context7'],
+    autoClaudeTools: [],
+    thinkingDefault: 'xhigh',
   },
   coder: {
     tools: [...ALL_BUILTIN_TOOLS],

@@ -31,6 +31,12 @@ import type { ProjectCapabilities, PromptContext, PromptValidationResult } from 
 
 const EXPECTED_PROMPT_FILES = [
   'planner.md',
+  'requirement_modeler.md',
+  'domain_modeler.md',
+  'software_designer.md',
+  'design_modeler.md',
+  'implementation_modeler.md',
+  'design_critic.md',
   'coder.md',
   'coder_recovery.md',
   'followup_planner.md',

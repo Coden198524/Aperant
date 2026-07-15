@@ -32,7 +32,7 @@ export interface AutocodeProjectPromptProfile {
   };
   workflow: {
     promptIntensity: AutocodePromptIntensity;
-    specStyle: 'quick' | 'standard' | 'full';
+    specStyle: 'standard' | 'full';
     planningGuidance: string;
     contextGuidance: string;
     validationGuidance: string;
@@ -135,17 +135,6 @@ ${formatBulletList([...conventions.architectureHints, ...conventions.workflowHin
 `;
 }
 
-function getSpecLengthGuidance(profile: AutocodeProjectPromptProfile): string {
-  switch (profile.workflow.specStyle) {
-    case 'quick':
-      return 'Keep `spec.md` concise: normally 20-60 lines.';
-    case 'standard':
-      return 'Keep `spec.md` focused but complete: normally 40-80 lines.';
-    default:
-      return 'Write enough `spec.md` detail to cover cross-module behavior, dependencies, validation, and risk, but avoid copied context or exhaustive checklists.';
-  }
-}
-
 function getComplexPlanningGuidance(profile: AutocodeProjectPromptProfile): string {
   if (profile.workflow.specStyle !== 'full' && profile.workflow.promptIntensity !== 'thorough') {
     return '- For genuinely complex tasks, preserve necessary work items in tasks.md instead of merging unrelated areas.';
@@ -160,8 +149,6 @@ function getComplexPlanningGuidance(profile: AutocodeProjectPromptProfile): stri
 
 function getSpecStyleLabel(profile: AutocodeProjectPromptProfile): string {
   switch (profile.workflow.specStyle) {
-    case 'quick':
-      return 'light Standard';
     case 'standard':
       return 'Standard';
     default:
@@ -308,81 +295,17 @@ Typecheck:
 ${formatCommands(profile.commands.typecheck)}`;
 }
 
-export function buildAutocodeSpecQuickPrompt(profile: AutocodeProjectPromptProfile): string {
-  const specLineBudget = profile.workflow.specStyle === 'quick' ? '20-60' : '40-80';
-  return [
-    buildGeneratedHeader(profile, 'spec_quick'),
-    '',
-    '## Role',
-    '',
-    'Write a compact Standard plan: one readable `spec.md` and one executable `tasks.md`.',
-    '',
-    '## Outputs',
-    '',
-    '- Write only `spec.md` and `tasks.md` in the spec directory.',
-    '- Do not write `implementation_plan.md`; the runtime derives it.',
-    '- Do not modify project source, git state, app JSON/JSONL state, manifests, settings, metadata, indexes, or parsed config.',
-    '',
-    buildToolCallJsonGuidance(),
-    '',
-    buildProjectConventionSection(profile),
-    '',
-    '## Process',
-    '',
-    '1. Use kickoff context and project docs first.',
-    '2. Read only files needed to identify the target change and closest pattern.',
-    `3. Keep \`spec.md\` to ${specLineBudget} lines with scope, requirements, affected files, evidence, and success criteria.`,
-    '4. Keep `tasks.md` concise and executable.',
-    '',
-    '## Task Contract',
-    '',
-    '- Split only by real behavior, contract, data shape, UI surface, risky error path, or verification scenario.',
-    '- Every executable task needs file intent, exactly one `_Depends on: ..._`, requirements, evidence, done signal, and verification.',
-    '- Shared files do not imply dependencies; the runtime file-conflict scheduler queues overlapping writes.',
-    '- Add architecture metadata only for cross-boundary, migration, schema/compatibility, or high-risk work.',
-    '- For analysis/documentation-only tasks, plan the reader answer first and source evidence later.',
-    buildRuntimeReadinessPromptRules(),
-    '',
-    '## Shape',
-    '',
-    '```markdown',
-    '# Tasks',
-    '',
-    'Feature: Task name',
-    'Workflow: simple',
-    'Status: pending',
-    '',
-    '- [ ] 1. Implementation',
-    '',
-    '- [ ] 1.1 Short action summary',
-    '  - Concrete implementation notes',
-    '  - _Files to modify: path/to/file_',
-    '  - _Depends on: none_',
-    '  - _Requirements: R1_',
-    '  - _Evidence: spec.md R1; path/to/file pattern_',
-    '  - _Done when: requested behavior works and verification passes_',
-    '  - _Verification: smallest reliable check_',
-    '```',
-    '',
-    '## Project Commands',
-    '',
-    buildProjectCommands(profile),
-    '',
-    'Final response: short completion note only.',
-  ].join('\n');
-}
-
 export function buildAutocodePlannerPrompt(profile: AutocodeProjectPromptProfile): string {
   return [
     buildGeneratedHeader(profile, 'planner'),
     '',
     '## Role',
     '',
-    'Create or repair one upstream `tasks.md`. The runtime derives `implementation_plan.md`; do not write it.',
+    'Create or repair the static definition catalog in `tasks.md`. The runtime derives `implementation_plan.md`; do not write it.',
     '',
     '## Output',
     '',
-    'Use Write/Edit for `tasks.md` in the spec directory. Update `spec.md` or `requirements.md` only when missing, stale, or required by real Request Changes feedback.',
+    'Write only `tasks.md` in the spec directory. Read approved `requirements.md`, `spec.md`, all five design-package files (`requirement_model.md`, `domain_model.md`, `design.md`, `design_model.md`, and `implementation_model.md`), and `design_review.md`; do not edit them.',
     '',
     buildToolCallJsonGuidance(),
     '',
@@ -390,7 +313,7 @@ export function buildAutocodePlannerPrompt(profile: AutocodeProjectPromptProfile
     '',
     '## Process',
     '',
-    '1. Use kickoff context first; read `spec.md`, `requirements.md`, or `context.md` only when needed for task details.',
+    '1. Read the approved requirement, scenario, and design IDs before defining work.',
     '2. Inspect only directly relevant project files when spec evidence is insufficient.',
     '3. Create concise checklist tasks from real dependency and project boundaries.',
     '4. Leave unknowns as assumptions, blocked items, or validation tasks; do not guess.',
@@ -399,15 +322,16 @@ export function buildAutocodePlannerPrompt(profile: AutocodeProjectPromptProfile
     '',
     '- Apply only when valid `HUMAN_INPUT.md` or non-empty `change_requests.jsonl` exists.',
     '- Treat the latest entry as the same-task contract, not a new task.',
-    '- Edit existing checklist items in place when they still represent the work; add tasks only for new requirements or verification gaps.',
+    '- Edit only still-pending definitions in place. Keep completed historical definitions unchanged and add revised work under a new task ID.',
     '- Never prefix task titles with revision, obsolete, retry, or history markers.',
     '',
     '## Task Rules',
     '',
-    '- Cover every requirement, scenario, acceptance criterion, or success criterion from `spec.md`/`requirements.md`.',
+    '- Cover every applicable R*, AC*, SCN-*, SYS-*, required IMP-*, and selected PAT-* ID.',
+    '- Resolve design IDs from their canonical package owner; never assume every ID is defined in `design.md`.',
     '- Split only when it improves execution safety or reviewability.',
     '- Keep each executable task small enough for one focused coding session.',
-    '- Every executable task needs precise file metadata, exactly one dependency line, `_Requirements: ..._`, one `_Evidence: ..._`, `_Done when: ..._`, and `_Verification: ..._`.',
+    '- Every executable task needs precise file metadata, exactly one dependency line, `_Requirements: ..._`, `_Design: ..._`, one `_Evidence: E*; ..._`, `_Done when: ..._`, and `_Verification: ..._`.',
     '- Shared files are not dependency evidence; the runtime file-conflict scheduler queues overlapping writes.',
     '- Add architecture metadata only for cross-boundary, migration, schema/compatibility, or high-risk work.',
     '- Do not add research, rollout, cleanup, or broad QA tasks unless task risk requires them.',
@@ -417,6 +341,10 @@ export function buildAutocodePlannerPrompt(profile: AutocodeProjectPromptProfile
     '## Checklist Shape',
     '',
     '```markdown',
+    '# Tasks',
+    '',
+    'Tasks-Contract: 1',
+    '',
     '- [ ] 1. Phase title',
     '  - Purpose',
     '',
@@ -424,11 +352,14 @@ export function buildAutocodePlannerPrompt(profile: AutocodeProjectPromptProfile
     '  - Implementation guidance',
     '  - _Files to modify: path/to/file_',
     '  - _Depends on: none_',
-    '  - _Requirements: R1_',
-    '  - _Evidence: spec.md R1; source pattern_',
+    '  - _Requirements: R1, AC1, SCN-001_',
+    '  - _Design: SYS-001, DES-001, FLOW-001, IMP-001_',
+    '  - _Evidence: E1; source pattern_',
     '  - _Done when: behavior works and verification passes_',
     '  - _Verification: targeted command or manual runtime check_',
     '```',
+    '',
+    'All phase and task checkboxes are [ ]; tasks.md never stores execution state.',
     '',
     '## Project Commands',
     '',
@@ -442,7 +373,7 @@ export function buildAutocodeCoderPrompt(profile: AutocodeProjectPromptProfile):
 
 ## Role
 
-Implement the next pending subtask in \`implementation_plan.md\`. Keep the change narrow and review-ready.
+Implement the current work package from the kickoff context. Keep the change narrow and review-ready.
 
 ${buildToolCallJsonGuidance()}
 
@@ -450,12 +381,12 @@ ${buildProjectConventionSection(profile)}
 
 ## Process
 
-1. Read \`implementation_plan.md\` and select the next pending subtask whose dependencies are complete.
-2. Read the task's evidence/files first; search only when those files are insufficient.
+1. Use the kickoff work-package details first. If they are absent, join the pending ledger entry's source task IDs with \`tasks.md\`; do not expect static task details in \`implementation_plan.md\`.
+2. Read the task's evidence/files and referenced IDs from their owning five-file design-package artifacts first; search only when those sources are insufficient.
 3. Identify the local contract before editing: inputs, outputs, lifecycle, side effects, errors, public APIs/schemas/config, persistence/data shape, and caller/callee expectations.
 4. Implement with existing project conventions.
 5. Run the smallest reliable verification.
-6. Update only the current subtask in \`implementation_plan.md\`: mark \`[x]\` when complete, or \`[-]\`/\`[!]\` with blocker evidence when blocked/failed.
+6. Report changed files, verification, completion evidence, blockers, and residual risk. The runtime records status, timing, retries, failures, summaries, and commits.
 
 ## Project Commands
 
@@ -465,6 +396,7 @@ ${buildProjectCommands(profile)}
 
 - Work on one subtask at a time.
 - Keep changes scoped to the subtask.
+- Do not edit \`tasks.md\` or \`implementation_plan.md\`; they are owned by planning and the runtime respectively.
 - Follow the design pattern decision in the plan or the nearest existing code; do not add unplanned named patterns unless clearly necessary.
 - Preserve public APIs, schemas, IPC/protocol contracts, config/env semantics, migrations, data formats, persistence, side effects, and error behavior unless the subtask requires a contract change.
 - If a contract changes, update affected callers, tests, fixtures, docs, and validation in the same pass.
@@ -545,7 +477,7 @@ ${buildProjectConventionSection(profile)}
 3. Fix only the reported blocking issues.
 4. Update callers, tests, schemas, configs, or docs when a fix intentionally changes a contract.
 5. Run the smallest relevant verification command available.
-6. Update the plan or QA notes only as needed to show fixes were applied.
+6. Report the fixes and verification evidence for the runtime and next QA pass to record.
 
 ## Project Commands
 
@@ -554,6 +486,7 @@ ${buildProjectCommands(profile)}
 ## Rules
 
 - Do not redesign or refactor unrelated code while fixing QA findings.
+- Do not edit \`tasks.md\`, \`implementation_plan.md\`, or the QA verdict; the planner, runtime, and reviewer own those artifacts.
 - Fix design pattern issues narrowly by aligning the affected code with the planned or existing pattern.
 - Preserve public APIs, schemas, IPC/protocols, config/env behavior, data formats, persistence, side effects, and error behavior unless QA explicitly requires a contract change.
 - Do not use placeholder code, TODO implementations, no-op handlers, fake data, disabled validation, broad type escapes, swallowed errors, or unrelated abstractions.
@@ -568,7 +501,6 @@ export function generateAutocodeProjectPromptOverrides(
   profile: AutocodeProjectPromptProfile,
 ): Record<string, string> {
   return {
-    spec_quick: buildAutocodeSpecQuickPrompt(profile),
     planner: buildAutocodePlannerPrompt(profile),
     coder: buildAutocodeCoderPrompt(profile),
     qa_reviewer: buildAutocodeQaReviewerPrompt(profile),

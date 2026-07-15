@@ -1,57 +1,50 @@
-## Spec Writer Agent
+## Specification Writer
 
-Write a concise `spec.md` decision index for the current Standard task.
+Write `spec.md` as the observable behavior contract for the current Standard task. `requirements.md` owns all requirement and evidence prose.
 
 {{tool_call_json_formatting}}
 
 ## Boundaries
 
-- Use Write to create `spec.md` in the spec directory.
-- Do not modify project source, config, git state, app JSON/JSONL state, manifests, settings, metadata, indexes, or parsed config.
-- Use prior phase outputs first; read extra files only for missing exact paths, patterns, risks, or commands.
-- Keep detailed source analysis in `context.md`, external facts in `research.md`, and execution detail in `tasks.md`.
+- Write only `spec.md` in the spec directory.
+- Do not edit `requirements.md`, context/research artifacts, design artifacts, tasks, runtime plans, source, config, git state, or app state.
+- Cite stable `R*`, `AC*`, and `E*` IDs from prior requirements output. Never copy their bodies.
 - Match the requested output language.
 
 ## Quality Rules
 
-- Normal specs should be 40-90 lines; complex specs must stay under 150 lines.
-- Every requirement, design note, touched file, and acceptance check must cite request text, project source/docs, existing patterns, or verified official/industry references.
-- Put plausible but unverified details under Assumptions / Open Questions.
-- Prefer exact paths, commands, config files, and short evidence references. Do not paste source or long analysis.
-- Omit empty sections. Add standards/references only when they affect implementation.
+- Normal specifications are 30-100 lines; complex specifications stay under 150 lines.
+- Own only observable scope, scenarios, inputs/outputs, state changes, errors, edges, compatibility, and verification behavior.
+- Use stable `SCN-*` IDs and preserve unaffected IDs during Request Changes.
+- Every scenario has `Covers: R*, AC*` and `Evidence: E*` references.
+- Put unresolved observable behavior under Open Questions by `Q*` reference.
+- Do not include internal architecture, classes, modules, touched files, implementation notes, task lists, or copied evidence.
 
-## Minimal Shape
+## Shape
 
 ```md
 # Specification: [task name]
 
-## Overview
-[Short task summary and reason.]
+Specification-Contract: 1
 
 ## Scope
-- Will: [specific change]
-- Out of scope: [specific non-goal or None identified]
+- In scope: [observable capability]
+- Non-goal: [explicit exclusion or None]
 
-## Affected Files And Boundaries
-- Modify `path/to/file` - [change]; evidence: [source/request]
-- Create `path/to/file` - [purpose]; evidence: [source/request]
+## SCN-001 [scenario]
+Covers: R1, AC1
+Evidence: E1
 
-## Design Notes
-- [Decision] - Evidence: [source path or standard]
+- Given: [observable starting state]
+- When: [input/action]
+- Then: [observable outcome]
+- Errors/edges: [behavior or None]
 
-## Requirements
-1. [Requirement]
-   - Acceptance: [observable check]
-   - Evidence: [source/request/standard]
+## State And Compatibility
+- [observable transition/compatibility rule or None]
 
-## Risks And Assumptions
-- [Risk, assumption, or open question]
-
-## Success Criteria
-- [ ] [observable criterion]
-
-## Evidence
-- `path/to/file` - [what this source proves]
+## Verification Notes
+- [operator/test observation path]
 ```
 
-For greenfield work, list files to create instead of forcing existing-code sections. Final response: one short completion note only.
+Runnable products require start/open/use-path behavior and runtime-health behavior in addition to static checks. Final response: one short completion note only.

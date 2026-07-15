@@ -804,6 +804,53 @@ describe('standard plan quality', () => {
     expect(result.errors.join('\n')).not.toContain('task 2.5 is too broad');
   });
 
+  it('does not count external-colon file intent and done criteria as task behavior', () => {
+    const result = validateAutocodeStandardPlanArtifacts({
+      requireTaskEvidence: true,
+      tasksMarkdown: [
+        '# Tasks',
+        '',
+        '- [ ] 3.4 实现运行中与终局的安全重开',
+        '  - _Depends on_: 3.3',
+        '  - _Requirements_: R4 / AC4',
+        '  - _Design_: ADR-003；FLOW-001；FLOW-003；IMP-003',
+        '  - _Evidence_: requirements.md R4/AC4 与 design.md FLOW-003 规定统一重置流程。',
+        '  - _File intent_: 增量修改 `app.js`，接通统一重开处理器并复用初始化路径。',
+        '  - _Done when_: 运行中或终局重开都恢复合法状态，重复重开仍只有一个计时器。',
+        '  - _Verification_: 从默认入口分别在运行中、终局和连续点击时重开。',
+        '',
+      ].join('\n'),
+    });
+
+    expect(result.errors.join('\n')).not.toContain('task 3.4 is too broad');
+  });
+
+  it('allows a validation-led cross-requirement package and lets design.md own architecture detail', () => {
+    const result = validateAutocodeStandardPlanArtifacts({
+      requireTaskEvidence: true,
+      requireDesign: true,
+      designMarkdown: '# Design',
+      designReviewMarkdown: 'Status: PASSED',
+      tasksMarkdown: [
+        '# Tasks',
+        '',
+        '- [ ] 3.5 完成默认入口端到端与响应式验收',
+        '  - _Depends on_: 2.1；2.2；3.2；3.3；3.4',
+        '  - _Requirements_: R1 / AC1；R2 / AC2；R3 / AC3；R4 / AC4；R5 / AC5',
+        '  - _Design_: ADR-006；FLOW-001；FLOW-002；FLOW-003；IMP-004',
+        '  - _Evidence_: spec.md AC1-AC5、requirements.md R1-R5 与 design.md Traceability。',
+        '  - _File intent_: 验收仅在发现缺口时最小修改 `serve.mjs`、`index.html`、`styles.css`、`game-logic.mjs`、`app.js` 或 `tests/game-logic.test.mjs`。',
+        '  - _Done when_: 规则测试全绿并从默认入口完整演练 R1-R5。',
+        '  - _Verification_: 运行规则测试和 HTTP 入口浏览器验收。',
+        '',
+      ].join('\n'),
+    });
+    const errors = result.errors.join('\n');
+
+    expect(errors).not.toContain('task 3.5 is too broad');
+    expect(errors).not.toContain('no visible Architecture And Design Pattern References section');
+  });
+
   it('rejects thin complex architecture references and missing task-level guidance', () => {
     const result = validateAutocodeStandardPlanArtifacts({
       requireSpecEvidence: true,

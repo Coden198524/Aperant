@@ -31,6 +31,277 @@ function createDirectCustomLatestContinuation(scriptPath: string, displayName = 
   };
 }
 
+const LEGACY_VALID_STANDARD_DESIGN = [
+  '# Design: Standard planning fixture',
+  'Design-Contract: 3',
+  'Design-Depth: local',
+  'Design-Revision: 1',
+  '',
+  '## Scope And Evidence',
+  '- Analysis direction: forward-design',
+  '- Primary source of truth: mixed',
+  '- Requirement evidence: requirement - requirements.md R-001 defines the command result',
+  '- Project evidence: observed - src/existing.ts#handleCommand owns the current behavior',
+  '- Design inferences: none - the requirement and source establish the local boundary',
+  '- Unresolved evidence: none',
+  '## Complexity Assessment',
+  '- Primary complexity driver: one local behavior',
+  '- Business rules and state: preserve the existing task invariant',
+  '- Boundary and contract impact: no public contract changes',
+  '- Quality-attribute risks: existing command compatibility',
+  '- Depth rationale: one existing module is affected',
+  '## Existing Architecture Fit',
+  'Reuse src/existing.ts and the current dependency direction.',
+  '## Engineering Adaptation',
+  '- Delivery context: existing-system',
+  '- System shape: local-utility',
+  '- Project paradigm: mixed',
+  '- Paradigm rationale: preserve the existing TypeScript module boundary',
+  '- Object-model applicability: low',
+  '- Object-model rationale: one local behavior has no independent object lifecycle',
+  '- Existing boundaries to preserve: src/existing.ts module boundary',
+  '- Existing patterns to reuse: src/existing.ts command handler',
+  '- Language/framework constraints: TypeScript existing runtime',
+  '- Integration and test seams: src/existing.test.ts focused test',
+  '## Design Budget',
+  '- Expected modules changed: 2',
+  '- New modules allowed: 0',
+  '- New public contracts allowed: 0',
+  '- New dependencies allowed: 0',
+  '- New architectural patterns: none',
+  '## Architecture Decision',
+  '### ADR-001 Preserve the existing boundary',
+  '- Decision: preserve the current caller-to-command dependency direction',
+  '- Status: accepted',
+  '- Decision drivers: RM-001 changes one local result without a public contract change',
+  '- Alternatives considered: splitting the command into additional boundaries was rejected',
+  '- Trade-offs: minimal change radius while retaining the current synchronous command',
+  '- Evidence basis: requirement - requirements.md R-001; observed - src/existing.ts#handleCommand',
+  '## Requirement Model',
+  '### RM-001 Complete the requested behavior',
+  '- Actor and goal: user obtains the requested result',
+  '- Business context: Who=user; What=request result; Why=complete command workflow; When=command invocation; Where=existing caller; How=invoke the established command',
+  '- Trigger and preconditions: existing workflow is available',
+  '- Normal flow: invoke, compute, and return the result',
+  '- Alternate or failure flow: preserve the existing error',
+  '- Outcome: requested result is exposed',
+  '- Constraints: existing contract remains compatible',
+  '- Quality constraints: Compatibility=existing command contract; Reliability=preserve error behavior',
+  '- Evidence basis: requirement - requirements.md R-001',
+  '## Domain Model',
+  '### DOM-001 Existing task state',
+  '- Concept kind: entity',
+  '- Business meaning: current task execution status',
+  '- Identity and state: task identity and current status',
+  '- Behavior: validate supported status transitions',
+  '- Responsibilities: validate current status',
+  '- Rules and invariants: only supported status changes are accepted',
+  '- Ownership and lifecycle: task owns status for its lifecycle',
+  '- Relationships: command reads task status',
+  '- Software mapping: existing - src/existing.ts task state',
+  '- Evidence basis: observed - src/existing.ts#taskState',
+  '## System Responsibility Allocation',
+  '### SYS-001 Existing command boundary',
+  '- Subsystem or boundary: caller-to-command module boundary',
+  '- Allocated requirements: RM-001',
+  '- Owns: command result calculation and current error behavior',
+  '- Provides: compatible result to the existing caller',
+  '- Requires: DOM-001 current task state',
+  '- Data and control boundary: caller initiates control and DES-001 returns result data',
+  '- Failure ownership: DES-001 preserves the existing command error path',
+  '- Evidence basis: observed - src/existing.ts#handleCommand',
+  '## Design Model',
+  '### DES-001 Existing module responsibility',
+  '- Element: module - existing command module',
+  '- System allocation: SYS-001',
+  '- Role stereotype: module',
+  '- Owned state: none; reads DOM-001 task state',
+  '- Public operations: handle command',
+  '- Responsibilities: implement requested behavior',
+  '- Collaborators: existing caller',
+  '- Dependencies: current task state',
+  '- Encapsulation boundary: private command logic',
+  '- Does not own: caller rendering',
+  '- Evidence basis: observed - src/existing.ts#handleCommand',
+  '### FLOW-001 Existing runtime flow',
+  '- Trigger: caller invokes existing contract',
+  '- Participants: DES-001',
+  '- Steps: DES-001 reads DOM-001, computes, and returns the result',
+  '- State changes: none',
+  '- Failure paths: preserve existing error response',
+  '- Evidence basis: observed - src/existing.ts#handleCommand',
+  '## Change And Pattern Analysis',
+  '- Verified variation points: none',
+  '- Variation inventory: none',
+  '- Candidate patterns evaluated: none',
+  '- Simplest change mechanism: update the existing module',
+  '- Selected patterns: none',
+  '## Implementation Model',
+  '### IMP-001 Focused implementation',
+  '- Project files and symbols: src/existing.ts handler; src/existing.test.ts',
+  '- Design mapping: implements SYS-001, DES-001, and FLOW-001',
+  '- Integration constraints: preserve existing contract',
+  '- Verification: run the focused test',
+  '- Evidence basis: observed - src/existing.ts#handleCommand',
+  '## Applicable Design Principles',
+  '- Cohesion decision: keep one behavior in the existing module',
+  '- Coupling and dependency decision: preserve the current caller direction',
+  '- Encapsulation decision: keep command logic private to DES-001',
+  '- SOLID trade-offs: SRP applies and no interface is justified',
+  '- Underdesign checks: DES-001 remains a focused module rather than a generic manager',
+  '## Rejected Complexity',
+  '- Reject new services and event buses because the flow is local.',
+  '## Risks And Evolution',
+  'Preserve the existing public contract.',
+  '## Traceability',
+  '- RM-001 -> ADR-001 -> DOM-001 -> SYS-001 -> DES-001 -> FLOW-001 -> IMP-001',
+  '',
+].join('\n');
+
+function sectionRange(source: string, start: string, end?: string): string {
+  const startIndex = source.indexOf(start);
+  const endIndex = end ? source.indexOf(end, startIndex + start.length) : source.length;
+  return source.slice(startIndex, endIndex < 0 ? source.length : endIndex).trim();
+}
+
+function buildV4DesignPackage(source: string) {
+  const preArchitecture = source
+    .slice(0, source.indexOf('## Architecture Decision'))
+    .replace('Design-Contract: 3', 'Design-Contract: 4')
+    .trim();
+  const architectureDecision = sectionRange(source, '## Architecture Decision', '## Requirement Model');
+  const changeAnalysis = sectionRange(source, '## Change And Pattern Analysis', '## Implementation Model');
+  const closingSections = sectionRange(source, '## Applicable Design Principles');
+  const modelDocument = (title: string, kind: string, body: string) => [
+    `# ${title}: Standard planning fixture`,
+    'Design-Contract: 4',
+    'Design-Revision: 1',
+    'Design-Root: design.md',
+    `Model-Kind: ${kind}`,
+    '',
+    body,
+  ].join('\n');
+
+  return {
+    design: [
+      preArchitecture,
+      '## Architecture Candidates',
+      '- Architecture baseline: preserve the observed caller-to-command boundary',
+      '- Candidate count: 1',
+      '- Candidate comparison: existing boundary | exact fit | smallest radius | retains current coupling | low migration risk',
+      '- Selected architecture: existing caller-to-command boundary',
+      '- Selection rationale: observed ownership and local scope make the current boundary the smallest complete choice',
+      '- Rejected alternatives: new service layer rejected because it adds a boundary without a current variation',
+      '- Evolution trigger: multiple independent command policies or an external transport requirement',
+      architectureDecision,
+      '## Model Package',
+      '- Requirement model: requirement_model.md',
+      '- Domain model: domain_model.md',
+      '- Design model: design_model.md',
+      '- Implementation model: implementation_model.md',
+      changeAnalysis,
+      closingSections,
+    ].join('\n'),
+    requirementModel: modelDocument(
+      'Requirement Model',
+      'requirement',
+      sectionRange(source, '## Requirement Model', '## Domain Model'),
+    ),
+    domainModel: modelDocument(
+      'Domain Model',
+      'domain',
+      sectionRange(source, '## Domain Model', '## System Responsibility Allocation'),
+    ),
+    designModel: modelDocument(
+      'Design Model',
+      'design',
+      sectionRange(source, '## System Responsibility Allocation', '## Change And Pattern Analysis'),
+    ),
+    implementationModel: modelDocument(
+      'Implementation Model',
+      'implementation',
+      sectionRange(source, '## Implementation Model', '## Applicable Design Principles'),
+    ),
+  };
+}
+
+const VALID_STANDARD_DESIGN_PACKAGE = buildV4DesignPackage(LEGACY_VALID_STANDARD_DESIGN);
+const VALID_STANDARD_DESIGN = VALID_STANDARD_DESIGN_PACKAGE.design;
+const VALID_STANDARD_REQUIREMENT_MODEL = VALID_STANDARD_DESIGN_PACKAGE.requirementModel;
+const VALID_STANDARD_DOMAIN_MODEL = VALID_STANDARD_DESIGN_PACKAGE.domainModel;
+const VALID_STANDARD_DESIGN_MODEL = VALID_STANDARD_DESIGN_PACKAGE.designModel;
+const VALID_STANDARD_IMPLEMENTATION_MODEL = VALID_STANDARD_DESIGN_PACKAGE.implementationModel;
+
+const VALID_STANDARD_DESIGN_REVIEW = [
+  'Status: PASSED',
+  '',
+  'The design is evidence-backed, feasible, and within its local budget.',
+  '',
+].join('\n');
+
+const HEADING_BUDGET_STANDARD_DESIGN = VALID_STANDARD_DESIGN.replace(
+  [
+    '- Expected modules changed: 2',
+    '- New modules allowed: 0',
+    '- New public contracts allowed: 0',
+    '- New dependencies allowed: 0',
+    '- New architectural patterns: none',
+  ].join('\n'),
+  [
+    '### DES-004 Design budget',
+    '#### Expected modules changed',
+    '2 modules.',
+    '#### New modules allowed',
+    '0 modules.',
+    '#### New public contracts allowed',
+    '0 contracts.',
+    '#### New dependencies allowed',
+    '0 dependencies.',
+    '#### New architectural patterns',
+    'None.',
+  ].join('\n'),
+);
+
+function createLocalizedMalformedStandardDesign(): string {
+  return VALID_STANDARD_DESIGN
+    .replace('# Design: Standard planning fixture', '# C++ \u4fc4\u7f57\u65af\u65b9\u5757\u6e38\u620f\u8bbe\u8ba1')
+    .replace(/-001\b/g, '-1')
+    .replace('- Analysis direction: forward-design', '- Analysis direction: forward-design - \u6b63\u5411\u8bbe\u8ba1')
+    .replace('- Primary source of truth: mixed', '- Primary source of truth: \u6df7\u5408')
+    .replace('- Requirement evidence: requirement - requirements.md R-1 defines the command result', '- Requirement evidence: requirements.md R-1')
+    .replace('- Project evidence: observed - src/existing.ts#handleCommand owns the current behavior', '- Project evidence: src/existing.ts#handleCommand')
+    .replace('- Design inferences: none - the requirement and source establish the local boundary', '- Design inferences: \u65e0')
+    .replace('- Unresolved evidence: none', '- Unresolved evidence: \u5f85\u786e\u8ba4')
+    .replace('- Delivery context: existing-system', '- Delivery context: \u73b0\u6709\u7cfb\u7edf')
+    .replace('- System shape: local-utility', '- System shape: \u672c\u5730\u5de5\u5177')
+    .replace('- Project paradigm: mixed', '- Project paradigm: \u6df7\u5408')
+    .replace('- Object-model applicability: low', '- Object-model applicability: \u4f4e')
+    .replace('- Cohesion decision:', '- \u5185\u805a\u51b3\u7b56:')
+    .replace('- Coupling and dependency decision:', '- \u8026\u5408\u4e0e\u4f9d\u8d56\u51b3\u7b56:')
+    .replace('- Encapsulation decision:', '- \u5c01\u88c5\u51b3\u7b56:')
+    .replace('- SOLID trade-offs:', '- SOLID \u6743\u8861:')
+    .replace('- Underdesign checks:', '- \u8bbe\u8ba1\u4e0d\u8db3\u68c0\u67e5:');
+}
+
+function withStandardDesignMetadata(tasksMarkdown: string): string {
+  if (/^\s*-\s+_Design:/im.test(tasksMarkdown)) {
+    return tasksMarkdown;
+  }
+  return tasksMarkdown.replace(
+    /^(\s*)-\s+_Requirements:[^\r\n]*_\s*$/gm,
+    (line, indent: string) => `${line}\n${indent}- _Design: ADR-001, SYS-001, DES-001, FLOW-001, IMP-001_`,
+  );
+}
+
+function writeValidStandardDesignArtifacts(specDir: string): void {
+  writeFileSync(join(specDir, 'design.md'), VALID_STANDARD_DESIGN, 'utf8');
+  writeFileSync(join(specDir, 'requirement_model.md'), VALID_STANDARD_REQUIREMENT_MODEL, 'utf8');
+  writeFileSync(join(specDir, 'domain_model.md'), VALID_STANDARD_DOMAIN_MODEL, 'utf8');
+  writeFileSync(join(specDir, 'design_model.md'), VALID_STANDARD_DESIGN_MODEL, 'utf8');
+  writeFileSync(join(specDir, 'implementation_model.md'), VALID_STANDARD_IMPLEMENTATION_MODEL, 'utf8');
+  writeFileSync(join(specDir, 'design_review.md'), VALID_STANDARD_DESIGN_REVIEW, 'utf8');
+}
+
 describe('Autocode CLI runner prompt', () => {
   let projectRoot: string;
   const dataDirName = '.autocode';
@@ -307,6 +578,7 @@ describe('Autocode CLI runner prompt', () => {
       cwd: projectRoot,
       env: { ...process.env, GRAPHITI_ENABLED: 'false' },
       stdio: 'pipe',
+      encoding: 'utf8',
       timeout: 15_000,
     });
 
@@ -444,7 +716,7 @@ describe('Autocode CLI runner prompt', () => {
 
     expect(directPlan.prompt).toContain('direct_summary.md');
   });
-  it('does not inject revision-state wording for new planning tasks without review input', () => {
+  it('uses the staged artifact ownership contract for new planning tasks', () => {
     createAutocodeTask({
       projectRoot,
       dataDirName,
@@ -462,18 +734,16 @@ describe('Autocode CLI runner prompt', () => {
       phase: 'planning',
     });
 
-    expect(plan.prompt).toContain('not a RequestChanges iteration');
-    expect(plan.prompt).toContain('ordinary pending tasks');
-    expect(plan.prompt).toContain('canonical requirements artifact');
-    expect(plan.prompt).toContain('Do not keep the only concrete Requirement Index inside tasks.md');
-    expect(plan.prompt).toContain('reader-first');
-    expect(plan.prompt).toContain('Conclusion Snapshot');
-    expect(plan.prompt).toContain('Main Flow');
+    expect(plan.prompt).toContain('requirements.md owns full R*/AC*/C*/A*/Q*/E* facts');
+    expect(plan.prompt).toContain('spec.md owns observable SCN-* behavior');
+    expect(plan.prompt).toContain('tasks.md owns static task definitions with [ ] checkboxes only');
+    expect(plan.prompt).toContain('implementation_plan.md is a runtime-owned ledger');
+    expect(plan.prompt).toContain('Write only the artifact named by the active owner stage');
+    expect(plan.prompt).not.toContain('## Human Input');
     expect(plan.prompt).not.toContain('needs_revision');
-    expect(plan.prompt).not.toContain('preserve prior change-request history');
   });
 
-  it('injects revision-state wording only when planning has human review input', () => {
+  it('includes review input while retaining the staged artifact ownership contract', () => {
     createAutocodeTask({
       projectRoot,
       dataDirName,
@@ -493,8 +763,125 @@ describe('Autocode CLI runner prompt', () => {
       phase: 'planning',
     });
 
-    expect(plan.prompt).toContain('same-task RequestChanges iteration');
-    expect(plan.prompt).toContain('needs_revision');
+    expect(plan.prompt).toContain('## Human Input');
+    expect(plan.prompt).toContain('RequestChanges: split the runtime task.');
+    expect(plan.prompt).toContain('For Request Changes, use the latest impacts/flowDocuments');
+    expect(plan.prompt).toContain('preserve unaffected stable IDs, completed task definitions, and dependency relationships');
+    expect(plan.prompt).not.toContain('needs_revision');
+  });
+
+  it('starts tasks-only Request Changes at the planner and isolates old transactions', () => {
+    const taskId = '001-tasks-only-owner-plan';
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: taskId,
+      title: 'Revise only task definitions',
+      description: 'Keep upstream Standard artifacts unchanged.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: taskId });
+    writeFileSync(join(specDir, 'requirements.md'), [
+      '# Requirements',
+      '',
+      'Requirements-Contract: 1',
+      '',
+      '## User Requirements',
+      '- R1: Preserve approved upstream planning artifacts.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: A tasks-only change starts at the tasks owner.',
+      '',
+      '## Evidence Sources',
+      '- E1: change_requests.jsonl records the approved tasks-only scope.',
+      '',
+    ].join('\n'), 'utf8');
+    writeFileSync(join(specDir, 'spec.md'), [
+      '# Specification: Tasks-only owner plan',
+      '',
+      'Specification-Contract: 1',
+      '',
+      '## SCN-001 Revise task definitions',
+      'Covers: R1, AC1',
+      'Evidence: E1',
+      '',
+      '- Given: upstream planning artifacts are approved.',
+      '- When: a tasks-only change is requested.',
+      '- Then: planning starts at the tasks owner.',
+      '- Errors/edges: invalid upstream artifacts expand repair to their owning stage.',
+      '',
+    ].join('\n'), 'utf8');
+    writeValidStandardDesignArtifacts(specDir);
+    writeFileSync(join(specDir, 'change_requests.jsonl'), JSON.stringify({
+      id: 'CR-NEW',
+      createdAt: '2026-07-15T01:00:00.000Z',
+      scope: 'planning',
+      impacts: ['tasks', 'validation'],
+      iteration: {
+        mode: 'standard-planning',
+        flowDocuments: ['HUMAN_INPUT.md', 'change_requests.jsonl', 'tasks.md'],
+      },
+    }) + '\n', 'utf8');
+    writeFileSync(join(specDir, 'planning-transaction.json'), JSON.stringify({
+      version: 1,
+      id: 'old-transaction',
+      phase: 'planning',
+      status: 'repair_required',
+      stage: 'plan_validated',
+      checkpoint: 'plan_validated',
+      changeRequestId: 'CR-OLD',
+      createdAt: '2026-07-14T01:00:00.000Z',
+      updatedAt: '2026-07-14T01:00:00.000Z',
+      baselineArtifactHashes: {},
+      artifactHashes: {},
+    }, null, 2), 'utf8');
+
+    const capturedPromptPath = join(projectRoot, 'tasks-only-owner-prompt.txt');
+    const fakeCliPath = join(projectRoot, 'capture-tasks-owner.cjs');
+    writeFileSync(fakeCliPath, [
+      'const { writeFileSync } = require(\'node:fs\');',
+      'let input = \'\';',
+      'process.stdin.setEncoding(\'utf8\');',
+      'process.stdin.on(\'data\', chunk => { input += chunk; });',
+      'process.stdin.on(\'end\', () => { writeFileSync(' +
+        JSON.stringify(capturedPromptPath) +
+        ', input, \'utf8\'); process.exitCode = 9; });',
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'custom',
+      customCommand: 'node ' + fakeCliPath.replaceAll(String.fromCharCode(92), '/'),
+      phase: 'planning',
+      forcePlanning: true,
+    });
+
+    expect(() => execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    })).toThrow();
+
+    const capturedPrompt = readFileSync(capturedPromptPath, 'utf8');
+    expect(capturedPrompt).toContain('# Standard Task Planning Stage');
+    expect(capturedPrompt).not.toContain('## STANDARD REQUIREMENTS STAGE ONLY');
+    const transaction = JSON.parse(
+      readFileSync(join(specDir, 'planning-transaction.json'), 'utf8'),
+    ) as {
+      id?: string;
+      changeRequestId?: string;
+      ownerStages?: string[];
+      resumedAt?: string;
+    };
+    expect(transaction).toMatchObject({
+      changeRequestId: 'CR-NEW',
+      ownerStages: ['tasks'],
+    });
+    expect(transaction.id).not.toBe('old-transaction');
+    expect(transaction.resumedAt).toBeUndefined();
   });
 
   it('writes zh-CN prompts as readable Chinese and includes Codex rules preflight', () => {
@@ -589,16 +976,56 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('const shouldPreserveCompletedState = shouldPreserveCompletedTasksInStandardPlanning();');
     expect(runner).toContain('includeCompletedTasks: shouldPreserveCompletedState');
     expect(runner).toContain('preserveCompletedStateFromPreviousPlanMarkdown: previousImplementationPlanMarkdown');
-    expect(runner).toContain('repairStandardPlanEvidenceScaffolding();');
+    expect(runner).not.toContain('repairStandardPlanEvidenceScaffolding();');
     expect(runner).toContain('hasOnlyStandardPlanRecoverableQualityErrors(planQuality, errors)');
     expect(runner).toContain('function isStandardPlanRecoverableQualityError(planQuality, error)');
     expect(runner).toContain('isAutocodePlanRecoverableQualityError');
     expect(runner).toContain('function isStandardPlanArchitectureGuidanceError(planQuality, error)');
     expect(runner).toContain('isAutocodePlanArchitectureGuidanceError');
     expect(runner).toContain('complex task\\(s\\) missing _Architecture: \\.\\.\\._ guidance');
-    expect(runner).toContain('spec.md must include a non-empty ## Evidence section');
+    expect(runner).toContain('spec.md must declare Specification-Contract: 1');
     expect(runner).toContain('requirements.md must include concrete User Requirements and Acceptance Criteria');
     expect(runner).toContain('validationRetryCount >= maxValidationRetries');
+    expect(runner).toContain('const STANDARD_PLANNING_STAGE_RETRY_MAX_CHARS = 16000;');
+    expect(runner).toContain('const STANDARD_DESIGN_STAGE_MAX_RETRIES = 3;');
+    expect(runner).toContain('buildAutocodeDesignQualityRetryPrompt(errors)');
+    expect(runner).toContain('standardDesignMachineContractPrompt');
+    expect(runner).toContain('- DOM Concept kind: entity|value-object|domain-service|policy|event|technical|other');
+    expect(runner).toContain('- DES Element: module|class|component|function|store|process|data-structure|other - <localized concrete element or symbol>');
+    expect(runner).toContain('Declare Design-Contract: 4');
+    expect(runner).toContain('SYS|DES|FLOW|CONTRACT|PAT|REV|IMP');
+    expect(runner).toContain('map the target symbol to IMP-*');
+    expect(runner).toContain('its SYS-* owner/interface');
+    expect(runner).toContain('Preserve the approved object, component, data-oriented, functional, procedural, or mixed paradigm');
+    expect(runner).toContain('source contradicts REV-*');
+    expect(runner).toContain('material ownership/design change is required');
+  });
+
+  it('keeps every Standard planning stage in the configured Chinese output language', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-chinese-stages',
+      title: '保持设计评审语言一致',
+      description: '设计、评审和任务规划均使用中文。',
+      metadata: { developmentMode: 'standard' },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-standard-chinese-stages',
+      cli: 'codex',
+      phase: 'planning',
+      language: 'zh-CN',
+    });
+    const runner = readFileSync(plan.runnerFilePath, 'utf8');
+
+    expect(runner).toContain('design_review.md 的首行仍必须精确使用 Status: PASSED 或 Status: REVISE');
+    expect(runner).toContain('后续评审正文必须使用简体中文');
+    expect(runner).toContain('## OUTPUT LANGUAGE REQUIREMENT');
+    expect(runner).toContain('do not write _Depends on_: or _Design_:');
+    expect(runner).toContain('do not use a free-form _File intent_: sentence');
   });
 
   it('retries Standard scheduling metadata validation after artifact retries are exhausted', () => {
@@ -627,8 +1054,11 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('implementation_plan\\.md missing scheduling metadata');
     expect(runner).toContain('The derived implementation_plan.md is missing runtime scheduling metadata. Repair tasks.md');
     expect(runner).toContain('make every executable tasks.md item carry metadata that can be copied into derived runtime work packages');
+    expect(runner).toContain('function canFinalizeStandardPlanningFromPersistedTasks()');
+    expect(runner).toContain('if (standardPlanningStage !== \'tasks\')');
+    expect(runner).toContain('tasks.md has not been regenerated; resuming the tasks owner');
   });
-  it('repairs missing Standard spec evidence before deriving runtime work packages', () => {
+  it('keeps Standard spec evidence as ID references without adding duplicate evidence prose', () => {
     createAutocodeTask({
       projectRoot,
       dataDirName,
@@ -646,6 +1076,8 @@ describe('Autocode CLI runner prompt', () => {
     const requirementsMarkdown = [
       '# Requirements',
       '',
+      'Requirements-Contract: 1',
+      '',
       '## User Requirements',
       '- R1: Planning validation keeps a traceable Standard task list.',
       '',
@@ -653,49 +1085,32 @@ describe('Autocode CLI runner prompt', () => {
       '- AC1: Runtime work packages are derived from tasks.md after validation passes.',
       '',
       '## Evidence Sources',
-      '- User task description captured by Autocode.',
+      '- E1: User task description captured by Autocode.',
       '',
     ].join('\n');
     const specMarkdown = [
       '# Specification: Repair planning evidence',
       '',
-      '## Overview',
-      'Keep Standard planning validation moving when generated specs omit evidence scaffolding.',
+      'Specification-Contract: 1',
       '',
-      '## Workflow Type',
+      '## Scope',
+      'Describe observable runtime-plan derivation without repeating requirement or evidence prose.',
       '',
-      '**Type**: simple',
-      '',
-      '**Rationale**: The change is local to planning artifact validation.',
-      '',
-      '## Task Scope',
-      '',
-      '### This Task Will:',
-      '- [ ] Repair missing evidence scaffolding before validation.',
-      '',
-      '### Out of Scope:',
-      '- Runtime coding changes.',
-      '',
-      '## Files to Modify',
-      '- `src/evidence.ts` - evidence repair path',
-      '',
-      '## Change Details',
-      'Add Standard evidence scaffolding before artifact validation.',
-      '',
-      '## Requirements',
-      '1. Standard planning validation continues after Evidence scaffolding is repaired.',
-      '   - Acceptance: runtime work packages are derived from tasks.md.',
-      '',
-      '## Success Criteria',
-      '- [ ] implementation_plan.md is created from tasks.md.',
+      '## SCN-001 Derive the runtime ledger',
+      'Covers: R1, AC1',
+      'Evidence: E1',
+      '- Given validated static task definitions',
+      '- When Standard planning is committed',
+      '- Then implementation_plan.md exposes one pending runtime work package.',
       '',
     ].join('\n');
     const tasksMarkdown = [
       '# Tasks',
       '',
+      'Tasks-Contract: 1',
+      '',
       'Feature: Repair planning evidence',
       'Workflow: simple',
-      'Status: pending',
       '',
       '- [ ] 1. Implementation',
       '',
@@ -703,12 +1118,14 @@ describe('Autocode CLI runner prompt', () => {
       '    - Update `src/evidence.ts` to add Standard evidence scaffolding before validation.',
       '    - _Files to modify: src/evidence.ts_',
       '    - _Depends on: none_',
-      '    - _Requirements: R1_',
-      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '    - _Requirements: R1, AC1, SCN-001_',
+      '    - _Evidence: E1; requirements.md E1; src/evidence.ts_',
       '    - _Done when: validation repairs missing evidence and derives the runtime plan_',
       '    - _Verification: npm test -- evidence.test.ts_',
       '',
     ].join('\n');
+    const tasksWithDesignMarkdown = withStandardDesignMetadata(tasksMarkdown);
+    writeValidStandardDesignArtifacts(specDir);
     const fakeCliPath = join(projectRoot, 'write-standard-artifacts.cjs');
     writeFileSync(fakeCliPath, [
       "const { mkdirSync, writeFileSync } = require('node:fs');",
@@ -717,7 +1134,8 @@ describe('Autocode CLI runner prompt', () => {
       'mkdirSync(specDir, { recursive: true });',
       `writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
       `writeFileSync(join(specDir, 'spec.md'), ${JSON.stringify(specMarkdown)}, 'utf8');`,
-      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(tasksMarkdown)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'design_review.md'), ${JSON.stringify(VALID_STANDARD_DESIGN_REVIEW)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(tasksWithDesignMarkdown)}, 'utf8');`,
     ].join('\n'), 'utf8');
 
     const plan = createAutocodeTaskRunPlan({
@@ -736,9 +1154,10 @@ describe('Autocode CLI runner prompt', () => {
       timeout: 15_000,
     });
 
-    const repairedSpec = readFileSync(join(specDir, 'spec.md'), 'utf8');
-    expect(repairedSpec).toContain('## Evidence');
-    expect(repairedSpec).toContain('requirements.md captures the user request');
+    const persistedSpec = readFileSync(join(specDir, 'spec.md'), 'utf8');
+    expect(persistedSpec).toBe(specMarkdown);
+    expect(persistedSpec).toContain('Evidence: E1');
+    expect(persistedSpec).not.toContain('## Evidence');
     const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
     expect(implementationPlan?.phases?.[0]?.subtasks?.[0]?.title).toContain('Update evidence repair path');
     const planningEvent = stdout
@@ -751,9 +1170,561 @@ describe('Autocode CLI runner prompt', () => {
       hasSubtasks: true,
       subtaskCount: 1,
       incompleteSubtaskCount: 1,
-      continueAfterPlanning: true,
-      requireReviewBeforeCoding: false,
+      continueAfterPlanning: false,
+      requireReviewBeforeCoding: true,
     });
+  });
+
+  it('runs independent Standard owner stages and repairs a localized malformed design', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-independent-planning-sessions',
+      title: 'Run independent design-first planning sessions',
+      description: 'Separate Standard requirements, specification, design, critique, and task generation contexts.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({
+      projectRoot,
+      dataDirName,
+      specId: '001-standard-independent-planning-sessions',
+    });
+    const specMarkdown = [
+      '# Specification: Independent planning sessions',
+      '',
+      'Specification-Contract: 1',
+      '',
+      '## SCN-001 Complete isolated planning stages',
+      'Covers: R1, AC1',
+      'Evidence: E1',
+      '- Given a new Standard planning run',
+      '- When each artifact owner finishes',
+      '- Then planning reaches human review without sharing a CLI session.',
+      '',
+    ].join('\n');
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      'Requirements-Contract: 1',
+      '',
+      '## User Requirements',
+      '- R1: Standard planning separates requirements, specification, design, critique, and task generation.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: Five stage-specific artifact owners complete before human review.',
+      '',
+      '## Evidence Sources',
+      '- E1: Generated planning-session audit and src/planning-sessions.ts.',
+      '',
+    ].join('\n');
+    const tasksMarkdown = withStandardDesignMetadata([
+      '# Tasks',
+      '',
+      'Tasks-Contract: 1',
+      '',
+      'Feature: Independent planning sessions',
+      'Workflow: feature',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Preserve independent planning sessions',
+      '    - Keep each Standard planning role in a fresh CLI invocation.',
+      '    - _Files to modify: src/planning-sessions.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1, SCN-001_',
+      '    - _Evidence: E1; requirements.md E1; src/planning-sessions.ts_',
+      '    - _Done when: all five owner stages complete before review_',
+      '    - _Verification: Start the CLI planner, exercise all four stage sessions, and check console errors, resource loading, blank screen, startup, and exit status._',
+      '',
+    ].join('\n'));
+    const callsPath = join(projectRoot, 'planning-session-calls.jsonl');
+    const fakeCliPath = join(projectRoot, 'stage-aware-standard-planner.cjs');
+    const malformedDesign = createLocalizedMalformedStandardDesign();
+    writeFileSync(join(specDir, 'design_review.md'), 'Status: PASSED\n\nStale review from the previous design.\n', 'utf8');
+    writeFileSync(fakeCliPath, [
+      `const { appendFileSync, existsSync, mkdirSync, writeFileSync } = require('node:fs');`,
+      `const { join } = require('node:path');`,
+      `const specDir = process.argv[2];`,
+      `const callsPath = process.argv[3];`,
+      `let prompt = '';`,
+      `process.stdin.setEncoding('utf8');`,
+      `process.stdin.on('data', (chunk) => { prompt += chunk; });`,
+      `process.stdin.on('end', () => {`,
+      `  const stage = prompt.includes('## STANDARD REQUIREMENTS STAGE ONLY') ? 'requirements'`,
+      `    : prompt.includes('# Standard Observable Specification Stage') ? 'spec'`,
+      `      : prompt.includes('# Standard Requirement Model Stage') ? 'requirement_model'`,
+      `        : prompt.includes('# Standard Domain Model Stage') ? 'domain_model'`,
+      `          : prompt.includes('# Standard Architecture Decision Stage') ? 'design'`,
+      `            : prompt.includes('# Standard Design Model Stage') ? 'design_model'`,
+      `              : prompt.includes('# Standard Implementation Model Stage') ? 'implementation_model'`,
+      `                : prompt.includes('# Independent Standard Design Review') ? 'design_review'`,
+      `                  : prompt.includes('# Standard Task Planning Stage') ? 'tasks' : 'unknown';`,
+      `  const designAttempt = stage === 'design' ? (existsSync(join(specDir, 'design.md')) ? 2 : 1) : 0;`,
+      `  mkdirSync(specDir, { recursive: true });`,
+      `  appendFileSync(callsPath, JSON.stringify({ stage, pid: process.pid, designAttempt, hadReview: stage === 'design_review' && existsSync(join(specDir, 'design_review.md')), hasBudgetContract: prompt.includes('- Expected modules changed: <non-negative integer>') && prompt.includes('do not use headings for these fields'), hasRetryHeader: prompt.includes('The Standard design artifacts failed deterministic validation.'), hasShortIdError: prompt.includes('heading ADR-1 is invalid'), hasLateEvidenceError: prompt.includes('Unresolved evidence must be exactly'), hasPrinciplesContract: prompt.includes('- Applicable Design Principles: Cohesion decision;') }) + '\\n', 'utf8');`,
+      `  if (stage === 'requirements') {`,
+      `    writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
+      `  } else if (stage === 'spec') {`,
+      `    writeFileSync(join(specDir, 'spec.md'), ${JSON.stringify(specMarkdown)}, 'utf8');`,
+      `  } else if (stage === 'requirement_model') {`,
+      `    writeFileSync(join(specDir, 'requirement_model.md'), ${JSON.stringify(VALID_STANDARD_REQUIREMENT_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'domain_model') {`,
+      `    writeFileSync(join(specDir, 'domain_model.md'), ${JSON.stringify(VALID_STANDARD_DOMAIN_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'design') {`,
+      `    writeFileSync(join(specDir, 'design.md'), designAttempt === 1 ? ${JSON.stringify(malformedDesign)} : ${JSON.stringify(VALID_STANDARD_DESIGN)}, 'utf8');`,
+      `  } else if (stage === 'design_model') {`,
+      `    writeFileSync(join(specDir, 'design_model.md'), ${JSON.stringify(VALID_STANDARD_DESIGN_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'implementation_model') {`,
+      `    writeFileSync(join(specDir, 'implementation_model.md'), ${JSON.stringify(VALID_STANDARD_IMPLEMENTATION_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'design_review') {`,
+      `    writeFileSync(join(specDir, 'design_review.md'), ${JSON.stringify(VALID_STANDARD_DESIGN_REVIEW)}, 'utf8');`,
+      `  } else if (stage === 'tasks') {`,
+      `    writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(tasksMarkdown)}, 'utf8');`,
+      `  } else {`,
+      `    process.exitCode = 2;`,
+      `  }`,
+      `  process.stdout.write(stage + ' complete\\n');`,
+      `});`,
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-standard-independent-planning-sessions',
+      cli: 'custom',
+      customCommand: `node ${fakeCliPath.replace(/\\/g, '/')} ${specDir.replace(/\\/g, '/')} ${callsPath.replace(/\\/g, '/')}`,
+      phase: 'spec',
+    });
+
+    let stdout = '';
+    let executionFailure = '';
+    try {
+      stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+        cwd: projectRoot,
+        env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+    } catch (error) {
+      const outputError = error as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
+      const outputText = (value?: Buffer | string): string =>
+        typeof value === 'string' ? value : value?.toString('utf8') ?? '';
+      executionFailure = [
+        outputError.message,
+        outputText(outputError.stdout),
+        outputText(outputError.stderr),
+        existsSync(callsPath) ? readFileSync(callsPath, 'utf8') : '',
+        existsSync(join(specDir, 'task_logs.jsonl'))
+          ? readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8')
+          : '',
+      ].filter(Boolean).join('\n');
+    }
+    const calls = readFileSync(callsPath, 'utf8').trim().split(/\r?\n/).map((line) => (
+      JSON.parse(line) as {
+        stage: string;
+        pid: number;
+        designAttempt: number;
+        hadReview: boolean;
+        hasBudgetContract: boolean;
+        hasRetryHeader: boolean;
+        hasShortIdError: boolean;
+        hasLateEvidenceError: boolean;
+        hasPrinciplesContract: boolean;
+      }
+    ));
+    const retryCall = calls.find((call) => call.stage === 'design' && call.designAttempt === 2);
+
+    expect(executionFailure).toBe('');
+    expect(calls.map((call) => call.stage)).toEqual([
+      'requirements',
+      'spec',
+      'requirement_model',
+      'domain_model',
+      'design',
+      'design',
+      'design_model',
+      'implementation_model',
+      'design_review',
+      'tasks',
+    ]);
+    expect(new Set(calls.map((call) => call.pid)).size).toBe(10);
+    expect(calls.find((call) => call.stage === 'design_review')?.hadReview).toBe(false);
+    expect(calls.find((call) => call.stage === 'design')?.hasBudgetContract).toBe(true);
+    expect(retryCall).toMatchObject({
+      hasRetryHeader: true,
+      hasPrinciplesContract: true,
+    });
+    expect(stdout).toContain('PLANNING_COMPLETE');
+    expect(stdout).toContain('requireReviewBeforeCoding');
+    expect(loadAutocodeImplementationPlanSync(specDir)?.phases?.[0]?.subtasks).toHaveLength(1);
+  });
+
+  it('preserves validated requirements and resumes the spec owner after spec failure', () => {
+    const taskId = '001-standard-spec-resume';
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: taskId,
+      title: 'Resume the specification owner',
+      description: 'Keep validated requirements when specification validation fails.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: taskId });
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      'Requirements-Contract: 1',
+      '',
+      '## User Requirements',
+      '- R1: Preserve validated requirements across a specification failure.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: Resume at the specification owner without regenerating R1.',
+      '',
+      '## Evidence Sources',
+      '- E1: Persisted planning transaction behavior.',
+      '',
+    ].join('\n');
+    const callsPath = join(projectRoot, 'spec-failure-owner-calls.jsonl');
+    const failedCliPath = join(projectRoot, 'spec-failure-owner.cjs');
+    writeFileSync(failedCliPath, [
+      `const { appendFileSync, writeFileSync } = require('node:fs');`,
+      `const { join } = require('node:path');`,
+      `const specDir = process.argv[2];`,
+      `const callsPath = process.argv[3];`,
+      `let prompt = '';`,
+      `process.stdin.setEncoding('utf8');`,
+      `process.stdin.on('data', chunk => { prompt += chunk; });`,
+      `process.stdin.on('end', () => {`,
+      `  const stage = prompt.includes('## STANDARD REQUIREMENTS STAGE ONLY') ? 'requirements'`,
+      `    : prompt.includes('# Standard Observable Specification Stage') ? 'spec' : 'unknown';`,
+      `  appendFileSync(callsPath, stage + '\\n', 'utf8');`,
+      `  if (stage === 'requirements') {`,
+      `    writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
+      `  } else if (stage === 'spec') {`,
+      `    writeFileSync(join(specDir, 'spec.md'), '# Manual Standard planning seed\\n', 'utf8');`,
+      `  } else {`,
+      `    process.exitCode = 2;`,
+      `  }`,
+      `});`,
+    ].join('\n'), 'utf8');
+
+    const failedPlan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'custom',
+      customCommand: `node ${failedCliPath.replace(/\\/g, '/')} ${specDir.replace(/\\/g, '/')} ${callsPath.replace(/\\/g, '/')}`,
+      phase: 'spec',
+    });
+    expect(() => execFileSync(process.execPath, [failedPlan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 20_000,
+    })).toThrow();
+
+    const failedCalls = readFileSync(callsPath, 'utf8').trim().split(/\r?\n/);
+    const failedTransaction = JSON.parse(
+      readFileSync(join(specDir, 'planning-transaction.json'), 'utf8'),
+    ) as Record<string, unknown> & { status?: string; checkpoint?: string };
+    expect(failedCalls[0]).toBe('requirements');
+    expect(failedCalls.slice(1).every((stage) => stage === 'spec')).toBe(true);
+    expect(readFileSync(join(specDir, 'requirements.md'), 'utf8')).toBe(requirementsMarkdown);
+    expect(existsSync(join(specDir, 'spec.md'))).toBe(false);
+    expect(failedTransaction).toMatchObject({
+      status: 'repair_required',
+      checkpoint: 'requirements_validated',
+    });
+
+    const resumedPromptPath = join(projectRoot, 'resumed-spec-owner-prompt.txt');
+    const resumedCliPath = join(projectRoot, 'capture-resumed-spec-owner.cjs');
+    writeFileSync(resumedCliPath, [
+      `const { writeFileSync } = require('node:fs');`,
+      `let prompt = '';`,
+      `process.stdin.setEncoding('utf8');`,
+      `process.stdin.on('data', chunk => { prompt += chunk; });`,
+      `process.stdin.on('end', () => {`,
+      `  writeFileSync(${JSON.stringify(resumedPromptPath)}, prompt, 'utf8');`,
+      `  process.exitCode = 9;`,
+      `});`,
+    ].join('\n'), 'utf8');
+    const resumedPlan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'custom',
+      customCommand: `node ${resumedCliPath.replace(/\\/g, '/')}`,
+      phase: 'planning',
+    });
+    expect(() => execFileSync(process.execPath, [resumedPlan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    })).toThrow();
+
+    const resumedPrompt = readFileSync(resumedPromptPath, 'utf8');
+    expect(resumedPrompt).toContain('# Standard Observable Specification Stage');
+    expect(resumedPrompt).not.toContain('## STANDARD REQUIREMENTS STAGE ONLY');
+    expect(readFileSync(join(specDir, 'requirements.md'), 'utf8')).toBe(requirementsMarkdown);
+  });
+
+  it('preserves validated sources and resumes the design stage after invalid budget formatting', () => {
+    const taskId = '001-standard-design-budget-resume';
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: taskId,
+      title: 'Resume invalid design budget planning',
+      description: 'Keep validated requirements and resume the failed design stage.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: taskId });
+    const specMarkdown = [
+      '# Specification: Resume invalid design budget planning',
+      '',
+      'Specification-Contract: 1',
+      '',
+      '## SCN-001 Resume design validation',
+      'Covers: R1, AC1',
+      'Evidence: E1',
+      '- Given validated requirements and specification artifacts',
+      '- When deterministic design validation fails',
+      '- Then the next run resumes without replacing those artifacts.',
+      '',
+    ].join('\n');
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      'Requirements-Contract: 1',
+      '',
+      '## User Requirements',
+      '- R1: Continue planning from the failed design stage.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: Validated source artifacts survive a design-format failure.',
+      '',
+      '## Evidence Sources',
+      '- E1: Persisted planning transaction and src/design-resume.ts.',
+      '',
+    ].join('\n');
+    const tasksMarkdown = withStandardDesignMetadata([
+      '# Tasks',
+      '',
+      'Tasks-Contract: 1',
+      '',
+      'Feature: Resume invalid design budget planning',
+      'Workflow: feature',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Preserve stage-aware planning recovery',
+      '    - Continue from the last validated planning boundary.',
+      '    - _Files to modify: src/design-resume.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1, SCN-001_',
+      '    - _Evidence: E1; requirements.md E1; src/design-resume.ts_',
+      '    - _Done when: the design stage resumes without regenerating validated sources_',
+      '    - _Verification: npm test -- design-resume.test.ts_',
+      '',
+    ].join('\n'));
+    const failedCallsPath = join(projectRoot, 'failed-design-budget-calls.jsonl');
+    const failedCliPath = join(projectRoot, 'failed-design-budget-planner.cjs');
+    writeFileSync(failedCliPath, [
+      `const { appendFileSync, mkdirSync, writeFileSync } = require('node:fs');`,
+      `const { join } = require('node:path');`,
+      `const specDir = process.argv[2];`,
+      `const callsPath = process.argv[3];`,
+      `let prompt = '';`,
+      `process.stdin.setEncoding('utf8');`,
+      `process.stdin.on('data', (chunk) => { prompt += chunk; });`,
+      `process.stdin.on('end', () => {`,
+      `  const stage = prompt.includes('## STANDARD REQUIREMENTS STAGE ONLY') ? 'requirements'`,
+      `    : prompt.includes('# Standard Observable Specification Stage') ? 'spec'`,
+      `      : prompt.includes('# Standard Requirement Model Stage') ? 'requirement_model'`,
+      `        : prompt.includes('# Standard Domain Model Stage') ? 'domain_model'`,
+      `          : prompt.includes('# Standard Architecture Decision Stage') ? 'design' : 'unknown';`,
+      `  appendFileSync(callsPath, JSON.stringify({ stage, hasValidation: prompt.includes('Previous stage validation'), hasBudgetContract: prompt.includes('- Expected modules changed: <non-negative integer>') && prompt.includes('do not use headings for these fields') }) + '\\n', 'utf8');`,
+      `  mkdirSync(specDir, { recursive: true });`,
+      `  if (stage === 'requirements') {`,
+      `    writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
+      `  } else if (stage === 'spec') {`,
+      `    writeFileSync(join(specDir, 'spec.md'), ${JSON.stringify(specMarkdown)}, 'utf8');`,
+      `  } else if (stage === 'requirement_model') {`,
+      `    writeFileSync(join(specDir, 'requirement_model.md'), ${JSON.stringify(VALID_STANDARD_REQUIREMENT_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'domain_model') {`,
+      `    writeFileSync(join(specDir, 'domain_model.md'), ${JSON.stringify(VALID_STANDARD_DOMAIN_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'design') {`,
+      `    writeFileSync(join(specDir, 'design.md'), ${JSON.stringify(HEADING_BUDGET_STANDARD_DESIGN)}, 'utf8');`,
+      `  } else {`,
+      `    process.exitCode = 2;`,
+      `  }`,
+      `});`,
+    ].join('\n'), 'utf8');
+
+    const failedPlan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'custom',
+      customCommand: `node "${failedCliPath.replace(/\\/g, '/')}" "${specDir.replace(/\\/g, '/')}" "${failedCallsPath.replace(/\\/g, '/')}"`,
+      phase: 'spec',
+    });
+    expect(() => execFileSync(process.execPath, [failedPlan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 20_000,
+    })).toThrow();
+
+    const failedCalls = readFileSync(failedCallsPath, 'utf8').trim().split(/\r?\n/).map((line) => (
+      JSON.parse(line) as { stage: string; hasValidation: boolean; hasBudgetContract: boolean }
+    ));
+    const designCalls = failedCalls.filter((call) => call.stage === 'design');
+    const failedDesignBackups = readdirSync(specDir).filter((file) => file.startsWith('design.md.failed-'));
+    const failedTransaction = JSON.parse(
+      readFileSync(join(specDir, 'planning-transaction.json'), 'utf8'),
+    ) as { status?: string; checkpoint?: string };
+
+    expect(failedCalls.map((call) => call.stage)).toEqual([
+      'requirements',
+      'spec',
+      'requirement_model',
+      'domain_model',
+      'design',
+      'design',
+      'design',
+      'design',
+    ]);
+    expect(designCalls.slice(1).every((call) => call.hasValidation && call.hasBudgetContract)).toBe(true);
+    expect(readFileSync(join(specDir, 'spec.md'), 'utf8')).toBe(specMarkdown);
+    expect(readFileSync(join(specDir, 'requirements.md'), 'utf8')).toBe(requirementsMarkdown);
+    expect(existsSync(join(specDir, 'design.md'))).toBe(false);
+    expect(failedDesignBackups).toHaveLength(1);
+    expect(readFileSync(join(specDir, failedDesignBackups[0]), 'utf8')).toContain('#### Expected modules changed');
+    expect(failedTransaction).toMatchObject({
+      status: 'repair_required',
+      checkpoint: 'domain_model_validated',
+    });
+
+    // Reproduce a transaction written by the older rollback behavior: the checkpoint
+    // says design, but source artifacts have fallen back to their manual seed.
+    writeFileSync(join(specDir, 'planning-transaction.json'), JSON.stringify({
+      ...failedTransaction,
+      stage: 'design_written',
+      checkpoint: 'design_written',
+    }, null, 2), 'utf8');
+    writeFileSync(join(specDir, 'spec.md'), '# Manual Standard planning seed\n', 'utf8');
+    writeFileSync(join(specDir, 'requirements.md'), [
+      '# Requirements',
+      '## User Requirements',
+      '- None',
+      '## Acceptance Criteria',
+      '- None',
+      '## Evidence Sources',
+      '- User request',
+    ].join('\n'), 'utf8');
+
+    const resumedCallsPath = join(projectRoot, 'resumed-design-budget-calls.jsonl');
+    const resumedCliPath = join(projectRoot, 'resumed-design-budget-planner.cjs');
+    writeFileSync(resumedCliPath, [
+      `const { appendFileSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');`,
+      `const { join } = require('node:path');`,
+      `const specDir = process.argv[2];`,
+      `const callsPath = process.argv[3];`,
+      `let prompt = '';`,
+      `process.stdin.setEncoding('utf8');`,
+      `process.stdin.on('data', (chunk) => { prompt += chunk; });`,
+      `process.stdin.on('end', () => {`,
+      `  const stage = prompt.includes('## STANDARD REQUIREMENTS STAGE ONLY') ? 'requirements'`,
+      `    : prompt.includes('# Standard Observable Specification Stage') ? 'spec'`,
+      `      : prompt.includes('# Standard Requirement Model Stage') ? 'requirement_model'`,
+      `        : prompt.includes('# Standard Domain Model Stage') ? 'domain_model'`,
+      `          : prompt.includes('# Standard Architecture Decision Stage') ? 'design'`,
+      `            : prompt.includes('# Standard Design Model Stage') ? 'design_model'`,
+      `              : prompt.includes('# Standard Implementation Model Stage') ? 'implementation_model'`,
+      `                : prompt.includes('# Independent Standard Design Review') ? 'design_review'`,
+      `                  : prompt.includes('# Standard Task Planning Stage') ? 'tasks' : 'unknown';`,
+      `  const transaction = JSON.parse(readFileSync(join(specDir, 'planning-transaction.json'), 'utf8'));`,
+      `  appendFileSync(callsPath, JSON.stringify({ stage, resumedAt: transaction.resumedAt, transactionPhase: transaction.phase, checkpoint: transaction.checkpoint }) + '\\n', 'utf8');`,
+      `  mkdirSync(specDir, { recursive: true });`,
+      `  if (stage === 'requirements') {`,
+      `    writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
+      `  } else if (stage === 'spec') {`,
+      `    writeFileSync(join(specDir, 'spec.md'), ${JSON.stringify(specMarkdown)}, 'utf8');`,
+      `  } else if (stage === 'requirement_model') {`,
+      `    writeFileSync(join(specDir, 'requirement_model.md'), ${JSON.stringify(VALID_STANDARD_REQUIREMENT_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'domain_model') {`,
+      `    writeFileSync(join(specDir, 'domain_model.md'), ${JSON.stringify(VALID_STANDARD_DOMAIN_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'design') {`,
+      `    writeFileSync(join(specDir, 'design.md'), ${JSON.stringify(VALID_STANDARD_DESIGN)}, 'utf8');`,
+      `  } else if (stage === 'design_model') {`,
+      `    writeFileSync(join(specDir, 'design_model.md'), ${JSON.stringify(VALID_STANDARD_DESIGN_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'implementation_model') {`,
+      `    writeFileSync(join(specDir, 'implementation_model.md'), ${JSON.stringify(VALID_STANDARD_IMPLEMENTATION_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'design_review') {`,
+      `    writeFileSync(join(specDir, 'design_review.md'), ${JSON.stringify(VALID_STANDARD_DESIGN_REVIEW)}, 'utf8');`,
+      `  } else if (stage === 'tasks') {`,
+      `    writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(tasksMarkdown)}, 'utf8');`,
+      `  } else {`,
+      `    process.exitCode = 2;`,
+      `  }`,
+      `});`,
+    ].join('\n'), 'utf8');
+    const resumedPlan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'custom',
+      customCommand: `node "${resumedCliPath.replace(/\\/g, '/')}" "${specDir.replace(/\\/g, '/')}" "${resumedCallsPath.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+    });
+    let resumedOutput = '';
+    let resumedFailure = '';
+    try {
+      resumedOutput = execFileSync(process.execPath, [resumedPlan.runnerFilePath], {
+        cwd: projectRoot,
+        env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+        encoding: 'utf8',
+        timeout: 20_000,
+      });
+    } catch (error) {
+      const outputError = error as { stdout?: Buffer; stderr?: Buffer; message?: string };
+      resumedFailure = [
+        outputError.message,
+        outputError.stdout?.toString('utf8'),
+        outputError.stderr?.toString('utf8'),
+      ].filter(Boolean).join('\n');
+    }
+    const resumedCalls = readFileSync(resumedCallsPath, 'utf8').trim().split(/\r?\n/).map((line) => (
+      JSON.parse(line) as { stage: string; resumedAt?: string; transactionPhase?: string; checkpoint?: string }
+    ));
+    const resumedLog = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
+
+    expect(resumedCalls[0]).toMatchObject({
+      resumedAt: expect.any(String),
+      transactionPhase: 'planning',
+      checkpoint: 'design_written',
+    });
+    expect(resumedLog).toContain('Resuming interrupted Standard planning');
+    expect(resumedLog).toContain('checkpoint is ahead of valid artifacts; resuming from requirements');
+    expect(resumedCalls.map((call) => call.stage)).toEqual([
+      'requirements',
+      'spec',
+      'requirement_model',
+      'domain_model',
+      'design',
+      'design_model',
+      'implementation_model',
+      'design_review',
+      'tasks',
+    ]);
+    expect(resumedFailure).toBe('');
+    expect(readFileSync(join(specDir, 'spec.md'), 'utf8')).toBe(specMarkdown);
+    expect(resumedOutput).toContain('PLANNING_COMPLETE');
+    expect(JSON.parse(readFileSync(join(specDir, 'planning-transaction.json'), 'utf8')))
+      .toMatchObject({ status: 'completed', checkpoint: 'committed' });
   });
 
   it('requires manual review after force planning when every work package is already complete', () => {
@@ -773,6 +1744,8 @@ describe('Autocode CLI runner prompt', () => {
     const requirementsMarkdown = [
       '# Requirements',
       '',
+      'Requirements-Contract: 1',
+      '',
       '## User Requirements',
       '- R1: Completed iteration planning requires manual review.',
       '',
@@ -780,58 +1753,84 @@ describe('Autocode CLI runner prompt', () => {
       '- AC1: Planning emits a review event before any completion transition.',
       '',
       '## Evidence Sources',
-      '- The existing completed runtime work package.',
+      '- E1: The existing completed runtime work package.',
       '',
     ].join('\n');
     const specMarkdown = [
       '# Specification: Review completed iteration planning',
       '',
-      '## Requirements',
-      '- R1: Stop force planning for manual review even when all work is complete.',
-      '  - Evidence: requirements.md R1 and the existing completed plan.',
+      'Specification-Contract: 1',
       '',
-      '## Evidence',
-      '- requirements.md records the mandatory review policy.',
+      '## SCN-001 Review a completed iteration',
+      'Covers: R1, AC1',
+      'Evidence: E1',
+      '',
+      '- Given: every runtime work package is complete.',
+      '- When: force planning finishes.',
+      '- Then: planning stops for manual review without scheduling coding.',
+      '- Errors/edges: completed runtime history remains completed.',
       '',
     ].join('\n');
     const tasksMarkdown = [
       '# Tasks',
       '',
+      'Tasks-Contract: 1',
+      '',
       'Feature: Review completed iteration planning',
       'Workflow: feature',
-      'Status: completed',
+      'Status: pending',
       '',
-      '- [x] 1. Existing implementation',
+      '- [ ] 1. Existing implementation',
       '',
-      '  - [x] 1.1 Preserve completed implementation',
+      '  - [ ] 1.1 Preserve completed implementation',
       '    - Keep the completed implementation unchanged during review-only planning.',
       '    - _Files to modify: src/completed.ts_',
       '    - _Depends on: none_',
-      '    - _Requirements: R1, AC1_',
-      '    - _Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+      '    - _Requirements: R1, AC1, SCN-001_',
+      '    - _Evidence: E1; requirements.md E1; existing runtime plan_',
       '    - _Architecture: Boundary: planning state; strategy: preserve completed history; source/reference: spec.md R1_',
       '    - _Done when: the completed work package remains completed_',
       '    - _Verification: npm test -- completed.test.ts_',
       '',
     ].join('\n');
+    const tasksWithDesignMarkdown = withStandardDesignMetadata(tasksMarkdown);
+    writeValidStandardDesignArtifacts(specDir);
     writeFileSync(join(specDir, 'requirements.md'), requirementsMarkdown, 'utf8');
     writeFileSync(join(specDir, 'spec.md'), specMarkdown, 'utf8');
-    writeFileSync(join(specDir, 'tasks.md'), tasksMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'tasks.md'), tasksWithDesignMarkdown, 'utf8');
+    const completedRuntimePlan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
+      tasksWithDesignMarkdown,
+      {
+        now: '2026-07-12T00:00:00.000Z',
+        sourcePath: 'tasks.md',
+        requireTaskEvidence: true,
+        includeCompletedTasks: true,
+        designMarkdown: VALID_STANDARD_DESIGN,
+        requirementModelMarkdown: VALID_STANDARD_REQUIREMENT_MODEL,
+        domainModelMarkdown: VALID_STANDARD_DOMAIN_MODEL,
+        designModelMarkdown: VALID_STANDARD_DESIGN_MODEL,
+        implementationModelMarkdown: VALID_STANDARD_IMPLEMENTATION_MODEL,
+        designPath: 'design.md',
+      },
+    );
+    for (const phase of completedRuntimePlan.phases) {
+      for (const subtask of phase.subtasks ?? []) {
+        subtask.status = 'completed';
+        subtask.completed_at = '2026-07-12T00:05:00.000Z';
+      }
+    }
     writeFileSync(
       join(specDir, 'implementation_plan.md'),
-      stringifyAutocodeImplementationPlanMarkdown(
-        buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(tasksMarkdown, {
-          now: '2026-07-12T00:00:00.000Z',
-          sourcePath: 'tasks.md',
-          requireTaskEvidence: true,
-          includeCompletedTasks: true,
-        }),
-      ),
+      stringifyAutocodeImplementationPlanMarkdown(completedRuntimePlan),
       'utf8',
     );
 
     const fakeCliPath = join(projectRoot, 'successful-review-only-planner.cjs');
-    writeFileSync(fakeCliPath, "process.stdout.write('planning complete\\n');\n", 'utf8');
+    writeFileSync(fakeCliPath, [
+      "const { writeFileSync } = require('node:fs');",
+      `writeFileSync(${JSON.stringify(join(specDir, 'design_review.md'))}, ${JSON.stringify(VALID_STANDARD_DESIGN_REVIEW)}, 'utf8');`,
+      "process.stdout.write('planning complete\\n');",
+    ].join('\n'), 'utf8');
     const plan = createAutocodeTaskRunPlan({
       projectRoot,
       dataDirName,
@@ -983,7 +1982,15 @@ describe('Autocode CLI runner prompt', () => {
     const failedTaskBackups = readdirSync(specDir).filter((file) => file.startsWith('tasks.md.failed-'));
     expect(failed, failureOutput).toBe(true);
     expect(readFileSync(join(specDir, 'tasks.md'), 'utf8')).toBe(originalTasksMarkdown);
-    expect(readFileSync(join(specDir, 'implementation_plan.md'), 'utf8')).toContain('Preserve completed baseline work');
+    const restoredLedgerMarkdown = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+    const restoredRuntimeTask = loadAutocodeImplementationPlanSync(specDir)
+      ?.phases?.flatMap((phase) => phase.subtasks ?? [])[0];
+    expect(restoredLedgerMarkdown).not.toContain('Preserve completed baseline work');
+    expect(restoredRuntimeTask).toMatchObject({
+      status: 'completed',
+      upstream_task_ids: ['1.1'],
+      definition_fingerprint: expect.any(String),
+    });
     expect(failedTaskBackups).toHaveLength(1);
     expect(readFileSync(join(specDir, failedTaskBackups[0]), 'utf8')).toContain('Missing required metadata');
   });
@@ -1044,15 +2051,17 @@ describe('Autocode CLI runner prompt', () => {
       '    - _Verification: npm test -- parser.test.ts_',
       '',
     ].join('\n');
+    const tasksWithDesignMarkdown = withStandardDesignMetadata(tasksMarkdown);
+    writeValidStandardDesignArtifacts(specDir);
     writeFileSync(join(specDir, 'spec.md'), specMarkdown, 'utf8');
     writeFileSync(join(specDir, 'requirements.md'), requirementsMarkdown, 'utf8');
-    writeFileSync(join(specDir, 'tasks.md'), tasksMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'tasks.md'), tasksWithDesignMarkdown, 'utf8');
     writeFileSync(join(specDir, 'planning-transaction.json'), JSON.stringify({
       version: 1,
       id: 'resume-transaction',
       phase: 'planning',
       status: 'active',
-      stage: 'sources_validated',
+      stage: 'tasks_validated',
       createdAt: '2026-07-10T00:00:00.000Z',
       updatedAt: '2026-07-10T00:00:00.000Z',
       artifactHashes: {},
@@ -1090,8 +2099,17 @@ describe('Autocode CLI runner prompt', () => {
     expect(stdout).toContain('"progress":100');
     expect(readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8'))
       .toContain('Recovered interrupted Standard planning');
-    expect(readFileSync(join(specDir, 'implementation_plan.md'), 'utf8'))
+    const resumedLedgerMarkdown = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
+    const resumedRuntimeTask = loadAutocodeImplementationPlanSync(specDir)
+      ?.phases?.flatMap((phase) => phase.subtasks ?? [])[0];
+    expect(readFileSync(join(specDir, 'tasks.md'), 'utf8'))
       .toContain('Derive the persisted parser work package');
+    expect(resumedLedgerMarkdown).not.toContain('Derive the persisted parser work package');
+    expect(resumedRuntimeTask).toMatchObject({
+      title: 'Derive the persisted parser work package',
+      upstream_task_ids: ['1.1'],
+      definition_fingerprint: expect.any(String),
+    });
     expect(transaction).toMatchObject({
       status: 'completed',
       stage: 'committed',
@@ -1136,7 +2154,7 @@ describe('Autocode CLI runner prompt', () => {
       '- spec.md Requirements R1 and the previous implementation plan.',
       '',
     ].join('\n'), 'utf8');
-    writeFileSync(join(specDir, 'tasks.md'), [
+    writeFileSync(join(specDir, 'tasks.md'), withStandardDesignMetadata([
       '# Tasks',
       '',
       'Feature: Preserve legacy planning history',
@@ -1154,7 +2172,8 @@ describe('Autocode CLI runner prompt', () => {
       '    - _Done when: the parser behavior has a runnable work package_',
       '    - _Verification: npm test -- parser.test.ts_',
       '',
-    ].join('\n'), 'utf8');
+    ].join('\n')), 'utf8');
+    writeValidStandardDesignArtifacts(specDir);
     writeFileSync(join(specDir, 'implementation_plan.md'),
       stringifyAutocodeImplementationPlanMarkdown({
         feature: 'Legacy completed plan',
@@ -1177,7 +2196,11 @@ describe('Autocode CLI runner prompt', () => {
     );
 
     const fakeCliPath = join(projectRoot, 'successful-planner.cjs');
-    writeFileSync(fakeCliPath, "process.stdout.write('planning complete\\n');\n", 'utf8');
+    writeFileSync(fakeCliPath, [
+      "const { writeFileSync } = require('node:fs');",
+      `writeFileSync(${JSON.stringify(join(specDir, 'design_review.md'))}, ${JSON.stringify(VALID_STANDARD_DESIGN_REVIEW)}, 'utf8');`,
+      "process.stdout.write('planning complete\\n');",
+    ].join('\n'), 'utf8');
     const plan = createAutocodeTaskRunPlan({
       projectRoot,
       dataDirName,
@@ -1192,6 +2215,7 @@ describe('Autocode CLI runner prompt', () => {
       cwd: projectRoot,
       env: { ...process.env, GRAPHITI_ENABLED: 'false' },
       stdio: 'pipe',
+      encoding: 'utf8',
       timeout: 15_000,
     });
 
@@ -1289,6 +2313,8 @@ describe('Autocode CLI runner prompt', () => {
       '    - _Verification: npm test -- follow-up.test.ts_',
       '',
     ].join('\n');
+    const tasksWithDesignMarkdown = withStandardDesignMetadata(tasksMarkdown);
+    writeValidStandardDesignArtifacts(specDir);
     writeFileSync(join(specDir, 'HUMAN_INPUT.md'), 'Please add the focused follow-up while preserving completed work.\n', 'utf8');
 
     const fakeCliPath = join(projectRoot, 'write-standard-force-planning-artifacts.cjs');
@@ -1299,7 +2325,8 @@ describe('Autocode CLI runner prompt', () => {
       'mkdirSync(specDir, { recursive: true });',
       `writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
       `writeFileSync(join(specDir, 'spec.md'), ${JSON.stringify(specMarkdown)}, 'utf8');`,
-      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(tasksMarkdown)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'design_review.md'), ${JSON.stringify(VALID_STANDARD_DESIGN_REVIEW)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(tasksWithDesignMarkdown)}, 'utf8');`,
     ].join('\n'), 'utf8');
 
     const plan = createAutocodeTaskRunPlan({
@@ -1375,13 +2402,17 @@ describe('Autocode CLI runner prompt', () => {
       '    - _Verification: npm test -- baseline.test.ts_',
       '',
     ].join('\n');
+    const previousTasksWithDesignMarkdown = withStandardDesignMetadata(previousCompletedTasksMarkdown);
+    writeValidStandardDesignArtifacts(specDir);
     const previousRuntimePlan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
-      previousCompletedTasksMarkdown,
+      previousTasksWithDesignMarkdown,
       {
         now: '2026-06-18T00:00:00.000Z',
         sourcePath: 'tasks.md',
         requireTaskEvidence: true,
         includeCompletedTasks: true,
+        designMarkdown: VALID_STANDARD_DESIGN,
+        designPath: 'design.md',
       },
     );
     const previousSubtask = previousRuntimePlan.phases[0].subtasks?.[0];
@@ -1458,6 +2489,7 @@ describe('Autocode CLI runner prompt', () => {
       '    - _Verification: npm test -- follow-up.test.ts_',
       '',
     ].join('\n');
+    const rewrittenTasksWithDesignMarkdown = withStandardDesignMetadata(rewrittenPendingTasksMarkdown);
     writeFileSync(join(specDir, 'HUMAN_INPUT.md'), 'Please add the focused follow-up while preserving completed work.\n', 'utf8');
 
     const fakeCliPath = join(projectRoot, 'write-standard-force-planning-rewritten-pending-artifacts.cjs');
@@ -1468,7 +2500,8 @@ describe('Autocode CLI runner prompt', () => {
       'mkdirSync(specDir, { recursive: true });',
       `writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
       `writeFileSync(join(specDir, 'spec.md'), ${JSON.stringify(specMarkdown)}, 'utf8');`,
-      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(rewrittenPendingTasksMarkdown)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'design_review.md'), ${JSON.stringify(VALID_STANDARD_DESIGN_REVIEW)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(rewrittenTasksWithDesignMarkdown)}, 'utf8');`,
     ].join('\n'), 'utf8');
 
     const plan = createAutocodeTaskRunPlan({
@@ -1675,7 +2708,7 @@ describe('Autocode CLI runner prompt', () => {
     expect(result.message).toContain('Selected model is at capacity');
     expect(result.message).not.toContain('Autocode CLI failed:');
   });
-  it('localizes repaired Standard evidence scaffolding for zh-CN tasks', () => {
+  it('keeps zh-CN Standard evidence in the owning artifacts without scaffolding writes', () => {
     createAutocodeTask({
       projectRoot,
       dataDirName,
@@ -1727,15 +2760,54 @@ describe('Autocode CLI runner prompt', () => {
       '    - _Verification: npm test -- evidence.test.ts_',
       '',
     ].join('\n');
+    const tasksWithDesignMarkdown = withStandardDesignMetadata(tasksMarkdown);
+    const contractRequirementsMarkdown = [
+      '# Requirements: zh-CN evidence ownership',
+      '',
+      'Requirements-Contract: 1',
+      '',
+      '## User Requirements',
+      '- R1: Standard planning keeps evidence in the requirements registry.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: The runtime ledger is derived after contract validation.',
+      '',
+      '## Evidence Sources',
+      '- E1: User request captured by Autocode.',
+      '',
+    ].join('\n');
+    const contractSpecMarkdown = [
+      '# Specification: zh-CN evidence ownership',
+      '',
+      'Specification-Contract: 1',
+      '',
+      '## SCN-001 Derive the runtime ledger',
+      'Covers: R1, AC1',
+      'Evidence: E1',
+      '- Given valid Standard planning artifacts',
+      '- When planning is committed',
+      '- Then implementation_plan.md contains the derived work package.',
+      '',
+    ].join('\n');
+    const contractTasksMarkdown = tasksWithDesignMarkdown
+      .replace('# Tasks\n\n', '# Tasks\n\nTasks-Contract: 1\n\n')
+      .replace('Status: pending\n\n', '')
+      .replace('_Requirements: R1_', '_Requirements: R1, AC1, SCN-001_')
+      .replace(
+        '_Evidence: spec.md Requirements R1; requirements.md Evidence Sources_',
+        '_Evidence: E1; requirements.md E1; src/evidence.ts_',
+      );
+    writeValidStandardDesignArtifacts(specDir);
     const fakeCliPath = join(projectRoot, 'write-standard-artifacts-zh.cjs');
     writeFileSync(fakeCliPath, [
       "const { mkdirSync, writeFileSync } = require('node:fs');",
       "const { join } = require('node:path');",
       'const specDir = process.argv[2];',
       'mkdirSync(specDir, { recursive: true });',
-      `writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
-      `writeFileSync(join(specDir, 'spec.md'), ${JSON.stringify(specMarkdown)}, 'utf8');`,
-      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(tasksMarkdown)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(contractRequirementsMarkdown)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'spec.md'), ${JSON.stringify(contractSpecMarkdown)}, 'utf8');`,
+      `writeFileSync(join(specDir, 'design_review.md'), ${JSON.stringify('Status: PASSED\n\n\u8bbe\u8ba1\u8bc4\u5ba1\u5df2\u9a8c\u8bc1\u8bc1\u636e\u3001\u804c\u8d23\u8fb9\u754c\u548c\u5b9e\u65bd\u6620\u5c04\u3002\n')}, 'utf8');`,
+      `writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(contractTasksMarkdown)}, 'utf8');`,
     ].join('\n'), 'utf8');
 
     const plan = createAutocodeTaskRunPlan({
@@ -1755,16 +2827,14 @@ describe('Autocode CLI runner prompt', () => {
       timeout: 15_000,
     });
 
-    const repairedSpec = readFileSync(join(specDir, 'spec.md'), 'utf8');
-    expect(repairedSpec).toContain('## Evidence');
-    expect(repairedSpec).toContain('requirements.md 记录了本任务的用户请求和规划约束。');
-    expect(repairedSpec).toContain('tasks.md 将实现工作映射回生成的 Standard 需求。');
-    expect(repairedSpec).not.toContain('requirements.md captures the user request');
-    const repairedRequirements = readFileSync(join(specDir, 'requirements.md'), 'utf8');
-    expect(repairedRequirements).toContain('## Evidence Sources');
-    expect(repairedRequirements).toContain('Autocode 捕获的用户任务描述。');
-    expect(repairedRequirements).toContain('spec.md 中的规划范围和成功标准。');
-    expect(repairedRequirements).not.toContain('User task description captured by Autocode');
+    const persistedSpec = readFileSync(join(specDir, 'spec.md'), 'utf8');
+    expect(persistedSpec).toBe(contractSpecMarkdown);
+    expect(persistedSpec).toContain('Evidence: E1');
+    expect(persistedSpec).not.toContain('## Evidence');
+    const persistedRequirements = readFileSync(join(specDir, 'requirements.md'), 'utf8');
+    expect(persistedRequirements).toBe(contractRequirementsMarkdown);
+    expect(persistedRequirements).toContain('## Evidence Sources');
+    expect(persistedRequirements).toContain('- E1:');
   });
 
   it('folds repeated human feedback lines before generating run prompts', () => {
@@ -2336,6 +3406,8 @@ describe('Autocode CLI runner prompt', () => {
         'wp-1': {
           work_package: true,
           depends_on: [],
+          duration_ms: 1_000,
+          started_at: '2026-01-01T00:00:00.000Z',
           files_to_create: ['src/created.ts'],
           files_to_modify: ['src/keep.ts', 'src/remove-me.ts'],
         },
@@ -2354,10 +3426,12 @@ describe('Autocode CLI runner prompt', () => {
     ].join('\n'), 'utf8');
 
     const fakeCliPath = join(projectRoot, 'coding-git-commit.cjs');
+    const activePlanPath = join(projectRoot, 'coding-git-commit-active-plan.md');
     writeFileSync(fakeCliPath, [
       "const { mkdirSync, rmSync, writeFileSync } = require('node:fs');",
       "const { join } = require('node:path');",
       'const root = process.cwd();',
+      `require('node:fs').writeFileSync(process.env.AUTOCODE_TEST_ACTIVE_PLAN_PATH, require('node:fs').readFileSync(process.env.AUTOCODE_TEST_SPEC_DIR + '/implementation_plan.md', 'utf8'), 'utf8');`,
       "mkdirSync(join(root, 'src'), { recursive: true });",
       "writeFileSync(join(root, 'src', 'keep.ts'), 'export const value = 2;\\n', 'utf8');",
       "writeFileSync(join(root, 'src', 'created.ts'), 'export const created = true;\\n', 'utf8');",
@@ -2376,10 +3450,28 @@ describe('Autocode CLI runner prompt', () => {
 
     execFileSync(process.execPath, [plan.runnerFilePath], {
       cwd: projectRoot,
-      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      env: {
+        ...process.env,
+        GRAPHITI_ENABLED: 'false',
+        AUTOCODE_TEST_SPEC_DIR: specDir,
+        AUTOCODE_TEST_ACTIVE_PLAN_PATH: activePlanPath,
+      },
       stdio: 'pipe',
       timeout: 15_000,
     });
+
+    const activePlan = readFileSync(activePlanPath, 'utf8');
+    const activeMetadataPrefix = '<!-- autocode-plan-meta: ';
+    const activeMetadataLine = activePlan.split(String.fromCharCode(10))
+      .find(line => line.startsWith(activeMetadataPrefix));
+    const activeMetadataJson = activeMetadataLine
+      ? activeMetadataLine.slice(activeMetadataPrefix.length, activeMetadataLine.lastIndexOf('-->')).trim()
+      : '{}';
+    const activeMetadata = JSON.parse(activeMetadataJson) as {
+      subtaskMetadata?: Record<string, { active_started_at?: string; duration_ms?: number }>;
+    };
+    expect(activeMetadata.subtaskMetadata?.['wp-1']?.active_started_at).toEqual(expect.any(String));
+    expect(activeMetadata.subtaskMetadata?.['wp-1']?.duration_ms).toBe(1_000);
 
     const subject = execFileSync('git', ['log', '-1', '--format=%s'], {
       cwd: projectRoot,
@@ -2404,7 +3496,11 @@ describe('Autocode CLI runner prompt', () => {
     const logs = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
     expect(logs).toContain('Committed local changes for work item wp-1');
     const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
-    expect(implementationPlan?.phases?.[0]?.subtasks?.[0]?.status).toBe('completed');
+    const completedSubtask = implementationPlan?.phases?.[0]?.subtasks?.[0];
+    expect(completedSubtask?.status).toBe('completed');
+    expect(completedSubtask?.duration_ms).toBeGreaterThan(1_000);
+    expect(completedSubtask?.started_at).toBe('2026-01-01T00:00:00.000Z');
+    expect(completedSubtask?.active_started_at).toBeUndefined();
   });
   it('does not log completed coding work when plan completion status cannot be persisted', () => {
     createAutocodeTask({
@@ -2575,7 +3671,7 @@ describe('Autocode CLI runner prompt', () => {
     expect(capturedPrompts).not.toContain('Work Package ID: wp-1');
     expect(capturedPrompts).toContain('Work Package ID: wp-2');
     const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
-    expect(implementationPlan?.phases?.[0]?.subtasks.map((subtask) => subtask.status)).toEqual([
+    expect(implementationPlan?.phases?.[0]?.subtasks?.map((subtask) => subtask.status)).toEqual([
       'completed',
       'completed',
     ]);
@@ -2639,10 +3735,88 @@ describe('Autocode CLI runner prompt', () => {
     expect(capturedPrompts).toContain('Work Package ID: wp-1');
     expect(capturedPrompts).toContain('Work Package ID: wp-2');
     const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
-    expect(implementationPlan?.phases?.[0]?.subtasks.map((subtask) => subtask.status)).toEqual([
+    expect(implementationPlan?.phases?.[0]?.subtasks?.map((subtask) => subtask.status)).toEqual([
       'completed',
       'completed',
     ]);
+  });
+
+  it('injects only referenced SYS and REV design sections into coding worker prompts', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '008-coding-design-excerpt',
+      title: 'Bind coding to focused design',
+      description: 'Provide only the current work package design contract to its coding worker.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({
+      projectRoot,
+      dataDirName,
+      specId: '008-coding-design-excerpt',
+    });
+    writeFileSync(join(specDir, 'design.md'), [
+      '# Design: Focused coding fixture',
+      '',
+      '## System Responsibility Allocation',
+      '### SYS-001 Included system owner',
+      '- Owns: current work package behavior',
+      '### SYS-999 Unrelated system owner',
+      '- Owns: unrelated behavior',
+      '## Source Reconstruction',
+      '### REV-001 Included source reconstruction',
+      '- Runtime path: ExistingApi#run -> ExistingStore#apply',
+      '## Implementation Model',
+      '### IMP-001 Included implementation',
+      '- Project files and symbols: src/example.ts#run',
+      '',
+    ].join('\n'), 'utf8');
+    writeFileSync(join(specDir, 'implementation_plan.md'), [
+      '# Implementation Plan',
+      'Feature: Bind coding to focused design',
+      'Status: coding',
+      'Execution Phase: coding',
+      '<!-- autocode-plan-meta: {"planStatus":"coding","xstateState":"coding","subtaskMetadata":{"wp-1":{"work_package":true,"depends_on":[],"design_refs":["SYS-001","REV-001","IMP-001"]}}} -->',
+      '',
+      '- [ ] 1. Implementation',
+      '  - [ ] wp-1 Implement the mapped behavior',
+      '    - _Design: SYS-001, REV-001, IMP-001_',
+      '',
+    ].join('\n'), 'utf8');
+
+    const fakeCliPath = join(projectRoot, 'coding-design-excerpt.cjs');
+    const capturedPromptPath = join(projectRoot, 'coding-design-excerpt-prompt.txt');
+    writeFileSync(fakeCliPath, [
+      "const { writeFileSync } = require('node:fs');",
+      "let input = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { input += chunk; });",
+      "process.stdin.on('end', () => { writeFileSync(process.argv[2], input, 'utf8'); });",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '008-coding-design-excerpt',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}" "${capturedPromptPath.replace(/\\/g, '/')}"`,
+      phase: 'coding',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const capturedPrompt = readFileSync(capturedPromptPath, 'utf8');
+    expect(capturedPrompt).toContain('### SYS-001 Included system owner');
+    expect(capturedPrompt).toContain('### REV-001 Included source reconstruction');
+    expect(capturedPrompt).toContain('### IMP-001 Included implementation');
+    expect(capturedPrompt).not.toContain('SYS-999 Unrelated system owner');
+    expect(capturedPrompt).toContain('map the target symbol to IMP-*');
+    expect(capturedPrompt).toContain('source contradicts REV-*');
   });
 
   it('does not write completed_at for failed coding work packages', () => {
@@ -2697,6 +3871,8 @@ describe('Autocode CLI runner prompt', () => {
     expect(subtask?.status).toBe('failed');
     expect(subtask?.completed_at).toBeUndefined();
     expect(subtask?.notes).toContain('CLI work item run failed');
+    expect(subtask?.duration_ms).toBeGreaterThan(0);
+    expect(subtask?.active_started_at).toBeUndefined();
   });
 
   it('counts repeated Codex JSON usage snapshots as one implicit model turn', () => {

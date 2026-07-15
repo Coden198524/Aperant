@@ -40,7 +40,6 @@ const PHASE_OUTPUT_FILES: Record<string, string[]> = {
   requirements: ['requirements.md'],
   research: ['research.md'],
   context: ['context.md'],
-  quick_spec: ['spec.md'],
   spec_writing: ['spec.md'],
   self_critique: ['spec.md', 'critique_notes.md'],
   planning: ['implementation_plan.md'],

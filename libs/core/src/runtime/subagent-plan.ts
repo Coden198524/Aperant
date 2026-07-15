@@ -12,6 +12,8 @@ export const AUTOCODE_SUBAGENT_TYPES = [
   'spec_critic',
   'spec_validation',
   'planner',
+  'software_designer',
+  'design_critic',
   'coder',
   'qa_reviewer',
   'qa_fixer',
@@ -53,6 +55,8 @@ export const AUTOCODE_SUBAGENT_AGENT_TYPE_MAP: Record<AutocodeSubagentType, Agen
   spec_critic: 'spec_critic',
   spec_validation: 'spec_validation',
   planner: 'planner',
+  software_designer: 'software_designer',
+  design_critic: 'design_critic',
   coder: 'coder',
   qa_reviewer: 'qa_reviewer',
   qa_fixer: 'qa_fixer',
@@ -85,6 +89,8 @@ export const AUTOCODE_SUBAGENT_PROMPT_NAME_MAP: Record<AutocodeSubagentType, str
   spec_critic: 'spec_critic',
   spec_validation: 'spec_writer',
   planner: 'planner',
+  software_designer: 'software_designer',
+  design_critic: 'design_critic',
   coder: 'coder',
   qa_reviewer: 'qa_reviewer',
   qa_fixer: 'qa_fixer',
@@ -124,12 +130,14 @@ export const AUTOCODE_SPAWN_SUBAGENT_TOOL_DESCRIPTION = `Spawn a specialist suba
 Available subagent types:
 - complexity_assessor: Assess task complexity (simple/standard/complex). Returns structured JSON.
 - spec_discovery: Analyze project structure, tech stack, conventions, and source evidence. Writes context.md.
-- spec_gatherer: Gather and validate evidence-backed requirements from task description, project source, and standards. Writes requirements.md.
+- spec_gatherer: Return structured evidence-backed requirements from task description, project source, and standards. The orchestrator validates and persists requirements.md.
 - spec_researcher: Research implementation approaches, external APIs, libraries, and standards using verified sources. Writes research.md.
 - spec_writer: Write the evidence-backed specification (spec.md). Writes files.
 - spec_critic: Review spec for completeness, technical feasibility, gaps.
-- spec_validation: Final validation of spec.md and implementation_plan.md.
+- spec_validation: Read-only cross-validation of requirements.md, spec.md, the five-file Design-Contract package, design_review.md, tasks.md, and the derived runtime ledger.
 - planner: Create source-backed tasks with dependencies, evidence notes, and verification.
+- software_designer: Produce the assigned Design-Contract owner artifact for requirement, domain, architecture, detailed design, or implementation mapping without mixing file ownership.
+- design_critic: Independently review all five design-package files for project fit, model consistency, both underdesign and overdesign, pattern evidence, feasibility, and connected traceability.
 - coder: Implement code changes.
 - qa_reviewer: Review implementation against specification.
 - qa_fixer: Fix issues found by qa_reviewer.

@@ -54,7 +54,7 @@ describe('runtime log display', () => {
     ]);
   });
 
-  it('renders internal quick_spec phase names as Standard light planning', () => {
+  it('renders legacy quick_spec phase names as Standard planning', () => {
     const displayLogs = buildDisplayRuntimeLogs([
       [
         'Spec phase 2/3: quick_spec',
@@ -65,10 +65,10 @@ describe('runtime log display', () => {
     ]);
 
     expect(displayLogs.map(log => log.content)).toEqual([
-      'Spec phase 2/3: Standard light planning',
-      'Running spec_writer session (spec phase=Standard light planning, session=1)',
-      'Standard planning: Standard light planning (2/3)',
-      'Running simple workflow: Standard light planning -> validation',
+      'Spec phase 2/3: Standard planning',
+      'Running spec_writer session (spec phase=Standard planning, session=1)',
+      'Standard planning: Standard planning (2/3)',
+      'Running simple workflow: Standard planning -> validation',
     ]);
   });
 

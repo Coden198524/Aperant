@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -7,7 +7,7 @@ import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import { createManualAutocodeTask } from './workspace-state.js';
 
 describe('manual Standard task seed', () => {
-  it('creates a compact task-first Standard seed spec', () => {
+  it('seeds canonical requirements without pre-writing spec behavior', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-workspace-state-'));
     try {
       const task = createManualAutocodeTask({
@@ -18,43 +18,52 @@ describe('manual Standard task seed', () => {
         now: '2026-07-01T00:00:00.000Z',
       });
 
-      const spec = readFileSync(join(task.specsPath, AUTOCODE_TASK_ARTIFACTS.specFile), 'utf8');
+      const requirements = readFileSync(
+        join(task.specsPath, AUTOCODE_TASK_ARTIFACTS.requirements),
+        'utf8',
+      );
+      const runtimeLedger = readFileSync(
+        join(task.specsPath, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
+        'utf8',
+      );
 
       expect(task.metadata?.developmentMode).toBe('standard');
       expect(task.metadata?.workflowMode).toBe('balanced');
-      expect(spec).toContain('Standard mode task');
-      expect(spec).toContain('Use compact Standard Autocode planning');
-      expect(spec).toContain('Create or repair tasks.md as the executable checklist');
-      expect(spec).not.toContain('Requirements To Clarify');
-      expect(spec).not.toContain('Design Decisions To Record');
-      expect(spec).not.toContain('Acceptance Criteria To Define');
-      expect(spec).not.toContain('Risks / Assumptions To Review');
-      expect(spec.length).toBeLessThan(900);
+      expect(requirements).toContain('Requirements-Contract: 1');
+      expect(requirements).toContain('Fix the settings label text.');
+      expect(requirements).toContain('E1: User task description');
+      expect(requirements).not.toContain('SCN-');
+      expect(requirements).not.toContain('Implementation Notes');
+      expect(runtimeLedger).toContain('# Runtime Execution Ledger');
+      expect(runtimeLedger).not.toContain('Feature:');
+      expect(runtimeLedger).not.toContain('## Description');
+      expect(existsSync(join(task.specsPath, AUTOCODE_TASK_ARTIFACTS.specFile))).toBe(false);
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
     }
   });
 
-  it('keeps the Chinese Standard seed readable and compact', () => {
+  it('preserves localized input without creating a mixed seed spec', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-workspace-state-zh-'));
     try {
+      const description = '\u4fee\u590d\u8bbe\u7f6e\u6309\u94ae\u6587\u6848\u3002';
       const task = createManualAutocodeTask({
         projectRoot,
         dataDirName: '.autocode',
-        title: '修复设置文案',
-        description: '修复设置按钮文案。',
+        title: '\u4fee\u590d\u8bbe\u7f6e\u6587\u6848',
+        description,
         metadata: { language: 'zh-CN' },
         now: '2026-07-01T00:00:00.000Z',
       });
 
-      const spec = readFileSync(join(task.specsPath, AUTOCODE_TASK_ARTIFACTS.specFile), 'utf8');
+      const requirements = readFileSync(
+        join(task.specsPath, AUTOCODE_TASK_ARTIFACTS.requirements),
+        'utf8',
+      );
 
-      expect(spec).toContain('Standard 标准模式任务');
-      expect(spec).toContain('使用紧凑的 Standard Autocode 规划');
-      expect(spec).toContain('创建或修复 tasks.md 作为可执行清单');
-      expect(spec).not.toContain('待澄清需求');
-      expect(spec).not.toContain('待记录设计决策');
-      expect(spec.length).toBeLessThan(650);
+      expect(requirements).toContain(description);
+      expect(requirements).toContain('Requirements-Contract: 1');
+      expect(existsSync(join(task.specsPath, AUTOCODE_TASK_ARTIFACTS.specFile))).toBe(false);
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
     }

@@ -564,7 +564,7 @@ describe('registerTaskExecutionHandlers', () => {
     );
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('Flow/runtime documents involved: HUMAN_INPUT.md, change_requests.jsonl, spec.md, requirements.md, tasks.md, implementation_plan.md, qa_report.md'),
+      expect.stringContaining('Flow/runtime documents involved: HUMAN_INPUT.md, change_requests.jsonl, tasks.md, implementation_plan.md, qa_report.md'),
       'utf-8'
     );
     expect(fs.writeFileSync).toHaveBeenCalledWith(
@@ -665,7 +665,7 @@ describe('registerTaskExecutionHandlers', () => {
     expect(result).toEqual({ success: true });
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('Impact analysis: requirements, design, tasks, validation'),
+      expect.stringContaining('Impact analysis: requirements, tasks, validation'),
       'utf-8',
     );
     expect(writeFileSync).toHaveBeenCalledWith(
@@ -675,7 +675,7 @@ describe('registerTaskExecutionHandlers', () => {
     );
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('Update tasks.md by editing represented subtasks in place'),
+      expect.stringContaining('tasks.md owns static task definitions; implementation_plan.md owns runtime state only'),
       'utf-8',
     );
     expect(writeFileSync).toHaveBeenCalledWith(
@@ -718,7 +718,7 @@ describe('registerTaskExecutionHandlers', () => {
       .map(([, content]) => String(content));
     const finalHumanInput = humanInputWrites[humanInputWrites.length - 1];
     expect(finalHumanInput).toContain('Use the Autocode Standard iteration flow incrementally');
-    expect(finalHumanInput).toContain('Do not regenerate the entire task plan');
+    expect(finalHumanInput).toContain('Do not regenerate unaffected upstream artifacts or the entire task plan');
     expect(finalHumanInput).toContain('Do not implement code in this planning pass');
     expect(finalHumanInput).not.toContain('planning artifacts were patched locally');
     expect(finalHumanInput).not.toContain('Continue coding from the pending change-request work item');
@@ -2117,6 +2117,77 @@ describe('registerTaskExecutionHandlers', () => {
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
+  it('starts coding when approving plan_review instead of marking the task done', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { existsSync, readFileSync, writeFileSync } = await import('fs');
+
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-plan-approve',
+        specId: '001-plan-approve',
+        projectId: 'project-fast',
+        title: 'Plan approval task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'plan_review',
+        subtasks: [{ id: '1.1', title: 'Pending work', description: 'desc', status: 'pending', files: [] }],
+        logs: [],
+        metadata: { workflowMode: 'balanced', developmentMode: 'standard' },
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('plan_review');
+    (existsSync as Mock).mockImplementation((filePath: string) =>
+      filePath.includes('spec.md') || filePath.includes('implementation_plan.md')
+    );
+    (readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.md')) {
+        return JSON.stringify({
+          phases: [{ phase: 1, subtasks: [{ id: '1.1', status: 'pending' }] }],
+        });
+      }
+      return '';
+    });
+
+    const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
+    const result = await reviewHandler({}, '001-plan-approve', true, undefined, undefined, 'project-fast');
+
+    expect(result).toEqual({ success: true });
+    expect(taskStateManager.prepareForRestart).toHaveBeenCalledWith(
+      '001-plan-approve',
+      'project-fast',
+    );
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-plan-approve',
+      { type: 'PLAN_APPROVED' },
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(taskStateManager.handleUiEvent).not.toHaveBeenCalledWith(
+      '001-plan-approve',
+      { type: 'MARK_DONE' },
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect((writeFileSync as Mock).mock.calls.some(([filePath]) =>
+      String(filePath).includes('qa_report.md')
+    )).toBe(false);
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalledWith(
+      '001-plan-approve',
+      'E:/Work/FastProject',
+      '001-plan-approve',
+      expect.objectContaining({ parallel: true }),
+      'project-fast',
+    );
+    expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
+  });
+
   it('approves direct review without writing QA artifacts', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
@@ -2331,7 +2402,7 @@ describe('registerTaskExecutionHandlers', () => {
     expect(result).toEqual({ success: true });
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('Update tasks.md by editing represented subtasks in place'),
+      expect.stringContaining('tasks.md owns static task definitions; implementation_plan.md owns runtime state only'),
       'utf-8'
     );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(

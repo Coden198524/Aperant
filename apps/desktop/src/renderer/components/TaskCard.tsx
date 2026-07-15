@@ -24,7 +24,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import { buildTokenHoverTitle, cn, formatTokenCount, sanitizeMarkdownForDisplay } from '../lib/utils';
+import {
+  buildTokenHoverTitle,
+  calculateProgress,
+  cn,
+  formatTokenCount,
+  sanitizeMarkdownForDisplay,
+} from '../lib/utils';
 import { resolveActiveSubtaskIndex } from '../lib/subtask-progress';
 import { PhaseProgressIndicator } from './PhaseProgressIndicator';
 import {
@@ -191,7 +197,13 @@ export const TaskCard = memo(function TaskCard({
       ? (task.subtasks.some((subtask) => subtask.status === 'in_progress') ? 'coding' : 'planning')
       : rawExecutionPhase;
   const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed' && executionPhase !== 'stopped';
-  const cardPhaseProgress = isCompletedTerminal ? 100 : hasStaleTerminalProgress ? 0 : task.executionProgress?.phaseProgress;
+  const cardPhaseProgress = isCompletedTerminal
+    ? 100
+    : task.subtasks.length > 0
+      ? calculateProgress(task.subtasks)
+      : hasStaleTerminalProgress
+        ? 0
+        : task.executionProgress?.phaseProgress;
   const activeBatchCount = taskView.activeSubtaskCount;
   const hasParallelSubtasks = isRunning && taskView.hasParallelSubtasks;
   const developmentMode = resolveCardDevelopmentMode(task);

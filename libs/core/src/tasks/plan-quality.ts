@@ -1,6 +1,8 @@
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import { parseAutocodeImplementationPlanMarkdown } from './plan-store.js';
 import { formatAutocodeRetryErrorLines } from '../text/compaction.js';
+import { validateAutocodeStandardDesignArtifacts } from './design-quality.js';
+import { validateAutocodeStandardArtifactResponsibilities } from './standard-artifact-contract.js';
 
 export type AutocodeEvidenceConfidence = 'low' | 'medium' | 'high';
 
@@ -21,6 +23,12 @@ export interface AutocodePlanQualityLimits {
   context: AutocodePlanArtifactLimit;
   spec: AutocodePlanArtifactLimit;
   requirements: AutocodePlanArtifactLimit;
+  design: AutocodePlanArtifactLimit;
+  requirementModel: AutocodePlanArtifactLimit;
+  domainModel: AutocodePlanArtifactLimit;
+  designModel: AutocodePlanArtifactLimit;
+  implementationModel: AutocodePlanArtifactLimit;
+  designReview: AutocodePlanArtifactLimit;
   tasks: AutocodePlanArtifactLimit;
 }
 
@@ -28,11 +36,22 @@ export interface ValidateAutocodeStandardPlanArtifactsInput {
   specMarkdown?: string | null;
   requirementsMarkdown?: string | null;
   tasksMarkdown?: string | null;
+  implementationPlanMarkdown?: string | null;
+  previousTasksMarkdown?: string | null;
+  previousImplementationPlanMarkdown?: string | null;
+  designMarkdown?: string | null;
+  requirementModelMarkdown?: string | null;
+  domainModelMarkdown?: string | null;
+  designModelMarkdown?: string | null;
+  implementationModelMarkdown?: string | null;
+  designReviewMarkdown?: string | null;
   contextMarkdown?: string | null;
+  language?: string;
   limits?: Partial<AutocodePlanQualityLimits>;
   requireSpecEvidence?: boolean;
   requireRequirementsEvidence?: boolean;
   requireTaskEvidence?: boolean;
+  requireDesign?: boolean;
   requireContextEvidence?: boolean;
 }
 
@@ -46,6 +65,12 @@ export const AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS: AutocodePlanQualityLimits = 
   context: { maxLines: 220, maxChars: 18_000 },
   spec: { maxLines: 150, maxChars: 16_000 },
   requirements: { maxLines: 160, maxChars: 14_000 },
+  design: { maxLines: 360, maxChars: 32_000 },
+  requirementModel: { maxLines: 500, maxChars: 40_000 },
+  domainModel: { maxLines: 500, maxChars: 40_000 },
+  designModel: { maxLines: 800, maxChars: 64_000 },
+  implementationModel: { maxLines: 600, maxChars: 48_000 },
+  designReview: { maxLines: 220, maxChars: 18_000 },
   tasks: { maxLines: 900, maxChars: 64_000 },
 };
 
@@ -98,7 +123,10 @@ const TASK_TITLE_STATE_LABEL_PATTERN =
   /^\s*(?:[\[(]\s*(?:needs[_\s-]*revision|revision[_\s-]*required|obsolete|superseded|deprecated)\s*[\])]\s*(?:[-:]\s*)?|(?:needs[_\s-]*revision|revision[_\s-]*required|obsolete|superseded|deprecated)\s*[-:]\s*)/iu;
 
 const READ_ONLY_VALIDATION_TASK_PATTERN =
-  /\b(?:validate|verify|verification|manual qa|qa|smoke|test|typecheck|lint|build)\b/i;
+  /\b(?:validate|verify|verification|manual qa|qa|smoke|test|typecheck|lint|build)\b|验证|验收|测试|检查|复核|构建/iu;
+
+const VALIDATION_LED_IMPLEMENTATION_PATTERN =
+  /\b(?:implement|add|create|update|modify|wire|integrate|render|persist|migrate|remove|refactor|handle|support|expose|bind|configure|generate)\b|实现|创建|新增|添加|更新|修改|接入|绑定|绘制|渲染|处理|保存|读取|生成|配置|清除/iu;
 
 const ANALYSIS_DOCUMENTATION_PLAN_PATTERN =
   /\b(?:analysis|analyze|documentation|docs?|research|investigation|audit|review|report|write[-\s]?up|explain|explanation)\b|分析|文档|说明|调研|研究|审计|复核|报告|梳理|定位/iu;
@@ -280,6 +308,8 @@ const PLAN_ARTIFACT_FILE_NAMES = new Set([
   AUTOCODE_TASK_ARTIFACTS.requirements.toLowerCase(),
   AUTOCODE_TASK_ARTIFACTS.context.toLowerCase(),
   AUTOCODE_TASK_ARTIFACTS.research.toLowerCase(),
+  AUTOCODE_TASK_ARTIFACTS.design.toLowerCase(),
+  AUTOCODE_TASK_ARTIFACTS.designReview.toLowerCase(),
   AUTOCODE_TASK_ARTIFACTS.tasks.toLowerCase(),
   AUTOCODE_TASK_ARTIFACTS.implementationPlan.toLowerCase(),
   AUTOCODE_TASK_ARTIFACTS.qaReport.toLowerCase(),
@@ -315,13 +345,53 @@ export function validateAutocodeStandardPlanArtifacts(
     errors.push(...validateMarkdownSize(AUTOCODE_TASK_ARTIFACTS.tasks, input.tasksMarkdown, limits.tasks));
     if (input.requireTaskEvidence) {
       errors.push(...validateTasksEvidence(input.tasksMarkdown));
-      errors.push(...validateComplexPlanArchitectureReferences({
-        specMarkdown: input.specMarkdown ?? undefined,
-        tasksMarkdown: input.tasksMarkdown,
-      }));
+      if (!input.requireDesign) {
+        errors.push(...validateComplexPlanArchitectureReferences({
+          specMarkdown: input.specMarkdown ?? undefined,
+          tasksMarkdown: input.tasksMarkdown,
+        }));
+      }
     }
   } else if (input.requireTaskEvidence) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} is missing.`);
+  }
+
+  if (input.requireDesign) {
+    if (input.designMarkdown !== undefined && input.designMarkdown !== null) {
+      errors.push(...validateMarkdownSize(AUTOCODE_TASK_ARTIFACTS.design, input.designMarkdown, limits.design));
+    }
+    const modelArtifacts = [
+      [AUTOCODE_TASK_ARTIFACTS.requirementModel, input.requirementModelMarkdown, limits.requirementModel],
+      [AUTOCODE_TASK_ARTIFACTS.domainModel, input.domainModelMarkdown, limits.domainModel],
+      [AUTOCODE_TASK_ARTIFACTS.designModel, input.designModelMarkdown, limits.designModel],
+      [AUTOCODE_TASK_ARTIFACTS.implementationModel, input.implementationModelMarkdown, limits.implementationModel],
+    ] as const;
+    for (const [fileName, markdown, limit] of modelArtifacts) {
+      if (markdown !== undefined && markdown !== null) {
+        errors.push(...validateMarkdownSize(fileName, markdown, limit));
+      }
+    }
+    if (input.designReviewMarkdown !== undefined && input.designReviewMarkdown !== null) {
+      errors.push(...validateMarkdownSize(
+        AUTOCODE_TASK_ARTIFACTS.designReview,
+        input.designReviewMarkdown,
+        limits.designReview,
+      ));
+    }
+    const designQuality = validateAutocodeStandardDesignArtifacts({
+      designMarkdown: input.designMarkdown,
+      requirementModelMarkdown: input.requirementModelMarkdown,
+      domainModelMarkdown: input.domainModelMarkdown,
+      designModelMarkdown: input.designModelMarkdown,
+      implementationModelMarkdown: input.implementationModelMarkdown,
+      designReviewMarkdown: input.designReviewMarkdown,
+      tasksMarkdown: input.tasksMarkdown,
+      language: input.language,
+      requireReview: true,
+      requireTaskReferences: Boolean(input.tasksMarkdown?.trim()),
+    });
+    errors.push(...designQuality.errors);
+    warnings.push(...designQuality.warnings);
   }
 
   if (input.contextMarkdown !== undefined && input.contextMarkdown !== null) {
@@ -330,6 +400,17 @@ export function validateAutocodeStandardPlanArtifacts(
   } else if (input.requireContextEvidence) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.context} is missing.`);
   }
+
+  const responsibilityResult = validateAutocodeStandardArtifactResponsibilities({
+    requirementsMarkdown: input.requirementsMarkdown,
+    specMarkdown: input.specMarkdown,
+    tasksMarkdown: input.tasksMarkdown,
+    implementationPlanMarkdown: input.implementationPlanMarkdown,
+    previousTasksMarkdown: input.previousTasksMarkdown,
+    previousImplementationPlanMarkdown: input.previousImplementationPlanMarkdown,
+  });
+  errors.push(...responsibilityResult.errors);
+  warnings.push(...responsibilityResult.warnings);
 
   return {
     valid: errors.length === 0,
@@ -345,18 +426,24 @@ export function buildAutocodePlanQualityRetryPrompt(errors: string[]): string {
     'The previous Standard planning artifacts failed quality validation.',
     '',
     'Errors:',
-    ...formatAutocodeRetryErrorLines(errors, { maxCharsPerError: 160 }),
+    ...formatAutocodeRetryErrorLines(errors, { maxCharsPerError: 56 }),
     '',
     'Repair only the affected artifacts with the Write/Edit tools.',
     '- Preserve unaffected requirement IDs, decisions, completed tasks, and Request Changes history.',
-    `- Keep ${AUTOCODE_TASK_ARTIFACTS.specFile} compact and concrete: requirements, key decisions/assumptions, traceable evidence, and acceptance/verification notes. Replace any manual Standard seed.`,
-    `- Keep ${AUTOCODE_TASK_ARTIFACTS.requirements} focused on User Requirements, Acceptance Criteria, constraints, and Evidence Sources; mirror concrete requirements referenced by tasks.`,
-    `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} detailed but compact. Each executable leaf should cover one reviewable behavior or contract and one focused verification path.`,
+    '- requirements.md is the only owner of full R*/AC*/C*/A*/Q*/E* text. Preserve unaffected IDs and do not put scenarios, design, files, tasks, or runtime state there.',
+    '- spec.md owns observable SCN-* behavior only. Cite Covers: R*, AC* and Evidence: E* without copying their prose or adding architecture/task details.',
+    `- Treat the Design-Contract: 4 package as binding. ${AUTOCODE_TASK_ARTIFACTS.design} owns architecture/ADR decisions and references ${AUTOCODE_TASK_ARTIFACTS.requirementModel}, ${AUTOCODE_TASK_ARTIFACTS.domainModel}, ${AUTOCODE_TASK_ARTIFACTS.designModel}, and ${AUTOCODE_TASK_ARTIFACTS.implementationModel}; keep ${AUTOCODE_TASK_ARTIFACTS.designReview} independent.`,
+    '- Repair only the earliest affected owner and its downstream models. Preserve shared Design-Revision and unaffected stable IDs. RM belongs in requirement_model.md, DOM in domain_model.md, SYS/DES/FLOW/CONTRACT/PAT/REV in design_model.md, and IMP in implementation_model.md.',
+    '- Select the smallest complete project-consistent architecture. Declare forward-design, reverse-engineering, or mixed analysis; preserve requirement/observed/inferred/unresolved evidence provenance; allocate every RM-* through SYS-* before DES-*; and use REV-* only for evidence-backed source reconstruction.',
+    '- Select architecture and implementation paradigm from system shape, behavior, lifecycle, quality constraints, framework ownership, and repository evidence, never from the programming language alone.',
+    '- Remove speculative abstractions, but also repair God coordinators, anemic objects, implicit ownership, shallow flows, static/dynamic contradictions, and unexamined state/type/policy variation.',
+    `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} as a static definition catalog with Tasks-Contract: 1 and [ ] checkboxes only. Each leaf covers one reviewable behavior or contract and one focused verification path.`,
+    '- Never rewrite or remove a completed task definition. Restore it and assign revised work a new task ID; pending definitions may be revised in place.',
+    `- Do not edit ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives its slim status/timing/retry/failure/commit ledger from tasks.md.`,
     '- Split a leaf that covers more than three behaviors, three requirement/acceptance references, or four write-intent files.',
-    '- Every executable leaf needs concrete files/APIs or boundaries plus _Depends on_, _Requirements_, traceable _Evidence_, _Done when_, and _Verification_ metadata.',
+    '- Every executable leaf needs concrete files/APIs or boundaries plus _Depends on_, _Requirements_, _Design_ (including selected PAT-* when applicable), traceable _Evidence_, _Done when_, and _Verification_ metadata.',
     '- Use dependencies only for real data, contract, or verification order. Overlapping file writes are queued by the runtime scheduler.',
-    '- Evidence must cite the user request, concrete requirements, project files/docs, or verified standards. If evidence is missing, record an assumption/open question or validation task.',
-    '- For complex/high-risk work, add a compact Architecture And Design Pattern References section and one _Architecture: boundary; strategy; source/reference_ line per write task.',
+    '- Evidence metadata cites E* IDs and exact project files/docs or verified standards; do not copy evidence bodies from requirements.md.',
     '- Runnable or user-facing work needs runtime-readiness verification: start/open it, exercise the primary path, and check console/resources/blank screen/startup/exit status; static checks alone are insufficient.',
     '- Do not prefix executable titles with revision/obsolete state labels or invent history markers without real Request Changes context.',
     '- Documentation-only outputs must be reader-first: early Conclusion Snapshot, early Main Flow, scenario-based sections, and evidence/verification templates near the end or in appendices; avoid implementation-contract top-level headings unless requested.',
@@ -692,6 +779,24 @@ function mergeAutocodePlanQualityLimits(
     context: { ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.context, ...overrides?.context },
     spec: { ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.spec, ...overrides?.spec },
     requirements: { ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.requirements, ...overrides?.requirements },
+    design: { ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.design, ...overrides?.design },
+    requirementModel: {
+      ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.requirementModel,
+      ...overrides?.requirementModel,
+    },
+    domainModel: {
+      ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.domainModel,
+      ...overrides?.domainModel,
+    },
+    designModel: {
+      ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.designModel,
+      ...overrides?.designModel,
+    },
+    implementationModel: {
+      ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.implementationModel,
+      ...overrides?.implementationModel,
+    },
+    designReview: { ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.designReview, ...overrides?.designReview },
     tasks: { ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.tasks, ...overrides?.tasks },
   };
 }
@@ -711,6 +816,18 @@ function validateMarkdownSize(fileName: string, content: string, limit: Autocode
 
 function validateSpecEvidence(specMarkdown: string): string[] {
   const errors: string[] = [];
+  if (/^Specification-Contract:\s*1\s*$/im.test(specMarkdown)) {
+    if (!/\bE\d+\b/i.test(specMarkdown)) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} must cite at least one requirements.md E* evidence ID.`);
+    }
+    if (!/\bCovers\s*:\s*(?:R|AC)\d+/i.test(specMarkdown)) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} must map observable behavior with Covers: R*, AC*.`);
+    }
+    if (isManualStandardSpecSeed(specMarkdown)) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} is still the manual Standard planning seed; migrate it to Specification-Contract: 1 with observable SCN-* behavior referencing R*/AC*/E*, without copied requirement prose or design decisions.`);
+    }
+    return errors;
+  }
   const evidenceSection = getMarkdownSection(specMarkdown, 'Evidence');
   const hasGlobalEvidence = Boolean(evidenceSection && /(?:^|\n)\s*(?:[-*]|\d+\.)\s+\S/.test(evidenceSection));
   if (!/^\s*##\s+Evidence\b/im.test(specMarkdown)) {
@@ -719,7 +836,7 @@ function validateSpecEvidence(specMarkdown: string): string[] {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} Evidence section is only generic Standard scaffolding; cite the user request, concrete requirements, project files/docs, or verified standards that prove scope and acceptance criteria.`);
   }
   if (isManualStandardSpecSeed(specMarkdown)) {
-    errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} is still the manual Standard planning seed; replace it with a compact Standard spec containing concrete requirements, key decisions or assumptions, evidence, and acceptance/verification notes before planning.`);
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} is still the manual Standard planning seed; migrate it to Specification-Contract: 1 with observable SCN-* behavior referencing R*/AC*/E*, without copied requirement prose or design decisions.`);
   }
   if (hasSectionContent(specMarkdown, 'Requirements') && !sectionContainsEvidence(specMarkdown, 'Requirements') && !hasGlobalEvidence) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} Requirements section must cite Evidence for requirements or acceptance criteria.`);
@@ -989,6 +1106,9 @@ function validateTaskGranularity(plan: ReturnType<typeof parseAutocodeImplementa
     }
 
     const metrics = analyzeTaskGranularity(record, title, description);
+    if (isValidationLedTask(record, title, description, metrics)) {
+      continue;
+    }
     if (!isTaskTooBroad(metrics)) {
       continue;
     }
@@ -1102,7 +1222,7 @@ function isTaskMetadataLineForGranularity(line: string): boolean {
   if (isTaskArchitectureMetadataLine(line)) {
     return true;
   }
-  return /^\s*(?:[-*]\s*)?(?:[_*`]+)?\s*(?:Architecture|Architecture\/Pattern|Design Pattern|Boundary\/Pattern|Files?|Files to create\/modify|Files to modify|Files to create|Depends on|Requirements?|Acceptance Criteria|Evidence|Done when|Complete when|Finished when|Completion Criteria|Success Criteria|Verification|Validation|Pattern files)\s*[:\uFF1A]/iu.test(line);
+  return /^\s*(?:[-*]\s*)?(?:[_*`]+)?\s*(?:Architecture|Architecture\/Pattern|Design Pattern|Boundary\/Pattern|Files?|Files to create\/modify|Files to modify|Files to create|File intent|Files intent|File write intent|Write intent|Depends on|Requirements?|Acceptance Criteria|Evidence|Done when|Complete when|Finished when|Completion Criteria|Success Criteria|Verification|Validation|Pattern files)\s*(?:[_*`]+)?\s*[:\uFF1A]/iu.test(line);
 }
 
 function isTaskTooBroad(metrics: TaskGranularityMetrics): boolean {
@@ -1219,6 +1339,24 @@ function isReadOnlyValidationTask(
   }
 
   return READ_ONLY_VALIDATION_TASK_PATTERN.test([title, description].join(' '));
+}
+
+function isValidationLedTask(
+  subtask: Record<string, unknown>,
+  title: string,
+  description: string,
+  metrics: TaskGranularityMetrics,
+): boolean {
+  if (metrics.behaviorSignals > 2) {
+    return false;
+  }
+  const taskText = [
+    title,
+    description,
+    stringifyTaskValue(subtask.verification),
+  ].join(' ');
+  return READ_ONLY_VALIDATION_TASK_PATTERN.test(taskText) &&
+    !VALIDATION_LED_IMPLEMENTATION_PATTERN.test(title);
 }
 
 function hasProjectSpecificTaskAnchor(subtask: Record<string, unknown>): boolean {

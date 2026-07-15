@@ -117,8 +117,9 @@ describe('buildAutocodeSpecKickoffMessage', () => {
     });
 
     expect(message).toContain('Create E:/Work/App/.autocode/specs/001-task/tasks.md');
-    expect(message).toContain('Default output is tasks.md only');
-    expect(message).toContain('required by RequestChanges');
+    expect(message).toContain('Write tasks.md only');
+    expect(message).toContain('Do not edit upstream artifacts');
+    expect(message).toContain('Keep completed historical definitions unchanged');
     expect(message).toContain('Do not write implementation_plan.md');
     expect(message).not.toContain('Use Autocode Standard planning: update E:/Work/App/.autocode/specs/001-task/spec.md');
   });
@@ -225,7 +226,7 @@ describe('buildAutocodeSpecKickoffMessage', () => {
     expect(qaReviewer).toContain('APIs, schemas, IPC/protocols');
     expect(qaReviewer).toContain('actual launch/open/use-path smoke verification');
     expect(qaReviewer).toContain('reject static-only verification');
-    expect(qaFixer).toContain('Do not edit the QA verdict');
+    expect(qaFixer).toContain('Do not edit tasks.md, implementation_plan.md, or the QA verdict');
     expect(qaFixer).toContain('public APIs/schemas/IPC/config/data/error contracts');
     expect(qaFixer).toContain('rerun the exact launch/open/use-path smoke check');
     expect(mmoReviewer).toContain('MMO Domain Matrix');
@@ -242,8 +243,9 @@ describe('buildAutocodeSpecKickoffMessage', () => {
       projectDir: 'E:/Work/App',
     });
 
-    expect(message).toContain('Create or repair E:/Work/App/.autocode/specs/001-task/tasks.md as the primary output');
-    expect(message).toContain('required by RequestChanges');
+    expect(message).toContain('Create or repair only E:/Work/App/.autocode/specs/001-task/tasks.md');
+    expect(message).toContain('Tasks-Contract: 1 static definition catalog with [ ] checkboxes');
+    expect(message).toContain('Preserve completed historical definitions unchanged');
     expect(message).toContain('Do not write E:/Work/App/.autocode/specs/001-task/implementation_plan.md');
     expect(message).not.toContain('First update E:/Work/App/.autocode/specs/001-task/spec.md');
     expect(message).not.toContain('Update E:/Work/App/.autocode/specs/001-task/spec.md with Proposal/Goal');
@@ -258,11 +260,12 @@ describe('buildAutocodeSpecKickoffMessage', () => {
 
     expect(message).toContain('STANDARD ITERATION PLANNING');
     expect(message).toContain('Do not edit E:/Work/App/.autocode/specs/001-task/implementation_plan.md directly');
-    expect(message).toContain('Autocode Standard iteration flow incrementally');
-    expect(message).toContain('Do not regenerate the entire task plan');
-    expect(message).toContain('editing affected checklist items in place');
-    expect(message).toContain('keep one canonical checklist item');
-    expect(message).toContain('Do not append a second task');
+    expect(message).toContain('staged Standard iteration flow incrementally');
+    expect(message).toContain('never regenerate unaffected owner artifacts');
+    expect(message).toContain('Revise only affected still-pending definitions');
+    expect(message).toContain('completed historical task definitions visible and unchanged');
+    expect(message).toContain('add revised work under a new task ID');
+    expect(message).toContain('Keep every tasks.md checkbox [ ]');
     expect(message).toContain('cannot start, open, run, or play');
     expect(message).not.toContain('preserve completed work that remains valid');
   });

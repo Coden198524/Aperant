@@ -580,6 +580,11 @@ describe('Task Store', () => {
       const task = useTaskStore.getState().tasks[0];
       expect(task.status).toBe('human_review');
       expect(task.reviewReason).toBe('plan_review');
+      expect(task.executionProgress).toEqual({
+        phase: 'planning',
+        phaseProgress: 100,
+        overallProgress: 100,
+      });
       expect(task.executionProgress?.phase).toBe('planning');
       expect(task.subtasks.map(subtask => subtask.status)).toEqual(['pending']);
     });
@@ -1438,6 +1443,37 @@ describe('Task Store', () => {
       ]);
       expect(useTaskStore.getState().tasks[1].status).toBe('in_progress');
       expect(useTaskStore.getState().tasks[1].executionProgress?.phase).toBe('planning');
+    });
+
+    it('keeps a task waiting for plan review when a refresh result temporarily misses it', async () => {
+      const planReviewTask = createTestTask({
+        id: 'task-plan-review',
+        specId: '001-plan-review',
+        projectId: 'project-1',
+        status: 'human_review',
+        reviewReason: 'plan_review',
+        executionProgress: {
+          phase: 'idle',
+          phaseProgress: 0,
+          overallProgress: 0,
+        },
+      });
+
+      vi.stubGlobal('window', {
+        electronAPI: {
+          getTasks: vi.fn().mockResolvedValue({ success: true, data: [] }),
+        },
+      });
+      useProjectStore.setState({
+        projects: [createTestProject('project-1')],
+        activeProjectId: 'project-1',
+        selectedProjectId: 'project-1',
+      });
+      useTaskStore.setState({ tasks: [planReviewTask] });
+
+      await loadTasks('project-1', { forceRefresh: true });
+
+      expect(useTaskStore.getState().tasks).toEqual([planReviewTask]);
     });
   });
 

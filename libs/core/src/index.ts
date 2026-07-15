@@ -684,7 +684,6 @@ export {
 } from './runtime/work-executor-strategy.js';
 
 export {
-  AUTOCODE_AGGRESSIVE_SIMPLE_SPEC_PHASES,
   AUTOCODE_SPEC_COMPLEXITY_PHASES,
   hasAutocodeProjectExternalResearchSignal,
   hasAutocodeTaskExternalResearchSignal,
@@ -1039,7 +1038,6 @@ export {
   buildAutocodeProjectPromptProfileSection,
   buildAutocodeQaFixerPrompt,
   buildAutocodeQaReviewerPrompt,
-  buildAutocodeSpecQuickPrompt,
   generateAutocodeProjectPromptOverrides,
   type AutocodeProjectDomain,
   type AutocodeProjectPromptProfile,
@@ -1331,6 +1329,8 @@ export {
   AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME,
   AUTOCODE_PROJECT_DATA_DIR_NAME,
   AUTOCODE_SPECS_DIR_NAME,
+  AUTOCODE_STANDARD_DESIGN_MODEL_ARTIFACTS,
+  AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS,
   AUTOCODE_TASK_ARTIFACT_FILE_NAMES,
   AUTOCODE_TASK_ARTIFACTS,
   type AutocodeTaskArtifactFileName,
@@ -1339,6 +1339,24 @@ export {
   isAutocodeTaskArtifactFileName,
   normalizeAutocodeProjectDataDirName,
 } from './tasks/artifacts.js';
+
+export {
+  AUTOCODE_STANDARD_CHANGE_REQUESTS_FILE,
+  AUTOCODE_STANDARD_PLANNING_OWNER_STAGE_ORDER,
+  type AutocodeStandardPlanningOwnerPlan,
+  type AutocodeStandardPlanningOwnerStage,
+  parseAutocodeStandardPlanningOwnerPlan,
+  resolveAutocodeStandardPlanningOwnerPlan,
+} from './tasks/standard-planning-owner.js';
+
+export {
+  classifyAutocodeChangeRequestImpact,
+  isAutocodeImplementationFailureFeedback,
+  selectAutocodeChangeRequestDesignOwnerStage,
+  type AutocodeChangeRequestImpact,
+  type AutocodeChangeRequestDesignOwnerStage,
+  type AutocodeChangeRequestScope,
+} from './tasks/change-request-impact.js';
 
 export {
   AUTOCODE_COMMON_BASE_BRANCHES,
@@ -1433,6 +1451,7 @@ export {
 export {
   getAutocodeTaskRequirementsPath,
   loadAutocodeTaskRequirementsSync,
+  normalizeAutocodeTaskRequirements,
   parseAutocodeTaskRequirementsMarkdown,
   saveAutocodeTaskRequirementsSync,
   stringifyAutocodeTaskRequirementsMarkdown,
@@ -1472,9 +1491,25 @@ export {
   saveAutocodeImplementationPlan,
   saveAutocodeImplementationPlanSync,
   stringifyAutocodeImplementationPlanMarkdown,
+  stringifyAutocodeTaskDefinitionsMarkdown,
   updateAutocodeImplementationPlan,
   updateAutocodePlanSubtask,
 } from './tasks/plan-store.js';
+
+export {
+  AUTOCODE_RUNTIME_LEDGER_SCHEMA,
+  AUTOCODE_RUNTIME_LEDGER_DYNAMIC_SUBTASK_FIELDS,
+  AUTOCODE_RUNTIME_TASK_DEFINITION_FIELDS,
+  buildAutocodeRuntimeDefinitionFingerprint,
+  isAutocodeSlimRuntimeLedger,
+} from './tasks/runtime-ledger.js';
+
+export {
+  type AutocodeStandardArtifactResponsibilityResult,
+  type ValidateAutocodeStandardArtifactResponsibilitiesInput,
+  validateAutocodeCompletedTaskDefinitionHistory,
+  validateAutocodeStandardArtifactResponsibilities,
+} from './tasks/standard-artifact-contract.js';
 
 export {
   type AutocodeRuntimeTask,
@@ -1510,6 +1545,37 @@ export {
   stringifyAutocodeContextMarkdown,
   validateAutocodeStandardPlanArtifacts,
 } from './tasks/plan-quality.js';
+
+export {
+  AUTOCODE_STANDARD_DESIGN_CRITIC_PROMPT,
+  AUTOCODE_STANDARD_DESIGN_METHOD_PROMPT,
+  type AutocodeDesignAnalysisDirection,
+  type AutocodeDesignContractVersion,
+  type AutocodeDesignDepth,
+  type AutocodeDesignPackageMarkdown,
+  type AutocodeDesignPackageStage,
+  type AutocodeDesignQualityResult,
+  type AutocodeDesignReviewStatus,
+  type AutocodeDesignSection,
+  type ValidateAutocodeStandardDesignArtifactsInput,
+  AUTOCODE_DESIGN_GENERATION_STAGE_ORDER,
+  buildAutocodeDesignQualityRetryPrompt,
+  buildAutocodeDesignPackageMarkdown,
+  extractAutocodeDesignPackageReferenceExcerpt,
+  extractAutocodeDesignReferenceExcerpt,
+  getAutocodeDesignContractVersion,
+  getAutocodeDesignAnalysisDirection,
+  getAutocodeDesignDepth,
+  getAutocodeDesignDocumentFingerprint,
+  getAutocodeDesignPackageFingerprint,
+  getAutocodeDesignReferenceFingerprint,
+  getAutocodeDesignReviewStatus,
+  parseAutocodeDesignSections,
+  selectAutocodeDesignRevisionStages,
+  validateAutocodeStandardDesignArtifacts,
+  validateAutocodeStandardDesignStageArtifacts,
+  validateAutocodeTaskDesignReferences,
+} from './tasks/design-quality.js';
 
 export {
   AUTOCODE_JSON_ERROR_PREFIX,

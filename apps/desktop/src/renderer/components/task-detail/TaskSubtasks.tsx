@@ -1050,6 +1050,7 @@ function getSubtaskRecordedTiming(subtask: Task['subtasks'][number]): {
   completedMs?: number;
   updatedMs?: number;
   durationMs?: number;
+  durationWasRecorded: boolean;
 } {
   const timedSubtask = subtask as Task['subtasks'][number] & {
     startedAt?: unknown;
@@ -1084,6 +1085,7 @@ function getSubtaskRecordedTiming(subtask: Task['subtasks'][number]): {
     ...(completedMs !== undefined ? { completedMs } : {}),
     ...(updatedMs !== undefined ? { updatedMs } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
+    durationWasRecorded: rawDuration !== undefined,
   };
 }
 
@@ -1212,7 +1214,10 @@ function resolveSubtaskTiming(
   subtask: Task['subtasks'][number],
   logTimingBySubtaskId: Map<string, ExecutionGraphLogTiming>,
 ): Pick<ExecutionGraphNode, 'startedMs' | 'completedMs' | 'durationMs' | 'activeDurationMs' | 'activeStartedMs' | 'activeIntervals' | 'timingSource'> {
-  const recorded = getSubtaskRecordedTiming(subtask);
+  const {
+    durationWasRecorded,
+    ...recorded
+  } = getSubtaskRecordedTiming(subtask);
   const inferred = logTimingBySubtaskId.get(subtask.id);
 
   if (subtask.status === 'in_progress') {
@@ -1233,6 +1238,28 @@ function resolveSubtaskTiming(
         ...(activeStartedMs !== undefined ? { activeStartedMs } : {}),
         ...(inferred?.activeIntervals ? { activeIntervals: inferred.activeIntervals } : {}),
         timingSource: inferred ? 'logs' : 'recorded',
+      };
+    }
+  }
+
+  if (inferred?.completedMs !== undefined) {
+    const relevantIntervals = (inferred.activeIntervals ?? []).filter(interval =>
+      recorded.startedMs === undefined || interval.completedMs >= recorded.startedMs - 1000
+    );
+    const inferredDurationMs = calculateExecutionIntervalUnionDuration(relevantIntervals);
+    if (inferredDurationMs !== undefined) {
+      const durationMs = durationWasRecorded && recorded.durationMs !== undefined
+        ? Math.max(recorded.durationMs, inferredDurationMs)
+        : inferredDurationMs;
+      const intervalsMatchDuration = Math.abs(durationMs - inferredDurationMs) < 1000;
+
+      return {
+        ...recorded,
+        startedMs: recorded.startedMs ?? inferred.startedMs,
+        completedMs: recorded.completedMs ?? inferred.completedMs,
+        durationMs,
+        ...(intervalsMatchDuration ? { activeIntervals: relevantIntervals } : {}),
+        timingSource: 'logs',
       };
     }
   }
@@ -1398,15 +1425,10 @@ function calculateParallelDurationFromTimedNodes(
 function calculateMaxConcurrentTimedNodes(nodes: ExecutionGraphNode[]): number | undefined {
   const events: Array<{ time: number; delta: number }> = [];
   for (const node of nodes) {
-    if (
-      node.startedMs === undefined ||
-      node.completedMs === undefined ||
-      node.completedMs < node.startedMs
-    ) {
-      continue;
+    for (const interval of getExecutionGraphNodeCompletedIntervals(node)) {
+      events.push({ time: interval.startedMs, delta: 1 });
+      events.push({ time: interval.completedMs, delta: -1 });
     }
-    events.push({ time: node.startedMs, delta: 1 });
-    events.push({ time: node.completedMs, delta: -1 });
   }
 
   if (events.length === 0) {

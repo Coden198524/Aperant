@@ -22,6 +22,18 @@ import type {
   TaskStatus,
 } from '../../../desktop/src/shared/types';
 import type { ProviderAccount } from '../../../desktop/src/shared/types/provider-account';
+import {
+  classifyAutocodeChangeRequestImpact,
+  isAutocodeImplementationFailureFeedback,
+  selectAutocodeChangeRequestDesignOwnerStage,
+  type AutocodeChangeRequestImpact,
+  type AutocodeChangeRequestDesignOwnerStage,
+  type AutocodeChangeRequestScope,
+} from '@autocode/core/tasks/change-request-impact';
+import {
+  resolveAutocodeTaskDevelopmentModeValue,
+  type AutocodeTaskDevelopmentModeMetadataLike,
+} from '@autocode/core/tasks/task-development-mode';
 import { DEFAULT_AUTOCODE_CLI, resolveAutocodeCli } from '@autocode/core/tasks/cli-catalog';
 import { DEFAULT_APP_SETTINGS, DEFAULT_PROJECT_SETTINGS } from '../../../desktop/src/shared/constants';
 import type {
@@ -111,13 +123,19 @@ type TaskExecutionProgressListener = (
 type TerminalOutputListener = (id: string, data: string) => void;
 type TerminalExitListener = (id: string, exitCode: number) => void;
 type TerminalTitleListener = (id: string, title: string) => void;
-type WebChangeRequestScope = 'planning' | 'implementation';
-type WebChangeRequestImpact = 'requirements' | 'design' | 'tasks' | 'implementation' | 'validation';
+type WebChangeRequestScope = AutocodeChangeRequestScope;
+type WebChangeRequestImpact = AutocodeChangeRequestImpact;
 type WebChangeRequestFlowDocument =
   | 'HUMAN_INPUT.md'
   | 'change_requests.jsonl'
-  | 'spec.md'
   | 'requirements.md'
+  | 'spec.md'
+  | 'requirement_model.md'
+  | 'domain_model.md'
+  | 'design.md'
+  | 'design_model.md'
+  | 'implementation_model.md'
+  | 'design_review.md'
   | 'tasks.md'
   | 'implementation_plan.md'
   | 'qa_report.md'
@@ -675,6 +693,30 @@ function installTaskApi(api: ElectronAPI): void {
     }
 
     if (approved) {
+      const task = await findTaskForStart(projectId, taskId);
+      if (!task) {
+        throw new Error('Unable to load the current task state before approving review.');
+      }
+
+      const isPlanReview =
+        resolveAutocodeTaskDevelopmentModeValue(
+          task.metadata as AutocodeTaskDevelopmentModeMetadataLike,
+          'standard',
+        ) === 'standard' &&
+        (
+          task.reviewReason === 'plan_review' ||
+          (
+            !task.reviewReason &&
+            task.status === 'human_review' &&
+            task.executionProgress?.phase === 'planning'
+          )
+        );
+
+      if (isPlanReview) {
+        await startOrResumeTaskRuntime(taskId, projectId);
+        return;
+      }
+
       await updateTaskStatus(projectId, taskId, 'done', undefined, 'complete');
       emitTaskStatus(taskId, 'done', projectId);
       return;
@@ -1084,9 +1126,9 @@ async function persistWebChangeRequest(
   }
 
   const normalizedFeedback = feedback?.trim() || 'No feedback provided';
-  const initialScope: WebChangeRequestScope = webFeedbackRequiresImplementationRestart(normalizedFeedback)
-    ? 'implementation'
-    : 'planning';
+  const initialScope: WebChangeRequestScope = isWebStandardTask(task)
+    ? 'planning'
+    : 'implementation';
   const impacts = classifyWebChangeRequestImpact(task, normalizedFeedback, initialScope);
   const forcePlanning = shouldWebRegeneratePlanForFeedback(task, impacts, normalizedFeedback);
   const scope: WebChangeRequestScope = forcePlanning ? 'planning' : 'implementation';
@@ -1099,7 +1141,7 @@ async function persistWebChangeRequest(
     taskTitle: task.title,
     scope,
     impacts,
-    iteration: buildWebChangeRequestIterationPlan(task, impacts, scope),
+    iteration: buildWebChangeRequestIterationPlan(task, impacts, scope, normalizedFeedback),
     feedback: normalizedFeedback,
     attachments: summarizeWebReviewAttachments(images),
   };
@@ -1116,10 +1158,10 @@ function classifyWebChangeRequestImpact(
   feedback: string,
   scope: WebChangeRequestScope,
 ): WebChangeRequestImpact[] {
-  const impacts = new Set<WebChangeRequestImpact>();
+  const impacts = new Set<WebChangeRequestImpact>(
+    classifyAutocodeChangeRequestImpact({ feedback, scope }),
+  );
   if (scope === 'planning') {
-    impacts.add('requirements');
-    impacts.add('design');
     impacts.add('tasks');
     impacts.add('validation');
   } else {
@@ -1140,20 +1182,19 @@ function classifyWebChangeRequestImpact(
 
 function shouldWebRegeneratePlanForFeedback(
   task: Task,
-  impacts: WebChangeRequestImpact[],
-  feedback: string,
+  _impacts: WebChangeRequestImpact[],
+  _feedback: string,
 ): boolean {
-  if (isWebDirectTask(task)) return false;
-  if (impacts.some((impact) => impact === 'requirements' || impact === 'design' || impact === 'tasks')) {
-    return isWebStandardTask(task);
-  }
-  return isWebStandardTask(task) && !webFeedbackRequiresImplementationRestart(feedback);
+  // Match Desktop: every Standard Request Changes pass updates the static task
+  // contract before coding, including feedback that reports an implementation failure.
+  return isWebStandardTask(task);
 }
 
 function buildWebChangeRequestIterationPlan(
   task: Task,
   impacts: WebChangeRequestImpact[],
   scope: WebChangeRequestScope,
+  feedback: string,
 ): WebChangeRequestIterationPlan {
   const documents = new Set<WebChangeRequestFlowDocument>(['HUMAN_INPUT.md', CHANGE_REQUESTS_LOG_FILE]);
   const actions = new Set<string>();
@@ -1163,19 +1204,43 @@ function buildWebChangeRequestIterationPlan(
     documents.add('implementation_plan.md');
     actions.add('Keep this as the same Standard task iteration; do not create a new task for the follow-up requirement.');
     actions.add('Update changed flow documents before starting the coding pass.');
-    actions.add('Preserve completed work that still satisfies the updated requirement, and reset only affected work to pending with needs_revision markers only in detail notes or metadata lines, never in titles.');
+    actions.add('Preserve unaffected and completed historical task definitions; add a new task ID for revised completed work and reset only new or changed runtime definitions.');
     actions.add('Add or adjust verification metadata for every new or revised task.');
     validation.add('Run the smallest reliable targeted validation for the affected area.');
-    validation.add('Record validation results in the implementation plan completion note or QA report.');
+    validation.add('Report validation results for the runtime completion summary or QA report.');
 
-    if (scope === 'planning' || impacts.includes('requirements') || impacts.includes('design')) {
-      documents.add('spec.md');
-      documents.add('requirements.md');
-      actions.add('Revise requirements, acceptance criteria, constraints, risks, and open questions before regenerating runtime work.');
-    }
-    if (scope === 'planning' || impacts.includes('tasks')) {
+    const designOwnerStage = selectAutocodeChangeRequestDesignOwnerStage({ feedback, impacts });
+    const designFlow: Array<{
+      stage: AutocodeChangeRequestDesignOwnerStage;
+      document: WebChangeRequestFlowDocument;
+    }> = [
+      { stage: 'requirement_model', document: 'requirement_model.md' },
+      { stage: 'domain_model', document: 'domain_model.md' },
+      { stage: 'design', document: 'design.md' },
+      { stage: 'design_model', document: 'design_model.md' },
+      { stage: 'implementation_model', document: 'implementation_model.md' },
+    ];
+    const addDesignFlowFrom = (firstStage: AutocodeChangeRequestDesignOwnerStage): void => {
+      const firstIndex = designFlow.findIndex(({ stage }) => stage === firstStage);
+      for (const { document } of designFlow.slice(Math.max(0, firstIndex))) {
+        documents.add(document);
+      }
+      documents.add('design_review.md');
       documents.add('tasks.md');
-      actions.add('Regenerate tasks.md incrementally, keeping unaffected checklist items stable.');
+    };
+
+    if (impacts.includes('requirements')) {
+      documents.add('requirements.md');
+      documents.add('spec.md');
+      addDesignFlowFrom('requirement_model');
+      actions.add('Run requirements -> specification -> requirement model -> domain model -> architecture -> design model -> implementation model -> design review -> tasks, preserving unaffected stable IDs.');
+    } else if (impacts.includes('design') && designOwnerStage) {
+      addDesignFlowFrom(designOwnerStage);
+      actions.add(`Run the design package from ${designOwnerStage} through downstream models, review, and tasks without rewriting unaffected upstream artifacts.`);
+    }
+    if (impacts.includes('tasks')) {
+      documents.add('tasks.md');
+      actions.add('Revise only affected static tasks.md definitions; keep every checkbox [ ] and all runtime state out of tasks.md.');
     }
     if (impacts.includes('validation')) {
       documents.add('qa_report.md');
@@ -1211,8 +1276,14 @@ function orderWebChangeRequestFlowDocuments(
   const order: WebChangeRequestFlowDocument[] = [
     'HUMAN_INPUT.md',
     'change_requests.jsonl',
-    'spec.md',
     'requirements.md',
+    'spec.md',
+    'requirement_model.md',
+    'domain_model.md',
+    'design.md',
+    'design_model.md',
+    'implementation_model.md',
+    'design_review.md',
     'tasks.md',
     'implementation_plan.md',
     'qa_report.md',
@@ -1222,15 +1293,22 @@ function orderWebChangeRequestFlowDocuments(
 }
 
 function isWebDirectTask(task: Task): boolean {
-  return task.metadata?.workflowMode === 'off' || task.metadata?.developmentMode === 'direct';
+  return resolveAutocodeTaskDevelopmentModeValue(
+    task.metadata as AutocodeTaskDevelopmentModeMetadataLike,
+    'standard',
+  ) === 'direct';
 }
 
 function isWebStandardTask(task: Task): boolean {
-  return !isWebDirectTask(task) && task.metadata?.developmentMode === 'standard';
+  return resolveAutocodeTaskDevelopmentModeValue(
+    task.metadata as AutocodeTaskDevelopmentModeMetadataLike,
+    'standard',
+  ) === 'standard';
 }
 
 function webFeedbackRequiresImplementationRestart(feedback: string): boolean {
-  return /\b(build|compile|typecheck|lint|test|syntaxerror|typeerror|referenceerror|module not found|exit code)\b/i.test(feedback)
+  return isAutocodeImplementationFailureFeedback(feedback)
+    || /\b(build|compile|typecheck|lint|test|syntaxerror|typeerror|referenceerror|module not found|exit code)\b/i.test(feedback)
     || /构建|编译|类型检查|测试|验证|语法错误|运行失败/.test(feedback);
 }
 
@@ -1259,11 +1337,12 @@ function buildWebHumanInputContent(
   ];
   const planningInstructions = [
     '- Treat this as an iteration of the existing task. Do not create a new task unless the user explicitly asks for a separate follow-up task.',
-    '- First update requirements/design/task artifacts so they reflect this change request before any coding pass.',
-    '- For Standard tasks, update spec.md with changed requirements, design decisions, acceptance criteria, risks, and open questions.',
-    '- Then update tasks.md with new pending subtasks that implement this feedback. Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan.',
-    '- Revise task lists incrementally: keep completed work that remains valid, reset affected work to pending, and put any needs_revision marker only in a detail note or metadata line. Add new pending subtasks for new requirements, and record obsolete upstream checklist history without prefixing executable task titles.',
-    '- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback.',
+    '- Start at the earliest owner named by flowDocuments and stop after tasks validation for human review.',
+    '- requirements.md owns full R*/AC*/C*/A*/Q*/E* facts; spec.md owns observable SCN-* behavior and cites those IDs without copying their bodies.',
+    '- The Design-Contract: 4 package separates requirement_model.md RM, domain_model.md DOM, design.md architecture/ADR, design_model.md SYS/DES/FLOW/CONTRACT/PAT/REV, and implementation_model.md IMP ownership.',
+    '- design_review.md owns the independent verdict; tasks.md owns static [ ] definitions and immutable completed history.',
+    '- Revise tasks.md incrementally: preserve unaffected IDs and completed historical definitions, add a new ID for revised completed work, and retain logical dependencies.',
+    '- Do not edit implementation_plan.md; the runtime derives and maintains its status/timing/retry/failure/summary/commit ledger after tasks.md validates.',
     '- Update verification metadata for revised tasks, and ensure the next coding/QA pass runs the relevant tests before the task is committed.',
     '- Keep this iteration commit-ready: the final coding pass should use the normal task commit flow after validation succeeds.',
     '- Do not implement code in this planning pass.',
@@ -1274,7 +1353,7 @@ function buildWebHumanInputContent(
     '- Fix the reported implementation issues.',
     '- Re-run the relevant build/test/validation steps.',
     '- Keep this iteration commit-ready: after validation passes, use the normal task commit flow when commits are enabled.',
-    '- Update implementation_plan.md as you make progress and record affected subtasks as needs_revision only in descriptions or completion notes, never in titles.',
+    '- Do not edit tasks.md or implementation_plan.md; report progress and verification so the runtime can update its ledger.',
   ];
 
   return [

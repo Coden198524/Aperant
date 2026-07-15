@@ -1467,12 +1467,10 @@ export class AgentManager extends EventEmitter {
       profileManager = await initializeClaudeProfileManager();
     } catch (error) {
       console.error('[AgentManager] Failed to initialize profile manager:', error);
-      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
-      return;
+      this.throwStartupError(taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
     }
     if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount()) {
-      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
-      return;
+      this.throwStartupError(taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
     }
 
     // Resolve the spec directory from specId
@@ -1504,12 +1502,10 @@ export class AgentManager extends EventEmitter {
       resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
-      this.emit('error', taskId, message, projectId);
-      return;
+      this.throwStartupError(taskId, message, projectId);
     }
     if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
-      this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
-      return;
+      this.throwStartupError(taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
     }
 
     // Find existing worktree for QA (created during task execution)

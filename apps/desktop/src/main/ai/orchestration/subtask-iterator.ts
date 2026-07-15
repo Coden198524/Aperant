@@ -1216,13 +1216,11 @@ function getSubtaskId(subtask: PlanSubtask): string | undefined {
 /**
  * Re-stamp executionPhase on the plan file after a coder session.
  *
- * During a coder session, the model reads implementation_plan.md, edits
- * subtask statuses, and writes the file back. If the model read the plan
- * before persistPlanPhaseSync set executionPhase to 'coding', the model's
- * write overwrites executionPhase with the stale value (e.g., 'planning').
+ * Older runtimes and concurrent status persistence can leave executionPhase
+ * behind the authoritative task state after a coder session.
  *
- * This function runs AFTER the session ends (no more model writes) and
- * corrects executionPhase to the actual current phase.
+ * This function runs after the session and corrects the ledger to the actual
+ * current phase.
  *
  * @internal Exported for unit testing only.
  */
@@ -1233,7 +1231,7 @@ export async function restampExecutionPhase(
   try {
     const plan = await loadImplementationPlanFromFiles(specDir);
     if (!plan) {
-      console.warn(`[restampExecutionPhase] Could not parse implementation_plan.md in ${specDir} 鈥?skipping restamp`);
+      console.warn(`[restampExecutionPhase] Could not parse implementation_plan.md in ${specDir} - skipping restamp`);
       return;
     }
 

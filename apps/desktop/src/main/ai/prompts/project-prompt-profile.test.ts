@@ -77,6 +77,7 @@ describe('project prompt profile', () => {
     expect(profile.project.size).toBe('small');
     expect(profile.project.domain).toBe('web');
     expect(profile.workflow.promptIntensity).toBe('lightweight');
+    expect(profile.workflow.specStyle).toBe('standard');
     expect(profile.commands.build).toContain('npm run build');
     expect(profile.commands.test).toContain('npm run test');
     expect(profile.conventions.instructionFiles).toContain('AGENTS.md');
@@ -95,13 +96,12 @@ describe('project prompt profile', () => {
     expect(coderOverride?.content).toContain('PROJECT CONVENTIONS');
     expect(coderOverride?.content).toContain('Rule files to respect: AGENTS.md');
     expect(coderOverride?.content).toContain('React conventions');
-    expect(coderOverride?.content).toContain('Implement the next pending subtask');
+    expect(coderOverride?.content).toContain('Implement the current work package');
     expect(coderOverride?.content).toContain('design pattern decision');
     expect(coderOverride?.content).toContain('Identify the local contract before editing');
     expect(coderOverride?.content).toContain('public APIs, schemas, IPC/protocol contracts');
     expect(coderOverride?.content).toContain('Do not leave placeholder code');
     expect(coderOverride?.content).toContain('closest regression test');
-    expect(coderOverride?.content).toContain('mark `[x]` when complete');
     expect(coderOverride?.content).toContain('read the current narrow context');
     expect(coderOverride?.content).toContain('legacy or non-UTF-8 files as encoding-sensitive');
     expect(coderOverride?.content).toContain('do not mark the subtask complete until the launch/open/browser/CLI smoke path passes');
@@ -109,11 +109,18 @@ describe('project prompt profile', () => {
     expect(coderOverride?.content).toContain('forward slashes');
     expect(coderOverride?.content).toContain('both keys');
     expect(coderOverride?.content).toContain('20-60 line');
-    expect(existsSync(join(projectDir, '.autocode', 'prompts', 'spec_quick.md'))).toBe(true);
+    expect(existsSync(join(projectDir, '.autocode', 'prompts', 'spec_quick.md'))).toBe(false);
 
     const plannerOverride = loadProjectPromptOverride(projectDir, 'planner');
-    expect(plannerOverride?.content).toContain('Create or repair one upstream `tasks.md`');
-    expect(plannerOverride?.content).toContain('Update `spec.md` or `requirements.md` only when missing, stale, or required by real Request Changes feedback');
+    expect(plannerOverride?.content).toContain('Create or repair the static definition catalog in `tasks.md`');
+    expect(plannerOverride?.content).toContain('Write only `tasks.md`');
+    expect(plannerOverride?.content).toContain('all five design-package files');
+    expect(plannerOverride?.content).toContain('`requirement_model.md`');
+    expect(plannerOverride?.content).toContain('`domain_model.md`');
+    expect(plannerOverride?.content).toContain('`design_model.md`');
+    expect(plannerOverride?.content).toContain('`implementation_model.md`');
+    expect(plannerOverride?.content).toContain('Resolve design IDs from their canonical package owner');
+    expect(plannerOverride?.content).toContain('do not edit them');
     expect(plannerOverride?.content).toContain('Every executable task needs precise file metadata, exactly one dependency line');
     expect(plannerOverride?.content).toContain('runtime file-conflict scheduler queues overlapping writes');
     expect(plannerOverride?.content).toContain('Add architecture metadata only for cross-boundary, migration, schema/compatibility, or high-risk work');
@@ -124,17 +131,6 @@ describe('project prompt profile', () => {
     expect(plannerOverride?.content).not.toContain('Architecture Grounding');
     expect(plannerOverride?.content).not.toContain('needs_revision');
     expect((plannerOverride?.content.length ?? 0)).toBeLessThan(7_500);
-
-    const specQuickOverride = loadProjectPromptOverride(projectDir, 'spec_quick')?.content;
-    expect(specQuickOverride).toContain('Write a compact Standard plan');
-    expect(specQuickOverride).toContain('Split only by real behavior, contract, data shape, UI surface, risky error path, or verification scenario');
-    expect(specQuickOverride).toContain('Shared files do not imply dependencies');
-    expect(specQuickOverride).toContain('_Done when:');
-    expect(specQuickOverride).toContain('Static syntax, unit, lint, typecheck, build, or file-existence checks alone are not enough');
-    expect(specQuickOverride).not.toContain('OpenSpec');
-    expect(specQuickOverride).not.toContain('Do not cap task count');
-    expect(specQuickOverride).not.toContain('Architecture Grounding');
-    expect((specQuickOverride?.length ?? 0)).toBeLessThan(7_500);
 
     const qaReviewerOverride = loadProjectPromptOverride(projectDir, 'qa_reviewer');
     expect(qaReviewerOverride?.content).toContain('map requirement/evidence -> changed file/contract -> verification result -> residual risk');
@@ -215,6 +211,7 @@ describe('project prompt profile', () => {
 
     const profilePath = join(projectDir, '.autocode', 'prompt_profile.json');
     const coderPath = join(projectDir, '.autocode', 'prompts', 'coder.md');
+    const removedQuickSpecPath = join(projectDir, '.autocode', 'prompts', 'spec_quick.md');
 
     writeFileSync(profilePath, JSON.stringify({ version: 1, project: {}, workflow: {} }), 'utf-8');
     writeFileSync(
@@ -222,11 +219,17 @@ describe('project prompt profile', () => {
       '## PROJECT-SPECIFIC PROMPT (GENERATED)\n\nold generated prompt\n',
       'utf-8',
     );
+    writeFileSync(
+      removedQuickSpecPath,
+      '## PROJECT-SPECIFIC PROMPT (GENERATED)\n\nremoved quick-spec prompt\n',
+      'utf-8',
+    );
 
     initializeProjectPromptProfile(projectDir, { overwrite: false });
 
     expect(readFileSync(profilePath, 'utf-8')).toContain(`"version": ${PROJECT_PROMPT_PROFILE_VERSION}`);
-    expect(readFileSync(coderPath, 'utf-8')).toContain('Implement the next pending subtask');
+    expect(readFileSync(coderPath, 'utf-8')).toContain('Implement the current work package');
     expect(readFileSync(coderPath, 'utf-8')).not.toContain('old generated prompt');
+    expect(existsSync(removedQuickSpecPath)).toBe(false);
   });
 });

@@ -9,6 +9,7 @@ import {
   loadAutocodeImplementationPlanSync,
   saveAutocodeImplementationPlanSync,
 } from './plan-store.js';
+import { AUTOCODE_RUNTIME_LEDGER_SCHEMA } from './runtime-ledger.js';
 import {
   loadAutocodeTaskRequirementsSync,
   saveAutocodeTaskRequirementsSync,
@@ -19,6 +20,11 @@ import {
   type AutocodeTaskRuntimeConcurrencyMetadata,
 } from '../runtime/concurrency.js';
 import type { MutableAutocodePlan } from './plan-file.js';
+import {
+  isAutocodeTaskDevelopmentModeValue,
+  normalizeAutocodeTaskDevelopmentModeValue,
+  resolveAutocodeTaskDevelopmentModeValue,
+} from './task-development-mode.js';
 export type { AutocodeTaskRequirements } from './requirements-store.js';
 
 export type AutocodeTaskStatus =
@@ -114,6 +120,7 @@ export interface AutocodePlanSubtask {
   durationMs?: number;
   files: string[];
   dependsOn?: string[];
+  designRefs?: string[];
   workPackage?: boolean;
   upstreamTaskIds?: string[];
   upstreamSource?: string;
@@ -202,6 +209,7 @@ interface ImplementationPlanFile {
   }>;
   created_at?: string;
   updated_at?: string;
+  source_task?: Record<string, unknown>;
 }
 
 interface RawPlanSubtask {
@@ -259,6 +267,35 @@ function withResolvedRuntimeConcurrency(metadata: AutocodeTaskMetadata): Autocod
   };
 }
 
+function buildInitialAutocodeTaskPlan(
+  title: string,
+  description: string,
+  metadata: AutocodeTaskMetadata | undefined,
+  now: string,
+): ImplementationPlanFile {
+  if (resolveAutocodeTaskDevelopmentMode(metadata, 'standard') === 'standard') {
+    return {
+      created_at: now,
+      updated_at: now,
+      status: 'pending',
+      source_task: {
+        source: AUTOCODE_TASK_ARTIFACTS.tasks,
+        runtime_ledger_schema: AUTOCODE_RUNTIME_LEDGER_SCHEMA,
+      },
+      phases: [],
+    };
+  }
+
+  return {
+    feature: title,
+    description,
+    created_at: now,
+    updated_at: now,
+    status: 'pending',
+    phases: [],
+  };
+}
+
 export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask {
   const projectRoot = requireNonEmpty(input.projectRoot, 'projectRoot');
   const dataDirName = normalizeAutocodeProjectDataDirName(input.dataDirName);
@@ -300,14 +337,7 @@ export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask
     taskTitle: title,
   });
 
-  const plan: ImplementationPlanFile = {
-    feature: title,
-    description,
-    created_at: now,
-    updated_at: now,
-    status: 'pending',
-    phases: [],
-  };
+  const plan = buildInitialAutocodeTaskPlan(title, description, metadata, now);
 
   saveAutocodeImplementationPlanSync(specDir, plan as MutableAutocodePlan);
   writeJson(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata), metadata);
@@ -364,13 +394,13 @@ export function buildAutocodeTaskRequirements(
 }
 
 export function isAutocodeTaskDevelopmentMode(value: unknown): value is AutocodeTaskDevelopmentMode {
-  return value === 'direct' || value === 'standard';
+  return isAutocodeTaskDevelopmentModeValue(value);
 }
 
 export function normalizeAutocodeTaskDevelopmentMode(
   value: unknown,
 ): AutocodeTaskDevelopmentMode | null {
-  return isAutocodeTaskDevelopmentMode(value) ? value : null;
+  return normalizeAutocodeTaskDevelopmentModeValue(value);
 }
 
 export function isDirectAutocodeTaskDevelopmentMode(value: unknown): boolean {
@@ -381,14 +411,7 @@ export function resolveAutocodeTaskDevelopmentMode(
   metadata: AutocodeTaskMetadata | null | undefined,
   defaultMode: AutocodeTaskDevelopmentMode = 'standard',
 ): AutocodeTaskDevelopmentMode {
-  const normalizedMode = normalizeAutocodeTaskDevelopmentMode(metadata?.developmentMode);
-  if (normalizedMode) {
-    return normalizedMode;
-  }
-  if (metadata?.workflowMode === 'off') {
-    return 'direct';
-  }
-  return defaultMode;
+  return resolveAutocodeTaskDevelopmentModeValue(metadata, defaultMode);
 }
 
 export function buildAutocodeTaskModeMetadata(
@@ -437,12 +460,8 @@ export function updateAutocodeTaskPlanStatus(input: UpdateAutocodeTaskPlanStatus
     dataDirName: input.dataDirName,
     specId: task.specId,
   });
-  const plan = loadAutocodeImplementationPlanSync(specDir) as ImplementationPlanFile | null ?? {
-    feature: task.title,
-    description: task.description,
-    created_at: task.createdAt,
-    phases: [],
-  };
+  const plan = loadAutocodeImplementationPlanSync(specDir) as ImplementationPlanFile | null ??
+    buildInitialAutocodeTaskPlan(task.title, task.description, task.metadata, task.createdAt);
   const now = new Date().toISOString();
 
   plan.status = input.planStatus;

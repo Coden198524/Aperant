@@ -818,10 +818,10 @@ function correctStaleAutocodeTaskStatus(input: {
         saveAutocodeImplementationPlanSync(input.planPath, correctedPlan as unknown as MutableAutocodePlan);
         Object.assign(input.plan, correctedPlan);
       } catch {
-        return { status: 'error' };
+        return { status: 'error', reviewReason: 'errors' };
       }
     }
-    return { status: 'error' };
+    return { status: 'error', reviewReason: 'errors' };
   }
 
   if (isCompletedDirectRun(input)) {
@@ -1256,6 +1256,7 @@ function applyFailedDirectRunCorrection(
   const directSubtaskId = stringFrom(plan.direct_execution?.current_subtask_id);
   const failureOutcome = normalizeFailedDirectRunOutcome(runResult?.status);
   const failureSummary = stringFrom(runResult?.message, 'Autocode Direct run failed.');
+  const failedAt = stringFrom(runResult?.updatedAt, now);
   const phases = (plan.phases ?? []).map((phase) => {
     const phaseIsDirect = phase.type === 'direct';
     const rewriteItems = (items: RawProjectPlanSubtask[] | undefined): RawProjectPlanSubtask[] | undefined => {
@@ -1275,7 +1276,7 @@ function applyFailedDirectRunCorrection(
         return {
           ...rest,
           status: 'failed',
-          updated_at: now,
+          updated_at: failedAt,
           notes: stringFrom(subtask.notes, subtask.actual_output, failureSummary),
           actual_output: stringFrom(subtask.actual_output, subtask.notes, failureSummary),
         };
@@ -1301,13 +1302,13 @@ function applyFailedDirectRunCorrection(
     ...plan,
     status: 'error',
     planStatus: 'error',
+    reviewReason: 'errors',
     updated_at: now,
     xstateState: 'error',
     executionPhase: 'failed',
     direct_execution: directExecution,
     phases,
   };
-  delete correctedPlan.reviewReason;
   return correctedPlan;
 }
 

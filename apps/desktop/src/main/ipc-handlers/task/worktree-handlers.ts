@@ -3167,7 +3167,7 @@ export function registerWorktreeHandlers(
           console.warn('[IPC] Refreshing evolution data from worktree:', worktreePath);
           orchestrator.evolutionTracker.refreshFromGit(task.specId, worktreePath, effectiveBaseBranch);
         } else {
-          console.warn('[IPC] No worktree found for preview 鈥?evolution data may be stale');
+          console.warn('[IPC] No worktree found for preview - evolution data may be stale');
         }
 
         console.warn('[IPC] Running TypeScript merge preview for task:', task.specId);

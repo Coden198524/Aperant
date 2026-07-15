@@ -44,6 +44,7 @@ export const SpecContextOutputSchema = z.object({
 });
 
 export const RequirementsOutputSchema = z.object({
+  contract_version: z.number().int().min(1).default(1),
   task_description: z.string(),
   workflow_type: z.enum(['feature', 'refactor', 'investigation', 'migration', 'simple', 'bugfix']),
   services_involved: z.array(z.string()),
@@ -53,6 +54,7 @@ export const RequirementsOutputSchema = z.object({
   evidence_sources: z.array(z.string()).default([]),
   standards_references: z.array(z.string()).default([]),
   assumptions: z.array(z.string()).default([]),
+  open_questions: z.array(z.string()).default([]),
   created_at: z.string(),
 });
 

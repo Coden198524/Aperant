@@ -112,6 +112,282 @@ const STANDARD_CONTEXT_MD = [
   '- spec.md - test fixture proves context.',
   '',
 ].join('\n');
+const STRICT_STANDARD_SPEC_MD = [
+  '# Specification: Incremental owner stages',
+  '',
+  'Specification-Contract: 1',
+  '',
+  '## Scope',
+  '- In scope: update the requested observable behavior.',
+  '- Non-goal: unrelated behavior.',
+  '',
+  '## SCN-001 Apply the requested behavior',
+  'Covers: R1, AC1',
+  'Evidence: E1',
+  '',
+  '- Given: the existing task is under review.',
+  '- When: the approved change is planned.',
+  '- Then: the updated behavior is represented by executable work.',
+  '- Errors/edges: preserve unrelated completed work.',
+  '',
+  '## Verification Notes',
+  '- Run the focused owner-stage regression test.',
+  '',
+].join('\n');
+
+const STRICT_STANDARD_TASKS_MD = [
+  '# Tasks',
+  '',
+  'Tasks-Contract: 1',
+  'Feature: Incremental owner stages',
+  'Workflow: feature',
+  'Status: pending',
+  '',
+  '- [ ] 1. Incremental implementation',
+  '',
+  '  - [ ] 1.1 Apply the requested behavior',
+  '    - Implement SCN-001 inside the existing workflow boundary.',
+  '    - _Files to modify: src/file-1.ts_',
+  '    - _Depends on: none_',
+  '    - _Requirements: R1, AC1, SCN-001_',
+  '    - _Design: ADR-001, SYS-001, DES-001, FLOW-001, IMP-001_',
+  '    - _Evidence: E1; src/file-1.ts existing workflow_',
+  '    - _Done when: SCN-001 is represented by one focused work package_',
+  '    - _Verification: npm test -- file-1.test.ts_',
+  '',
+].join('\n');
+
+function makeStandardPlanningChangeRequest(
+  flowDocuments: string[],
+  id = 'cr-owner-stages',
+): string {
+  return JSON.stringify({
+    id,
+    createdAt: '2026-07-14T00:00:00.000Z',
+    scope: 'planning',
+    impacts: [],
+    iteration: {
+      mode: 'standard-planning',
+      flowDocuments,
+    },
+  }) + '\n';
+}
+const LEGACY_STANDARD_DESIGN_MD = [
+  '# Design: Test task',
+  'Design-Contract: 3',
+  'Design-Depth: local',
+  'Design-Revision: 1',
+  '',
+  '## Scope And Evidence',
+  '- Analysis direction: forward-design',
+  '- Primary source of truth: mixed',
+  '- Requirement evidence: requirement - requirements.md R-001 defines the workflow result',
+  '- Project evidence: observed - src/file-1.ts#handleWorkflow owns the current behavior',
+  '- Design inferences: none - the requirement and source establish the local boundary',
+  '- Unresolved evidence: none',
+  '## Complexity Assessment',
+  '- Primary complexity driver: one local behavior',
+  '- Business rules and state: preserve the task invariant',
+  '- Boundary and contract impact: no public contract changes',
+  '- Quality-attribute risks: existing workflow compatibility',
+  '- Depth rationale: one existing module is affected',
+  '## Existing Architecture Fit',
+  'Reuse src/file-1.ts and the existing dependency direction.',
+  '## Engineering Adaptation',
+  '- Delivery context: existing-system',
+  '- System shape: local-utility',
+  '- Project paradigm: mixed',
+  '- Paradigm rationale: preserve the existing TypeScript workflow module',
+  '- Object-model applicability: low',
+  '- Object-model rationale: one local workflow has no independent object lifecycle',
+  '- Existing boundaries to preserve: src/file-1.ts module boundary',
+  '- Existing patterns to reuse: src/file-1.ts workflow handler',
+  '- Language/framework constraints: TypeScript existing runtime',
+  '- Integration and test seams: src/file-1.test.ts focused test',
+  '## Design Budget',
+  '- Expected modules changed: 2',
+  '- New modules allowed: 0',
+  '- New public contracts allowed: 0',
+  '- New dependencies allowed: 0',
+  '- New architectural patterns: none',
+  '## Architecture Decision',
+  '### ADR-001 Preserve the existing boundary',
+  '- Decision: preserve the current caller-to-workflow dependency direction',
+  '- Status: accepted',
+  '- Decision drivers: RM-001 changes one local result without a public contract change',
+  '- Alternatives considered: splitting the workflow into additional boundaries was rejected',
+  '- Trade-offs: minimal change radius while retaining the current module boundary',
+  '- Evidence basis: requirement - requirements.md R-001; observed - src/file-1.ts#handleWorkflow',
+  '## Requirement Model',
+  '### RM-001 Complete the requested behavior',
+  '- Actor and goal: user obtains the requested result',
+  '- Business context: Who=user; What=request result; Why=complete workflow; When=workflow invocation; Where=existing caller; How=invoke the established workflow',
+  '- Trigger and preconditions: existing workflow is available',
+  '- Normal flow: invoke, compute, and return the result',
+  '- Alternate or failure flow: preserve the existing error',
+  '- Outcome: requested result is exposed',
+  '- Constraints: existing contract remains compatible',
+  '- Quality constraints: Compatibility=existing workflow contract; Reliability=preserve error behavior',
+  '- Evidence basis: requirement - requirements.md R-001',
+  '## Domain Model',
+  '### DOM-001 Existing task state',
+  '- Concept kind: entity',
+  '- Business meaning: current task execution status',
+  '- Identity and state: task identity and current status',
+  '- Behavior: validate supported status transitions',
+  '- Responsibilities: validate current status',
+  '- Rules and invariants: only supported status changes are accepted',
+  '- Ownership and lifecycle: task owns status for its lifecycle',
+  '- Relationships: workflow reads task status',
+  '- Software mapping: existing - src/file-1.ts task state',
+  '- Evidence basis: observed - src/file-1.ts#taskState',
+  '## System Responsibility Allocation',
+  '### SYS-001 Existing workflow boundary',
+  '- Subsystem or boundary: caller-to-workflow module boundary',
+  '- Allocated requirements: RM-001',
+  '- Owns: workflow result calculation and current error behavior',
+  '- Provides: compatible result to the existing caller',
+  '- Requires: DOM-001 current task state',
+  '- Data and control boundary: caller initiates control and DES-001 returns result data',
+  '- Failure ownership: DES-001 preserves the existing workflow error path',
+  '- Evidence basis: observed - src/file-1.ts#handleWorkflow',
+  '## Design Model',
+  '### DES-001 Existing module responsibility',
+  '- Element: module - existing workflow module',
+  '- System allocation: SYS-001',
+  '- Role stereotype: module',
+  '- Owned state: none; reads DOM-001 state',
+  '- Public operations: handle workflow',
+  '- Responsibilities: implement requested behavior',
+  '- Collaborators: existing caller',
+  '- Dependencies: current task state',
+  '- Encapsulation boundary: private workflow logic',
+  '- Does not own: caller rendering',
+  '- Evidence basis: observed - src/file-1.ts#handleWorkflow',
+  '### FLOW-001 Existing runtime flow',
+  '- Trigger: caller invokes existing contract',
+  '- Participants: DES-001',
+  '- Steps: DES-001 reads DOM-001, computes, and returns the result',
+  '- State changes: none',
+  '- Failure paths: preserve existing error response',
+  '- Evidence basis: observed - src/file-1.ts#handleWorkflow',
+  '## Change And Pattern Analysis',
+  '- Verified variation points: none',
+  '- Variation inventory: none',
+  '- Candidate patterns evaluated: none',
+  '- Simplest change mechanism: update the existing module',
+  '- Selected patterns: none',
+  '## Implementation Model',
+  '### IMP-001 Focused implementation',
+  '- Project files and symbols: src/file-1.ts handler; src/file-1.test.ts',
+  '- Design mapping: implements SYS-001, DES-001, and FLOW-001',
+  '- Integration constraints: preserve existing contract',
+  '- Verification: run the focused test',
+  '- Evidence basis: observed - src/file-1.ts#handleWorkflow',
+  '## Applicable Design Principles',
+  '- Cohesion decision: keep one behavior in the existing module',
+  '- Coupling and dependency decision: preserve the current caller direction',
+  '- Encapsulation decision: keep workflow logic private to DES-001',
+  '- SOLID trade-offs: SRP applies and no interface is justified',
+  '- Underdesign checks: DES-001 remains focused and is not a generic manager',
+  '## Rejected Complexity',
+  '- Reject new services and event buses because the flow is local.',
+  '## Risks And Evolution',
+  'Preserve the existing public contract.',
+  '## Traceability',
+  '- RM-001 -> ADR-001 -> DOM-001 -> SYS-001 -> DES-001 -> FLOW-001 -> IMP-001',
+  '',
+].join('\n');
+
+function sectionRange(source: string, start: string, end?: string): string {
+  const startIndex = source.indexOf(start);
+  const endIndex = end ? source.indexOf(end, startIndex + start.length) : source.length;
+  return source.slice(startIndex, endIndex < 0 ? source.length : endIndex).trim();
+}
+
+function buildV4DesignPackage(source: string) {
+  const preArchitecture = source
+    .slice(0, source.indexOf('## Architecture Decision'))
+    .replace('Design-Contract: 3', 'Design-Contract: 4')
+    .trim();
+  const architectureDecision = sectionRange(source, '## Architecture Decision', '## Requirement Model');
+  const changeAnalysis = sectionRange(source, '## Change And Pattern Analysis', '## Implementation Model');
+  const closingSections = sectionRange(source, '## Applicable Design Principles');
+  const modelDocument = (title: string, kind: string, body: string) => [
+    `# ${title}: Standard planning fixture`,
+    'Design-Contract: 4',
+    'Design-Revision: 1',
+    'Design-Root: design.md',
+    `Model-Kind: ${kind}`,
+    '',
+    body,
+  ].join('\n');
+
+  return {
+    design: [
+      preArchitecture,
+      '## Architecture Candidates',
+      '- Architecture baseline: preserve the observed caller-to-workflow boundary',
+      '- Candidate count: 1',
+      '- Candidate comparison: existing boundary | exact fit | smallest radius | retains current coupling | low migration risk',
+      '- Selected architecture: existing caller-to-workflow boundary',
+      '- Selection rationale: observed ownership and local scope make the current boundary the smallest complete choice',
+      '- Rejected alternatives: new service layer rejected because it adds a boundary without a current variation',
+      '- Evolution trigger: multiple independent workflow policies or an external transport requirement',
+      architectureDecision,
+      '## Model Package',
+      '- Requirement model: requirement_model.md',
+      '- Domain model: domain_model.md',
+      '- Design model: design_model.md',
+      '- Implementation model: implementation_model.md',
+      changeAnalysis,
+      closingSections,
+    ].join('\n'),
+    requirementModel: modelDocument(
+      'Requirement Model',
+      'requirement',
+      sectionRange(source, '## Requirement Model', '## Domain Model'),
+    ),
+    domainModel: modelDocument(
+      'Domain Model',
+      'domain',
+      sectionRange(source, '## Domain Model', '## System Responsibility Allocation'),
+    ),
+    designModel: modelDocument(
+      'Design Model',
+      'design',
+      sectionRange(source, '## System Responsibility Allocation', '## Change And Pattern Analysis'),
+    ),
+    implementationModel: modelDocument(
+      'Implementation Model',
+      'implementation',
+      sectionRange(source, '## Implementation Model', '## Applicable Design Principles'),
+    ),
+  };
+}
+
+const STANDARD_DESIGN_PACKAGE = buildV4DesignPackage(LEGACY_STANDARD_DESIGN_MD);
+const STANDARD_DESIGN_MD = STANDARD_DESIGN_PACKAGE.design;
+const STANDARD_REQUIREMENT_MODEL_MD = STANDARD_DESIGN_PACKAGE.requirementModel;
+const STANDARD_DOMAIN_MODEL_MD = STANDARD_DESIGN_PACKAGE.domainModel;
+const STANDARD_DESIGN_MODEL_MD = STANDARD_DESIGN_PACKAGE.designModel;
+const STANDARD_IMPLEMENTATION_MODEL_MD = STANDARD_DESIGN_PACKAGE.implementationModel;
+const STANDARD_DESIGN_REVIEW_MD = [
+  'Status: PASSED',
+  '',
+  'The design is evidence-backed and stays within its local budget.',
+  '',
+].join('\n');
+
+function withStandardDesignMetadata(tasksMarkdown: string): string {
+  if (/^\s*-\s+_Design:/im.test(tasksMarkdown)) {
+    return tasksMarkdown;
+  }
+  return tasksMarkdown.replace(
+    /^(\s*)-\s+_Requirements:[^\r\n]*_\s*$/gm,
+    (line, indent: string) => `${line}\n${indent}- _Design: ADR-001, SYS-001, DES-001, FLOW-001, IMP-001_`,
+  );
+}
 
 function readStandardArtifactOrReject(filePath: string): Promise<string> {
   if (filePath.endsWith('spec.md')) {
@@ -122,6 +398,24 @@ function readStandardArtifactOrReject(filePath: string): Promise<string> {
   }
   if (filePath.endsWith('context.md')) {
     return Promise.resolve(STANDARD_CONTEXT_MD);
+  }
+  if (filePath.endsWith('design.md')) {
+    return Promise.resolve(STANDARD_DESIGN_MD);
+  }
+  if (filePath.endsWith('requirement_model.md')) {
+    return Promise.resolve(STANDARD_REQUIREMENT_MODEL_MD);
+  }
+  if (filePath.endsWith('domain_model.md')) {
+    return Promise.resolve(STANDARD_DOMAIN_MODEL_MD);
+  }
+  if (filePath.endsWith('design_model.md')) {
+    return Promise.resolve(STANDARD_DESIGN_MODEL_MD);
+  }
+  if (filePath.endsWith('implementation_model.md')) {
+    return Promise.resolve(STANDARD_IMPLEMENTATION_MODEL_MD);
+  }
+  if (filePath.endsWith('design_review.md')) {
+    return Promise.resolve(STANDARD_DESIGN_REVIEW_MD);
   }
   return Promise.reject(new Error('ENOENT'));
 }
@@ -295,6 +589,7 @@ function makeTasks(statuses: string[], withSchedulingMetadata = true): string {
       lines.push(`    - _Files to modify: src/file-${index + 1}.ts_`);
       lines.push(`    - _Depends on: ${index === 0 ? 'none' : `1.${index}`}_`);
       lines.push(`    - _Requirements: 1.${index + 1}_`);
+      lines.push('    - _Design: ADR-001, SYS-001, DES-001, FLOW-001, IMP-001_');
       lines.push(`    - _Evidence: spec.md Subtask ${index + 1}_`);
       lines.push(`    - _Done when: Subtask ${index + 1} is implemented and the focused check passes_`);
       lines.push('    - _Verification: Run focused check_');
@@ -305,7 +600,7 @@ function makeTasks(statuses: string[], withSchedulingMetadata = true): string {
 }
 
 function makeBroadTasks(): string {
-  return [
+  return withStandardDesignMetadata([
     '# Tasks',
     '',
     'Feature: Test task',
@@ -323,11 +618,25 @@ function makeBroadTasks(): string {
     '    - _Done when: the browser game loop supports movement, scoring, pause, restart, and game over._',
     '    - _Verification: Start the browser game, exercise the primary path, and check console errors, resource loading, blank screen, startup, and exit status._',
     '',
-  ].join('\n');
+  ].join('\n'));
+}
+
+function standardDesignPackageEntries(): Array<[string, string]> {
+  return [
+    ['/spec/design.md', STANDARD_DESIGN_MD],
+    ['/spec/requirement_model.md', STANDARD_REQUIREMENT_MODEL_MD],
+    ['/spec/domain_model.md', STANDARD_DOMAIN_MODEL_MD],
+    ['/spec/design_model.md', STANDARD_DESIGN_MODEL_MD],
+    ['/spec/implementation_model.md', STANDARD_IMPLEMENTATION_MODEL_MD],
+  ];
+}
+
+function makeStandardArtifactMap(entries: Array<[string, string]>): Map<string, string> {
+  return new Map([...standardDesignPackageEntries(), ...entries]);
 }
 
 function makeVagueEvidenceTasks(): string {
-  return [
+  return withStandardDesignMetadata([
     '# Tasks',
     '',
     'Feature: Test task',
@@ -345,11 +654,11 @@ function makeVagueEvidenceTasks(): string {
     '    - _Done when: the browser opens the page shell without missing-resource errors._',
     '    - _Verification: Open index.html manually_',
     '',
-  ].join('\n');
+  ].join('\n'));
 }
 
 function makePhaseHeadingDependencyTasks(): string {
-  return [
+  return withStandardDesignMetadata([
     '# Tasks',
     '',
     'Feature: Test task',
@@ -416,7 +725,7 @@ function makePhaseHeadingDependencyTasks(): string {
     '  - _Done when: the complete browser flow is verified._',
     '  - _Verification: Start the browser flow, exercise the primary path, and check console errors, resource loading, blank screen, startup, and exit status._',
     '',
-  ].join('\n');
+  ].join('\n'));
 }
 
 function makePlanWithSchedulingMetadata(statuses: string[]): string {
@@ -458,6 +767,32 @@ function makeForcePlanningOrchestrator(runSession = vi.fn().mockResolvedValue(ma
   });
 }
 
+function installPlanningArtifactMap(files: Map<string, string>): void {
+  const normalizePath = (filePath: string) => filePath.replace(/\\/g, '/');
+  mockReadFile.mockImplementation((filePath: string) => {
+    const content = files.get(normalizePath(filePath));
+    return content === undefined
+      ? Promise.reject(new Error('ENOENT'))
+      : Promise.resolve(content);
+  });
+  mockWriteFile.mockImplementation(async (filePath: string, content: unknown) => {
+    files.set(normalizePath(filePath), String(content));
+  });
+  mockRename.mockImplementation(async (sourcePath: string, targetPath: string) => {
+    const source = normalizePath(sourcePath);
+    const target = normalizePath(targetPath);
+    const content = files.get(source);
+    if (content === undefined) {
+      throw new Error('ENOENT');
+    }
+    files.set(target, content);
+    files.delete(source);
+  });
+  mockUnlink.mockImplementation(async (filePath: string) => {
+    files.delete(normalizePath(filePath));
+  });
+}
+
 describe('BuildOrchestrator QA recovery', () => {
   beforeEach(() => {
     mockReadFile.mockReset();
@@ -471,6 +806,111 @@ describe('BuildOrchestrator QA recovery', () => {
     mockValidateImplementationPlanLanguage.mockReset().mockReturnValue([]);
     mockRewriteImplementationPlanFiles.mockReset().mockResolvedValue(null);
     mockIterateSubtasks.mockReset();
+  });
+
+  it('blocks coding when design.md is stale for the active runtime plan', async () => {
+    mockReadFile.mockImplementation((path: string) => readStandardArtifactOrReject(path));
+    const orchestrator = makeOrchestrator() as unknown as {
+      validateRuntimeDesignContract: (
+        plan: Record<string, unknown>,
+      ) => Promise<string | undefined>;
+    };
+
+    const error = await orchestrator.validateRuntimeDesignContract({
+      source_task: {
+        design_contract: {
+          version: 2,
+          path: 'design.md',
+          fingerprint: 'stale-design-fingerprint',
+        },
+      },
+    });
+
+    expect(error).toContain('approved design package changed after the runtime plan was derived');
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+  });
+
+  it('allows one compatibility pass for legacy runtime plans without a design contract', async () => {
+    const orchestrator = makeOrchestrator() as unknown as {
+      validateRuntimeDesignContract: (
+        plan: Record<string, unknown>,
+      ) => Promise<string | undefined>;
+    };
+
+    await expect(orchestrator.validateRuntimeDesignContract({
+      source_task: { kind: 'legacy-standard-plan' },
+    })).resolves.toBeUndefined();
+    expect(mockReadFile).not.toHaveBeenCalled();
+  });
+
+  it('does not reuse a stale passed review when the independent review session errors', async () => {
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ...standardDesignPackageEntries(),
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
+    ]);
+    const normalizePath = (filePath: string) => filePath.replace(/\\/g, '/');
+    mockReadFile.mockImplementation((filePath: string) => {
+      const content = files.get(normalizePath(filePath));
+      return content === undefined
+        ? Promise.reject(new Error('ENOENT'))
+        : Promise.resolve(content);
+    });
+    mockWriteFile.mockImplementation(async (filePath: string, content: unknown) => {
+      files.set(normalizePath(filePath), String(content));
+    });
+    mockRename.mockImplementation(async (sourcePath: string, targetPath: string) => {
+      const source = normalizePath(sourcePath);
+      const target = normalizePath(targetPath);
+      const content = files.get(source);
+      if (content === undefined) {
+        throw new Error('ENOENT');
+      }
+      files.set(target, content);
+      files.delete(source);
+    });
+    mockUnlink.mockImplementation(async (filePath: string) => {
+      files.delete(normalizePath(filePath));
+    });
+
+    let criticRuns = 0;
+    const runSession = vi.fn(async (config: { agentType: string }): Promise<SessionResult> => {
+      if (config.agentType !== 'design_critic') {
+        return makeSessionResult('completed');
+      }
+      criticRuns++;
+      if (criticRuns === 1) {
+        return {
+          ...makeSessionResult('error'),
+          error: { code: 'temporary-review-error', message: 'review process interrupted', retryable: true },
+        };
+      }
+      files.set('/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD);
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession) as unknown as {
+      ensureStandardDesignForPlanning: (
+        transaction: Record<string, unknown>,
+      ) => Promise<{ success: boolean; error?: string }>;
+    };
+
+    const result = await orchestrator.ensureStandardDesignForPlanning({
+      version: 1,
+      id: 'stale-review-transaction',
+      phase: 'planning',
+      status: 'active',
+      stage: 'started',
+      createdAt: '2026-07-12T00:00:00.000Z',
+      updatedAt: '2026-07-12T00:00:00.000Z',
+      baselineArtifactHashes: {},
+      artifactHashes: {},
+    });
+
+    expect(result.success, result.error).toBe(true);
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'software_designer')).toHaveLength(5);
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'design_critic')).toHaveLength(2);
+    expect(mockUnlink).toHaveBeenCalledWith(expect.stringContaining('design_review.md'));
   });
 
   it('compacts long pre-QA failure details before returning to coding', () => {
@@ -837,6 +1277,65 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(phases).toContain('qa_review');
   });
 
+  it('re-enters planning when a non-empty implementation plan fails schema validation', async () => {
+    let plannerRuns = 0;
+    let codingRuns = 0;
+
+    mockIterateSubtasks.mockImplementation(async () => {
+      codingRuns++;
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('tasks.md')) {
+        return Promise.resolve(makeTasks(['pending']));
+      }
+      if (path.endsWith('implementation_plan.md')) {
+        if (plannerRuns === 0) {
+          return Promise.resolve(JSON.stringify({
+            phases: [{
+              name: 'Malformed phase without an id',
+              subtasks: [{ id: '1.1', description: 'Non-empty malformed task', status: 'pending' }],
+            }],
+          }));
+        }
+        return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return Promise.resolve(makePassedQAReport());
+      }
+      return readStandardArtifactOrReject(path);
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        plannerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+
+    const orchestrator = makeOrchestrator(runSession);
+    const phases: ExecutionPhase[] = [];
+    const logs: string[] = [];
+    orchestrator.on('phase-change', (phase) => phases.push(phase));
+    orchestrator.on('log', (message) => logs.push(String(message)));
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success, [outcome.error, ...logs].filter(Boolean).join('\n')).toBe(true);
+    expect(runSession.mock.calls.some(([config]) => config.agentType === 'planner')).toBe(true);
+    expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
+    expect(logs.some((log) => log.includes('Existing implementation plan is invalid; regenerating plan'))).toBe(true);
+    expect(phases[0]).toBe('planning');
+    expect(phases).toContain('coding');
+    expect(phases).toContain('qa_review');
+  });
+
   it('skips planner in aggressive mode when quick plan already has executable subtasks', async () => {
     let codingRuns = 0;
     mockReadFile.mockImplementation((path: string) => {
@@ -896,10 +1395,191 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(logs.some((log) => log.includes('Force planning requested'))).toBe(true);
   });
 
-  it('completes force planning when every preserved work package is already completed', async () => {
-    const files = new Map<string, string>([
+  it('runs only the tasks owner for a tasks-only Request Changes plan', async () => {
+    const files = makeStandardArtifactMap([
       ['/spec/spec.md', STANDARD_SPEC_MD],
       ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
+      ['/spec/tasks.md', makeTasks(['pending'])],
+      ['/spec/implementation_plan.md', makePlanWithSchedulingMetadata(['pending'])],
+      ['/spec/change_requests.jsonl', makeStandardPlanningChangeRequest([
+        'HUMAN_INPUT.md',
+        'change_requests.jsonl',
+        'tasks.md',
+        'implementation_plan.md',
+      ])],
+    ]);
+    installPlanningArtifactMap(files);
+    const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+    const ownerAgents = runSession.mock.calls.map(([config]) => config.agentType);
+
+    expect(outcome.success, outcome.error).toBe(true);
+    expect(outcome.finalPhase).toBe('planning');
+    expect(ownerAgents).toEqual(['planner']);
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+  });
+
+  it('runs design review and tasks owners without rerunning requirements or spec', async () => {
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
+      ['/spec/tasks.md', makeTasks(['pending'])],
+      ['/spec/implementation_plan.md', makePlanWithSchedulingMetadata(['pending'])],
+      ['/spec/change_requests.jsonl', makeStandardPlanningChangeRequest([
+        'HUMAN_INPUT.md',
+        'change_requests.jsonl',
+        'design.md',
+        'design_review.md',
+        'tasks.md',
+        'implementation_plan.md',
+      ], 'cr-design-only')],
+    ]);
+    installPlanningArtifactMap(files);
+    const runSession = vi.fn(async (config: { agentType: string; specPhase?: string }) => {
+      if (config.agentType === 'design_critic') {
+        files.set('/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD);
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+    const ownerAgents = runSession.mock.calls.map(([config]) => config.agentType);
+
+    expect(outcome.success, outcome.error).toBe(true);
+    expect(ownerAgents).toEqual([
+      'software_designer',
+      'software_designer',
+      'software_designer',
+      'design_critic',
+      'planner',
+    ]);
+    expect(runSession.mock.calls
+      .filter(([config]) => config.agentType === 'software_designer')
+      .map(([config]) => config.specPhase))
+      .toEqual(['design', 'design_model', 'implementation_model']);
+    expect(ownerAgents).not.toContain('spec_gatherer');
+    expect(ownerAgents).not.toContain('spec_writer');
+  });
+
+  it('runs the full owner chain and retries only the failed requirements stage', async () => {
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
+      ['/spec/tasks.md', makeTasks(['pending'])],
+      ['/spec/implementation_plan.md', makePlanWithSchedulingMetadata(['pending'])],
+      ['/spec/change_requests.jsonl', makeStandardPlanningChangeRequest([
+        'HUMAN_INPUT.md',
+        'change_requests.jsonl',
+        'requirements.md',
+        'spec.md',
+        'design.md',
+        'design_review.md',
+        'tasks.md',
+        'implementation_plan.md',
+      ], 'cr-requirements')],
+    ]);
+    installPlanningArtifactMap(files);
+    let gathererRuns = 0;
+    const runSession = vi.fn(async (
+      config: { agentType: string; specPhase?: string },
+    ): Promise<SessionResult> => {
+      if (config.agentType === 'spec_gatherer') {
+        gathererRuns++;
+        if (gathererRuns === 1) {
+          return {
+            ...makeSessionResult('error'),
+            error: {
+              code: 'temporary-owner-failure',
+              message: 'temporary requirements failure',
+              retryable: true,
+            },
+          };
+        }
+        return {
+          ...makeSessionResult('completed'),
+          structuredOutput: {
+            contract_version: 1,
+            task_description: 'Apply the requested incremental behavior.',
+            workflow_type: 'feature',
+            services_involved: [],
+            user_requirements: ['R1: Apply the requested behavior.'],
+            acceptance_criteria: ['AC1: The requested behavior is represented by executable work.'],
+            constraints: ['C1: Keep the existing workflow contract compatible.'],
+            evidence_sources: ['E1: HUMAN_INPUT.md - approved Request Changes feedback.'],
+            standards_references: [],
+            assumptions: [],
+            open_questions: [],
+            created_at: '2026-07-14T00:00:00.000Z',
+          },
+        };
+      }
+      if (config.agentType === 'spec_writer') {
+        files.set('/spec/spec.md', STRICT_STANDARD_SPEC_MD);
+      }
+      if (config.agentType === 'design_critic') {
+        files.set('/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD);
+      }
+      if (config.agentType === 'planner') {
+        files.set('/spec/tasks.md', STRICT_STANDARD_TASKS_MD);
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+    const ownerAgents = runSession.mock.calls.map(([config]) => config.agentType);
+    const transaction = JSON.parse(files.get('/spec/planning-transaction.json') ?? '{}');
+
+    expect(outcome.success, outcome.error).toBe(true);
+    expect(ownerAgents).toEqual([
+      'spec_gatherer',
+      'spec_gatherer',
+      'spec_writer',
+      'software_designer',
+      'software_designer',
+      'software_designer',
+      'software_designer',
+      'software_designer',
+      'design_critic',
+      'planner',
+    ]);
+    expect(runSession.mock.calls
+      .filter(([config]) => config.agentType === 'software_designer')
+      .map(([config]) => config.specPhase))
+      .toEqual([
+        'requirement_model',
+        'domain_model',
+        'design',
+        'design_model',
+        'implementation_model',
+      ]);
+    expect(transaction).toMatchObject({
+      changeRequestId: 'cr-requirements',
+      status: 'completed',
+      checkpoint: 'committed',
+    });
+    expect(files.get('/spec/requirements.md')).toContain('Requirements-Contract: 1');
+    expect(files.get('/spec/spec.md')).toBe(STRICT_STANDARD_SPEC_MD);
+  });
+
+  it('completes force planning when every preserved work package is already completed', async () => {
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
       ['/spec/context.md', STANDARD_CONTEXT_MD],
       ['/spec/tasks.md', makeTasks(['completed'])],
       ['/spec/implementation_plan.md', makePlanWithSchedulingMetadata(['completed'])],
@@ -931,9 +1611,11 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(mockIterateSubtasks).not.toHaveBeenCalled();
   });
   it('resumes validated planning transaction artifacts without another planner session', async () => {
-    const files = new Map<string, string>([
+    const files = makeStandardArtifactMap([
       ['/spec/spec.md', STANDARD_SPEC_MD],
       ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
       ['/spec/context.md', STANDARD_CONTEXT_MD],
       ['/spec/tasks.md', makeTasks(['pending'])],
       ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
@@ -942,7 +1624,7 @@ describe('BuildOrchestrator QA recovery', () => {
         id: 'resume-build-transaction',
         phase: 'planning',
         status: 'active',
-        stage: 'sources_validated',
+        stage: 'tasks_validated',
         createdAt: '2026-07-10T00:00:00.000Z',
         updatedAt: '2026-07-10T00:00:00.000Z',
         artifactHashes: {},
@@ -991,8 +1673,55 @@ describe('BuildOrchestrator QA recovery', () => {
       checkpoint: 'committed',
     });
   });
+
+  it('resumes a legacy sources checkpoint before design, review, and task planning', async () => {
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/planning-transaction.json', JSON.stringify({
+        version: 1,
+        id: 'legacy-sources-transaction',
+        phase: 'planning',
+        status: 'repair_required',
+        stage: 'sources_validated',
+        checkpoint: 'sources_validated',
+        createdAt: '2026-07-10T00:00:00.000Z',
+        updatedAt: '2026-07-10T00:00:00.000Z',
+        artifactHashes: {},
+      })],
+    ]);
+    installPlanningArtifactMap(files);
+
+    const runSession = vi.fn(async (config: { agentType: string }) => {
+      if (config.agentType === 'software_designer') {
+        files.set('/spec/design.md', STANDARD_DESIGN_MD);
+      } else if (config.agentType === 'design_critic') {
+        files.set('/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD);
+      } else if (config.agentType === 'planner') {
+        files.set('/spec/tasks.md', makeTasks(['pending']));
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+    const ownerAgents = runSession.mock.calls.map(([config]) => config.agentType);
+
+    expect(outcome.success, outcome.error).toBe(true);
+    expect(outcome.finalPhase).toBe('planning');
+    expect(ownerAgents).toEqual([
+      'software_designer',
+      'design_critic',
+      'planner',
+    ]);
+    expect(files.get('/spec/implementation_plan.md')).toContain('Subtask 1');
+  });
+
   it('preserves completed runtime work packages during force planning iteration', async () => {
-    const tasksMarkdown = [
+    const tasksMarkdown = withStandardDesignMetadata([
       '# Tasks',
       '',
       'Feature: Preserve completed iteration work',
@@ -1021,10 +1750,12 @@ describe('BuildOrchestrator QA recovery', () => {
       '    - _Done when: the focused change request is ready for coding_',
       '    - _Verification: npm test -- follow-up.test.ts_',
       '',
-    ].join('\n');
-    const files = new Map<string, string>([
+    ].join('\n'));
+    const files = makeStandardArtifactMap([
       ['/spec/spec.md', STANDARD_SPEC_MD],
       ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
       ['/spec/context.md', STANDARD_CONTEXT_MD],
       ['/spec/tasks.md', tasksMarkdown],
       ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
@@ -1285,19 +2016,11 @@ describe('BuildOrchestrator QA recovery', () => {
 
   it('continues from repaired Standard artifacts when planner retry times out with only granularity warnings', async () => {
     let plannerRuns = 0;
-    const files = new Map<string, string>([
-      [
-        '/spec/spec.md',
-        [
-          '# Test task',
-          '',
-          '## Requirements',
-          '',
-          '- R1: Build a browser game with movement, scoring, pause, restart, and game-over behavior.',
-          '',
-        ].join('\n'),
-      ],
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
       ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
       ['/spec/tasks.md', makeBroadTasks()],
       ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
     ]);
@@ -1334,7 +2057,7 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(outcome.success).toBe(true);
     expect(outcome.finalPhase).toBe('planning');
     expect(plannerRuns).toBe(2);
-    expect(files.get('/spec/spec.md')).toContain('## Evidence');
+    expect(files.get('/spec/spec.md')).toBe(STANDARD_SPEC_MD);
     expect(files.get('/spec/implementation_plan.md')).toContain('Build complete browser game loop');
     expect(mockIterateSubtasks).not.toHaveBeenCalled();
   });
@@ -1342,19 +2065,11 @@ describe('BuildOrchestrator QA recovery', () => {
   it('continues a new task into coding when planner retry times out after generating usable Standard artifacts', async () => {
     let plannerRuns = 0;
     let reviewerRuns = 0;
-    const files = new Map<string, string>([
-      [
-        '/spec/spec.md',
-        [
-          '# Test task',
-          '',
-          '## Requirements',
-          '',
-          '- R1: Build a browser game with movement, scoring, pause, restart, and game-over behavior.',
-          '',
-        ].join('\n'),
-      ],
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
       ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
       ['/spec/tasks.md', makeBroadTasks()],
       ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
     ]);
@@ -1413,16 +2128,18 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(outcome.finalPhase).toBe('complete');
     expect(plannerRuns).toBe(2);
     expect(reviewerRuns).toBe(1);
-    expect(files.get('/spec/spec.md')).toContain('## Evidence');
+    expect(files.get('/spec/spec.md')).toBe(STANDARD_SPEC_MD);
     expect(files.get('/spec/implementation_plan.md')).toContain('"status":"completed"');
     expect(mockIterateSubtasks).toHaveBeenCalled();
   });
 
-  it('repairs vague tasks.md evidence before deriving runtime work packages for a new task', async () => {
+  it('rejects vague tasks.md evidence without mutating another artifact owner', async () => {
     let reviewerRuns = 0;
-    const files = new Map<string, string>([
+    const files = makeStandardArtifactMap([
       ['/spec/spec.md', STANDARD_SPEC_MD],
       ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
       ['/spec/tasks.md', makeVagueEvidenceTasks()],
       ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
     ]);
@@ -1467,17 +2184,15 @@ describe('BuildOrchestrator QA recovery', () => {
 
     const outcome = await orchestrator.run();
 
-    expect(outcome.error).toBeUndefined();
-    expect(outcome.success).toBe(true);
-    expect(outcome.finalPhase).toBe('complete');
-    expect(reviewerRuns).toBe(1);
-    expect(files.get('/spec/tasks.md')).toContain('spec.md Requirements');
-    expect(files.get('/spec/tasks.md')).toContain('requirements.md Evidence Sources');
-    expect(files.get('/spec/implementation_plan.md')).toContain('"status":"completed"');
-    expect(mockIterateSubtasks).toHaveBeenCalled();
+    expect(outcome.success).toBe(false);
+    expect(outcome.error).toContain('tasks.md task 1.1 has vague _Evidence_');
+    expect(reviewerRuns).toBe(0);
+    expect(files.get('/spec/tasks.md')).toBe(makeVagueEvidenceTasks());
+    expect(JSON.parse(files.get('/spec/implementation_plan.md') ?? '{}')).toEqual({ phases: [] });
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
   });
 
-  it('repairs a manual Standard seed spec before deriving runtime work packages', async () => {
+  it('rejects a manual Standard seed spec without synthesizing cross-owner content', async () => {
     const seedSpec = [
       '# Recalculate Standard board progress',
       '',
@@ -1508,9 +2223,11 @@ describe('BuildOrchestrator QA recovery', () => {
       '- tasks.md work package metadata for executable progress status.',
       '',
     ].join('\n');
-    const files = new Map<string, string>([
+    const files = makeStandardArtifactMap([
       ['/spec/spec.md', seedSpec],
       ['/spec/requirements.md', requirementsMarkdown],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
       ['/spec/tasks.md', makeTasks(['pending'])],
       ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
       ['/spec/HUMAN_INPUT.md', 'Request Changes: board progress should sync with detail progress.'],
@@ -1534,26 +2251,21 @@ describe('BuildOrchestrator QA recovery', () => {
     const outcome = await orchestrator.run();
     const repairedSpec = files.get('/spec/spec.md') ?? '';
 
-    expect(outcome.success).toBe(true);
-    expect(outcome.finalPhase).toBe('planning');
-    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(1);
-    expect(repairedSpec).toContain('## Requirements');
-    expect(repairedSpec).toContain('## Design Notes');
-    expect(repairedSpec).toContain('## Acceptance And Verification');
-    expect(repairedSpec).toContain('## Evidence');
-    expect(repairedSpec).toContain('Recalculate Standard board progress');
-    expect(repairedSpec).toContain('HUMAN_INPUT.md latest reviewer feedback');
-    expect(repairedSpec).not.toContain('Standard mode task');
-    expect(repairedSpec).not.toContain('Use compact Standard Autocode planning');
-    expect(files.get('/spec/implementation_plan.md')).toContain('"status":"pending"');
+    expect(outcome.success).toBe(false);
+    expect(outcome.error).toContain('spec.md is still the manual Standard planning seed');
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(2);
+    expect(repairedSpec).toBe(seedSpec);
+    expect(JSON.parse(files.get('/spec/implementation_plan.md') ?? '{}')).toEqual({ phases: [] });
     expect(mockIterateSubtasks).not.toHaveBeenCalled();
   });
 
   it('derives runtime work packages when tasks.md dependencies reference phase headings', async () => {
     let reviewerRuns = 0;
-    const files = new Map<string, string>([
+    const files = makeStandardArtifactMap([
       ['/spec/spec.md', STANDARD_SPEC_MD],
       ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
       ['/spec/tasks.md', makePhaseHeadingDependencyTasks()],
       ['/spec/implementation_plan.md', JSON.stringify({ phases: [] })],
     ]);
@@ -1617,9 +2329,11 @@ describe('BuildOrchestrator QA recovery', () => {
     const originalTasksMarkdown = makeTasks(['completed']);
     const revisedTasksMarkdown = makeTasks(['pending']);
     const originalPlanMarkdown = makePlanWithSchedulingMetadata(['completed']);
-    const files = new Map<string, string>([
+    const files = makeStandardArtifactMap([
       ['/spec/spec.md', STANDARD_SPEC_MD],
       ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
       ['/spec/context.md', STANDARD_CONTEXT_MD],
       ['/spec/tasks.md', originalTasksMarkdown],
       ['/spec/implementation_plan.md', originalPlanMarkdown],
@@ -1652,6 +2366,9 @@ describe('BuildOrchestrator QA recovery', () => {
     ]);
 
     const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'design_critic') {
+        files.set('/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD);
+      }
       if (config.agentType === 'planner') {
         files.set('/spec/tasks.md', revisedTasksMarkdown);
       }
@@ -1686,9 +2403,11 @@ describe('BuildOrchestrator QA recovery', () => {
     const originalTasksMarkdown = makeTasks(['completed']);
     const failedTasksMarkdown = makeTasks(['pending'], false);
     const originalPlanMarkdown = makePlanWithSchedulingMetadata(['completed']);
-    const files = new Map<string, string>([
+    const files = makeStandardArtifactMap([
       ['/spec/spec.md', STANDARD_SPEC_MD],
       ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', STANDARD_DESIGN_MD],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
       ['/spec/context.md', STANDARD_CONTEXT_MD],
       ['/spec/tasks.md', originalTasksMarkdown],
       ['/spec/implementation_plan.md', originalPlanMarkdown],
@@ -1710,6 +2429,9 @@ describe('BuildOrchestrator QA recovery', () => {
     });
 
     const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'design_critic') {
+        files.set('/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD);
+      }
       if (config.agentType === 'planner') {
         files.set('/spec/tasks.md', failedTasksMarkdown);
       }

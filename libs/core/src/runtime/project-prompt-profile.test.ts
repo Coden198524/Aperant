@@ -33,13 +33,20 @@ describe('project prompt profile formatting', () => {
     expect(full).toContain('- Stack: TypeScript, JavaScript, React, Electron');
   });
 
-  it('keeps generated Standard planning prompts compact and task-first', () => {
+  it('keeps generated Standard planning prompts compact with separated artifact ownership', () => {
     const prompts = generateAutocodeProjectPromptOverrides(createProfile());
     const planner = prompts.planner;
-    const specQuick = prompts.spec_quick;
 
-    expect(planner).toContain('Create or repair one upstream `tasks.md`');
-    expect(planner).toContain('Update `spec.md` or `requirements.md` only when missing, stale, or required by real Request Changes feedback');
+    expect(planner).toContain('Create or repair the static definition catalog in `tasks.md`');
+    expect(planner).toContain('Write only `tasks.md`');
+    expect(planner).toContain('all five design-package files');
+    expect(planner).toContain('`requirement_model.md`');
+    expect(planner).toContain('`domain_model.md`');
+    expect(planner).toContain('`design_model.md`');
+    expect(planner).toContain('`implementation_model.md`');
+    expect(planner).toContain('Resolve design IDs from their canonical package owner');
+    expect(planner).toContain('All phase and task checkboxes are [ ]');
+    expect(planner).toContain('The runtime derives `implementation_plan.md`; do not write it');
     expect(planner).toContain('runtime file-conflict scheduler queues overlapping writes');
     expect(planner).toContain('Add architecture metadata only for cross-boundary, migration, schema/compatibility, or high-risk work');
     expect(planner).toContain('Every executable task needs precise file metadata, exactly one dependency line');
@@ -52,15 +59,7 @@ describe('project prompt profile formatting', () => {
     expect(planner).not.toContain('needs_revision');
     expect(planner.length).toBeLessThan(7_000);
 
-    expect(specQuick).toContain('Write a compact Standard plan');
-    expect(specQuick).toContain('Split only by real behavior, contract, data shape, UI surface, risky error path, or verification scenario');
-    expect(specQuick).toContain('Shared files do not imply dependencies');
-    expect(specQuick).toContain('_Done when:');
-    expect(specQuick).toContain('Static syntax, unit, lint, typecheck, build, or file-existence checks alone are not enough');
-    expect(specQuick).not.toContain('OpenSpec');
-    expect(specQuick).not.toContain('Do not cap task count');
-    expect(specQuick).not.toContain('Architecture Grounding');
-    expect(specQuick.length).toBeLessThan(7_000);
+    expect(prompts).not.toHaveProperty('spec_quick');
   });
 
   it('grounds generated coder prompts in implementation contracts and reviewable summaries', () => {
@@ -70,7 +69,8 @@ describe('project prompt profile formatting', () => {
     expect(coder).toContain('public APIs, schemas, IPC/protocol contracts');
     expect(coder).toContain('Do not leave placeholder code');
     expect(coder).toContain('closest regression test');
-    expect(coder).toContain('mark `[x]` when complete');
+    expect(coder).toContain('Do not edit `tasks.md` or `implementation_plan.md`');
+    expect(coder).toContain('The runtime records status, timing, retries, failures, summaries, and commits');
     expect(coder).toContain('do not mark the subtask complete until the launch/open/browser/CLI smoke path passes');
   });
 

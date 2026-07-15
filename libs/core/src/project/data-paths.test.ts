@@ -74,6 +74,8 @@ describe('Autocode data path file formats', () => {
     expect(AUTOCODE_IDEATION_CONTEXT_FILE_NAME).toBe('ideation_context.md');
     expect(AUTOCODE_TASK_ARTIFACTS.context).toBe('context.md');
     expect(AUTOCODE_TASK_ARTIFACTS.research).toBe('research.md');
+    expect(AUTOCODE_TASK_ARTIFACTS.design).toBe('design.md');
+    expect(AUTOCODE_TASK_ARTIFACTS.designReview).toBe('design_review.md');
     expect(AUTOCODE_TASK_ARTIFACTS.requirements).toBe('requirements.md');
     expect(AUTOCODE_TASK_ARTIFACTS.tasks).toBe('tasks.md');
     expect(AUTOCODE_TASK_ARTIFACTS.implementationPlan).toBe('implementation_plan.md');

@@ -456,7 +456,9 @@ describe('AgentManager worktree execution', () => {
     manager.on('task-event', taskEventListener);
     createOrGetWorktreeMock.mockRejectedValue(new Error('worktree add failed'));
 
-    await manager.startTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: true }, 'project-1');
+    await expect(
+      manager.startTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: true }, 'project-1'),
+    ).rejects.toThrow('Failed to create isolated worktree');
 
     expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
     expect(errorListener).toHaveBeenCalledWith(
@@ -586,19 +588,45 @@ describe('AgentManager worktree execution', () => {
     const errorListener = vi.fn();
     manager.on('error', errorListener);
 
-    await manager.startSpecCreation('001-task', 'E:/repo', 'Task description', undefined, undefined, undefined, 'project-1');
-    await manager.startTaskExecution('001-task', 'E:/repo', '001-task', {}, 'project-1');
-    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', {}, 'project-1');
-    await manager.startQAProcess('001-task', 'E:/repo', '001-task', 'project-1');
+    const starts: Array<[string, () => Promise<unknown>]> = [
+      ['001-spec', () => manager.startSpecCreation('001-spec', 'E:/repo', 'Task description', undefined, undefined, undefined, 'project-1')],
+      ['001-task', () => manager.startTaskExecution('001-task', 'E:/repo', '001-task', {}, 'project-1')],
+      ['001-direct', () => manager.startDirectTaskExecution('001-direct', 'E:/repo', '001-direct', {}, 'project-1')],
+      ['001-qa', () => manager.startQAProcess('001-qa', 'E:/repo', '001-qa', 'project-1')],
+    ];
+    for (const [, start] of starts) {
+      await expect(start()).rejects.toThrow('Authentication required');
+    }
 
     expect(errorListener).toHaveBeenCalledTimes(4);
-    for (const call of errorListener.mock.calls) {
+    for (const [index, call] of errorListener.mock.calls.entries()) {
       expect(call).toEqual([
-        '001-task',
+        starts[index][0],
         'Authentication required. Please add an account in Settings > Accounts before starting tasks.',
         'project-1',
       ]);
     }
+    expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
+    expect(spawnProcessMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects QA startup when the selected provider has no credentials', async () => {
+    const authResolver = await import('../ai/auth/resolver');
+    (authResolver.resolveAuth as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+    const errorListener = vi.fn();
+    manager.on('error', errorListener);
+
+    await expect(
+      manager.startQAProcess('001-qa', 'E:/repo', '001-qa', 'project-1'),
+    ).rejects.toThrow('No credentials available for provider');
+
+    expect(errorListener).toHaveBeenCalledWith(
+      '001-qa',
+      expect.stringContaining('No credentials available for provider'),
+      'project-1',
+    );
     expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
     expect(spawnProcessMock).not.toHaveBeenCalled();
   });

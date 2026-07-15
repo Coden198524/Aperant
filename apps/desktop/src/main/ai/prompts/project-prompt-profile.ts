@@ -43,7 +43,7 @@ import { shouldSkipAutocodeWorkspaceDir } from '@autocode/core/workspace/ignore-
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 27;
+export const PROJECT_PROMPT_PROFILE_VERSION = 29;
 export const PROJECT_PROMPT_PROFILE_PATH = getAutocodeProjectPromptProfileRelativePath();
 export const PROJECT_PROMPTS_PATH = getAutocodeProjectPromptsRelativeDir();
 
@@ -79,7 +79,7 @@ export interface ProjectPromptProfile {
   };
   workflow: {
     promptIntensity: PromptIntensity;
-    specStyle: 'quick' | 'standard' | 'full';
+    specStyle: 'standard' | 'full';
     planningGuidance: string;
     contextGuidance: string;
     validationGuidance: string;
@@ -145,12 +145,12 @@ const SOURCE_EXTENSIONS = new Set([
 ]);
 
 const PROJECT_PROMPT_NAMES = [
-  'spec_quick',
   'planner',
   'coder',
   'qa_reviewer',
   'qa_fixer',
 ] as const;
+const REMOVED_PROJECT_PROMPT_NAMES = ['spec_quick'] as const;
 
 const INSTRUCTION_FILE_NAMES = new Set([
   'agents.md',
@@ -475,7 +475,7 @@ function inferWorkflow(
   if (size === 'small') {
     return {
       promptIntensity: 'lightweight',
-      specStyle: 'quick',
+      specStyle: 'standard',
       planningGuidance: 'Use a simple implementation flow unless the request clearly spans separate modules or dependency boundaries.',
       contextGuidance: 'Prefer targeted file reads. Do not perform broad discovery when the task already points to the affected files.',
       validationGuidance: 'Run the smallest relevant build, typecheck, lint, or test command available. Manual verification is acceptable for simple UI/text changes.',
@@ -743,6 +743,13 @@ export function initializeProjectPromptProfile(
   const promptOverrides = generateProjectPromptOverrides(profile);
   const promptsDir = getAutocodeProjectPromptsDir(projectPath);
   mkdirSync(promptsDir, { recursive: true });
+
+  for (const promptName of REMOVED_PROJECT_PROMPT_NAMES) {
+    const promptPath = join(promptsDir, `${promptName}.md`);
+    if (existsSync(promptPath) && isGeneratedProjectPrompt(promptPath)) {
+      unlinkSync(promptPath);
+    }
+  }
 
   if (options.overwrite) {
     const managedPromptNames = new Set(Object.keys(promptOverrides));

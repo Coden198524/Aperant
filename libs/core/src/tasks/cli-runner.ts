@@ -23,6 +23,12 @@ import {
 } from '../runtime/direct-session-state.js';
 import { foldRepeatedAutocodePromptLines } from '../runtime/prompt-context.js';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
+import { AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT } from './design-quality.js';
+import {
+  AUTOCODE_STANDARD_CHANGE_REQUESTS_FILE,
+  type AutocodeStandardPlanningOwnerPlan,
+  resolveAutocodeStandardPlanningOwnerPlan,
+} from './standard-planning-owner.js';
 import {
   type AutocodeCli,
   type AutocodeCliContinuationStrategy,
@@ -104,6 +110,20 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
   });
   const resolvedPhase = resolveRunPhase(specDir, task);
   const phase = input.phase ?? (input.forcePlanning === true && resolvedPhase !== 'direct' ? 'planning' : resolvedPhase);
+  let changeRequestsContent: string | undefined;
+  try {
+    changeRequestsContent = readFileSync(
+      join(specDir, AUTOCODE_STANDARD_CHANGE_REQUESTS_FILE),
+      'utf8',
+    );
+  } catch {
+    // A missing journal selects the compatible initial or legacy owner flow.
+  }
+  const standardPlanningOwnerPlan = resolveAutocodeStandardPlanningOwnerPlan({
+    phase,
+    forcePlanning: input.forcePlanning === true,
+    changeRequestsContent,
+  });
   const thinkingLevel = normalizeThinkingLevel(resolveAutocodePhaseThinking({
     metadata: task.metadata,
     phase: phase === 'direct' ? 'coding' : phase,
@@ -138,6 +158,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
       promptFilePath,
       phase,
       forcePlanning: input.forcePlanning === true,
+      standardPlanningOwnerPlan,
       specDir,
       taskTitle: task.title,
       taskDescription: compactTaskRunTaskDescription(task.description || task.title),
@@ -301,6 +322,25 @@ function buildTaskRunPrompt(input: {
     ].join('\n');
   }
 
+  if (['spec', 'planning'].includes(input.phase)) {
+    return header + contextReference + humanInputReference + [
+      '## Standard staged planning',
+      '',
+      'Task: ' + taskDescription,
+      'Spec directory: ' + input.specDir,
+      '',
+      'Follow the owner-stage instruction appended to this prompt. That instruction is authoritative for this invocation.',
+      '- requirements.md owns full R*/AC*/C*/A*/Q*/E* facts.',
+      '- spec.md owns observable SCN-* behavior and references requirement/evidence IDs.',
+      '- requirement_model.md owns RM behavior; domain_model.md owns DOM rules/state; design.md owns architecture/ADR/budgets/index/traceability; design_model.md owns SYS/DES/FLOW/CONTRACT/PAT/REV; implementation_model.md owns IMP repository mappings.',
+      '- tasks.md owns static task definitions with [ ] checkboxes only.',
+      '- implementation_plan.md is a runtime-owned ledger derived after tasks validation.',
+      '- Write only the artifact named by the active owner stage. Do not repair downstream artifacts in the same invocation.',
+      '- For Request Changes, use the latest impacts/flowDocuments, preserve unaffected stable IDs, completed task definitions, and dependency relationships.',
+      '- Stop after validated planning for human review; do not code.',
+    ].join('\n');
+  }
+
   if (input.phase === 'spec') {
     if (isChinese) {
       return `${header}${contextReference}${humanInputReference}${[
@@ -422,7 +462,7 @@ function buildTaskRunPrompt(input: {
       `- 仅在缺少验收细节时参考 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile}。`,
       '- 运行器会针对每个运行时工作包调用你一次。每次调用只实现 Current Work Item 章节。',
       '- 不要提前开始后续工作包，即使它们看起来相关。',
-      '- 编码期间不要编辑 implementation_plan.md 的状态复选框；运行器会在本次调用结束后负责更新状态。',
+      '- 编码期间不要编辑 tasks.md 或 implementation_plan.md；请回报完成情况和验证结果，由运行器在本次调用结束后更新运行状态。',
       '- 将完成详情放在最终回复或实现总结中，不要通过编辑计划状态来表达完成。',
       '- 运行项目最相关的验证命令。',
       '- 当 HUMAN_INPUT.md 或 change_requests.jsonl 存在时，将最新变更请求视为同一任务迭代：满足其中的验证指导，并在测试通过后保持变更可进入正常任务提交流程。',
@@ -447,7 +487,7 @@ function buildTaskRunPrompt(input: {
     `- Use ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} only for missing acceptance details.`,
     '- The runner invokes you once per runtime work package. In each invocation, implement only the Current Work Item section.',
     '- Do not start later work packages early, even if they look related.',
-    '- Do not edit implementation_plan.md status checkboxes during coding; the runner owns status updates after this invocation.',
+    '- Do not edit tasks.md or implementation_plan.md during coding; report completion and verification so the runner can update runtime state after this invocation.',
     '- Put completion details in your final response, not by editing plan status or creating Direct-mode artifacts.',
     '- Run the most relevant validation command for the project.',
     '- When HUMAN_INPUT.md or change_requests.jsonl exists, treat the latest change request as a same-task iteration: satisfy its validation guidance and keep the changes ready for the normal task commit flow after tests pass.',
@@ -647,8 +687,8 @@ function buildPlanningIterationContextLines(input: {
     `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} when the latest change request changes structured requirements or acceptance criteria.`,
     '- If a previous iteration planning attempt was interrupted, continue from the existing Standard artifacts. Read the current tasks.md first, repair partial/truncated/inconsistent checklist content in place, and keep the original planning direction unless the latest feedback explicitly changes it.',
     '- Do not discard tasks.md or restart planning from scratch during recovery. Preserve completed, obsolete, and unaffected task history for reviewability; only reset or add the work items required by the current change request.',
-    '- If existing work truly needs revision for the latest human feedback, edit that checklist item in place, reset it to pending, and put any needs_revision marker only in a detail note or metadata line, never in the task title.',
-    '- Add pending tasks only for genuinely new requirements or verification gaps. After recording the change request, remove or compact obsolete executable checklist items to avoid duplicate tasks.',
+    '- Never rewrite or remove a completed task definition. Keep it for history and add a new task ID for revised work. A still-pending task may be revised in place.',
+    '- Add pending tasks only for genuinely new requirements, revisions, or verification gaps. Keep completed historical definitions visible and avoid duplicate executable work.',
   ];
 }
 
@@ -711,6 +751,24 @@ function buildTaskRunLanguageInstruction(language: AutocodeAgentLanguage): strin
     ].join(' ');
   }
 
+  return '';
+}
+
+function buildStandardPlanningStageLanguageInstruction(language: AutocodeAgentLanguage): string {
+  if (isTaskRunChineseLanguage(language)) {
+    return [
+      '除机器可读字段名、必需状态标记、代码、路径、命令、API 名称和技术标识符外，所有设计、评审发现、理由、计划和总结都必须使用简体中文。',
+      'design_review.md 的首行仍必须精确使用 Status: PASSED 或 Status: REVISE，但后续评审正文必须使用简体中文。',
+      '保留规则要求的英文机器字段名、枚举 token 和证据前缀；不得翻译、加反引号或在枚举 token 后追加说明。只本地化自由文本字段，以及 requirement -、observed -、inferred -、unresolved - 之后的描述。',
+    ].join(' ');
+  }
+  if (language === 'fr') {
+    return [
+      'Write all design, review findings, rationale, planning text, and summaries in French except required machine fields, status tokens, code, paths, commands, API names, and technical identifiers.',
+      'Keep the first line of design_review.md exactly Status: PASSED or Status: REVISE, but write the review body in French.',
+      'Keep contract enum tokens and evidence prefixes in English, unquoted, and exact; localize only descriptive prose.',
+    ].join(' ');
+  }
   return '';
 }
 
@@ -799,6 +857,7 @@ function buildNodeRunnerScript(input: {
   promptFilePath: string;
   phase: AutocodeTaskRunPhase;
   forcePlanning?: boolean;
+  standardPlanningOwnerPlan: AutocodeStandardPlanningOwnerPlan;
   specDir: string;
   taskTitle: string;
   taskDescription: string;
@@ -838,11 +897,13 @@ const cliJsonEventParsers = ${JSON.stringify([
 const iconvLiteModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('iconv-lite'))};
 const workPackagesModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/work-packages') ?? resolveOptionalRunnerDependency('./work-packages.js'))};
 const planQualityModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/plan-quality') ?? resolveOptionalRunnerDependency('./plan-quality.js'))};
+const designQualityModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/design-quality') ?? resolveOptionalRunnerDependency('./design-quality.js'))};
 const directTaskSummaryModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/runtime/direct-task-summary') ?? resolveOptionalRunnerDependency('../runtime/direct-task-summary.js'))};
 const libsqlSqlite3ModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@libsql/client/sqlite3'))};
 const promptFilePath = ${JSON.stringify(input.promptFilePath)};
 const phase = ${JSON.stringify(input.phase)};
 const forcePlanning = ${JSON.stringify(input.forcePlanning === true)};
+const standardPlanningOwnerPlan = ${JSON.stringify(input.standardPlanningOwnerPlan)};
 const specDir = ${JSON.stringify(input.specDir)};
 const projectDataRelativeDir = inferRunnerProjectDataRelativeDir();
 const taskTitle = ${JSON.stringify(input.taskTitle)};
@@ -850,28 +911,94 @@ const taskDescription = ${JSON.stringify(input.taskDescription)};
 const taskMetadata = ${JSON.stringify(input.taskMetadata ?? {})};
 const projectId = ${JSON.stringify(input.projectId)};
 const language = ${JSON.stringify(input.language)};
+const standardPlanningStageLanguageInstruction = ${JSON.stringify(buildStandardPlanningStageLanguageInstruction(input.language))};
+const standardDesignMachineContractPrompt = ${JSON.stringify(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT)};
 const runtimeConcurrency = ${JSON.stringify(input.runtimeConcurrency)};
 const artifacts = ${JSON.stringify(AUTOCODE_TASK_ARTIFACTS)};
+const standardPlanningOwnerStageOrder = [
+  'requirements',
+  'spec',
+  'requirement_model',
+  'domain_model',
+  'design',
+  'design_model',
+  'implementation_model',
+  'design_review',
+  'tasks',
+];
+const standardPlanningOwnerStages = Array.isArray(standardPlanningOwnerPlan.stages) &&
+  standardPlanningOwnerPlan.stages.length > 0
+  ? standardPlanningOwnerStageOrder.filter((stage) => standardPlanningOwnerPlan.stages.includes(stage))
+  : [...standardPlanningOwnerStageOrder];
+let standardPlanningRunStages = [...standardPlanningOwnerStages];
+const standardDesignGenerationStageOrder = [
+  'requirement_model',
+  'domain_model',
+  'design',
+  'design_model',
+  'implementation_model',
+];
+const standardDesignStageArtifact = {
+  requirement_model: artifacts.requirementModel || 'requirement_model.md',
+  domain_model: artifacts.domainModel || 'domain_model.md',
+  design: artifacts.design || 'design.md',
+  design_model: artifacts.designModel || 'design_model.md',
+  implementation_model: artifacts.implementationModel || 'implementation_model.md',
+  design_review: artifacts.designReview || 'design_review.md',
+};
+const standardDesignStageCheckpoint = {
+  requirement_model: 'requirement_model_validated',
+  domain_model: 'domain_model_validated',
+  design: 'design_validated',
+  design_model: 'design_model_validated',
+  implementation_model: 'implementation_model_validated',
+  design_review: 'design_reviewed',
+};
 const standardPlanningSourceArtifacts = [
   artifacts.specFile,
   artifacts.requirements,
-  artifacts.tasks || 'tasks.md',
   artifacts.context || 'context.md',
+  artifacts.design || 'design.md',
+  artifacts.requirementModel || 'requirement_model.md',
+  artifacts.domainModel || 'domain_model.md',
+  artifacts.designModel || 'design_model.md',
+  artifacts.implementationModel || 'implementation_model.md',
+  artifacts.designReview || 'design_review.md',
+  artifacts.tasks || 'tasks.md',
 ].filter(Boolean);
 const standardPlanningTransactionArtifacts = [
   ...standardPlanningSourceArtifacts,
   artifacts.implementationPlan,
 ].filter(Boolean);
 const standardPlanningCheckpoints = new Set([
+  'requirements_validated',
+  'spec_validated',
+  'design_written',
+  'requirement_model_validated',
+  'domain_model_validated',
+  'design_validated',
+  'design_model_validated',
+  'implementation_model_validated',
+  'design_reviewed',
   'sources_validated',
+  'tasks_validated',
   'plan_derived',
   'plan_validated',
   'committed',
 ]);
-const planningArtifactSnapshot = captureStandardPlanningArtifactSnapshot();
 const planningTransactionPath = join(specDir, artifacts.planningTransaction || 'planning-transaction.json');
 const planningTransaction = beginStandardPlanningTransaction();
+const planningArtifactSnapshot = captureStandardPlanningArtifactSnapshot(planningTransaction);
+let standardPlanningRequirementsValidated = false;
+let standardPlanningSpecValidated = false;
 let standardPlanningSourcesValidated = false;
+let standardPlanningDesignValidated = false;
+let standardPlanningDesignReviewValidated = false;
+let standardPlanningTasksValidated = false;
+const standardPlanningValidatedDesignStages = new Set();
+let standardPlanningStage = resolveInitialStandardPlanningStage();
+let standardPlanningStageRetryCount = 0;
+let standardPlanningDesignRevisionCount = 0;
 const directSessionStateVersion = ${JSON.stringify(AUTOCODE_DIRECT_SESSION_STATE_VERSION)};
 const taskEventPrefix = ${JSON.stringify(AUTOCODE_TASK_EVENT_PREFIX)};
 const fileWriteLockScope = inferFileWriteLockScope();
@@ -913,6 +1040,9 @@ const DIRECT_QUALITY_RETRY_FEEDBACK_MAX_CHARS = 1600;
 const DIRECT_QUALITY_RETRY_FILE_PREVIEW_LIMIT = 12;
 const VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS = 6000;
 const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
+const STANDARD_PLANNING_STAGE_RETRY_MAX_CHARS = 16000;
+const STANDARD_PLANNING_STAGE_DEFAULT_MAX_RETRIES = 2;
+const STANDARD_DESIGN_STAGE_MAX_RETRIES = 3;
 const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
 let schedulingMetadataRetryCount = 0;
@@ -1058,7 +1188,12 @@ initializeCliMemoryRuntime()
   .then((contextBlock) => {
     memoryContextBlock = contextBlock;
     if (phase === 'coding') {
-      startCodingWorkQueue();
+      const designContractError = validateRunnerRuntimeDesignContract();
+      if (designContractError) {
+        void finishRun(1, undefined, designContractError, designContractError);
+      } else {
+        startCodingWorkQueue();
+      }
     } else {
       void startNonCodingRuntimeWithPlanningRecovery(buildPromptWithMemoryContext(prompt));
     }
@@ -1066,7 +1201,12 @@ initializeCliMemoryRuntime()
   .catch((error) => {
     appendTaskLogEntry(logPhase, 'info', 'Memory context unavailable: ' + (error instanceof Error ? error.message : String(error)));
     if (phase === 'coding') {
-      startCodingWorkQueue();
+      const designContractError = validateRunnerRuntimeDesignContract();
+      if (designContractError) {
+        void finishRun(1, undefined, designContractError, designContractError);
+      } else {
+        startCodingWorkQueue();
+      }
     } else {
       void startNonCodingRuntimeWithPlanningRecovery(prompt);
     }
@@ -2145,6 +2285,10 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
   flushCliJsonOutput(defaultAttemptState);
   flushModelOutput(defaultAttemptState);
 
+  if (exitCode === 0 && !explicitError && await advanceStandardPlanningStage()) {
+    return;
+  }
+
   const validationError = exitCode === 0 ? await validateExpectedArtifacts() : undefined;
   if (validationError) {
     const schedulingMetadataError = isPlanningSchedulingMetadataValidationError(validationError);
@@ -2174,7 +2318,11 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
       emitPhase(executionPhase, retryMessage, 0);
       defaultAttemptState.lastCliMessageText = '';
       defaultAttemptState.completionSummaryDetected = false;
-      startAttempt(buildPromptWithMemoryContext(buildArtifactValidationRetryPrompt(validationError)));
+      startAttempt(buildPromptWithMemoryContext(
+        isStandardDesignFirstPlanningRun() && standardPlanningStage === 'tasks'
+          ? buildStandardPlanningStagePrompt('tasks', validationError)
+          : buildArtifactValidationRetryPrompt(validationError),
+      ));
       return;
     }
   }
@@ -2200,17 +2348,34 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     ? explicitError || validationError || summarizeCliFailureReason(defaultAttemptState, exitCode, signal)
     : undefined;
   if (failed) {
+    const hasValidatedPlanningStage = standardPlanningRequirementsValidated ||
+      standardPlanningSpecValidated ||
+      standardPlanningSourcesValidated ||
+      standardPlanningValidatedDesignStages.size > 0 ||
+      standardPlanningDesignValidated ||
+      standardPlanningDesignReviewValidated ||
+      standardPlanningTasksValidated;
     restoreStandardPlanningArtifactSnapshot(
       planningArtifactSnapshot,
       failureMessage || 'failed',
-      { preserveValidatedSources: standardPlanningSourcesValidated },
+      {
+        preserveValidatedRequirements: standardPlanningRequirementsValidated,
+        preserveValidatedSpec: standardPlanningSpecValidated || standardPlanningSourcesValidated,
+        preserveValidatedDesign: standardPlanningDesignValidated,
+        preserveValidatedDesignStages: Array.from(standardPlanningValidatedDesignStages),
+        preserveValidatedDesignReview: standardPlanningDesignReviewValidated,
+        preserveValidatedTasks: standardPlanningTasksValidated,
+      },
     );
     updateStandardPlanningTransaction(
-      standardPlanningSourcesValidated ? 'repair_required' : 'failed',
-      standardPlanningSourcesValidated ? 'repair_required' : 'failed',
+      hasValidatedPlanningStage ? 'repair_required' : 'failed',
+      hasValidatedPlanningStage ? 'repair_required' : 'failed',
       failureMessage,
     );
   } else {
+    if (planningTransaction) {
+      delete planningTransaction.baselineArtifacts;
+    }
     updateStandardPlanningTransaction('committed', 'completed');
   }
   const rateLimited = failed && isCliRateLimitFailure(defaultAttemptState, explicitError, validationError, failureMessage);
@@ -2373,30 +2538,13 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
   } else if (!failed && (phase === 'planning' || phase === 'spec')) {
     const planningItems = readPlanItems().filter((item) => item.isSubtask);
     const incompletePlanningItems = planningItems.filter((item) => item.status !== 'completed');
-    if (
-      forcePlanning !== true
-      && planningItems.length > 0
-      && incompletePlanningItems.length === 0
-    ) {
-      emitTaskEvent('QA_PASSED', {
-        iteration: 0,
-        testsRun: {
-          planningOnly: true,
-          completedWorkItems: planningItems.length,
-          totalWorkItems: planningItems.length,
-        },
-      });
-    } else {
-      const requireReviewBeforeCoding =
-        forcePlanning === true || taskMetadata?.requireReviewBeforeCoding === true;
-      emitTaskEvent('PLANNING_COMPLETE', {
-        hasSubtasks: planningItems.length > 0,
-        subtaskCount: planningItems.length,
-        incompleteSubtaskCount: incompletePlanningItems.length,
-        continueAfterPlanning: !requireReviewBeforeCoding,
-        requireReviewBeforeCoding,
-      });
-    }
+    emitTaskEvent('PLANNING_COMPLETE', {
+      hasSubtasks: planningItems.length > 0,
+      subtaskCount: planningItems.length,
+      incompleteSubtaskCount: incompletePlanningItems.length,
+      continueAfterPlanning: false,
+      requireReviewBeforeCoding: true,
+    });
   }
   updateTaskLogs(logPhase, failed ? 'failed' : 'completed', result.message);
   await flushCliMemoryWrites();
@@ -2985,6 +3133,9 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
   if (finalized) return;
   const attempt = activeCodingAttempts.get(currentAttemptId);
   if (!attempt) return;
+  const attemptDurationMs = Number.isFinite(attempt.state.startedAt)
+    ? Math.max(0, Date.now() - attempt.state.startedAt)
+    : undefined;
 
   attempt.state.finalizing = true;
   clearAttemptTimers(attempt.state);
@@ -3013,7 +3164,12 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
     const statusNote = /^CLI work item run failed\b/i.test(reason)
       ? reason
       : 'CLI work item run failed: ' + reason;
-    const statusResult = markPlanSubtaskStatusSafely(attempt.subtask.id, 'failed', statusNote);
+    const statusResult = markPlanSubtaskStatusSafely(
+      attempt.subtask.id,
+      'failed',
+      statusNote,
+      attemptDurationMs,
+    );
     if (!statusResult.ok) {
       const statusReason = formatPlanSubtaskStatusPersistFailure(attempt.subtask.id, 'failed', statusResult.reason);
       codingFailures.push(attempt.subtask.id + ': ' + statusReason);
@@ -3026,6 +3182,7 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
       attempt.subtask.id,
       'completed',
       'Completed by Autocode CLI runner.',
+      attemptDurationMs,
     );
     if (!statusResult.ok) {
       const reason = formatPlanSubtaskStatusPersistFailure(attempt.subtask.id, 'completed', statusResult.reason);
@@ -3072,6 +3229,10 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
           buildAttemptLogExtra(attempt.state, extra),
         );
         if (commitResult.status === 'committed') {
+          persistPlanSubtaskRuntimeMetadata(attempt.subtask.id, {
+            git_commit: commitResult.commit,
+            changed_files: commitResult.files,
+          });
           appendTaskLogEntry(
             'coding',
             'info',
@@ -3185,8 +3346,7 @@ function buildFocusedSubtaskPrompt(subtask) {
     ? [
         '- Implement every Autocode source task listed in this work package.',
         '- Do not implement later pending work packages in this invocation.',
-        '- Keep other work package checkboxes unchanged.',
-        '- Do not edit implementation_plan.md status checkboxes; this runner updates work package ' + subtask.id + ' after the CLI exits.',
+        '- Do not edit tasks.md or implementation_plan.md; this runner updates work package ' + subtask.id + ' after the CLI exits.',
         '- Return a concise completion summary for this work package.',
         '- Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread the surrounding lines once before retrying.',
         '- Treat legacy or non-UTF-8 files as encoding-sensitive: do not use apply_patch or UTF-8 rewrites on them. Use an encoding-preserving script/tool and keep the original file encoding.',
@@ -3198,8 +3358,7 @@ function buildFocusedSubtaskPrompt(subtask) {
     : [
         '- Implement only this current subtask.',
         '- Do not implement later pending subtasks in this invocation.',
-        '- Keep other subtask checkboxes unchanged.',
-        '- Do not edit implementation_plan.md status checkboxes; this runner updates subtask ' + subtask.id + ' after the CLI exits.',
+        '- Do not edit tasks.md or implementation_plan.md; this runner updates subtask ' + subtask.id + ' after the CLI exits.',
         '- Return a concise completion summary for this subtask.',
         '- Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread the surrounding lines once before retrying.',
         '- Treat legacy or non-UTF-8 files as encoding-sensitive: do not use apply_patch or UTF-8 rewrites on them. Use an encoding-preserving script/tool and keep the original file encoding.',
@@ -3208,6 +3367,7 @@ function buildFocusedSubtaskPrompt(subtask) {
         '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless this subtask explicitly changes state-machine code.',
         '- Keep validation commands scoped to their test runner: Vitest/unit commands must not collect Playwright/e2e specs; use tests/unit globs, command arguments, or runner config when both unit and e2e tests exist.',
       ];
+  const designExcerpt = readRunnerDesignExcerpt(subtask.designRefs);
   const fields = [
     '# Current Work Item',
     '',
@@ -3217,9 +3377,18 @@ function buildFocusedSubtaskPrompt(subtask) {
     subtask.dependsOn && subtask.dependsOn.length > 0 ? 'Depends on completed work items: ' + subtask.dependsOn.join(', ') : '',
     subtask.upstreamTaskIds && subtask.upstreamTaskIds.length > 0 ? 'Source task IDs: ' + subtask.upstreamTaskIds.join(', ') : '',
     subtask.upstreamSource ? 'Upstream source: ' + subtask.upstreamSource : '',
+    subtask.designRefs && subtask.designRefs.length > 0 ? 'Binding design IDs: ' + subtask.designRefs.join(', ') : '',
     '',
     'Description:',
     subtask.details.length > 0 ? subtask.details.join('\\n') : subtask.title,
+    designExcerpt ? '## Binding Design Contract' : '',
+    designExcerpt,
+    designExcerpt ? 'Before editing, perform a design preflight: map the target symbol to IMP-*, its SYS-* owner/interface, DES-* state/rule owner, FLOW-*/CONTRACT-* position, and any REV-* observed-source constraints.' : '',
+    designExcerpt ? '- Follow subsystem ownership/interfaces/failure ownership, detailed responsibilities, collaborators, dependency directions, contracts, data/lifecycle/error behavior, runtime flows, engineering constraints, source evidence, and PAT-* decisions.' : '',
+    designExcerpt ? '- Preserve the approved object, component, data-oriented, functional, procedural, or mixed paradigm, including explicit state/mutation authority, operations, lifetime, and FLOW ordering.' : '',
+    designExcerpt ? '- Implement PAT-* only for its documented variation and stable boundary; never expand it by analogy.' : '',
+    designExcerpt ? '- Do not add an unplanned layer, service, public interface, named pattern, dependency, persistence shape, or cross-module refactor.' : '',
+    designExcerpt ? '- If the target is absent from IMP-*, source contradicts REV-*, or a material ownership/design change is required, stop with evidence so this work package returns to planning. Do not improvise architecture.' : '',
     '',
     '## Required Workflow',
     ...workflowRules,
@@ -3232,6 +3401,56 @@ function buildFocusedSubtaskPrompt(subtask) {
     '',
     ...fields,
   ].join('\\n');
+}
+
+function readRunnerDesignExcerpt(refs) {
+  const requested = normalizeRunnerStringArray(refs).map((ref) => ref.toUpperCase());
+  if (requested.length === 0) {
+    return '';
+  }
+  const requestedSet = new Set(requested);
+  const blocksById = new Map();
+  const packageFiles = [
+    artifacts.design || 'design.md',
+    artifacts.requirementModel || 'requirement_model.md',
+    artifacts.domainModel || 'domain_model.md',
+    artifacts.designModel || 'design_model.md',
+    artifacts.implementationModel || 'implementation_model.md',
+  ];
+  for (const fileName of packageFiles) {
+    const markdown = readOptionalArtifact(fileName);
+    if (!markdown) continue;
+    let activeId = '';
+    let current = [];
+    const flush = () => {
+      if (activeId && current.length > 0 && !blocksById.has(activeId)) {
+        blocksById.set(activeId, current.join('\\n').trim());
+      }
+      activeId = '';
+      current = [];
+    };
+    for (const line of markdown.replace(/\\r\\n/g, '\\n').split('\\n')) {
+      const idHeading = /^#{3,6}\\s+((?:ADR|RM|DOM|SYS|DES|FLOW|CONTRACT|PAT|REV|IMP)-\\d{3,})\\b/i.exec(line);
+      if (idHeading) {
+        flush();
+        const id = idHeading[1].toUpperCase();
+        activeId = requestedSet.has(id) ? id : '';
+        current = activeId ? [line] : [];
+        continue;
+      }
+      if (/^##\\s+/.test(line)) {
+        flush();
+        continue;
+      }
+      if (activeId) current.push(line);
+    }
+    flush();
+  }
+  const excerpt = requested
+    .map((id) => blocksById.get(id))
+    .filter(Boolean)
+    .join('\\n\\n');
+  return excerpt.length <= 6000 ? excerpt : excerpt.slice(0, 5997).trimEnd() + '...';
 }
 
 function findNextRunnableSubtask() {
@@ -3666,6 +3885,7 @@ function readPlanItems() {
         patternFiles: normalizeRunnerStringArray(metadata.pattern_files),
         dependsOn: normalizeRunnerWorkDependencyIds(metadata.depends_on),
         requirements: normalizeRunnerStringArray(metadata.requirements),
+        designRefs: normalizeRunnerStringArray(metadata.design_refs),
         evidence: typeof metadata.evidence === 'string' ? metadata.evidence.trim() : '',
         hasFileMetadata: hasMetadataField('files') ||
           hasMetadataField('files_to_create') ||
@@ -3698,16 +3918,105 @@ function readPlanItems() {
       }
     }
   }
+  return hydrateRunnerRuntimeItemsFromTasks(items);
+}
+
+function hydrateRunnerRuntimeItemsFromTasks(items) {
+  const runtimeItems = items.filter((item) => item.isSubtask && item.workPackage);
+  if (runtimeItems.length === 0) {
+    return items;
+  }
+  const taskDefinitions = readRunnerStaticTaskDefinitions();
+  if (taskDefinitions.size === 0) {
+    return items;
+  }
+
+  for (const runtimeItem of runtimeItems) {
+    const definitions = runtimeItem.upstreamTaskIds
+      .map((id) => taskDefinitions.get(id))
+      .filter(Boolean);
+    if (definitions.length === 0) {
+      continue;
+    }
+    runtimeItem.title = definitions.length === 1
+      ? definitions[0].title
+      : definitions[0].title + ' (+' + (definitions.length - 1) + ')';
+    runtimeItem.details = [
+      'Static task definitions from ' + (runtimeItem.upstreamSource || artifacts.tasks || 'tasks.md') + ':',
+      ...definitions.flatMap((definition) => [
+        definition.id + ' ' + definition.title,
+        ...definition.details,
+      ]),
+    ];
+    runtimeItem.filesToCreate = uniqueRunnerStrings(definitions.flatMap((definition) => definition.filesToCreate));
+    runtimeItem.filesToModify = uniqueRunnerStrings(definitions.flatMap((definition) => definition.filesToModify));
+    runtimeItem.patternFiles = uniqueRunnerStrings(definitions.flatMap((definition) => definition.patternFiles));
+    runtimeItem.requirements = uniqueRunnerStrings(definitions.flatMap((definition) => definition.requirements));
+    runtimeItem.designRefs = uniqueRunnerStrings(definitions.flatMap((definition) => definition.designRefs));
+    runtimeItem.evidence = uniqueRunnerStrings(definitions.map((definition) => definition.evidence)).join('; ');
+    runtimeItem.hasFileMetadata = definitions.every((definition) => definition.hasFileMetadata);
+    runtimeItem.hasEvidenceMetadata = definitions.every((definition) => definition.hasEvidenceMetadata);
+    runtimeItem.hasVerificationMetadata = definitions.every((definition) => definition.hasVerificationMetadata);
+  }
   return items;
 }
 
+function readRunnerStaticTaskDefinitions() {
+  let content = '';
+  try {
+    content = readFileSync(join(specDir, artifacts.tasks || 'tasks.md'), 'utf8');
+  } catch {
+    return new Map();
+  }
+
+  const definitions = new Map();
+  const lines = content.replace(/\\r\\n/g, '\\n').split('\\n');
+  let current = null;
+  for (const line of lines) {
+    const match = /^(\\s*)-\\s+\\[([ xX/!\\-])\\]\\s+([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(?:\\.)?\\s+(.+?)\\s*$/.exec(line);
+    if (match) {
+      const isSubtask = match[1].length > 0 || /[.-]/.test(match[3]);
+      current = {
+        id: match[3],
+        title: match[4].trim(),
+        details: [],
+        filesToCreate: [],
+        filesToModify: [],
+        patternFiles: [],
+        dependsOn: [],
+        requirements: [],
+        designRefs: [],
+        evidence: '',
+        hasFileMetadata: false,
+        hasEvidenceMetadata: false,
+        hasVerificationMetadata: false,
+      };
+      if (isSubtask) {
+        definitions.set(current.id, current);
+      }
+      continue;
+    }
+    if (current && /^\\s+-\\s+/.test(line)) {
+      const detail = line.replace(/^\\s+-\\s+/, '').trim();
+      if (detail) {
+        current.details.push(detail);
+        applyPlanItemFileHint(current, detail);
+      }
+    }
+  }
+  return definitions;
+}
+
+function uniqueRunnerStrings(values) {
+  return Array.from(new Set((values || []).map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
 function applyPlanItemFileHint(item, detail) {
-  const clean = detail.replace(/^_+|_+$/g, '').trim();
-  const match = /^([^:]+):\\s*(.*?)\\s*$/.exec(clean);
+  const match = /^(?:[_*]+)?\\s*([^:：_*]+?)\\s*(?:[_*]+)?\\s*[:：]\\s*(?:[_*]+)?\\s*(.*?)\\s*(?:[_*]+)?\\s*$/.exec(detail);
   if (!match) {
     return;
   }
-  const key = match[1].trim().toLowerCase();
+  const key = match[1].trim().replace(/\\s+/g, ' ').toLowerCase();
   const values = splitPlanList(match[2]);
   if (key === 'files to create') {
     item.hasFileMetadata = true;
@@ -3715,10 +4024,15 @@ function applyPlanItemFileHint(item, detail) {
     item.filesToCreate.push(...values);
     return;
   }
-  if (key === 'files' || key === 'files to modify') {
+  if (key === 'files' || key === 'files to modify' || key === 'files to create/modify' || key === 'files to create or modify') {
     item.hasFileMetadata = true;
     if (values.length === 0) return;
     item.filesToModify.push(...values);
+    return;
+  }
+  if (key === 'file intent' || key === 'files intent' || key === 'file intents') {
+    item.hasFileMetadata = true;
+    item.filesToModify.push(...extractRunnerFileIntentPaths(match[2]));
     return;
   }
   if (key === 'pattern files' || key === 'patterns from') {
@@ -3731,6 +4045,14 @@ function applyPlanItemFileHint(item, detail) {
     item.hasDependencyMetadata = true;
     if (values.length === 0) return;
     item.dependsOn.push(...values);
+    return;
+  }
+  if (key === 'design' || key === 'design refs' || key === 'design references') {
+    item.designRefs.push(...values.map((value) => value.toUpperCase()));
+    return;
+  }
+  if (key === 'requirements' || key === 'requirement' || key === 'requirements coverage' || key === 'acceptance criteria') {
+    item.requirements.push(...values);
     return;
   }
   if (key === 'evidence' || key === 'source evidence' || key === 'evidence sources') {
@@ -3761,9 +4083,35 @@ const EMPTY_EVIDENCE_TOKENS = new Set([
 
 function splitPlanList(value) {
   return String(value || '')
-    .split(',')
+    .split(/[,;、，；]+/)
     .map((item) => item.trim())
     .filter((item) => item && !isNoneDependencyToken(item));
+}
+
+function extractRunnerFileIntentPaths(value) {
+  const text = String(value || '');
+  const fence = String.fromCharCode(96);
+  const codeSpanCandidates = text
+    .split(fence)
+    .filter((_part, index) => index % 2 === 1)
+    .map((part) => part.trim());
+  const candidates = codeSpanCandidates.filter(isLikelyRunnerFilePath);
+  if (candidates.length === 0) {
+    candidates.push(...(text.match(/(?:[A-Za-z]:[\\\\/])?(?:[A-Za-z0-9_.@()\\-]+[\\\\/])*[A-Za-z0-9_.@()\\-]+\\.[A-Za-z0-9_\\-]{1,12}/g) || []));
+  }
+  return Array.from(new Map(candidates.map((candidate) => [candidate.replace(/\\\\/g, '/').toLowerCase(), candidate])).values());
+}
+
+function isLikelyRunnerFilePath(value) {
+  const candidate = String(value || '').trim();
+  if (!candidate || /\\s/.test(candidate) || /^#/.test(candidate)) {
+    return false;
+  }
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:(?![\\\\/])/.test(candidate)) {
+    return false;
+  }
+  return /[\\\\/]/.test(candidate) ||
+    /^(?:\\.[A-Za-z0-9_.-]+|[A-Za-z0-9_.@()\\-]+\\.[A-Za-z0-9_\\-]{1,12})$/.test(candidate);
 }
 
 function parsePlanMachineMetadata(content) {
@@ -3805,6 +4153,19 @@ function markPlanSubtaskStatus(subtaskId, status, note, durationMs) {
       return false;
     }
 
+    const existingPlanMetadata = parsePlanMachineMetadata(content);
+    const existingSubtaskMetadata = existingPlanMetadata &&
+      existingPlanMetadata.subtaskMetadata &&
+      typeof existingPlanMetadata.subtaskMetadata === 'object' &&
+      !Array.isArray(existingPlanMetadata.subtaskMetadata)
+      ? existingPlanMetadata.subtaskMetadata[subtaskId]
+      : null;
+    const existingStartedValue = existingSubtaskMetadata &&
+      typeof existingSubtaskMetadata === 'object' &&
+      !Array.isArray(existingSubtaskMetadata) &&
+      typeof existingSubtaskMetadata.started_at === 'string'
+      ? existingSubtaskMetadata.started_at
+      : null;
     const marker = statusToMarker(status);
     const now = new Date().toISOString();
     const lines = content.replace(/\\r\\n/g, '\\n').split('\\n');
@@ -3812,7 +4173,7 @@ function markPlanSubtaskStatus(subtaskId, status, note, durationMs) {
     let matchedSubtask = false;
     let completionValue = null;
     let noteValue = status !== 'completed' && note ? compactPlanField(note) : null;
-    let startedValue = null;
+    let startedValue = existingStartedValue;
     let completedValue = null;
     for (let index = 0; index < lines.length; index += 1) {
       const pattern = /^(\\s*-\\s+\\[)([ xX/!\\-])(\\]\\s+)([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(\\.?)(\\s+.+?)\\s*$/;
@@ -3904,6 +4265,7 @@ function markPlanSubtaskStatus(subtaskId, status, note, durationMs) {
       startedValue,
       completedValue,
       durationMs,
+      activeStartedValue: status === 'in_progress' ? now : null,
     }));
     if (contentWithSubtaskMetadata !== content) {
       content = contentWithSubtaskMetadata;
@@ -3931,12 +4293,14 @@ function buildSubtaskStatusMetadataUpdates(status, values) {
       notes: null,
       completed_at: null,
       started_at: null,
-      duration_ms: null,
+      active_started_at: null,
+      failure_reason: null,
+      blocked_reason: null,
     };
   }
 
   const updates = {
-    started_at: values.startedValue || null,
+    started_at_if_absent: values.startedValue || null,
   };
   const durationMs = Number.isFinite(values.durationMs)
     ? Math.max(0, Math.floor(values.durationMs))
@@ -3944,16 +4308,30 @@ function buildSubtaskStatusMetadataUpdates(status, values) {
 
   if (status === 'in_progress') {
     updates.completed_at = null;
-    updates.duration_ms = null;
+    updates.active_started_at_if_absent = values.activeStartedValue || null;
+    updates.failure_reason = null;
+    updates.blocked_reason = null;
   } else if (status === 'completed') {
     updates.completed_at = values.completedValue || null;
+    updates.active_started_at = null;
+    updates.failure_reason = null;
+    updates.blocked_reason = null;
     if (durationMs !== undefined) {
-      updates.duration_ms = durationMs;
+      updates.duration_ms_delta = durationMs;
     }
   } else if (status === 'failed' || status === 'blocked') {
     updates.completed_at = null;
+    updates.active_started_at = null;
+    if (status === 'failed') {
+      updates.failure_reason = values.noteValue || 'Work package failed.';
+      updates.blocked_reason = null;
+      updates.retry_count_delta = 1;
+    } else {
+      updates.blocked_reason = values.noteValue || 'Work package blocked.';
+      updates.failure_reason = null;
+    }
     if (durationMs !== undefined) {
-      updates.duration_ms = durationMs;
+      updates.duration_ms_delta = durationMs;
     }
   }
 
@@ -3985,6 +4363,35 @@ function upsertPlanSubtaskMachineMetadata(content, subtaskId, updates) {
   const nextFields = { ...existingFields };
 
   for (const [key, value] of Object.entries(updates)) {
+    if (key === 'started_at_if_absent') {
+      if (!nextFields.started_at && value !== undefined && value !== null && value !== '') {
+        nextFields.started_at = value;
+      }
+      continue;
+    }
+    if (key === 'active_started_at_if_absent') {
+      if (!nextFields.active_started_at && value !== undefined && value !== null && value !== '') {
+        nextFields.active_started_at = value;
+      }
+      continue;
+    }
+    if (key === 'duration_ms_delta') {
+      const currentDurationMs = Number(nextFields.duration_ms);
+      const durationDeltaMs = Number(value);
+      if (Number.isFinite(durationDeltaMs) && durationDeltaMs >= 0) {
+        nextFields.duration_ms = Math.max(0, Math.floor(
+          (Number.isFinite(currentDurationMs) ? currentDurationMs : 0) + durationDeltaMs,
+        ));
+      }
+      continue;
+    }
+    if (key === 'retry_count_delta') {
+      const currentRetryCount = Number(nextFields.retry_count);
+      const retryDelta = Number(value);
+      nextFields.retry_count = (Number.isFinite(currentRetryCount) ? currentRetryCount : 0) +
+        (Number.isFinite(retryDelta) ? retryDelta : 0);
+      continue;
+    }
     if (value === undefined || value === null || value === '') {
       delete nextFields[key];
     } else {
@@ -4001,6 +4408,31 @@ function upsertPlanSubtaskMachineMetadata(content, subtaskId, updates) {
   return upsertPlanMachineMetadata(content, {
     subtaskMetadata: Object.keys(subtaskMetadata).length > 0 ? subtaskMetadata : null,
   });
+}
+
+function persistPlanSubtaskRuntimeMetadata(subtaskId, updates) {
+  const planPath = join(specDir, artifacts.implementationPlan);
+  try {
+    return withFileWriteLock(planPath, 'runner:plan-runtime-metadata:' + subtaskId, () => {
+      const content = readFileSync(planPath, 'utf8');
+      const now = new Date().toISOString();
+      const updated = upsertPlanSubtaskMachineMetadata(content, subtaskId, {
+        ...updates,
+        updated_at: now,
+      });
+      const nextContent = upsertPlanMetadata(updated, 'Updated', now);
+      writeFileSync(planPath, nextContent.endsWith('\\n') ? nextContent : nextContent + '\\n', 'utf8');
+      return true;
+    });
+  } catch (error) {
+    appendTaskLogEntry(
+      'coding',
+      'error',
+      'Failed to persist runtime metadata for work item ' + subtaskId + ': ' +
+        (error instanceof Error ? error.message : String(error)),
+    );
+    return false;
+  }
 }
 
 function compactPlanField(value) {
@@ -5933,6 +6365,58 @@ function compactRunnerDirectValidationReason(value) {
   }
   return normalized.slice(0, 497).trimEnd() + '...';
 }
+function validateRunnerRuntimeDesignContract() {
+  const metadata = readPlanMachineMetadata(readCurrentPlanContent());
+  const sourceTask = metadata && metadata.source_task && typeof metadata.source_task === 'object'
+    ? metadata.source_task
+    : {};
+  const contract = sourceTask.design_contract && typeof sourceTask.design_contract === 'object'
+    ? sourceTask.design_contract
+    : {};
+  const expectedFingerprint = typeof contract.fingerprint === 'string'
+    ? contract.fingerprint.trim()
+    : '';
+  if (!expectedFingerprint) {
+    return undefined;
+  }
+  const designMarkdown = readOptionalArtifact(artifacts.design || 'design.md');
+  if (!designMarkdown) {
+    return (artifacts.design || 'design.md') + ' is missing for the active runtime plan; return to planning.';
+  }
+  const packagePaths = Number(contract.version) === 4
+    ? [
+        artifacts.design || 'design.md',
+        artifacts.requirementModel || 'requirement_model.md',
+        artifacts.domainModel || 'domain_model.md',
+        artifacts.designModel || 'design_model.md',
+        artifacts.implementationModel || 'implementation_model.md',
+      ]
+    : [artifacts.design || 'design.md'];
+  const packageParts = [];
+  for (const fileName of packagePaths) {
+    const markdown = readOptionalArtifact(fileName);
+    if (!markdown) {
+      return fileName + ' is missing for the active runtime plan; return to planning.';
+    }
+    packageParts.push(Number(contract.version) === 4
+      ? '<!-- Design artifact: ' + fileName + ' -->\\n' + markdown.trim()
+      : markdown.trim());
+  }
+  const fingerprintSource = packageParts.join('\\n\\n').trim();
+  const actualFingerprint = createHash('sha256')
+    .update(fingerprintSource.replace(/\\r\\n/g, '\\n'), 'utf8')
+    .digest('hex');
+  if (actualFingerprint !== expectedFingerprint) {
+    return 'The approved design package changed after the runtime plan was derived; return to planning before coding.';
+  }
+  const reviewMarkdown = readOptionalArtifact(artifacts.designReview || 'design_review.md') || '';
+  const reviewStatuses = Array.from(reviewMarkdown.matchAll(/^Status:\\s*(PASSED|REVISE)\\s*$/gim));
+  if (reviewStatuses.length !== 1 || String(reviewStatuses[0][1]).toUpperCase() !== 'PASSED') {
+    return (artifacts.designReview || 'design_review.md') + ' is missing or not PASSED; return to planning before coding.';
+  }
+  return undefined;
+}
+
 function readCurrentPlanTokenUsage() {
   try {
     const content = readFileSync(join(specDir, artifacts.implementationPlan), 'utf8');
@@ -5981,13 +6465,25 @@ async function validateExpectedArtifacts() {
   }
 
   if (phase === 'spec' || phase === 'planning') {
+    standardPlanningRequirementsValidated = true;
+    standardPlanningSpecValidated = true;
     standardPlanningSourcesValidated = true;
-    updateStandardPlanningTransaction('sources_validated', 'active');
+    standardPlanningDesignValidated = true;
+    standardPlanningDesignReviewValidated = true;
+    for (const stage of standardDesignGenerationStageOrder) {
+      standardPlanningValidatedDesignStages.add(stage);
+    }
+    standardPlanningTasksValidated = true;
+    updateStandardPlanningTransaction('tasks_validated', 'active');
   }
 
   const derivedPlanError = await deriveRuntimePlanFromStandardTasksIfNeeded();
   if (derivedPlanError) {
     return derivedPlanError;
+  }
+  const runtimeLedgerError = await validateDerivedStandardRuntimeLedger();
+  if (runtimeLedgerError) {
+    return runtimeLedgerError;
   }
 
   if (phase === 'spec') {
@@ -6025,19 +6521,38 @@ async function validateStandardPlanArtifactQuality() {
     return undefined;
   }
   try {
-    repairStandardPlanEvidenceScaffolding();
     const moduleUrl = pathToFileURL(planQualityModulePath).href;
     const planQuality = await import(moduleUrl);
     const contextMarkdown = readOptionalArtifact(artifacts.context || 'context.md');
     const result = planQuality.validateAutocodeStandardPlanArtifacts({
       specMarkdown: readOptionalArtifact(artifacts.specFile),
       requirementsMarkdown: readOptionalArtifact(artifacts.requirements),
+      designMarkdown: readOptionalArtifact(artifacts.design || 'design.md'),
+      requirementModelMarkdown: readOptionalArtifact(artifacts.requirementModel || 'requirement_model.md'),
+      domainModelMarkdown: readOptionalArtifact(artifacts.domainModel || 'domain_model.md'),
+      designModelMarkdown: readOptionalArtifact(artifacts.designModel || 'design_model.md'),
+      implementationModelMarkdown: readOptionalArtifact(artifacts.implementationModel || 'implementation_model.md'),
+      designReviewMarkdown: readOptionalArtifact(artifacts.designReview || 'design_review.md'),
       tasksMarkdown: readOptionalArtifact(artifacts.tasks || 'tasks.md'),
+      previousTasksMarkdown: shouldPreserveCompletedTasksInStandardPlanning()
+        ? getStandardPlanningArtifactSnapshotContent(
+            planningArtifactSnapshot,
+            artifacts.tasks || 'tasks.md',
+          )
+        : undefined,
+      previousImplementationPlanMarkdown: shouldPreserveCompletedTasksInStandardPlanning()
+        ? getStandardPlanningArtifactSnapshotContent(
+            planningArtifactSnapshot,
+            artifacts.implementationPlan,
+          )
+        : undefined,
       contextMarkdown,
+      language,
       requireSpecEvidence: phase === 'planning',
       requireRequirementsEvidence: phase === 'planning',
       requireTaskEvidence: true,
       requireContextEvidence: phase === 'planning' && Boolean(contextMarkdown),
+      requireDesign: true,
     });
     if (!result || result.valid) {
       return undefined;
@@ -6061,89 +6576,22 @@ async function validateStandardPlanArtifactQuality() {
   }
 }
 
-function repairStandardPlanEvidenceScaffolding() {
-  const repaired = [];
-  const scaffold = getStandardPlanEvidenceScaffold();
-  if (ensureArtifactEvidenceSection(
-    artifacts.specFile,
-    'Evidence',
-    scaffold.specEvidence,
-  )) {
-    repaired.push(artifacts.specFile);
+async function validateDerivedStandardRuntimeLedger() {
+  if ((phase !== 'spec' && phase !== 'planning') || !planQualityModulePath) {
+    return undefined;
   }
-  if (phase === 'planning' && ensureArtifactEvidenceSection(
-    artifacts.requirements,
-    'Evidence Sources',
-    scaffold.requirementsEvidence,
-  )) {
-    repaired.push(artifacts.requirements);
+  try {
+    const moduleUrl = pathToFileURL(planQualityModulePath).href;
+    const planQuality = await import(moduleUrl);
+    const result = planQuality.validateAutocodeStandardPlanArtifacts({
+      implementationPlanMarkdown: readOptionalArtifact(artifacts.implementationPlan),
+    });
+    return result && !result.valid
+      ? 'Standard runtime ledger quality failed: ' + result.errors.slice(0, 8).join('; ')
+      : undefined;
+  } catch (error) {
+    return 'Unable to validate Standard runtime ledger: ' + (error instanceof Error ? error.message : String(error));
   }
-  if (repaired.length > 0) {
-    appendTaskLogEntry(logPhase, 'info', 'Added missing Standard evidence scaffolding to: ' + repaired.join(', '));
-  }
-}
-
-function getStandardPlanEvidenceScaffold() {
-  const requestEvidence = String(taskDescription || taskTitle || '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 500);
-  if (String(language || '').trim().toLowerCase().replace(/_/g, '-').startsWith('zh')) {
-    return {
-      specEvidence: [
-        requestEvidence
-          ? '- 用户请求：' + requestEvidence
-          : '- 用户请求由 Autocode 任务描述提供。',
-        '- requirements.md 记录了本任务的用户请求和规划约束。',
-        '- tasks.md 将实现工作映射回生成的 Standard 需求。',
-      ],
-      requirementsEvidence: [
-        requestEvidence
-          ? '- 用户任务描述：' + requestEvidence
-          : '- Autocode 捕获的用户任务描述。',
-        '- Autocode 捕获的用户任务描述。',
-        '- spec.md 中的规划范围和成功标准。',
-      ],
-    };
-  }
-  return {
-    specEvidence: [
-      requestEvidence
-        ? '- User request: ' + requestEvidence
-        : '- User request captured by Autocode task metadata.',
-      '- requirements.md captures the user request and planning constraints for this task.',
-      '- tasks.md maps the implementation work back to the generated Standard requirements.',
-    ],
-    requirementsEvidence: [
-      requestEvidence
-        ? '- User task description: ' + requestEvidence
-        : '- User task description captured by Autocode.',
-      '- User task description captured by Autocode.',
-      '- spec.md planning scope and success criteria.',
-    ],
-  };
-}
-
-function ensureArtifactEvidenceSection(fileName, heading, lines) {
-  if (!fileName) {
-    return false;
-  }
-  const filePath = join(specDir, fileName);
-  if (!existsSync(filePath)) {
-    return false;
-  }
-  const content = readFileSync(filePath, 'utf8');
-  const headingPattern = new RegExp('^##\\\\s+' + escapeRegExp(heading) + '\\\\b', 'im');
-  if (headingPattern.test(content)) {
-    return false;
-  }
-  const section = ['', '## ' + heading, '', ...lines, ''].join('\\n');
-  writeFileSync(filePath, content.replace(/\\s*$/u, '') + '\\n\\n' + section, 'utf8');
-  return true;
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[|\\\\{}()[\\]^$+*?.]/g, '\\\\$&');
 }
 
 function hasOnlyStandardPlanRecoverableQualityErrors(planQuality, errors) {
@@ -6151,8 +6599,7 @@ function hasOnlyStandardPlanRecoverableQualityErrors(planQuality, errors) {
     return false;
   }
   return errors.every((error) =>
-    isStandardPlanRecoverableQualityError(planQuality, error) ||
-    isStandardPlanEvidenceScaffoldError(error),
+    isStandardPlanRecoverableQualityError(planQuality, error),
   );
 }
 
@@ -6180,14 +6627,6 @@ function isStandardPlanArchitectureGuidanceError(planQuality, error) {
     /\\btasks\\.md complex task\\(s\\) missing _Architecture: \\.\\.\\._ guidance/.test(text);
 }
 
-function isStandardPlanEvidenceScaffoldError(error) {
-  const text = String(error || '');
-  return text === artifacts.specFile + ' missing "## Evidence" section.' ||
-    text === artifacts.specFile + ' Requirements section must cite Evidence for requirements or acceptance criteria.' ||
-    text === artifacts.specFile + ' Design Notes must cite Evidence or move unverified claims to Assumptions/Open Questions.' ||
-    text === artifacts.requirements + ' missing non-empty "Evidence Sources" section.';
-}
-
 function readOptionalArtifact(fileName) {
   if (!fileName) {
     return undefined;
@@ -6206,30 +6645,20 @@ function getStandardPlanningArtifactHash(fileName) {
     : createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
-function getStandardPlanningChangeRequestId() {
-  const content = readOptionalArtifact('change_requests.jsonl');
-  if (!content) {
-    return undefined;
-  }
-  const lines = content.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    try {
-      const entry = JSON.parse(lines[index]);
-      if (entry && typeof entry.id === 'string' && entry.id.trim()) {
-        return entry.id.trim();
-      }
-    } catch {
-      // Ignore malformed historical entries and continue searching.
-    }
-  }
-  return undefined;
-}
-
 function getStandardPlanningArtifactHashes() {
   return Object.fromEntries(
     standardPlanningTransactionArtifacts.map((fileName) => [
       fileName,
       getStandardPlanningArtifactHash(fileName),
+    ]),
+  );
+}
+
+function getStandardPlanningArtifactContents() {
+  return Object.fromEntries(
+    standardPlanningTransactionArtifacts.map((fileName) => [
+      fileName,
+      readOptionalArtifact(fileName) ?? null,
     ]),
   );
 }
@@ -6240,38 +6669,69 @@ function beginStandardPlanningTransaction() {
   }
   const now = new Date().toISOString();
   const previous = readJson(planningTransactionPath);
+  const changeRequestId = typeof standardPlanningOwnerPlan.changeRequestId === 'string'
+    ? standardPlanningOwnerPlan.changeRequestId.trim()
+    : '';
+  const requestCreatedAtMs = typeof standardPlanningOwnerPlan.changeRequestCreatedAt === 'string'
+    ? Date.parse(standardPlanningOwnerPlan.changeRequestCreatedAt)
+    : Number.NaN;
+  const previousCreatedAtMs = previous && typeof previous.createdAt === 'string'
+    ? Date.parse(previous.createdAt)
+    : Number.NaN;
+  const compatibleLegacyRequest = Boolean(
+    previous &&
+    changeRequestId &&
+    !previous.changeRequestId &&
+    Number.isFinite(requestCreatedAtMs) &&
+    Number.isFinite(previousCreatedAtMs) &&
+    previousCreatedAtMs >= requestCreatedAtMs - 1000
+  );
+  const samePlanningRequest = changeRequestId
+    ? previous && (previous.changeRequestId === changeRequestId || compatibleLegacyRequest)
+    : previous && !previous.changeRequestId;
+  const compatiblePlanningPhase = previous &&
+    (previous.phase === 'spec' || previous.phase === 'planning') &&
+    (phase === 'spec' || phase === 'planning');
   const canResume = previous &&
     typeof previous === 'object' &&
     previous.status !== 'completed' &&
-    previous.phase === phase;
+    compatiblePlanningPhase &&
+    samePlanningRequest;
   const artifactHashes = getStandardPlanningArtifactHashes();
+  const artifactContents = getStandardPlanningArtifactContents();
   const previousCheckpoint = canResume
     ? previous.checkpoint || (standardPlanningCheckpoints.has(previous.stage) ? previous.stage : undefined)
     : undefined;
   const transaction = canResume
     ? {
         ...previous,
+        phase: 'planning',
         status: 'active',
         stage: 'resumed',
         resumedAt: now,
         resumedFromStage: previous.stage,
         checkpoint: previousCheckpoint,
+        ...(changeRequestId ? { changeRequestId } : {}),
+        ownerStages: [...standardPlanningOwnerStages],
         updatedAt: now,
         baselineArtifactHashes: previous.baselineArtifactHashes || previous.artifactHashes || artifactHashes,
+        baselineArtifacts: previous.baselineArtifacts || artifactContents,
         artifactHashes,
       }
     : {
         version: 1,
         id: randomUUID(),
         taskId: taskMetadata?.id || taskMetadata?.taskId,
-        changeRequestId: getStandardPlanningChangeRequestId(),
-        phase,
+        ...(changeRequestId ? { changeRequestId } : {}),
+        ownerStages: [...standardPlanningOwnerStages],
+        phase: 'planning',
         forcePlanning,
         status: 'active',
         stage: 'started',
         createdAt: now,
         updatedAt: now,
         baselineArtifactHashes: artifactHashes,
+        baselineArtifacts: artifactContents,
         artifactHashes,
       };
   writeJson(planningTransactionPath, transaction);
@@ -6301,22 +6761,574 @@ function shouldResumeStandardPlanningFromExistingSources() {
   if (!planningTransaction || !planningTransaction.resumedAt) {
     return false;
   }
+  const checkpoint = planningTransaction.checkpoint;
   if (
-    planningTransaction.checkpoint === 'sources_validated' ||
-    planningTransaction.checkpoint === 'plan_derived' ||
-    planningTransaction.checkpoint === 'plan_validated'
+    typeof checkpoint === 'string' &&
+    checkpoint !== 'committed' &&
+    standardPlanningCheckpoints.has(checkpoint)
   ) {
     return true;
   }
+  return havePersistedStandardTasksChanged();
+}
+
+function havePersistedStandardTasksChanged() {
   const baselineHashes = planningTransaction.baselineArtifactHashes || {};
   const currentHashes = planningTransaction.artifactHashes || {};
-  return standardPlanningSourceArtifacts.some((fileName) =>
-    currentHashes[fileName] !== null && currentHashes[fileName] !== baselineHashes[fileName]
-  );
+  const tasksFile = artifacts.tasks || 'tasks.md';
+  return currentHashes[tasksFile] !== null &&
+    currentHashes[tasksFile] !== baselineHashes[tasksFile];
+}
+
+function canFinalizeStandardPlanningFromPersistedTasks() {
+  if (!planningTransaction) {
+    return false;
+  }
+  return planningTransaction.checkpoint === 'tasks_validated' ||
+    planningTransaction.checkpoint === 'plan_derived' ||
+    planningTransaction.checkpoint === 'plan_validated' ||
+    havePersistedStandardTasksChanged();
+}
+
+function isStandardDesignFirstPlanningRun() {
+  return phase === 'spec' || phase === 'planning';
+}
+
+function getSelectedStandardPlanningStageAtOrAfter(minimumStage) {
+  const minimumIndex = Math.max(0, standardPlanningOwnerStageOrder.indexOf(minimumStage));
+  return standardPlanningRunStages.find((stage) =>
+    standardPlanningOwnerStageOrder.indexOf(stage) >= minimumIndex
+  ) || 'tasks';
+}
+
+function includeStandardPlanningStagesFrom(firstStage) {
+  const startIndex = standardPlanningOwnerStageOrder.indexOf(firstStage);
+  if (startIndex < 0) {
+    return;
+  }
+  const selected = new Set(standardPlanningRunStages);
+  for (const stage of standardPlanningOwnerStageOrder.slice(startIndex)) {
+    selected.add(stage);
+  }
+  standardPlanningRunStages = standardPlanningOwnerStageOrder.filter((stage) => selected.has(stage));
+  if (planningTransaction) {
+    planningTransaction.ownerStages = [...standardPlanningRunStages];
+  }
+}
+
+function getNextStandardPlanningStage(stage) {
+  const currentIndex = standardPlanningOwnerStageOrder.indexOf(stage);
+  return standardPlanningRunStages.find((candidate) =>
+    standardPlanningOwnerStageOrder.indexOf(candidate) > currentIndex
+  ) || 'complete';
+}
+
+function resolveInitialStandardPlanningStage() {
+  if (!isStandardDesignFirstPlanningRun()) {
+    return 'complete';
+  }
+  const checkpoint = planningTransaction && planningTransaction.checkpoint;
+  if (checkpoint === 'requirement_model_validated') {
+    return getSelectedStandardPlanningStageAtOrAfter('domain_model');
+  }
+  if (checkpoint === 'domain_model_validated') {
+    return getSelectedStandardPlanningStageAtOrAfter('design');
+  }
+  if (checkpoint === 'design_validated') {
+    return getSelectedStandardPlanningStageAtOrAfter('design_model');
+  }
+  if (checkpoint === 'design_model_validated') {
+    return getSelectedStandardPlanningStageAtOrAfter('implementation_model');
+  }
+  if (checkpoint === 'implementation_model_validated') {
+    return getSelectedStandardPlanningStageAtOrAfter('design_review');
+  }
+  if (
+    checkpoint === 'design_reviewed' ||
+    checkpoint === 'tasks_validated' ||
+    checkpoint === 'plan_derived' ||
+    checkpoint === 'plan_validated'
+  ) {
+    return getSelectedStandardPlanningStageAtOrAfter('tasks');
+  }
+  if (checkpoint === 'sources_validated' || checkpoint === 'spec_validated') {
+    return getSelectedStandardPlanningStageAtOrAfter('requirement_model');
+  }
+  if (checkpoint === 'requirements_validated') {
+    return getSelectedStandardPlanningStageAtOrAfter('spec');
+  }
+  if (checkpoint === 'design_written') {
+    return getSelectedStandardPlanningStageAtOrAfter('requirement_model');
+  }
+  return standardPlanningRunStages[0] || 'requirements';
+}
+
+function buildStandardPlanningStagePrompt(stage, validationError) {
+  const retry = validationError
+    ? '\\n\\n## Previous stage validation\\n\\n' + limitStandardPlanningStageRetryGuidance(validationError)
+    : '';
+  const outputLanguage = standardPlanningStageLanguageInstruction
+    ? '\\n\\n## OUTPUT LANGUAGE REQUIREMENT\\n\\n' + standardPlanningStageLanguageInstruction
+    : '';
+  if (stage === 'requirements') {
+    return [
+      prompt,
+      '',
+      '---',
+      '',
+      '## STANDARD REQUIREMENTS STAGE ONLY',
+      '',
+      'Create or incrementally repair only ' + artifacts.requirements + '.',
+      'Declare Requirements-Contract: 1 and use stable R*, AC*, C*, A*, Q*, and E* IDs. Keep each full fact only in requirements.md.',
+      'For Request Changes, preserve unaffected IDs and revise only affected facts.',
+      'Do not create or edit ' + artifacts.specFile + ', ' + (artifacts.design || 'design.md') + ', ' +
+        (artifacts.designReview || 'design_review.md') + ', ' +
+        (artifacts.tasks || 'tasks.md') + ', or ' + artifacts.implementationPlan + ' in this stage.',
+      'Own only what and why: requirements, acceptance criteria, constraints, assumptions, open questions, and evidence registry. Do not define scenarios, architecture, files, tasks, or runtime state.',
+      outputLanguage,
+      retry,
+    ].join('\\n');
+  }
+  if (stage === 'spec') {
+    return [
+      '# Standard Observable Specification Stage',
+      '',
+      'Project root: ' + cwd,
+      'Spec directory: ' + specDir,
+      'Task: ' + taskDescription,
+      '',
+      'Read ' + artifacts.requirements + ' and write only ' + artifacts.specFile + '.',
+      'Declare Specification-Contract: 1. Define observable SCN-* behavior with Covers: R*, AC* and Evidence: E* references.',
+      'Do not copy requirement, acceptance, or evidence bodies. Do not define architecture, files, tasks, or runtime state.',
+      'For Request Changes, preserve unaffected SCN-* IDs and revise only affected observable behavior.',
+      outputLanguage,
+      retry,
+    ].join('\\n');
+  }
+  if (stage === 'requirement_model') {
+    return [
+      '# Standard Requirement Model Stage',
+      '',
+      'Project root: ' + cwd,
+      'Spec directory: ' + specDir,
+      'Task: ' + taskDescription,
+      '',
+      'Write only ' + join(specDir, standardDesignStageArtifact.requirement_model) + '.',
+      'Read approved requirements.md and spec.md plus active Request Changes. Preserve unaffected RM-* IDs.',
+      'Derive cohesive, independently verifiable RM-* scenarios from actors, goals, triggers, ordered normal behavior, alternate/failure behavior, outcomes, constraints, quality needs, and R*/AC*/SCN*/E* evidence.',
+      'Apply 5W1H and 8C only where they expose a real boundary, decision, failure, or missing fact. Mark uncertainty as unresolved; never invent implementation facts.',
+      'Declare Design-Contract: 4, the shared Design-Revision, Design-Root: design.md, and Model-Kind: requirement.',
+      'Do not choose architecture, classes, modules, files, protocols, patterns, or tasks.',
+      'Follow the deterministic package contract below:',
+      standardDesignMachineContractPrompt,
+      outputLanguage,
+      retry,
+    ].filter(Boolean).join('\\n');
+  }
+  if (stage === 'domain_model') {
+    return [
+      '# Standard Domain Model Stage',
+      '',
+      'Project root: ' + cwd,
+      'Spec directory: ' + specDir,
+      'Task: ' + taskDescription,
+      '',
+      'Write only ' + join(specDir, standardDesignStageArtifact.domain_model) + '.',
+      'Read requirement_model.md, requirements.md, spec.md, active Request Changes, and targeted project terminology. Preserve unaffected DOM-* IDs.',
+      'Derive technology-neutral concepts from RM actions and outcomes. Give every material state, rule, invariant, behavior, mutation authority, relationship, and lifecycle an explicit owner.',
+      'Classify concepts with the exact Concept kind tokens. Reject CRUD-only records, synonym duplication, speculative abstractions, anemic objects, and generic managers/services that absorb unrelated behavior.',
+      'Declare Design-Contract: 4, the shared Design-Revision, Design-Root: design.md, and Model-Kind: domain.',
+      'Do not choose architecture, detailed software elements, file changes, patterns, or tasks.',
+      'Follow the deterministic package contract below:',
+      standardDesignMachineContractPrompt,
+      outputLanguage,
+      retry,
+    ].filter(Boolean).join('\\n');
+  }
+  if (stage === 'design') {
+    return [
+      '# Standard Architecture Decision Stage',
+      '',
+      'Project root: ' + cwd,
+      'Spec directory: ' + specDir,
+      'Task: ' + taskDescription,
+      '',
+      'Write only ' + join(specDir, standardDesignStageArtifact.design) + '. Do not copy or edit model bodies.',
+      'Read requirements.md, spec.md, requirement_model.md, domain_model.md, context/research when present, project docs, active Request Changes, and only source needed to verify boundaries.',
+      'Choose the smallest complete project-consistent architecture from evidence. Start with the minimum viable baseline; local compares one candidate, standard at most two, and complex at most three.',
+      'Compare candidates on requirement/rule/state fit, quality attributes, project boundaries, changed/new modules, public contracts, dependencies, migration, testability, operational risk, reversibility, and evolution triggers.',
+      'Use object-oriented analysis only when identity, state, invariants, lifecycle, and collaboration justify it. Otherwise select component, data-oriented, functional, procedural, framework-owned, or mixed design from evidence; no language implies a paradigm.',
+      'Apply NOP only to verified variation. Reject speculative layers and patterns, but also reject God coordinators, anemic models, implicit ownership, boundary bypass, and scattered state/type/policy dispatch.',
+      'Start the document with exactly "# Design: <localized task title>". Keep "Design" and the ASCII colon unchanged.',
+      'Declare Design-Contract: 4, Design-Depth, Design-Revision, and one analysis direction. Define ADR-* only and reference all four model files.',
+      'Include Scope And Evidence, Complexity Assessment, Existing Architecture Fit, Engineering Adaptation, Design Budget, Architecture Candidates, Architecture Decision, Model Package, Change And Pattern Analysis, Applicable Design Principles, Rejected Complexity, Risks And Evolution, and Traceability.',
+      'Follow the complete deterministic machine contract below. This contract is generated from the same token definitions used by validation:',
+      standardDesignMachineContractPrompt,
+      'For Request Changes, edit only affected stable-ID sections and preserve unaffected IDs. Supersede a changed ADR instead of silently changing its meaning.',
+      'Do not create tasks and do not edit source code.',
+      outputLanguage,
+      retry,
+      readOptionalArtifact(artifacts.designReview || 'design_review.md')
+        ? '\\n## Latest independent review\\n\\n' + compactRunnerDirectValidationReason(readOptionalArtifact(artifacts.designReview || 'design_review.md'))
+        : '',
+    ].filter(Boolean).join('\\n');
+  }
+  if (stage === 'design_model') {
+    return [
+      '# Standard Design Model Stage',
+      '',
+      'Project root: ' + cwd,
+      'Spec directory: ' + specDir,
+      'Task: ' + taskDescription,
+      '',
+      'Write only ' + join(specDir, standardDesignStageArtifact.design_model) + '.',
+      'Read approved requirement_model.md, domain_model.md, design.md, active Request Changes, and targeted project evidence. Preserve unaffected SYS/DES/FLOW/CONTRACT/PAT/REV IDs and obey ADR-* decisions.',
+      'Allocate every RM-* to SYS-* before defining DES-* elements. Make state, rules, mutation authority, public operations, responsibilities, collaborators, dependencies, encapsulation, non-responsibilities, failure ownership, lifecycle, and ordered runtime collaboration explicit.',
+      'Use CRC-style responsibility reasoning and require static ownership to agree with FLOW/CONTRACT mutation and error paths. Coordinators sequence work; they do not absorb domain rules.',
+      'Select project paradigm from evidence, not language. Apply NOP: compare direct mechanisms with applicable patterns only at verified variation points; local selects none, standard at most two, complex at most three.',
+      'Declare Design-Contract: 4, the same Design-Revision as design.md, Design-Root: design.md, and Model-Kind: design.',
+      'Do not edit architecture, upstream models, implementation mapping, tasks, or source.',
+      'Follow the deterministic package contract below:',
+      standardDesignMachineContractPrompt,
+      outputLanguage,
+      retry,
+    ].filter(Boolean).join('\\n');
+  }
+  if (stage === 'implementation_model') {
+    return [
+      '# Standard Implementation Model Stage',
+      '',
+      'Project root: ' + cwd,
+      'Spec directory: ' + specDir,
+      'Task: ' + taskDescription,
+      '',
+      'Write only ' + join(specDir, standardDesignStageArtifact.implementation_model) + '.',
+      'Read the complete approved design package, project documentation, active Request Changes, and only source needed to verify affected boundaries. Preserve unaffected IMP-* IDs.',
+      'Map every in-scope SYS/DES/FLOW-or-CONTRACT and selected PAT/REV path to observed or explicitly new files, exact symbols, schemas/contracts, construction and lifecycle points, integration order, compatibility/migration constraints, and focused verification.',
+      'Distinguish modify, create, delete, migrate, and test intent. Never claim an existing path or symbol without observation; mark uncertainty unresolved instead of inventing it.',
+      'Declare Design-Contract: 4, the same Design-Revision as design.md, Design-Root: design.md, and Model-Kind: implementation.',
+      'This is an implementation map, not a task list or source implementation. Do not edit upstream design, tasks, or code.',
+      'Follow the deterministic package contract below:',
+      standardDesignMachineContractPrompt,
+      outputLanguage,
+      retry,
+    ].filter(Boolean).join('\\n');
+  }
+  if (stage === 'design_review') {
+    return [
+      '# Independent Standard Design Review',
+      '',
+      'Project root: ' + cwd,
+      'Spec directory: ' + specDir,
+      'Review the complete Design-Contract: 4 package: design.md, requirement_model.md, domain_model.md, design_model.md, and implementation_model.md against requirements.md, spec.md, context/research, active Request Changes, and targeted project evidence.',
+      'Write only ' + join(specDir, artifacts.designReview || 'design_review.md') + '.',
+      'Start with exactly Status: PASSED or Status: REVISE.',
+      'Check architecture candidate comparison, evidence provenance, RM scenarios, domain identity/state/rule/lifecycle ownership, SYS allocation/interfaces/failure ownership, DES responsibilities, ordered collaboration, exact IMP mapping, project-paradigm fit, dependency direction, feasibility, testability, Design Budget, and connected traceability.',
+      'Apply NOP but reject both extremes: mechanically mapped abstractions and shallow designs with God coordinators, anemic objects, implicit state ownership, or scattered state/type/policy conditionals.',
+      'Require every concrete variation to compare the direct mechanism with applicable pattern candidates. Do not approve pattern avoidance when multiple current variants and a stable boundary already exist.',
+      'For reverse/mixed work, require outside-in REV paths, exact source symbols, contradiction checks, and justified confidence. Do not approve inferred claims as observed facts.',
+      'Apply the same design-depth rules across languages; require explicit state, mutation, lifetime, and collaboration ownership in the selected project paradigm.',
+      'For REVISE, list only blocking findings, impacted design IDs, evidence, and the simplest project-consistent correction.',
+      'Do not edit any design package file, create tasks, or modify source code.',
+      outputLanguage,
+      retry,
+    ].filter(Boolean).join('\\n');
+  }
+  return [
+    '# Standard Task Planning Stage',
+    '',
+    'Project root: ' + cwd,
+    'Spec directory: ' + specDir,
+    'Task: ' + taskDescription,
+    '',
+    'Require ' + (artifacts.designReview || 'design_review.md') + ' to contain Status: PASSED.',
+    'Read the approved complete five-file design package and create or incrementally revise only ' + (artifacts.tasks || 'tasks.md') + '.',
+    'Declare Tasks-Contract: 1. tasks.md is a static definition catalog; every checkbox must be [ ].',
+    'Never write runtime status, timestamps, duration, retries, failure/block reasons, commit IDs, or rounds into tasks.md.',
+    'Preserve unaffected task IDs, historical definitions, and dependency relationships during Request Changes.',
+    'A completed task ID is immutable: retain its prior definition in meaning, and create a new task ID for revised work. Pending definitions may be revised in place.',
+    'Every executable task must include _Depends on_, _Requirements_, _Design_, _Evidence_, _Done when_, and _Verification_ metadata plus concrete file intent.',
+    'Use canonical metadata bullets with the colon inside the emphasis, for example _Depends on: none_ and _Design: ADR-001, IMP-001_; do not write _Depends on_: or _Design_:.',
+    'Express file intent as exact path lists in _Files to create: ..._ and/or _Files to modify: ..._; do not use a free-form _File intent_: sentence.',
+    '_Design_ must reference existing stable IDs from their owning files: ADR in design.md, DOM in domain_model.md, SYS/DES/FLOW-or-CONTRACT/selected-PAT/applicable-REV in design_model.md, and IMP in implementation_model.md. Every implementation task includes SYS-*; cover every SYS-*, required IMP-*, selected PAT-*, and REV-* unit.',
+    'Do not invent architecture or design IDs in tasks.md. Do not edit implementation_plan.md; the runner derives work packages.',
+    'Reference R*/AC*/SCN*/E* and design IDs without copying their source prose.',
+    'Keep each task independently reviewable and avoid artificial dependencies for shared files.',
+    'This is planning only. Do not implement code.',
+    outputLanguage,
+    retry,
+  ].filter(Boolean).join('\\n');
+}
+
+function limitStandardPlanningStageRetryGuidance(value) {
+  const text = String(value || '').replace(/\\r\\n/g, '\\n').trim();
+  if (text.length <= STANDARD_PLANNING_STAGE_RETRY_MAX_CHARS) {
+    return text;
+  }
+  const notice = '\\n\\n[... remaining deterministic validation guidance omitted by prompt budget ...]';
+  const budget = Math.max(0, STANDARD_PLANNING_STAGE_RETRY_MAX_CHARS - notice.length);
+  return text.slice(0, budget).trimEnd() + notice;
+}
+
+async function validateStandardPlanningRequirementsStage() {
+  if (!existsSync(join(specDir, artifacts.requirements))) {
+    return artifacts.requirements + ' is missing.';
+  }
+  if (!planQualityModulePath) {
+    return undefined;
+  }
+  try {
+    const moduleUrl = pathToFileURL(planQualityModulePath).href;
+    const planQuality = await import(moduleUrl);
+    const result = planQuality.validateAutocodeStandardPlanArtifacts({
+      requirementsMarkdown: readOptionalArtifact(artifacts.requirements),
+      requireRequirementsEvidence: true,
+    });
+    return result && !result.valid
+      ? result.errors.slice(0, 8).join('; ')
+      : undefined;
+  } catch (error) {
+    return 'Unable to validate Standard requirements: ' + (error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function validateStandardPlanningSourceStage() {
+  if (!existsSync(join(specDir, artifacts.specFile))) {
+    return artifacts.specFile + ' is missing.';
+  }
+  if (!existsSync(join(specDir, artifacts.requirements))) {
+    return artifacts.requirements + ' is missing.';
+  }
+  if (!planQualityModulePath) {
+    return undefined;
+  }
+  try {
+    const moduleUrl = pathToFileURL(planQualityModulePath).href;
+    const planQuality = await import(moduleUrl);
+    const result = planQuality.validateAutocodeStandardPlanArtifacts({
+      specMarkdown: readOptionalArtifact(artifacts.specFile),
+      requirementsMarkdown: readOptionalArtifact(artifacts.requirements),
+      requireSpecEvidence: true,
+      requireRequirementsEvidence: true,
+    });
+    return result && !result.valid
+      ? result.errors.slice(0, 8).join('; ')
+      : undefined;
+  } catch (error) {
+    return 'Unable to validate Standard source artifacts: ' + (error instanceof Error ? error.message : String(error));
+  }
+}
+
+function getStandardDesignPackageValidationInput() {
+  return {
+    designMarkdown: readOptionalArtifact(artifacts.design || 'design.md'),
+    requirementModelMarkdown: readOptionalArtifact(artifacts.requirementModel || 'requirement_model.md'),
+    domainModelMarkdown: readOptionalArtifact(artifacts.domainModel || 'domain_model.md'),
+    designModelMarkdown: readOptionalArtifact(artifacts.designModel || 'design_model.md'),
+    implementationModelMarkdown: readOptionalArtifact(artifacts.implementationModel || 'implementation_model.md'),
+    designReviewMarkdown: readOptionalArtifact(artifacts.designReview || 'design_review.md'),
+    language,
+    requireTaskReferences: false,
+  };
+}
+
+async function validateStandardDesignOwnerStage(stage) {
+  if (!designQualityModulePath) {
+    return 'Standard design validator is unavailable.';
+  }
+  try {
+    const moduleUrl = pathToFileURL(designQualityModulePath).href;
+    const designQuality = await import(moduleUrl);
+    const validateStage = designQuality.validateAutocodeStandardDesignStageArtifacts;
+    if (typeof validateStage !== 'function') {
+      return 'Standard staged design validator is unavailable.';
+    }
+    const result = validateStage(getStandardDesignPackageValidationInput(), stage);
+    if (!result || result.valid) {
+      return undefined;
+    }
+    const errors = Array.isArray(result.errors) ? result.errors : [];
+    if (typeof designQuality.buildAutocodeDesignQualityRetryPrompt === 'function') {
+      return designQuality.buildAutocodeDesignQualityRetryPrompt(errors);
+    }
+    return errors.slice(0, 30).join('\\n');
+  } catch (error) {
+    return 'Unable to validate Standard design artifacts: ' + (error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function validateStandardPlanningOwnerStage(stage) {
+  if (stage === 'requirements') {
+    return validateStandardPlanningRequirementsStage();
+  }
+  if (stage === 'spec') {
+    return validateStandardPlanningSourceStage();
+  }
+  if (standardDesignStageCheckpoint[stage]) {
+    return validateStandardDesignOwnerStage(stage);
+  }
+  return undefined;
+}
+
+function markStandardPlanningOwnerStageValidated(stage) {
+  if (stage === 'requirements') {
+    standardPlanningRequirementsValidated = true;
+    return;
+  }
+  if (stage === 'spec') {
+    standardPlanningSpecValidated = true;
+    standardPlanningSourcesValidated = true;
+    return;
+  }
+  if (standardDesignGenerationStageOrder.includes(stage)) {
+    standardPlanningValidatedDesignStages.add(stage);
+    standardPlanningDesignValidated = stage === 'implementation_model' ||
+      standardPlanningValidatedDesignStages.has('implementation_model');
+    return;
+  }
+  if (stage === 'design_review') {
+    standardPlanningDesignValidated = true;
+    standardPlanningDesignReviewValidated = true;
+  }
+}
+
+function resetStandardPlanningValidationFrom(stage) {
+  const stageIndex = standardPlanningOwnerStageOrder.indexOf(stage);
+  if (stageIndex <= standardPlanningOwnerStageOrder.indexOf('requirements')) {
+    standardPlanningRequirementsValidated = false;
+  }
+  if (stageIndex <= standardPlanningOwnerStageOrder.indexOf('spec')) {
+    standardPlanningSpecValidated = false;
+    standardPlanningSourcesValidated = false;
+  }
+  for (const designStage of standardDesignGenerationStageOrder) {
+    if (standardPlanningOwnerStageOrder.indexOf(designStage) >= stageIndex) {
+      standardPlanningValidatedDesignStages.delete(designStage);
+    }
+  }
+  standardPlanningDesignValidated = standardPlanningValidatedDesignStages.has('implementation_model');
+  if (stageIndex <= standardPlanningOwnerStageOrder.indexOf('design_review')) {
+    standardPlanningDesignReviewValidated = false;
+  }
+  standardPlanningTasksValidated = false;
+}
+
+function selectStandardDesignRevisionStartStage(validationError) {
+  const text = String(validationError || '');
+  if (/\\bRM-[0-9]+\\b|requirement_model\\.md/i.test(text)) return 'requirement_model';
+  if (/\\bDOM-[0-9]+\\b|domain_model\\.md/i.test(text)) return 'domain_model';
+  if (/\\b(?:SYS|DES|FLOW|CONTRACT|PAT|REV)-[0-9]+\\b|design_model\\.md/i.test(text)) return 'design_model';
+  if (/\\bIMP-[0-9]+\\b|implementation_model\\.md/i.test(text)) return 'implementation_model';
+  return 'design';
+}
+
+async function reconcileStandardPlanningResumeStage() {
+  const currentIndex = standardPlanningOwnerStageOrder.indexOf(standardPlanningStage);
+  if (currentIndex <= 0) {
+    return undefined;
+  }
+  const prerequisiteStages = standardPlanningOwnerStageOrder
+    .slice(0, currentIndex)
+    .filter((stage) => stage !== 'tasks');
+  for (const stage of prerequisiteStages) {
+    const validationError = await validateStandardPlanningOwnerStage(stage);
+    if (validationError) {
+      includeStandardPlanningStagesFrom(stage);
+      standardPlanningStage = stage;
+      resetStandardPlanningValidationFrom(stage);
+      return validationError;
+    }
+    markStandardPlanningOwnerStageValidated(stage);
+  }
+  return undefined;
+}
+
+async function advanceStandardPlanningStage() {
+  if (!isStandardDesignFirstPlanningRun() || standardPlanningStage === 'tasks') {
+    return false;
+  }
+
+  const completedStage = standardPlanningStage;
+  const validationError = await validateStandardPlanningOwnerStage(completedStage);
+
+  if (validationError) {
+    if (completedStage === 'design_review') {
+      standardPlanningDesignRevisionCount += 1;
+      if (standardPlanningDesignRevisionCount <= 2) {
+        const revisionStage = selectStandardDesignRevisionStartStage(validationError);
+        includeStandardPlanningStagesFrom(revisionStage);
+        standardPlanningStage = revisionStage;
+        resetStandardPlanningValidationFrom(revisionStage);
+        standardPlanningStageRetryCount = 0;
+        appendTaskLogEntry(logPhase, 'info', 'Independent design review requested revision ' + standardPlanningDesignRevisionCount + '/2; resuming from ' + revisionStage + ': ' + compactRunnerDirectValidationReason(validationError));
+        startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(revisionStage, validationError)));
+        return true;
+      }
+    } else {
+      standardPlanningStageRetryCount += 1;
+      const stageRetryLimit = standardDesignGenerationStageOrder.includes(completedStage)
+        ? STANDARD_DESIGN_STAGE_MAX_RETRIES
+        : STANDARD_PLANNING_STAGE_DEFAULT_MAX_RETRIES;
+      if (standardPlanningStageRetryCount <= stageRetryLimit) {
+        appendTaskLogEntry(logPhase, 'info', 'Standard planning stage ' + completedStage + ' failed validation; retrying ' + standardPlanningStageRetryCount + '/' + stageRetryLimit + ': ' + compactRunnerDirectValidationReason(validationError));
+        startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(completedStage, validationError)));
+        return true;
+      }
+    }
+    await finishRun(1, undefined, 'Standard planning stage ' + completedStage + ' failed: ' + validationError, validationError);
+    return true;
+  }
+
+  standardPlanningStageRetryCount = 0;
+  markStandardPlanningOwnerStageValidated(completedStage);
+  const checkpoint = completedStage === 'requirements'
+    ? 'requirements_validated'
+    : completedStage === 'spec'
+      ? 'spec_validated'
+      : standardDesignStageCheckpoint[completedStage];
+  if (checkpoint) {
+    updateStandardPlanningTransaction(checkpoint, 'active');
+  }
+  standardPlanningStage = getNextStandardPlanningStage(completedStage);
+  appendTaskLogEntry(logPhase, 'info', 'Starting Standard planning stage: ' + standardPlanningStage + '.');
+  clearStaleStandardDesignReview(standardPlanningStage);
+  startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(standardPlanningStage)));
+  return true;
+}
+
+function clearStaleStandardDesignReview(stage) {
+  if (stage !== 'design_review') {
+    return;
+  }
+  try {
+    unlinkSync(join(specDir, artifacts.designReview || 'design_review.md'));
+  } catch {
+    // A missing review is the expected state before an independent review.
+  }
 }
 
 async function startNonCodingRuntimeWithPlanningRecovery(attemptPrompt) {
-  if (!shouldResumeStandardPlanningFromExistingSources()) {
+  const shouldResumeStandardPlanning = shouldResumeStandardPlanningFromExistingSources();
+  if (isStandardDesignFirstPlanningRun() && !shouldResumeStandardPlanning) {
+    const prerequisiteError = await reconcileStandardPlanningResumeStage();
+    appendTaskLogEntry(
+      logPhase,
+      'info',
+      'Starting Standard planning owner stages: ' + standardPlanningOwnerStages.join(' -> ') + '.',
+    );
+    if (prerequisiteError) {
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'The selected owner stages depend on an invalid upstream artifact; expanding repair from ' +
+          standardPlanningStage + ': ' + compactRunnerDirectValidationReason(prerequisiteError),
+      );
+    }
+    clearStaleStandardDesignReview(standardPlanningStage);
+    startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(standardPlanningStage)));
+    return;
+  }
+  if (!shouldResumeStandardPlanning) {
     startAttempt(attemptPrompt);
     return;
   }
@@ -6327,6 +7339,59 @@ async function startNonCodingRuntimeWithPlanningRecovery(attemptPrompt) {
     'Resuming interrupted Standard planning from persisted artifacts before starting another CLI session.',
   );
   try {
+    const checkpointError = await reconcileStandardPlanningResumeStage();
+    if (checkpointError) {
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Persisted Standard planning checkpoint is ahead of valid artifacts; resuming from ' +
+          standardPlanningStage + ': ' + checkpointError,
+      );
+      startAttempt(buildPromptWithMemoryContext(
+        buildStandardPlanningStagePrompt(standardPlanningStage, checkpointError),
+      ));
+      return;
+    }
+
+    if (
+      planningTransaction &&
+      planningTransaction.checkpoint === 'design_written' &&
+      standardPlanningStage === 'design'
+    ) {
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Validating the persisted Standard design before resuming its next owner stage.',
+      );
+      await advanceStandardPlanningStage();
+      return;
+    }
+
+    if (standardPlanningStage !== 'tasks') {
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Resuming interrupted Standard planning at owner stage ' + standardPlanningStage + '.',
+      );
+      clearStaleStandardDesignReview(standardPlanningStage);
+      startAttempt(buildPromptWithMemoryContext(
+        buildStandardPlanningStagePrompt(standardPlanningStage),
+      ));
+      return;
+    }
+
+    if (!canFinalizeStandardPlanningFromPersistedTasks()) {
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Upstream planning is validated, but tasks.md has not been regenerated; resuming the tasks owner.',
+      );
+      startAttempt(buildPromptWithMemoryContext(
+        buildStandardPlanningStagePrompt('tasks'),
+      ));
+      return;
+    }
+
     const validationError = await validateExpectedArtifacts();
     if (!validationError) {
       appendTaskLogEntry(
@@ -6343,7 +7408,9 @@ async function startNonCodingRuntimeWithPlanningRecovery(attemptPrompt) {
       'info',
       'Persisted Standard planning artifacts require focused repair: ' + validationError,
     );
-    startAttempt(buildPromptWithMemoryContext(buildArtifactValidationRetryPrompt(validationError)));
+    startAttempt(buildPromptWithMemoryContext(
+      buildStandardPlanningStagePrompt(standardPlanningStage, validationError),
+    ));
   } catch (error) {
     appendTaskLogEntry(
       logPhase,
@@ -6355,13 +7422,17 @@ async function startNonCodingRuntimeWithPlanningRecovery(attemptPrompt) {
   }
 }
 
-function captureStandardPlanningArtifactSnapshot() {
+function captureStandardPlanningArtifactSnapshot(transaction) {
   const suffix = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
   return {
     suffix,
     artifacts: standardPlanningTransactionArtifacts.map((fileName) => ({
       fileName,
-      content: readOptionalArtifact(fileName),
+      content: transaction &&
+        transaction.baselineArtifacts &&
+        Object.prototype.hasOwnProperty.call(transaction.baselineArtifacts, fileName)
+        ? transaction.baselineArtifacts[fileName] ?? undefined
+        : readOptionalArtifact(fileName),
     })),
   };
 }
@@ -6373,7 +7444,34 @@ function restoreStandardPlanningArtifactSnapshot(snapshot, reason, options = {})
   let restoredCount = 0;
   let savedFailedCount = 0;
   for (const artifact of snapshot.artifacts || []) {
-    if (options.preserveValidatedSources && artifact.fileName !== artifacts.implementationPlan) {
+    const isRequirementsArtifact = artifact.fileName === artifacts.requirements;
+    const isSpecArtifact = artifact.fileName === artifacts.specFile ||
+      artifact.fileName === (artifacts.context || 'context.md');
+    if (options.preserveValidatedRequirements && isRequirementsArtifact) {
+      continue;
+    }
+    if (options.preserveValidatedSpec && isSpecArtifact) {
+      continue;
+    }
+    const designArtifactStage = Object.entries(standardDesignStageArtifact)
+      .find(([stage, fileName]) => stage !== 'design_review' && fileName === artifact.fileName)?.[0];
+    if (
+      designArtifactStage &&
+      (
+        options.preserveValidatedDesign ||
+        (Array.isArray(options.preserveValidatedDesignStages) &&
+          options.preserveValidatedDesignStages.includes(designArtifactStage))
+      )
+    ) {
+      continue;
+    }
+    if (
+      options.preserveValidatedDesignReview &&
+      artifact.fileName === (artifacts.designReview || 'design_review.md')
+    ) {
+      continue;
+    }
+    if (options.preserveValidatedTasks && artifact.fileName === (artifacts.tasks || 'tasks.md')) {
       continue;
     }
     const currentContent = readOptionalArtifact(artifact.fileName);
@@ -6448,11 +7546,15 @@ async function deriveRuntimePlanFromStandardTasksIfNeeded() {
   }
 
   const tasksPath = join(specDir, artifacts.tasks || 'tasks.md');
+  const designPath = join(specDir, artifacts.design || 'design.md');
   if (!existsSync(tasksPath)) {
     return \`CLI finished without creating \${artifacts.tasks || 'tasks.md'}.\`;
   }
   if (!workPackagesModulePath) {
     return 'Unable to load Autocode work package builder.';
+  }
+  if (!existsSync(designPath)) {
+    return 'CLI finished without creating ' + (artifacts.design || 'design.md') + '.';
   }
 
   try {
@@ -6471,6 +7573,12 @@ async function deriveRuntimePlanFromStandardTasksIfNeeded() {
         requireTaskEvidence: true,
         includeCompletedTasks: shouldPreserveCompletedState,
         preserveCompletedStateFromPreviousPlanMarkdown: previousImplementationPlanMarkdown,
+        designMarkdown: readFileSync(designPath, 'utf8'),
+        requirementModelMarkdown: readOptionalArtifact(artifacts.requirementModel || 'requirement_model.md') || undefined,
+        domainModelMarkdown: readOptionalArtifact(artifacts.domainModel || 'domain_model.md') || undefined,
+        designModelMarkdown: readOptionalArtifact(artifacts.designModel || 'design_model.md') || undefined,
+        implementationModelMarkdown: readOptionalArtifact(artifacts.implementationModel || 'implementation_model.md') || undefined,
+        designPath: artifacts.design || 'design.md',
       },
     );
     const existingPlanMetadata = readExistingPlanMachineMetadata();
@@ -6665,6 +7773,38 @@ function buildArtifactValidationRetryPrompt(validationError) {
   const rawValidationError = String(validationError || '');
   const shouldRepairSpecArtifact = standardTasksMode && /\\bspec\\.md\\b/i.test(rawValidationError);
   const shouldRepairRequirementsArtifact = standardTasksMode && /\\brequirements\\.md\\b/i.test(rawValidationError);
+  const shouldRepairRequirementModelArtifact = standardTasksMode && /\\brequirement_model\\.md\\b|\\bRM-[0-9]+\\b/i.test(rawValidationError);
+  const shouldRepairDomainModelArtifact = standardTasksMode && /\\bdomain_model\\.md\\b|\\bDOM-[0-9]+\\b/i.test(rawValidationError);
+  const shouldRepairDesignArtifact = standardTasksMode && /\\bdesign\\.md\\b/i.test(rawValidationError);
+  const shouldRepairDesignModelArtifact = standardTasksMode && /\\bdesign_model\\.md\\b|\\b(?:SYS|DES|FLOW|CONTRACT|PAT|REV)-[0-9]+\\b/i.test(rawValidationError);
+  const shouldRepairImplementationModelArtifact = standardTasksMode && /\\bimplementation_model\\.md\\b|\\bIMP-[0-9]+\\b/i.test(rawValidationError);
+  const shouldRepairDesignReviewArtifact = standardTasksMode && /\\bdesign_review\\.md\\b/i.test(rawValidationError);
+  if (standardTasksMode) {
+    const ownerStage = shouldRepairRequirementsArtifact
+      ? 'requirements'
+      : shouldRepairSpecArtifact
+        ? 'spec'
+        : shouldRepairRequirementModelArtifact
+          ? 'requirement_model'
+          : shouldRepairDomainModelArtifact
+            ? 'domain_model'
+            : shouldRepairDesignModelArtifact
+              ? 'design_model'
+              : shouldRepairImplementationModelArtifact
+                ? 'implementation_model'
+                : shouldRepairDesignReviewArtifact
+                  ? 'design_review'
+                  : shouldRepairDesignArtifact
+                    ? 'design'
+                    : 'tasks';
+    if (ownerStage !== 'tasks') {
+      includeStandardPlanningStagesFrom(ownerStage);
+      standardPlanningStage = ownerStage;
+      resetStandardPlanningValidationFrom(ownerStage);
+      clearStaleStandardDesignReview(ownerStage);
+    }
+    return buildStandardPlanningStagePrompt(ownerStage, rawValidationError);
+  }
   const requiredOutputs = phase === 'spec'
     ? [
         \`- Write or repair \${specDir}/\${artifacts.specFile}.\`,
@@ -6678,6 +7818,12 @@ function buildArtifactValidationRetryPrompt(validationError) {
           : []),
         ...(shouldRepairRequirementsArtifact
           ? [\`- Write or repair \${specDir}/\${artifacts.requirements}.\`]
+          : []),
+        ...(shouldRepairDesignArtifact
+          ? [\`- Return to the design stage and repair \${specDir}/\${artifacts.design || 'design.md'}; preserve unaffected stable IDs.\`]
+          : []),
+        ...(shouldRepairDesignReviewArtifact
+          ? [\`- Independently review the complete five-file design package in \${specDir} and repair \${specDir}/\${artifacts.designReview || 'design_review.md'}.\`]
           : []),
         standardTasksMode
           ? \`- Write or repair \${specDir}/\${artifacts.tasks || 'tasks.md'}.\`
@@ -6701,26 +7847,28 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '- Single Autocode Markdown checklist.',
     '- Include at least one executable task numbered like 1.1, 1.2, or 2.1.',
     '- A top-level phase alone is not enough.',
-    '- Each task must include _Depends on_, _Evidence_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
+    '- Each task must include _Depends on_, _Requirements_, _Design_, _Evidence_, _Done when_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
     ...(schedulingMetadataError && standardTasksMode
       ? [
           '- For Standard mode, make every executable tasks.md item carry metadata that can be copied into derived runtime work packages: _Depends on_, _Evidence_, _Done when_, and _Verification_.',
           '- If runtime work packages group several tasks, keep each source task traceable enough that the generated work package still has Evidence and Verification metadata.',
         ]
       : []),
-    '- Evidence must cite spec.md, requirements.md, context.md, project source/docs, existing project patterns, or verified official/industry references.',
+    '- Reference R*/AC*/SCN-* and E* IDs from requirements.md/spec.md; add exact project source/docs or verified standards only as supplemental evidence.',
     '- Use Project Memory workflow recipes, pattern, decision, or module insight entries as architecture/design pattern references for similar tasks when they match current source/docs.',
     '- Do not force named architecture or design pattern guidance onto simple, single-boundary tasks.',
-    '- For complex or high-risk plans, add a detailed but compact ## Architecture And Design Pattern References section to spec.md or tasks.md: 4-8 bullets covering boundary/layer, pattern or strategy, source/docs/Project Memory reference or labeled general guidance, and applicable task IDs/boundaries.',
-    '- For complex or high-risk tasks, each executable task must include _Architecture: boundary; pattern/strategy; source/reference_ so implementation agents can apply the guidance directly.',
+    '- Keep architecture decisions in design.md, rule ownership in domain_model.md, detailed responsibilities/patterns/flows in design_model.md, and implementation mapping in implementation_model.md. tasks.md references stable IDs and never restates that prose.',
     '- Use exactly one architecture metadata line per task and keep the metadata key in English: _Architecture: ..._. Do not use localized keys such as _架构: ..._ or include both labels.',
-    '- Do not introduce a named design pattern unless source evidence or similar-task memory shows it reduces concrete complexity.',
+    '- Do not introduce or restate a named design pattern in tasks.md; reference a selected PAT-* from design_model.md only when applicable.',
+    '- The approved five-file design package is binding. Preserve architecture, project paradigm, rule ownership, responsibilities/collaboration, implementation mapping, engineering constraints, and NOP.',
+    '- Every _Design_ value must reference existing ADR/DOM/SYS/DES/FLOW-or-CONTRACT/selected-PAT/applicable-REV/IMP IDs. Every implementation task includes SYS-*; every SYS-*, required IMP-*, selected PAT-*, and REV-* unit must be covered.',
+    '- A new PAT-* requires verified variation evidence, stable boundary, simpler alternative, benefit, and cost; extending an established pattern in place does not create PAT-*.',
     ...(standardTasksMode
       ? [
-          '- spec.md must include a non-empty ## Evidence section whenever spec.md is written or repaired.',
+          '- spec.md must declare Specification-Contract: 1 and keep only observable SCN-* behavior with Covers: R*/AC* and Evidence: E* references.',
           '- requirements.md must include a non-empty ## Evidence Sources section whenever requirements.md is written or repaired.',
           '- requirements.md must include concrete User Requirements and Acceptance Criteria; do not leave either section as None when tasks.md derives requirements or acceptance criteria.',
-          '- Do not keep the only concrete Requirement Index inside tasks.md; mirror concrete requirements and acceptance criteria into requirements.md.',
+          '- requirements.md is the only owner of full requirement, acceptance, constraint, assumption, question, and evidence prose. tasks.md references IDs only.',
         ]
       : []),
     '- Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of dropping them.',
@@ -6729,10 +7877,12 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '- For runnable/user-facing deliverables, add runtime-readiness verification that starts/opens the artifact, exercises the primary path, and checks console/resource loading/blank-screen/startup/exit status.',
     '- Runtime-readiness verification cannot be node --check, lint, typecheck, file existence, or inspect-only review.',
     '- If split tasks touch the same file, keep them separate and add _Depends on_ only for real data, contract, or verification order; the runtime queues overlapping file writes safely.',
-    '- Keep spec.md compact as a decision index; put detailed source evidence in context.md and cite it from tasks.md.',
-    '- If this is a Request Changes retry, update only affected requirement/design/task sections and preserve unaffected content.',
+    '- Keep spec.md as the observable behavior contract, design.md as architecture decisions/package index, the four model files as analysis/design/mapping owners, and tasks.md as static work definitions.',
+    '- If this is a Request Changes retry, repair only the owning artifact for the failed validation, preserve unaffected IDs, completed task definitions, and dependencies, then stop for human review.',
+    '- Every tasks.md checkbox must be [ ]. Never store status, timestamps, duration, retries, failures, completion summaries, or commits in tasks.md.',
+    '- Do not edit implementation_plan.md; the runtime derives and maintains that ledger.',
     '- Use _Depends on: none_ for any task that has no true prerequisite. Use _Files to modify: none_ only for read-only validation.',
-  ];
+  ].filter((rule) => !standardTasksMode || !rule.includes('architecture metadata line'));
 
   return [
     compactArtifactValidationRetryBasePrompt(prompt),
@@ -6750,9 +7900,9 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '~~~md',
     standardTasksMode ? '# Tasks' : '# Implementation Plan',
     '',
-    'Feature: <task title>',
-    'Workflow: feature',
-    'Status: pending',
+    ...(standardTasksMode
+      ? ['Tasks-Contract: 1']
+      : ['Feature: <task title>', 'Workflow: feature', 'Status: pending']),
     '',
     '- [ ] 1. Implementation',
     '',
@@ -6761,8 +7911,9 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '    - For complex work, follow the existing boundary/pattern from src/example.ts or labeled general guidance; omit this for simple single-boundary work.',
     '    - _Files to modify: path/to/file.ts_',
     '    - _Depends on: none_',
-    '    - _Requirements: 1.1_',
-    '    - _Evidence: spec.md requirement 1.1; src/example.ts existing pattern_',
+    '    - _Requirements: R1, AC1, SCN-001_',
+    '    - _Design: ADR-001, SYS-001, DES-001, FLOW-001, IMP-001_',
+    '    - _Evidence: E1; src/example.ts existing pattern_',
     '    - _Done when: the concrete change is implemented and verification passes_',
     '    - _Verification: npm test_',
     '~~~',

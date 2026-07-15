@@ -26,7 +26,6 @@ import {
   resolveAutocodeTaskDevelopmentMode,
   updateAutocodeTaskPlanStatus,
   type AutocodeTask,
-  type AutocodeTaskDevelopmentMode,
   type AutocodeTaskMetadata,
   type AutocodeTaskPathsInput,
   type AutocodeTaskRequirements,
@@ -142,8 +141,6 @@ export function buildManualAutocodeTaskMetadata(metadata?: AutocodeTaskMetadata)
 }
 
 export function createManualAutocodeTask(input: CreateManualAutocodeTaskInput): AutocodeTask {
-  const developmentMode = resolveManualAutocodeTaskDevelopmentMode(input.metadata);
-
   return createAutocodeTask({
     projectRoot: input.projectRoot,
     dataDirName: input.dataDirName,
@@ -152,110 +149,13 @@ export function createManualAutocodeTask(input: CreateManualAutocodeTaskInput): 
     metadata: buildManualAutocodeTaskMetadata(input.metadata),
     requirements: input.requirements,
     now: input.now,
-    prepareSpecArtifacts: (context) => {
-      if (developmentMode !== 'direct') {
-        writeFileSync(
-          join(context.specDir, AUTOCODE_TASK_ARTIFACTS.specFile),
-          `${buildManualAutocodeExecutionSpecMarkdown({
-            title: context.title,
-            description: context.description,
-            developmentMode,
-            language: context.metadata.language,
-          }).trimEnd()}\n`,
-          'utf8',
-        );
-      }
-      return input.prepareSpecArtifacts?.(context);
-    },
+    prepareSpecArtifacts: input.prepareSpecArtifacts,
   });
 }
 
 function resolveManualAutocodeTaskDevelopmentMode(metadata?: AutocodeTaskMetadata): 'direct' | 'standard' {
   const developmentMode = resolveAutocodeTaskDevelopmentMode(metadata, 'standard');
   return developmentMode === 'direct' ? 'direct' : 'standard';
-}
-
-function buildManualAutocodeExecutionSpecMarkdown(input: {
-  title: string;
-  description: string;
-  developmentMode: AutocodeTaskDevelopmentMode;
-  language?: unknown;
-}): string {
-  if (isChineseLanguage(input.language)) {
-    return buildChineseManualAutocodeExecutionSpecMarkdown(input);
-  }
-
-  return [
-    `# ${input.title}`,
-    '',
-    '## Type',
-    input.developmentMode === 'direct'
-      ? 'Direct mode task'
-      : 'Standard mode task',
-    '',
-    '## Request',
-    input.description,
-    '',
-    '## Execution',
-    input.developmentMode === 'direct'
-      ? 'Run one direct coding session against the selected model. Do not create staged planning or QA artifacts.'
-      : [
-          'Use compact Standard Autocode planning. Keep spec.md, tasks.md, and derived implementation_plan.md inside this task directory.',
-          'Default to task-first planning: update spec.md only with concrete requirements, key decisions or assumptions, evidence, and verification needed for coding.',
-          'Create or repair tasks.md as the executable checklist. Do not write implementation_plan.md; the runtime derives it from tasks.md.',
-        ].join('\n'),
-    '',
-    '## Done',
-    '- The request is satisfied.',
-    '- Only relevant files are modified.',
-    '- Useful verification is recorded.',
-    ...(input.developmentMode === 'direct'
-      ? []
-      : [
-          '- tasks.md contains focused executable items with dependencies, evidence, done signals, and verification.',
-        ]),
-  ].join('\n');
-}
-
-function buildChineseManualAutocodeExecutionSpecMarkdown(input: {
-  title: string;
-  description: string;
-  developmentMode: AutocodeTaskDevelopmentMode;
-}): string {
-  return [
-    `# ${input.title}`,
-    '',
-    '## 类型',
-    input.developmentMode === 'direct'
-      ? 'Direct 直连模式任务'
-      : 'Standard 标准模式任务',
-    '',
-    '## 请求',
-    input.description,
-    '',
-    '## 执行方式',
-    input.developmentMode === 'direct'
-      ? '使用所选模型运行一次直连编码会话；不创建分阶段规划或 QA 工件。'
-      : [
-          '使用紧凑的 Standard Autocode 规划。spec.md、tasks.md 和运行时派生的 implementation_plan.md 都保留在本任务目录。',
-          '默认任务优先：spec.md 只记录编码所需的具体需求、关键决策或假设、证据和验证方式。',
-          '创建或修复 tasks.md 作为可执行清单。不要写 implementation_plan.md；运行时会从 tasks.md 派生。',
-        ].join('\n'),
-    '',
-    '## 完成标准',
-    '- 满足用户请求。',
-    '- 只修改相关文件。',
-    '- 记录有用的验证结果。',
-    ...(input.developmentMode === 'direct'
-      ? []
-      : [
-          '- tasks.md 包含聚焦的可执行任务，并带有依赖、证据、完成信号和验证方式。',
-        ]),
-  ].join('\n');
-}
-function isChineseLanguage(language: unknown): boolean {
-  const normalized = typeof language === 'string' ? language.trim().toLowerCase().replace(/_/g, '-') : '';
-  return normalized === 'zh' || normalized.startsWith('zh-') || normalized.includes('chinese');
 }
 
 export function createStartedAutocodeTaskRun(input: CreateAutocodeTaskRunPlanInput): StartedAutocodeTaskRun {

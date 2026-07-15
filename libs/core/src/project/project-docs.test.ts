@@ -137,7 +137,8 @@ describe('project documentation tasks', () => {
       expect(prompt).toContain('Source: .autocode/project-docs/architecture.md');
       expect(prompt).toContain('Runtime Boundaries');
       expect(prompt).toContain('Renderer owns all interactive screens');
-      expect(prompt).toContain('Deep implementation detail 79');
+      expect(prompt).toContain('Deep implementation detail 0');
+      expect(prompt).not.toContain('Deep implementation detail 79');
       expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThan(3_000);
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
@@ -182,7 +183,8 @@ describe('project documentation tasks', () => {
       expect(prompt).toContain('- .autocode/project-docs/product.md');
       expect(prompt).toContain('This is an index summary, not the full documentation.');
       expect(prompt).toContain('Renderer owns UI state');
-      expect(prompt).toContain('product.md deep detail 159');
+      expect(prompt).toContain('product.md deep detail 0');
+      expect(prompt).not.toContain('product.md deep detail 159');
       expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThan(6_000);
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });

@@ -212,6 +212,12 @@ describe('SPEC_PHASE_THINKING_LEVELS', () => {
     expect(SPEC_PHASE_THINKING_LEVELS.research).toBe('medium');
     expect(SPEC_PHASE_THINKING_LEVELS.context).toBe('medium');
   });
+
+  it('uses deeper reasoning for binding design and review phases', () => {
+    expect(SPEC_PHASE_THINKING_LEVELS.design).toBe('xhigh');
+    expect(SPEC_PHASE_THINKING_LEVELS.design_review).toBe('xhigh');
+    expect(SPEC_PHASE_THINKING_LEVELS.planning).toBe('high');
+  });
 });
 
 describe('getSpecPhaseThinkingBudget', () => {
@@ -222,6 +228,11 @@ describe('getSpecPhaseThinkingBudget', () => {
 
   it('should return medium budget for light phases', () => {
     expect(getSpecPhaseThinkingBudget('research')).toBe(4096);
+  });
+
+  it('returns xhigh budgets for design and independent design review', () => {
+    expect(getSpecPhaseThinkingBudget('design')).toBe(32768);
+    expect(getSpecPhaseThinkingBudget('design_review')).toBe(32768);
   });
 
   it('should fall back to medium for unknown phases', () => {

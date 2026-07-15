@@ -624,8 +624,8 @@ describe('TaskRuntimeLogs', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Historical planning output.')).toBeInTheDocument();
+      expect(screen.getByText('Live tail that is not flushed yet.')).toBeInTheDocument();
     });
-    expect(screen.getByText('Live tail that is not flushed yet.')).toBeInTheDocument();
   });
 
   it('shows the current streamed provider and model in the model output title', async () => {

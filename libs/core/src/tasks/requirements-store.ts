@@ -8,6 +8,7 @@ import {
 } from '../runtime/workspace-claims.js';
 
 export interface AutocodeTaskRequirements extends Record<string, unknown> {
+  contract_version?: number;
   task_description?: string;
   workflow_type?: string;
   services_involved?: string[];
@@ -17,6 +18,7 @@ export interface AutocodeTaskRequirements extends Record<string, unknown> {
   evidence_sources?: string[];
   standards_references?: string[];
   assumptions?: string[];
+  open_questions?: string[];
   created_at?: string;
   attached_images?: Array<{
     filename?: string;
@@ -27,6 +29,7 @@ export interface AutocodeTaskRequirements extends Record<string, unknown> {
 }
 
 const KNOWN_REQUIREMENT_KEYS = new Set([
+  'contract_version',
   'task_description',
   'workflow_type',
   'services_involved',
@@ -36,6 +39,7 @@ const KNOWN_REQUIREMENT_KEYS = new Set([
   'evidence_sources',
   'standards_references',
   'assumptions',
+  'open_questions',
   'created_at',
   'attached_images',
 ]);
@@ -91,12 +95,14 @@ export function saveAutocodeTaskRequirementsSync(
 
 export function parseAutocodeTaskRequirementsMarkdown(content: string): AutocodeTaskRequirements {
   const requirements: AutocodeTaskRequirements = {};
+  const contractVersion = Number(/^(?:Requirements-Contract|Contract-Version):\s*(\d+)\s*$/im.exec(content)?.[1]);
   const taskDescription = sectionContent(content, 'Task Description');
   const workflowType = firstNonEmptyLine(sectionContent(content, 'Workflow Type'));
   const createdAt = firstNonEmptyLine(sectionContent(content, 'Created At'));
   const attachedImages = parseJsonSection(sectionContent(content, 'Attached Images'));
   const extraMetadata = parseJsonSection(sectionContent(content, 'Extra Metadata'));
 
+  if (Number.isFinite(contractVersion) && contractVersion > 0) requirements.contract_version = contractVersion;
   if (taskDescription) requirements.task_description = taskDescription;
   if (workflowType) requirements.workflow_type = workflowType;
   const servicesSection = sectionContent(content, 'Services Involved');
@@ -120,6 +126,9 @@ export function parseAutocodeTaskRequirementsMarkdown(content: string): Autocode
   const assumptionsSection = sectionContent(content, 'Assumptions');
   const assumptions = parseMarkdownList(assumptionsSection);
   if (assumptions.length > 0 || assumptionsSection) requirements.assumptions = assumptions;
+  const openQuestionsSection = sectionContent(content, 'Open Questions');
+  const openQuestions = parseMarkdownList(openQuestionsSection);
+  if (openQuestions.length > 0 || openQuestionsSection) requirements.open_questions = openQuestions;
   if (createdAt) requirements.created_at = createdAt;
   if (Array.isArray(attachedImages)) {
     requirements.attached_images = attachedImages as AutocodeTaskRequirements['attached_images'];
@@ -134,24 +143,29 @@ export function parseAutocodeTaskRequirementsMarkdown(content: string): Autocode
 export function stringifyAutocodeTaskRequirementsMarkdown(
   requirements: AutocodeTaskRequirements,
 ): string {
-  const lines: string[] = ['# Requirements', ''];
-  addTextSection(lines, 'Task Description', stringFrom(requirements.task_description));
-  addTextSection(lines, 'Workflow Type', stringFrom(requirements.workflow_type));
-  addListSection(lines, 'Services Involved', toStringArray(requirements.services_involved));
-  addListSection(lines, 'User Requirements', toStringArray(requirements.user_requirements));
-  addListSection(lines, 'Acceptance Criteria', toStringArray(requirements.acceptance_criteria));
-  addListSection(lines, 'Constraints', toStringArray(requirements.constraints));
-  addListSection(lines, 'Evidence Sources', toStringArray(requirements.evidence_sources));
-  addListSection(lines, 'Standards References', toStringArray(requirements.standards_references));
-  addListSection(lines, 'Assumptions', toStringArray(requirements.assumptions));
-  addTextSection(lines, 'Created At', stringFrom(requirements.created_at));
+  const normalizedRequirements = normalizeAutocodeTaskRequirements(requirements);
+  const contractVersion = Number.isFinite(requirements.contract_version)
+    ? Math.max(1, Math.floor(Number(requirements.contract_version)))
+    : 1;
+  const lines: string[] = ['# Requirements', '', `Requirements-Contract: ${contractVersion}`, ''];
+  addTextSection(lines, 'Task Description', stringFrom(normalizedRequirements.task_description));
+  addTextSection(lines, 'Workflow Type', stringFrom(normalizedRequirements.workflow_type));
+  addListSection(lines, 'Services Involved', toStringArray(normalizedRequirements.services_involved));
+  addListSection(lines, 'User Requirements', toStringArray(normalizedRequirements.user_requirements));
+  addListSection(lines, 'Acceptance Criteria', toStringArray(normalizedRequirements.acceptance_criteria));
+  addListSection(lines, 'Constraints', toStringArray(normalizedRequirements.constraints));
+  addListSection(lines, 'Evidence Sources', toStringArray(normalizedRequirements.evidence_sources));
+  addListSection(lines, 'Standards References', toStringArray(normalizedRequirements.standards_references));
+  addListSection(lines, 'Assumptions', toStringArray(normalizedRequirements.assumptions));
+  addListSection(lines, 'Open Questions', toStringArray(normalizedRequirements.open_questions));
+  addTextSection(lines, 'Created At', stringFrom(normalizedRequirements.created_at));
 
-  if (Array.isArray(requirements.attached_images) && requirements.attached_images.length > 0) {
-    addJsonSection(lines, 'Attached Images', requirements.attached_images);
+  if (Array.isArray(normalizedRequirements.attached_images) && normalizedRequirements.attached_images.length > 0) {
+    addJsonSection(lines, 'Attached Images', normalizedRequirements.attached_images);
   }
 
   const extraMetadata = Object.fromEntries(
-    Object.entries(requirements)
+    Object.entries(normalizedRequirements)
       .filter(([key, value]) => !KNOWN_REQUIREMENT_KEYS.has(key) && value !== undefined),
   );
   if (Object.keys(extraMetadata).length > 0) {
@@ -159,6 +173,87 @@ export function stringifyAutocodeTaskRequirementsMarkdown(
   }
 
   return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+}
+
+export function normalizeAutocodeTaskRequirements(
+  requirements: AutocodeTaskRequirements,
+): AutocodeTaskRequirements {
+  const normalized: AutocodeTaskRequirements = { ...requirements };
+  const usedIds = collectStructuredRequirementIds(requirements);
+  const nextByPrefix = new Map<string, number>();
+
+  const normalizeSection = (key: keyof AutocodeTaskRequirements, prefix: string): void => {
+    const values = toStringArray(requirements[key]);
+    normalized[key] = values.map((value) => normalizeStructuredRequirementEntry(
+      value,
+      prefix,
+      usedIds,
+      nextByPrefix,
+    )) as never;
+  };
+
+  normalizeSection('user_requirements', 'R');
+  normalizeSection('acceptance_criteria', 'AC');
+  normalizeSection('constraints', 'C');
+  normalizeSection('evidence_sources', 'E');
+  normalizeSection('standards_references', 'E');
+  normalizeSection('assumptions', 'A');
+  normalizeSection('open_questions', 'Q');
+  normalized.contract_version = Number.isFinite(requirements.contract_version)
+    ? Math.max(1, Math.floor(Number(requirements.contract_version)))
+    : 1;
+  return normalized;
+}
+
+function collectStructuredRequirementIds(requirements: AutocodeTaskRequirements): Set<string> {
+  const ids = new Set<string>();
+  for (const key of [
+    'user_requirements',
+    'acceptance_criteria',
+    'constraints',
+    'evidence_sources',
+    'standards_references',
+    'assumptions',
+    'open_questions',
+  ] as const) {
+    for (const value of toStringArray(requirements[key])) {
+      const entry = parseStructuredRequirementEntry(value);
+      if (entry) {
+        ids.add(entry.id);
+      }
+    }
+  }
+  return ids;
+}
+
+function normalizeStructuredRequirementEntry(
+  value: string,
+  prefix: string,
+  usedIds: Set<string>,
+  nextByPrefix: Map<string, number>,
+): string {
+  const existing = parseStructuredRequirementEntry(value);
+  if (existing) {
+    return `${existing.id}: ${existing.body}`;
+  }
+
+  let next = nextByPrefix.get(prefix) ?? 1;
+  while (usedIds.has(`${prefix}${next}`)) {
+    next += 1;
+  }
+  const id = `${prefix}${next}`;
+  usedIds.add(id);
+  nextByPrefix.set(prefix, next + 1);
+  return `${id}: ${singleLine(value)}`;
+}
+
+function parseStructuredRequirementEntry(value: string): { id: string; body: string } | null {
+  const match = value.match(
+    /^\s*(?:\[)?((?:R|AC|C|A|Q|E)\d+)(?:\])?\s*(?::|\.|-|\u2013)\s*(.+?)\s*$/i,
+  );
+  return match
+    ? { id: match[1].toUpperCase(), body: singleLine(match[2]) }
+    : null;
 }
 
 function addTextSection(lines: string[], title: string, value: string): void {

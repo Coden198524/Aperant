@@ -58,7 +58,7 @@ export function buildAutocodeAggressiveCoderPrompt(): string {
     '- As soon as targeted verification passes, immediately call update_subtask_status for this work item before any final narrative.',
     '- Do not call update_subtask_status with status completed for user-facing or runnable work until the actual launch/open/browser/CLI smoke check passes.',
     '- Do not write a long final summary before update_subtask_status; that can trigger a redundant retry.',
-    '- Prefer the update_subtask_status tool if available; otherwise update only this work item checkbox and _Completion_ note in implementation_plan.md immediately.',
+    '- Prefer the update_subtask_status tool if available; otherwise report the completion summary and verification in the final response so the runtime can update implementation_plan.md.',
     '- After the status update succeeds, output only a compact completion_summary review matrix: | Item | Details | with What changed, Touched files/contracts, Verification, and Review notes/risks.',
     '- Do not commit or push unless the user or task explicitly requires it.',
   ].join('\n');

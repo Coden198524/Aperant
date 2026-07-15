@@ -499,6 +499,9 @@ function getExecutionProgressForStatus(
   if (status === 'in_progress' && isInactiveOrTerminalExecutionPhase(current?.phase)) {
     return { phase: 'planning', phaseProgress: 0, overallProgress: 0 };
   }
+  if (status === 'human_review' && reviewReason === 'plan_review') {
+    return { phase: 'planning', phaseProgress: 100, overallProgress: 100 };
+  }
   if (status === 'human_review' && reviewReason === 'stopped') {
     return { phase: 'stopped', phaseProgress: 0, overallProgress: 0 };
   }
@@ -550,7 +553,10 @@ function hasActiveExecutionProgress(task: Task): boolean {
 }
 
 function isLocallyActiveTask(task: Task): boolean {
-  return task.status === 'in_progress' || task.status === 'ai_review' || hasActiveExecutionProgress(task);
+  return task.status === 'in_progress' ||
+    task.status === 'ai_review' ||
+    (task.status === 'human_review' && task.reviewReason === 'plan_review') ||
+    hasActiveExecutionProgress(task);
 }
 
 function taskHasNonPendingSubtasks(task: Task): boolean {

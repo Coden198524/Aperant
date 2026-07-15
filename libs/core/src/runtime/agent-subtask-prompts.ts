@@ -517,7 +517,7 @@ function appendAutocodeSubtaskInstructions(
     `4. **Implement the subtask** following local patterns without placeholder code, no-op handlers, broad type escapes, or unrelated abstractions\n` +
     `5. **Run verification** and fix any issues. For behavior changes, add or update the closest regression test when an adjacent test pattern exists. For user-facing apps, browser pages, games, interactive tools, launchers, or CLI deliverables, include an actual launch/open/use-path smoke check; static syntax, unit, lint, typecheck, or file-existence checks alone are not enough\n` +
     `6. **Do not commit or push** unless this task explicitly requires it\n` +
-    `7. **Update the plan** - set this subtask's status to "completed" in implementation_plan.md and add a structured completion_summary for human review. Use this compact Markdown review matrix exactly:\n` +
+    `7. **Report completion** - do not edit tasks.md or implementation_plan.md. Return a structured completion_summary for the runtime to record. Use this compact Markdown review matrix exactly:\n` +
     `   \`| Item | Details |\n| --- | --- |\n| What changed | ... |\n| Verification | ... |\n| Review notes | ... |\`\n` +
     `   Include touched files/contracts in What changed or Review notes. Keep each cell concise, concrete, and suitable for quick manual audit.\n\n` +
     `## Quality Checklist\n\n` +
@@ -532,6 +532,7 @@ function appendAutocodeSubtaskInstructions(
     `- [ ] Completion summary names changed files/contracts, verification, and residual risks or edge cases\n\n` +
     `## Boundaries\n\n` +
     `- Focus on this subtask; do not modify unrelated code\n` +
+    `- Do not edit tasks.md or implementation_plan.md; planning owns static definitions and the runtime owns execution state\n` +
     `- If verification fails because of your changes, fix it before committing\n` +
     `- If you encounter a blocker, document it in build-progress.txt\n`,
   );

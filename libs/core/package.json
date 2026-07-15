@@ -197,6 +197,21 @@
       "import": "./dist/tasks/plan-quality.js",
       "default": "./dist/tasks/plan-quality.js"
     },
+    "./tasks/task-development-mode": {
+      "types": "./dist/tasks/task-development-mode.d.ts",
+      "import": "./dist/tasks/task-development-mode.js",
+      "default": "./dist/tasks/task-development-mode.js"
+    },
+    "./tasks/change-request-impact": {
+      "types": "./dist/tasks/change-request-impact.d.ts",
+      "import": "./dist/tasks/change-request-impact.js",
+      "default": "./dist/tasks/change-request-impact.js"
+    },
+    "./tasks/design-quality": {
+      "types": "./dist/tasks/design-quality.d.ts",
+      "import": "./dist/tasks/design-quality.js",
+      "default": "./dist/tasks/design-quality.js"
+    },
     "./tasks/worktree-paths": {
       "types": "./dist/tasks/worktree-paths.d.ts",
       "import": "./dist/tasks/worktree-paths.js",

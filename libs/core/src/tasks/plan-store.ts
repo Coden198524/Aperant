@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { foldRepeatedAutocodePromptLines } from '../runtime/prompt-context.js';
 import {
   type AutocodeRuntimeFileWriteLockInput,
@@ -11,9 +11,18 @@ import {
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import type {
   MutableAutocodePlan,
+  MutableAutocodePlanWithPhases,
   MutableAutocodePlanPhase,
   MutableAutocodePlanSubtask,
 } from './plan-file.js';
+import {
+  AUTOCODE_RUNTIME_LEDGER_DYNAMIC_SUBTASK_FIELDS,
+  AUTOCODE_RUNTIME_TASK_DEFINITION_FIELDS,
+  buildAutocodeRuntimeDefinitionFingerprint,
+  isAutocodeSlimRuntimeLedger,
+  type AutocodeRuntimeDefinitionFingerprintInput,
+} from './runtime-ledger.js';
+import { getAutocodeDesignReferenceFingerprint } from './design-quality.js';
 
 export type AutocodePlanMarkdownStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'failed';
 
@@ -36,6 +45,7 @@ interface ParsedPlanItem {
   patternFiles: string[];
   dependsOn: string[];
   requirements: string[];
+  designRefs: string[];
   architecture?: string;
   evidence?: string;
   verification?: string;
@@ -45,6 +55,7 @@ interface ParsedPlanItem {
   hasPatternFilesField: boolean;
   hasDependsOnField: boolean;
   hasRequirementsField: boolean;
+  hasDesignRefsField: boolean;
   hasArchitectureField: boolean;
   hasEvidenceField: boolean;
   hasVerificationField: boolean;
@@ -110,8 +121,8 @@ export function resolveAutocodePlanSpecDir(specDirOrPlanPath: string): string {
     : specDirOrPlanPath;
 }
 
-export function parseAutocodeImplementationPlanMarkdown(content: string): MutableAutocodePlan {
-  const plan: MutableAutocodePlan = { phases: [] };
+export function parseAutocodeImplementationPlanMarkdown(content: string): MutableAutocodePlanWithPhases {
+  const plan: MutableAutocodePlanWithPhases = { phases: [] };
   const items: ParsedPlanItem[] = [];
   let descriptionSectionLines: string[] | null = null;
   let current: ParsedPlanItem | undefined;
@@ -138,6 +149,7 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
         patternFiles: [],
         dependsOn: [],
         requirements: [],
+        designRefs: [],
         architecture: undefined,
         evidence: undefined,
         hasFilesField: false,
@@ -146,6 +158,7 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
         hasPatternFilesField: false,
         hasDependsOnField: false,
         hasRequirementsField: false,
+        hasDesignRefsField: false,
         hasArchitectureField: false,
         hasEvidenceField: false,
         hasVerificationField: false,
@@ -171,6 +184,11 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
     }
 
     if (!current) {
+      continue;
+    }
+
+    if (/^#{1,6}\s+\S/.test(line.trim())) {
+      current = undefined;
       continue;
     }
 
@@ -204,9 +222,12 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
 }
 
 export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocodePlan): string {
-  const lines: string[] = ['# Implementation Plan', ''];
-  addMetadataLine(lines, 'Feature', plan.feature);
-  addMetadataLine(lines, 'Workflow', plan.workflow_type);
+  const slimRuntimeLedger = isAutocodeSlimRuntimeLedger(plan);
+  const lines: string[] = [slimRuntimeLedger ? '# Runtime Execution Ledger' : '# Implementation Plan', ''];
+  if (!slimRuntimeLedger) {
+    addMetadataLine(lines, 'Feature', plan.feature);
+    addMetadataLine(lines, 'Workflow', plan.workflow_type);
+  }
   addMetadataLine(lines, 'Status', plan.status ?? plan.planStatus);
   addMetadataLine(lines, 'Review Reason', plan.reviewReason);
   addMetadataLine(lines, 'Execution Phase', plan.executionPhase);
@@ -220,14 +241,18 @@ export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocod
     lines.push('');
   }
 
-  addMarkdownSection(lines, 'Description', plan.description);
+  if (!slimRuntimeLedger) {
+    addMarkdownSection(lines, 'Description', plan.description);
+  }
 
   const phases = Array.isArray(plan.phases) ? plan.phases : [];
   for (const [phaseIndex, phase] of phases.entries()) {
     const phaseId = stringifyPlanValue(phase.id ?? phase.phase ?? phaseIndex + 1);
-    const phaseName = stringifyPlanValue(phase.name)
-      || stringifyPlanValue(phase.title)
-      || `Phase ${phaseIndex + 1}`;
+    const phaseName = slimRuntimeLedger
+      ? getRuntimeWorkPackagePhaseName(plan)
+      : stringifyPlanValue(phase.name)
+        || stringifyPlanValue(phase.title)
+        || `Phase ${phaseIndex + 1}`;
     const phaseStatus = inferPhaseMarkdownStatus(phase);
     lines.push(`- [${STATUS_TO_MARKER[phaseStatus]}] ${phaseId}. ${phaseName}`);
 
@@ -239,38 +264,45 @@ export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocod
     for (const [subtaskIndex, subtask] of getPhaseSubtasks(phase).entries()) {
       const fallbackId = `${phaseId}.${subtaskIndex + 1}`;
       const subtaskId = stringifyPlanValue(subtask.id ?? subtask.subtask_id ?? fallbackId);
-      const title = stringifyPlanValue(subtask.title)
-        || stringifyPlanValue(subtask.description)
-        || `Subtask ${subtaskId}`;
+      const title = slimRuntimeLedger
+        ? 'Work package'
+        : stringifyPlanValue(subtask.title)
+          || stringifyPlanValue(subtask.description)
+          || `Subtask ${subtaskId}`;
       const status = normalizeMarkdownStatus(subtask.status);
       lines.push('');
       lines.push(`  - [${STATUS_TO_MARKER[status]}] ${subtaskId} ${title}`);
 
-      const description = stringifyPlanValue(subtask.description);
-      if (description && description !== title) {
+      const description = slimRuntimeLedger ? '' : stringifyPlanValue(subtask.description);
+      if (!slimRuntimeLedger && description && description !== title) {
         for (const detailLine of description.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
           lines.push(`    - ${detailLine}`);
         }
       }
 
-      addListField(lines, 'Files', subtask.files, '    ');
-      addListField(lines, 'Files to create', subtask.files_to_create, '    ');
-      addListField(lines, 'Files to modify', subtask.files_to_modify, '    ', { writeNoneWhenEmptyArray: true });
-      addListField(lines, 'Pattern files', subtask.pattern_files, '    ');
+      if (!slimRuntimeLedger) {
+        addListField(lines, 'Files', subtask.files, '    ');
+        addListField(lines, 'Files to create', subtask.files_to_create, '    ');
+        addListField(lines, 'Files to modify', subtask.files_to_modify, '    ', { writeNoneWhenEmptyArray: true });
+        addListField(lines, 'Pattern files', subtask.pattern_files, '    ');
+      }
       addListField(lines, 'Depends on', subtask.depends_on, '    ', { writeNoneWhenEmptyArray: true });
-      addListField(lines, 'Requirements', subtask.requirements, '    ');
+      if (!slimRuntimeLedger) {
+        addListField(lines, 'Requirements', subtask.requirements, '    ');
+        addListField(lines, 'Design', subtask.design_refs, '    ');
+      }
 
-      const architecture = stringifyPlanValue(subtask.architecture);
+      const architecture = slimRuntimeLedger ? '' : stringifyPlanValue(subtask.architecture);
       if (architecture) {
         lines.push(`    - _Architecture: ${compactInlineMarkdownField(architecture)}_`);
       }
 
-      const evidence = stringifyPlanValue(subtask.evidence);
+      const evidence = slimRuntimeLedger ? '' : stringifyPlanValue(subtask.evidence);
       if (evidence) {
         lines.push(`    - _Evidence: ${compactInlineMarkdownField(evidence)}_`);
       }
 
-      const verification = stringifyVerification(subtask.verification);
+      const verification = slimRuntimeLedger ? '' : stringifyVerification(subtask.verification);
       if (verification) {
         lines.push(`    - _Verification: ${verification}_`);
       }
@@ -304,6 +336,44 @@ export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocod
   return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
 }
 
+export function stringifyAutocodeTaskDefinitionsMarkdown(plan: MutableAutocodePlan): string {
+  const phases = (plan.phases ?? []).map((phase) => {
+    const staticPhase: MutableAutocodePlanPhase = {
+      ...phase,
+      status: 'pending',
+    };
+    const staticTasks = getPhaseSubtasks(phase).map((subtask) => {
+      const staticTask: MutableAutocodePlanSubtask = {
+        ...subtask,
+        status: 'pending',
+      };
+      for (const key of AUTOCODE_RUNTIME_LEDGER_DYNAMIC_SUBTASK_FIELDS) {
+        if (key !== 'depends_on') {
+          delete staticTask[key];
+        }
+      }
+      return staticTask;
+    });
+    if (Array.isArray(phase.subtasks)) {
+      staticPhase.subtasks = staticTasks;
+      delete staticPhase.chunks;
+    } else {
+      staticPhase.chunks = staticTasks;
+      delete staticPhase.subtasks;
+    }
+    return staticPhase;
+  });
+  const staticPlan: MutableAutocodePlan = {
+    phases,
+  };
+  return stringifyAutocodeImplementationPlanMarkdown(staticPlan)
+    .replace(/^# Implementation Plan\s*/m, '# Tasks\n\nTasks-Contract: 1\n\n')
+    .replace(/^<!-- autocode-plan-meta: .*?-->\s*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd()
+    .concat('\n');
+}
+
 function inferPhaseMarkdownStatus(phase: MutableAutocodePlanPhase): AutocodePlanMarkdownStatus {
   const subtasks = getPhaseSubtasks(phase);
   if (subtasks.length === 0) {
@@ -324,20 +394,21 @@ function inferPhaseMarkdownStatus(phase: MutableAutocodePlanPhase): AutocodePlan
   return 'pending';
 }
 
-export function loadAutocodeImplementationPlanSync(specDirOrPlanPath: string): MutableAutocodePlan | null {
+export function loadAutocodeImplementationPlanSync(specDirOrPlanPath: string): MutableAutocodePlanWithPhases | null {
   const specDir = resolveAutocodePlanSpecDir(specDirOrPlanPath);
   const planPath = getAutocodeImplementationPlanPath(specDir);
   if (!existsSync(planPath)) {
     return null;
   }
   try {
-    return parseAutocodeImplementationPlanMarkdown(readFileSync(planPath, 'utf-8'));
+    const plan = parseAutocodeImplementationPlanMarkdown(readFileSync(planPath, 'utf-8'));
+    return hydrateAutocodeSlimRuntimeLedger(plan, specDir);
   } catch {
     return null;
   }
 }
 
-export async function loadAutocodeImplementationPlan(specDirOrPlanPath: string): Promise<MutableAutocodePlan | null> {
+export async function loadAutocodeImplementationPlan(specDirOrPlanPath: string): Promise<MutableAutocodePlanWithPhases | null> {
   return loadAutocodeImplementationPlanSync(specDirOrPlanPath);
 }
 
@@ -570,6 +641,12 @@ function pickMachineMetadata(plan: MutableAutocodePlan): Record<string, unknown>
 
 function collectSubtaskMachineMetadata(plan: MutableAutocodePlan): Record<string, Record<string, unknown>> {
   const metadata: Record<string, Record<string, unknown>> = {};
+  const fieldsToPersist = isAutocodeSlimRuntimeLedger(plan)
+    ? AUTOCODE_RUNTIME_LEDGER_DYNAMIC_SUBTASK_FIELDS
+    : [
+        ...AUTOCODE_RUNTIME_LEDGER_DYNAMIC_SUBTASK_FIELDS,
+        ...AUTOCODE_RUNTIME_TASK_DEFINITION_FIELDS,
+      ];
   for (const phase of plan.phases ?? []) {
     for (const subtask of getPhaseSubtasks(phase)) {
       const id = stringifyPlanValue(subtask.id ?? subtask.subtask_id);
@@ -577,28 +654,7 @@ function collectSubtaskMachineMetadata(plan: MutableAutocodePlan): Record<string
         continue;
       }
       const fields: Record<string, unknown> = {};
-      for (const key of [
-        'completion_summary',
-        'notes',
-        'completed_at',
-        'started_at',
-        'active_started_at',
-        'duration_ms',
-        'work_package',
-        'history_only',
-        'upstream_task_ids',
-        'upstream_source',
-        'files',
-        'files_to_create',
-        'files_to_modify',
-        'pattern_files',
-        'depends_on',
-        'requirements',
-        'architecture',
-        'evidence',
-        'verification',
-        'service',
-      ]) {
+      for (const key of fieldsToPersist) {
         if (subtask[key] !== undefined) {
           fields[key] = key === 'completion_summary' || key === 'notes'
             ? compactStoredPlanNoteField(subtask[key])
@@ -630,29 +686,11 @@ function applySubtaskMachineMetadata(plan: MutableAutocodePlan): void {
       }
       const fieldRecord = fields as Record<string, unknown>;
       for (const key of [
-        'completion_summary',
-        'notes',
-        'completed_at',
-        'started_at',
-        'active_started_at',
-        'duration_ms',
-        'work_package',
-        'history_only',
-        'upstream_task_ids',
-        'upstream_source',
-        'files',
-        'files_to_create',
-        'files_to_modify',
-        'pattern_files',
-        'depends_on',
-        'requirements',
-        'architecture',
-        'evidence',
-        'verification',
-        'service',
+        ...AUTOCODE_RUNTIME_LEDGER_DYNAMIC_SUBTASK_FIELDS,
+        ...AUTOCODE_RUNTIME_TASK_DEFINITION_FIELDS,
       ]) {
         if (fieldRecord[key] !== undefined) {
-          subtask[key] = fieldRecord[key];
+          (subtask as Record<string, unknown>)[key] = fieldRecord[key];
         }
       }
     }
@@ -676,6 +714,12 @@ function applyPlanItemField(item: ParsedPlanItem, rawKey: string, rawValue: stri
     case '文件写入意图':
       item.hasFilesField = true;
       item.files = splitPlanList(value);
+      break;
+    case 'file intent':
+    case 'files intent':
+    case 'file intents':
+      item.hasFilesField = true;
+      item.files = extractPlanFileIntentPaths(value);
       break;
     case 'files to create':
     case 'files to add':
@@ -723,6 +767,14 @@ function applyPlanItemField(item: ParsedPlanItem, rawKey: string, rawValue: stri
     case '成功标准':
       item.hasRequirementsField = true;
       item.requirements = splitPlanList(value);
+      break;
+    case 'design':
+    case 'design ref':
+    case 'design refs':
+    case 'design reference':
+    case 'design references':
+      item.hasDesignRefsField = true;
+      item.designRefs = splitPlanList(value).map((entry) => entry.toUpperCase());
       break;
     case 'architecture':
     case 'architecture/pattern':
@@ -850,6 +902,7 @@ function planItemToSubtask(item: ParsedPlanItem): MutableAutocodePlanSubtask {
   if (item.patternFiles.length > 0 || item.hasPatternFilesField) subtask.pattern_files = item.patternFiles;
   if (item.dependsOn.length > 0 || item.hasDependsOnField) subtask.depends_on = item.dependsOn;
   if (item.requirements.length > 0 || item.hasRequirementsField) subtask.requirements = item.requirements;
+  if (item.designRefs.length > 0 || item.hasDesignRefsField) subtask.design_refs = item.designRefs;
   if (item.architecture || item.hasArchitectureField) subtask.architecture = item.architecture ?? '';
   if (item.evidence || item.hasEvidenceField) subtask.evidence = item.evidence ?? '';
   if (item.verification) subtask.verification = { type: 'manual', run: item.verification };
@@ -929,13 +982,47 @@ function addListField(
 
 function splitPlanList(value: string): string[] {
   const trimmed = value.trim();
-  if (!trimmed || /^(none|no dependencies?|n\/a|na|nil|null|无|无依赖|没有|没有依赖)$/i.test(trimmed)) {
+  if (!trimmed || isNonePlanListToken(trimmed)) {
     return [];
   }
   return trimmed
-    .split(',')
+    .split(/[,;\u3001\uFF0C\uFF1B]+/u)
     .map((item) => item.trim())
-    .filter((item) => item && !/^(none|no dependencies?|n\/a|na|nil|null|无|无依赖|没有|没有依赖)$/i.test(item));
+    .filter((item) => item && !isNonePlanListToken(item));
+}
+
+function isNonePlanListToken(value: string): boolean {
+  return /^(?:none|no dependencies?|n\/a|na|nil|null|\u65E0|\u65E0\u4F9D\u8D56|\u6CA1\u6709|\u6CA1\u6709\u4F9D\u8D56)$/iu.test(value.trim());
+}
+
+function extractPlanFileIntentPaths(value: string): string[] {
+  const codeSpanCandidates = Array.from(value.matchAll(/`([^`\r\n]+)`/g), (match) => match[1].trim());
+  const candidates = codeSpanCandidates.filter(isLikelyPlanFilePath);
+  if (candidates.length === 0) {
+    candidates.push(...(value.match(/(?:[A-Za-z]:[\\/])?(?:[A-Za-z0-9_.@()\-]+[\\/])*[A-Za-z0-9_.@()\-]+\.[A-Za-z0-9_\-]{1,12}/g) ?? []));
+  }
+
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const normalized = candidate.replace(/\\/g, '/').toLowerCase();
+    if (!normalized || seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function isLikelyPlanFilePath(value: string): boolean {
+  const candidate = value.trim();
+  if (!candidate || /\s/.test(candidate) || /^#/.test(candidate)) {
+    return false;
+  }
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:(?![\\/])/.test(candidate)) {
+    return false;
+  }
+  return /[\\/]/.test(candidate) ||
+    /^(?:\.[A-Za-z0-9_.-]+|[A-Za-z0-9_.@()\-]+\.[A-Za-z0-9_\-]{1,12})$/.test(candidate);
 }
 
 function stringifyPlanValue(value: unknown): string {
@@ -1037,6 +1124,208 @@ function expandLegacyInlineDescriptionMarkdown(description: string, feature: unk
     '\n- ',
   );
   return text.trim();
+}
+
+export function hydrateAutocodeSlimRuntimeLedger<T extends MutableAutocodePlan>(
+  plan: T,
+  specDir: string,
+): T {
+  if (!isAutocodeSlimRuntimeLedger(plan)) {
+    return plan;
+  }
+
+  const sourceTask = asPlanRecord(plan.source_task);
+  const tasksPath = resolveLinkedTasksPath(specDir, stringifyPlanValue(sourceTask?.tasks));
+  if (!tasksPath || !existsSync(tasksPath)) {
+    return plan;
+  }
+
+  let tasksPlan: MutableAutocodePlan;
+  try {
+    tasksPlan = parseAutocodeImplementationPlanMarkdown(readFileSync(tasksPath, 'utf-8'));
+  } catch {
+    return plan;
+  }
+
+  const taskDefinitions = new Map<string, MutableAutocodePlanSubtask>();
+  for (const phase of tasksPlan.phases ?? []) {
+    for (const task of getPhaseSubtasks(phase)) {
+      const id = stringifyPlanValue(task.id ?? task.subtask_id);
+      if (id) {
+        taskDefinitions.set(id, task);
+      }
+    }
+  }
+
+  const designContract = asPlanRecord(sourceTask?.design_contract);
+  const designPath = resolveLinkedTasksPath(specDir, stringifyPlanValue(designContract?.path));
+  let designMarkdown = '';
+  if (designPath && existsSync(designPath)) {
+    try {
+      designMarkdown = readFileSync(designPath, 'utf-8');
+    } catch {
+      designMarkdown = '';
+    }
+  }
+
+  for (const phase of plan.phases ?? []) {
+    phase.name = getRuntimeWorkPackagePhaseName(plan);
+    for (const workPackage of getPhaseSubtasks(phase)) {
+      const sourceIds = arrayFromUnknown(workPackage.upstream_task_ids);
+      const definitions = sourceIds
+        .map((id) => taskDefinitions.get(id))
+        .filter((task): task is MutableAutocodePlanSubtask => Boolean(task));
+      if (definitions.length === 0) {
+        continue;
+      }
+
+      const fingerprintInputs = definitions.map((task) =>
+        toRuntimeDefinitionFingerprintInput(task, designMarkdown),
+      );
+      const filesToCreate = uniquePlanStrings(fingerprintInputs.flatMap((task) => task.filesToCreate));
+      const filesToModify = uniquePlanStrings(fingerprintInputs.flatMap((task) => task.filesToModify));
+      const patternFiles = uniquePlanStrings(fingerprintInputs.flatMap((task) => task.patternFiles));
+      const hasPatternFiles = definitions.some((task) => Array.isArray(task.pattern_files));
+      const requirements = uniquePlanStrings([
+        ...sourceIds,
+        ...fingerprintInputs.flatMap((task) => task.requirements),
+      ]);
+      const designRefs = uniquePlanStrings(fingerprintInputs.flatMap((task) => task.designRefs));
+      const architecture = uniquePlanStrings(fingerprintInputs.map((task) => task.architecture ?? ''));
+      const evidence = uniquePlanStrings(fingerprintInputs.map((task) => task.evidence ?? ''));
+      const verification = uniquePlanStrings(
+        fingerprintInputs.map((task) => stringifyVerification(task.verification)),
+      );
+
+      workPackage.title = buildHydratedWorkPackageTitle(fingerprintInputs);
+      workPackage.description = buildHydratedWorkPackageDescription(fingerprintInputs);
+      workPackage.files_to_create = filesToCreate;
+      workPackage.files_to_modify = filesToModify;
+      if (hasPatternFiles) {
+        workPackage.pattern_files = patternFiles;
+      } else {
+        delete workPackage.pattern_files;
+      }
+      workPackage.requirements = requirements;
+      workPackage.design_refs = designRefs;
+      workPackage.architecture = architecture.join('; ');
+      workPackage.evidence = evidence.join('; ');
+      workPackage.verification = {
+        type: 'manual',
+        run: verification.join('; '),
+      };
+      if (!stringifyPlanValue(workPackage.definition_fingerprint)) {
+        workPackage.definition_fingerprint = buildAutocodeRuntimeDefinitionFingerprint(fingerprintInputs);
+      }
+      if (!asPlanRecord(workPackage.source_task_fingerprints)) {
+        workPackage.source_task_fingerprints = Object.fromEntries(
+          fingerprintInputs.map((task) => [
+            task.id,
+            buildAutocodeRuntimeDefinitionFingerprint([task]),
+          ]),
+        );
+      }
+      if (!asPlanRecord(workPackage.design_task_fingerprints) && designMarkdown) {
+        workPackage.design_task_fingerprints = Object.fromEntries(
+          fingerprintInputs
+            .filter((task) => task.designRefs.length > 0)
+            .map((task) => [
+              task.id,
+              getAutocodeDesignReferenceFingerprint(designMarkdown, task.designRefs),
+            ]),
+        );
+      }
+      workPackage.upstream_source = stringifyPlanValue(sourceTask?.tasks) || AUTOCODE_TASK_ARTIFACTS.tasks;
+      workPackage.work_package = true;
+    }
+  }
+
+  plan.feature = plan.feature || tasksPlan.feature;
+  plan.workflow_type = plan.workflow_type || tasksPlan.workflow_type;
+  plan.description = plan.description || tasksPlan.description;
+  return plan;
+}
+
+function getRuntimeWorkPackagePhaseName(plan: MutableAutocodePlan): string {
+  const sourceTask = asPlanRecord(plan.source_task);
+  return stringifyPlanValue(sourceTask?.language).toLowerCase().startsWith('zh')
+    ? '\u8fd0\u884c\u5de5\u4f5c\u5305'
+    : 'Runtime work packages';
+}
+
+function toRuntimeDefinitionFingerprintInput(
+  task: MutableAutocodePlanSubtask,
+  designMarkdown = '',
+): AutocodeRuntimeDefinitionFingerprintInput {
+  const id = stringifyPlanValue(task.id ?? task.subtask_id);
+  const title = stringifyPlanValue(task.title) || id;
+  const designRefs = arrayFromUnknown(task.design_refs);
+  return {
+    id,
+    title,
+    description: stringifyPlanValue(task.description) || title,
+    filesToCreate: arrayFromUnknown(task.files_to_create),
+    filesToModify: uniquePlanStrings([
+      ...arrayFromUnknown(task.files),
+      ...arrayFromUnknown(task.files_to_modify),
+    ]),
+    patternFiles: arrayFromUnknown(task.pattern_files),
+    dependsOn: arrayFromUnknown(task.depends_on),
+    requirements: arrayFromUnknown(task.requirements),
+    designRefs,
+    ...(designMarkdown && designRefs.length > 0
+      ? { designFingerprint: getAutocodeDesignReferenceFingerprint(designMarkdown, designRefs) }
+      : {}),
+    architecture: stringifyPlanValue(task.architecture),
+    evidence: stringifyPlanValue(task.evidence),
+    verification: task.verification,
+  };
+}
+
+function buildHydratedWorkPackageTitle(tasks: AutocodeRuntimeDefinitionFingerprintInput[]): string {
+  if (tasks.length === 1) {
+    return tasks[0].title;
+  }
+  return `${tasks[0].title} (+${tasks.length - 1})`;
+}
+
+function buildHydratedWorkPackageDescription(
+  tasks: AutocodeRuntimeDefinitionFingerprintInput[],
+): string {
+  return [
+    'Implement the linked static task definitions from tasks.md.',
+    '',
+    'Included tasks:',
+    ...tasks.flatMap((task) => [
+      `- ${task.id} ${task.title}`,
+      `  ${task.description}`,
+    ]),
+  ].join('\n');
+}
+
+function resolveLinkedTasksPath(specDir: string, sourcePath: string): string | null {
+  if (!sourcePath) {
+    return null;
+  }
+  const normalizedSpecDir = resolve(specDir);
+  const candidate = isAbsolute(sourcePath)
+    ? resolve(sourcePath)
+    : resolve(normalizedSpecDir, sourcePath);
+  const relativePath = relative(normalizedSpecDir, candidate);
+  if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    return null;
+  }
+  return candidate;
+}
+
+function uniquePlanStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function asPlanRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function escapeRegExp(value: string): string {

@@ -54,9 +54,9 @@ export const projectMock = {
       updatedAt: new Date().toISOString(),
       projectSize: 'small',
       promptIntensity: 'lightweight',
-      specStyle: 'quick',
+      specStyle: 'standard' as const,
       sourceFileCount: 12,
-      generatedPrompts: ['spec_quick', 'planner', 'coder', 'qa_reviewer', 'qa_fixer'],
+      generatedPrompts: ['planner', 'coder', 'qa_reviewer', 'qa_fixer'],
       languages: ['typescript'],
       frameworks: ['react']
     }

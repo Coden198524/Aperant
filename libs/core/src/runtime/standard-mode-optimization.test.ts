@@ -9,6 +9,19 @@ import {
   selectAutocodeSpecPhases,
 } from './spec-orchestrator-strategy.js';
 
+const STANDARD_OWNER_CHAIN = [
+  'requirements',
+  'spec_writing',
+  'requirement_model',
+  'domain_model',
+  'design',
+  'design_model',
+  'implementation_model',
+  'design_review',
+  'planning',
+  'validation',
+] as const;
+
 describe('Standard mode optimization defaults', () => {
   it('keeps balanced Standard retries and prompt-heavy quality add-ons lean', () => {
     const config = getWorkflowConfig('balanced');
@@ -27,7 +40,7 @@ describe('Standard mode optimization defaults', () => {
     });
   });
 
-  it('uses Standard light planning when local fallback sees no broad or high-risk signal', () => {
+  it('uses the normal Standard specification flow when local fallback sees no broad or high-risk signal', () => {
     const config = getWorkflowConfig('balanced');
     const fallback = inferAutocodeSpecComplexityFallback({
       taskDescription: 'Fix the settings label text.',
@@ -43,10 +56,10 @@ describe('Standard mode optimization defaults', () => {
       assessment: fallback,
       taskDescription: 'Fix the settings label text.',
       workflowConfig: config,
-    })).toEqual(['quick_spec', 'validation']);
+    })).toEqual(STANDARD_OWNER_CHAIN);
   });
 
-  it('keeps local UI affordance changes on the Standard light route', () => {
+  it('keeps local UI affordance changes on the normal Standard specification route', () => {
     const config = getWorkflowConfig('balanced');
     const fallback = inferAutocodeSpecComplexityFallback({
       taskDescription: 'Add a dashboard UI tooltip for the settings button.',
@@ -63,7 +76,7 @@ describe('Standard mode optimization defaults', () => {
       assessment: fallback,
       taskDescription: 'Add a dashboard UI tooltip for the settings button.',
       workflowConfig: config,
-    })).toEqual(['quick_spec', 'validation']);
+    })).toEqual(STANDARD_OWNER_CHAIN);
   });
 
   it('keeps external integrations on the shortened Standard route with research', () => {
@@ -83,10 +96,22 @@ describe('Standard mode optimization defaults', () => {
       assessment: fallback,
       taskDescription: 'Create OAuth login integration for an external API.',
       workflowConfig: config,
-    })).toEqual(['requirements', 'research', 'spec_writing', 'planning', 'validation']);
+    })).toEqual([
+      'requirements',
+      'research',
+      'spec_writing',
+      'requirement_model',
+      'domain_model',
+      'design',
+      'design_model',
+      'implementation_model',
+      'design_review',
+      'planning',
+      'validation',
+    ]);
   });
 
-  it('keeps moderate balanced tasks on one compact Standard planning session', () => {
+  it('keeps moderate balanced tasks on the normal Standard artifact chain', () => {
     const config = getWorkflowConfig('balanced');
     const fallback = inferAutocodeSpecComplexityFallback({
       taskDescription: 'Refactor the runtime metadata schema and update compatibility handling.',
@@ -99,7 +124,7 @@ describe('Standard mode optimization defaults', () => {
       assessment: fallback,
       taskDescription: 'Refactor the runtime metadata schema and update compatibility handling.',
       workflowConfig: config,
-    })).toEqual(['quick_spec', 'validation']);
+    })).toEqual(STANDARD_OWNER_CHAIN);
   });
 
   it('preserves conservative Standard discovery for explicit high-assurance mode', () => {
@@ -116,6 +141,31 @@ describe('Standard mode optimization defaults', () => {
       assessment: fallback,
       taskDescription: 'Fix the settings label text.',
       workflowConfig: config,
-    })).toEqual(['discovery', 'requirements', 'spec_writing', 'self_critique', 'planning', 'validation']);
+    })).toEqual([
+      'discovery',
+      'requirements',
+      'spec_writing',
+      'self_critique',
+      'requirement_model',
+      'domain_model',
+      'design',
+      'design_model',
+      'implementation_model',
+      'design_review',
+      'planning',
+      'validation',
+    ]);
+  });
+
+  it('keeps aggressive simple tasks on the same Standard owner chain', () => {
+    const config = getWorkflowConfig('aggressive');
+    const phases = selectAutocodeSpecPhases({
+      complexity: 'simple',
+      taskDescription: 'Fix the settings label text.',
+      workflowConfig: config,
+    });
+
+    expect(phases).toEqual(STANDARD_OWNER_CHAIN);
+    expect(phases).not.toContain('quick_spec');
   });
 });

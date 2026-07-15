@@ -8,8 +8,13 @@ export type AutocodeSpecPhase =
   | 'spec_writing'
   | 'self_critique'
   | 'planning'
-  | 'validation'
-  | 'quick_spec';
+  | 'requirement_model'
+  | 'domain_model'
+  | 'design'
+  | 'design_model'
+  | 'implementation_model'
+  | 'design_review'
+  | 'validation';
 
 export function specPhaseToAutocodePromptName(phase: AutocodeSpecPhase | string): string {
   switch (phase) {
@@ -30,12 +35,21 @@ export function specPhaseToAutocodePromptName(phase: AutocodeSpecPhase | string)
       return 'spec_critic';
     case 'planning':
       return 'planner';
-    case 'quick_spec':
-      return 'spec_quick';
+    case 'requirement_model':
+      return 'requirement_modeler';
+    case 'domain_model':
+      return 'domain_modeler';
+    case 'design':
+      return 'software_designer';
+    case 'design_model':
+      return 'design_modeler';
+    case 'implementation_model':
+      return 'implementation_modeler';
+    case 'design_review':
+      return 'design_critic';
     case 'validation':
       return 'validation_fixer';
     default:
       return 'spec_writer';
   }
 }
-

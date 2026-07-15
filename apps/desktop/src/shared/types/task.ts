@@ -408,6 +408,8 @@ export interface PlanSubtask {
   files_to_modify?: string[];
   pattern_files?: string[];
   depends_on?: string[];
+  design_refs?: string[];
+  design_fingerprint?: string;
   work_package?: boolean;
   upstream_task_ids?: string[];
   upstream_source?: string;

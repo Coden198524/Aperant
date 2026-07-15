@@ -397,11 +397,11 @@ function normalizeCompactSummaryTables(content: string): string {
 
 function normalizeInternalSpecPhaseNames(content: string): string {
   return content
-    .replace(/(Spec phase \d+\/\d+:\s*)quick_spec\b/gi, '$1Standard light planning')
-    .replace(/\b(Standard planning:\s*)quick_spec\b/gi, '$1Standard light planning')
-    .replace(/\b(Error in spec\s*)quick_spec(\s*phase:)/gi, '$1Standard light planning$2')
-    .replace(/\(spec phase=quick_spec\b/gi, '(spec phase=Standard light planning')
-    .replace(/\bquick_spec\b/gi, 'Standard light planning');
+    .replace(/(Spec phase \d+\/\d+:\s*)quick_spec\b/gi, '$1Standard planning')
+    .replace(/\b(Standard planning:\s*)quick_spec\b/gi, '$1Standard planning')
+    .replace(/\b(Error in spec\s*)quick_spec(\s*phase:)/gi, '$1Standard planning$2')
+    .replace(/\(spec phase=quick_spec\b/gi, '(spec phase=Standard planning')
+    .replace(/\bquick_spec\b/gi, 'Standard planning');
 }
 
 function normalizeRuntimeLogContent(content: string): string {

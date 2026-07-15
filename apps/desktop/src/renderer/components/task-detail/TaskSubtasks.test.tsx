@@ -316,6 +316,9 @@ function createCompletedGappedWorkPackageTask(): Task {
         status: 'completed',
         files: [],
         workPackage: true,
+        startedAt: '2026-01-01T00:00:00.000Z',
+        completedAt: '2026-01-01T00:10:00.000Z',
+        durationMs: 60_000,
       },
       {
         id: 'wp-2',
@@ -324,6 +327,9 @@ function createCompletedGappedWorkPackageTask(): Task {
         status: 'completed',
         files: [],
         workPackage: true,
+        startedAt: '2026-01-01T00:00:00.000Z',
+        completedAt: '2026-01-01T00:10:00.000Z',
+        durationMs: 120_000,
       },
     ],
   };
@@ -952,8 +958,11 @@ describe('TaskSubtasks', () => {
     expect(await screen.findByText('Sequential 3m')).toBeInTheDocument();
     expect(screen.getByText('Parallel 3m')).toBeInTheDocument();
     expect(screen.getByText('Saves 0s')).toBeInTheDocument();
+    expect(screen.getByText('Max parallel 1')).toBeInTheDocument();
     expect(screen.queryByText('Parallel 7m')).not.toBeInTheDocument();
     expect(screen.queryByText('Parallel 2m')).not.toBeInTheDocument();
+    expect(screen.queryByText('Max parallel 2')).not.toBeInTheDocument();
+    expect(screen.queryByText('10m')).not.toBeInTheDocument();
   });
   it('uses recorded work package timings for execution graph totals', () => {
     render(

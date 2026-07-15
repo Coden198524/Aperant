@@ -40,7 +40,6 @@ import type { ProviderAccount, BuiltinProvider } from '../../shared/types/provid
 const THRESHOLD_CRITICAL = 95;  // Red: At or near limit
 const THRESHOLD_WARNING = 91;   // Orange: Very high usage
 const THRESHOLD_ELEVATED = 71;  // Yellow: Moderate usage
-const USAGE_STARTUP_REQUEST_DELAY_MS = 30000;
 // Below 71 is considered normal (green)
 
 const PROVIDER_BADGE_COLORS: Record<string, string> = {
@@ -169,6 +168,7 @@ export function UsageIndicator() {
   // Show cross-provider section whenever a config exists with 2+ providers,
   // regardless of whether the mode is currently active (so it persists after account swaps)
   const isCrossProviderConfigured = !!crossProviderConfig && crossProviderOrder.length > 1;
+  const shouldLoadAllProfilesUsage = providerAccounts.some(accountHasUsageMonitoring);
 
   /**
    * Helper function to get initials from a profile name
@@ -747,70 +747,70 @@ export function UsageIndicator() {
     : (hasHardcodedText(usage?.weeklyResetTime) ? undefined : usage?.weeklyResetTime);
 
   useEffect(() => {
-    if (!hasUsageMonitoring) {
-      setUsage(null);
-      setOtherProfiles([]);
-      setIsLoading(false);
-      setIsAvailable(false);
-      return;
-    }
-
-    setIsLoading(true);
+    let disposed = false;
+    setUsage(null);
+    setIsAvailable(false);
+    setActiveProfileNeedsReauth(false);
+    setIsLoading(hasUsageMonitoring);
 
     // Listen for usage updates from main process
-    const unsubscribe = window.electronAPI.onUsageUpdated((snapshot: ClaudeUsageSnapshot) => {
-      setUsage(snapshot);
-      setIsAvailable(true);
-      setIsLoading(false);
-    });
+    const unsubscribe = hasUsageMonitoring
+      ? window.electronAPI.onUsageUpdated((snapshot: ClaudeUsageSnapshot) => {
+        if (disposed) return;
+        setUsage(snapshot);
+        setIsAvailable(true);
+        setIsLoading(false);
+      })
+      : undefined;
 
     // Listen for all profiles usage updates (for multi-profile display)
-    const unsubscribeAllProfiles = window.electronAPI.onAllProfilesUsageUpdated?.((allProfilesUsage) => {
+    const unsubscribeAllProfiles = shouldLoadAllProfilesUsage
+      ? window.electronAPI.onAllProfilesUsageUpdated?.((allProfilesUsage) => {
       // Filter out the active profile - we only want to show "other" profiles
       const nonActiveProfiles = allProfilesUsage.allProfiles.filter(p => !p.isActive);
       setOtherProfiles(nonActiveProfiles);
       // Track if active profile needs re-auth
       const activeProfile = allProfilesUsage.allProfiles.find(p => p.isActive);
       setActiveProfileNeedsReauth(activeProfile?.needsReauthentication ?? false);
-    });
+      })
+      : undefined;
 
-    const shouldRequestAllProfiles = activeAccount?.provider === 'anthropic' && activeAccount.authType === 'oauth';
-    const startupUsageTimer = window.setTimeout(() => {
-      window.electronAPI.requestUsageUpdate().then((result) => {
+    if (hasUsageMonitoring) {
+      void window.electronAPI.requestUsageUpdate().then((result) => {
+        if (disposed) return;
         setIsLoading(false);
         if (result.success && result.data) {
           setUsage(result.data);
           setIsAvailable(true);
-        } else {
-          setIsAvailable(false);
         }
       }).catch(() => {
+        if (disposed) return;
         setIsLoading(false);
-        setIsAvailable(false);
       });
+    }
 
-      if (shouldRequestAllProfiles) {
-        window.electronAPI.requestAllProfilesUsage?.().then((result) => {
-          if (result.success && result.data) {
-            const nonActiveProfiles = result.data.allProfiles.filter(p => !p.isActive);
-            setOtherProfiles(nonActiveProfiles);
-            const activeProfile = result.data.allProfiles.find(p => p.isActive);
-            if (activeProfile?.needsReauthentication) {
-              setActiveProfileNeedsReauth(true);
-            }
-          }
-        }).catch(() => {
-          // Silently ignore
-        });
-      }
-    }, USAGE_STARTUP_REQUEST_DELAY_MS);
+    if (shouldLoadAllProfilesUsage) {
+      void window.electronAPI.requestAllProfilesUsage?.().then((result) => {
+        if (disposed) return;
+        if (result.success && result.data) {
+          const nonActiveProfiles = result.data.allProfiles.filter(p => !p.isActive);
+          setOtherProfiles(nonActiveProfiles);
+          const activeProfile = result.data.allProfiles.find(p => p.isActive);
+          setActiveProfileNeedsReauth(activeProfile?.needsReauthentication ?? false);
+        }
+      }).catch(() => {
+        // The active-account request still controls the top-level availability state.
+      });
+    } else {
+      setOtherProfiles([]);
+    }
 
     return () => {
-      window.clearTimeout(startupUsageTimer);
-      unsubscribe();
+      disposed = true;
+      unsubscribe?.();
       unsubscribeAllProfiles?.();
     };
-  }, [hasUsageMonitoring, activeAccount?.id, activeAccount?.provider, activeAccount?.authType]);
+  }, [hasUsageMonitoring, shouldLoadAllProfilesUsage, activeAccount?.id]);
   // Show loading state - only for Anthropic OAuth accounts awaiting usage data
   if (isLoading && hasUsageMonitoring) {
     return (

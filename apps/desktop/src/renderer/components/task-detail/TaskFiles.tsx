@@ -28,6 +28,7 @@ interface TaskFilesProps {
 
 // File extensions to display
 const ALLOWED_EXTENSIONS = ['.md', '.json', '.jsonl'];
+const FAILED_ARTIFACT_PATTERN = /^(.*\.(?:md|json|jsonl))\.failed-([^.]+)$/i;
 const INTERNAL_TASK_FILES = new Set([
   'autocode-run-prompt.md',
   'autocode-run-result.json',
@@ -35,10 +36,17 @@ const INTERNAL_TASK_FILES = new Set([
 const FILE_PRIORITY: Record<string, number> = {
   'HUMAN_INPUT.md': 0,
   'change_requests.jsonl': 1,
-  'spec.md': 2,
-  'tasks.md': 3,
-  'implementation_plan.md': 4,
-  'task_logs.jsonl': 5,
+  'requirements.md': 2,
+  'spec.md': 3,
+  'requirement_model.md': 4,
+  'domain_model.md': 5,
+  'design.md': 6,
+  'design_model.md': 7,
+  'implementation_model.md': 8,
+  'design_review.md': 9,
+  'tasks.md': 10,
+  'implementation_plan.md': 11,
+  'task_logs.jsonl': 12,
 };
 
 type FileViewMode = 'reader' | 'source';
@@ -50,7 +58,10 @@ type FileContextMenuState = {
 };
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type ParsedJson = { value: JsonValue; error?: never } | { value?: never; error: string };
-type TaskFileNode = FileNode;
+export type TaskFileNode = FileNode & {
+  canonicalName: string;
+  isFailedArtifact: boolean;
+};
 
 // Get icon for file type
 function getFileIcon(filename: string) {
@@ -67,10 +78,55 @@ function getFileKind(filename: string | null): FileKind {
   return 'text';
 }
 
-function isVisibleTaskFile(file: FileNode): boolean {
-  if (file.isDirectory) return false;
-  if (INTERNAL_TASK_FILES.has(file.name.toLowerCase())) return false;
-  return ALLOWED_EXTENSIONS.some(ext => file.name.endsWith(ext));
+function toTaskFileNode(file: FileNode): TaskFileNode | null {
+  if (file.isDirectory) return null;
+
+  const failedMatch = FAILED_ARTIFACT_PATTERN.exec(file.name);
+  const canonicalName = failedMatch?.[1] ?? file.name;
+  const normalizedName = canonicalName.toLowerCase();
+  if (INTERNAL_TASK_FILES.has(normalizedName)) return null;
+  if (!ALLOWED_EXTENSIONS.some(ext => normalizedName.endsWith(ext))) return null;
+
+  return {
+    ...file,
+    canonicalName,
+    isFailedArtifact: Boolean(failedMatch),
+  };
+}
+
+export function buildVisibleTaskFiles(directoryEntries: FileNode[]): TaskFileNode[] {
+  const regularFiles: TaskFileNode[] = [];
+  const latestFailedByCanonicalName = new Map<string, TaskFileNode>();
+
+  for (const entry of directoryEntries) {
+    const file = toTaskFileNode(entry);
+    if (!file) continue;
+
+    const canonicalKey = file.canonicalName.toLowerCase();
+    if (!file.isFailedArtifact) {
+      regularFiles.push(file);
+      continue;
+    }
+
+    const current = latestFailedByCanonicalName.get(canonicalKey);
+    if (!current || file.name.localeCompare(current.name) > 0) {
+      latestFailedByCanonicalName.set(canonicalKey, file);
+    }
+  }
+
+  const regularCanonicalNames = new Set(
+    regularFiles.map(file => file.canonicalName.toLowerCase()),
+  );
+  const failedFallbacks = [...latestFailedByCanonicalName.entries()]
+    .filter(([canonicalName]) => !regularCanonicalNames.has(canonicalName))
+    .map(([, file]) => file);
+
+  return [...regularFiles, ...failedFallbacks].sort((a, b) => {
+    const priorityDelta =
+      (FILE_PRIORITY[a.canonicalName] ?? 100) - (FILE_PRIORITY[b.canonicalName] ?? 100);
+    if (priorityDelta !== 0) return priorityDelta;
+    return a.canonicalName.localeCompare(b.canonicalName);
+  });
 }
 
 function getJsonSummary(value: JsonValue): string {
@@ -216,16 +272,7 @@ export function TaskFiles({ task }: TaskFilesProps) {
         throw new Error(result.error || 'Failed to load directory');
       }
 
-      const filteredFiles = result.data.filter(isVisibleTaskFile);
-
-      // Sort high-signal task files first, then alphabetically.
-      filteredFiles.sort((a, b) => {
-        const priorityDelta = (FILE_PRIORITY[a.name] ?? 100) - (FILE_PRIORITY[b.name] ?? 100);
-        if (priorityDelta !== 0) return priorityDelta;
-        return a.name.localeCompare(b.name);
-      });
-
-      setFiles(filteredFiles);
+      setFiles(buildVisibleTaskFiles(result.data));
     } catch (err) {
       setFilesError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -387,8 +434,12 @@ export function TaskFiles({ task }: TaskFilesProps) {
     }
   }, [files, selectedFile, loadFileContent]);
 
+  const selectedFileNode = selectedFile
+    ? files.find(file => file.path === selectedFile) ?? null
+    : null;
   // Get selected filename (cross-platform: handles both / and \ separators)
-  const selectedFileName = selectedFile ? (selectedFile.split(/[/\\]/).pop() ?? null) : null;
+  const selectedFileName = selectedFileNode?.canonicalName ??
+    (selectedFile ? (selectedFile.split(/[/\\]/).pop() ?? null) : null);
   const selectedFileKind = getFileKind(selectedFileName);
 
   const parsedJson = useMemo<ParsedJson | null>(() => {
@@ -606,10 +657,21 @@ export function TaskFiles({ task }: TaskFilesProps) {
                     selectedFile === file.path && 'bg-secondary'
                   )}
                 >
-                  {getFileIcon(file.name)}
+                  {getFileIcon(file.canonicalName)}
                   <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                    {file.name}
+                    {file.canonicalName}
                   </span>
+                  {file.isFailedArtifact && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <AlertCircle
+                          className="h-3.5 w-3.5 shrink-0 text-warning"
+                          aria-label={t('tasks:execution.phases.failed')}
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent>{t('tasks:execution.phases.failed')}</TooltipContent>
+                    </Tooltip>
+                  )}
                   {selectedFile === file.path && (
                     <ChevronRight className="h-3 w-3 text-muted-foreground" />
                   )}
@@ -627,6 +689,17 @@ export function TaskFiles({ task }: TaskFilesProps) {
           <div className="px-4 py-2 border-b border-border flex items-center gap-2 shrink-0 bg-muted/30">
             {getFileIcon(selectedFileName)}
             <span className="text-sm font-medium flex-1 min-w-0 truncate">{selectedFileName}</span>
+            {selectedFileNode?.isFailedArtifact && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <AlertCircle
+                    className="h-4 w-4 shrink-0 text-warning"
+                    aria-label={t('tasks:execution.phases.failed')}
+                  />
+                </TooltipTrigger>
+                <TooltipContent>{t('tasks:execution.phases.failed')}</TooltipContent>
+              </Tooltip>
+            )}
             <div className="flex items-center gap-1 rounded-md border border-border bg-background p-0.5">
               <Button
                 variant={viewMode === 'reader' ? 'secondary' : 'ghost'}

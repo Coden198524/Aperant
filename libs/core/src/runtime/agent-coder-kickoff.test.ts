@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { extractAutocodeDesignReferenceExcerpt } from '../tasks/design-quality.js';
 import {
   buildAutocodeFocusedCoderKickoffMessageFromContext,
   findAutocodeSubtaskKickoffContext,
@@ -178,5 +179,47 @@ describe('agent coder kickoff prompt compaction', () => {
     });
 
     expect(message).toContain('- Architecture: static entry layer; HTML structure contract strategy; requirements.md R1');
+  });
+});
+
+describe('focused coder design contract', () => {
+  it('injects only the design sections referenced by the current work package', () => {
+    const designMarkdown = [
+      '## Architecture Decision',
+      '### ADR-001 Preserve the renderer boundary',
+      'Keep projection logic in the existing renderer state layer.',
+      '### ADR-002 Add an unrelated persistence boundary',
+      'This section belongs to another work package.',
+      '## Design Model',
+      '### DES-002 Plan progress presenter',
+      'Derive display state without a new service.',
+    ].join('\n');
+    const designRefs = ['ADR-001', 'DES-002'];
+    const designExcerpt = extractAutocodeDesignReferenceExcerpt(designMarkdown, designRefs);
+
+    const message = buildAutocodeFocusedCoderKickoffMessageFromContext({
+      specDir: '/specs/006',
+      projectDir: '/project',
+      subtaskId: 'ui-2',
+      context: {
+        id: 'ui-2',
+        title: 'Show plan progress',
+        description: 'Render planning progress next to the task badge.',
+        designRefs,
+        designExcerpt,
+        filesToModify: ['src/renderer/TaskBoard.tsx'],
+        filesToCreate: [],
+        patternFiles: [],
+      },
+    });
+
+    expect(message).toContain('## Binding Design Contract');
+    expect(message).toContain('ADR-001, DES-002');
+    expect(message).toContain('Preserve the renderer boundary');
+    expect(message).toContain('Plan progress presenter');
+    expect(message).not.toContain('ADR-002');
+    expect(message).not.toContain('unrelated persistence boundary');
+    expect(message).toContain('Do not add an unplanned layer');
+    expect(message).toContain('explicit state/mutation authority, operations, lifetime, and FLOW ordering');
   });
 });

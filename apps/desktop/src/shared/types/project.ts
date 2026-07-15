@@ -455,7 +455,7 @@ export interface PromptProfileRefreshResult {
   updatedAt: string;
   projectSize: string;
   promptIntensity: string;
-  specStyle: string;
+  specStyle: 'standard' | 'full';
   sourceFileCount: number;
   generatedPrompts: string[];
   languages: string[];

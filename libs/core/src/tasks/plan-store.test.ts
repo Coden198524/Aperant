@@ -1,12 +1,117 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  hydrateAutocodeSlimRuntimeLedger,
   parseAutocodeImplementationPlanMarkdown,
   stringifyAutocodeImplementationPlanMarkdown,
+  stringifyAutocodeTaskDefinitionsMarkdown,
   updateAutocodePlanSubtask,
 } from './plan-store.js';
 
+function firstPhaseSubtasks(plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>) {
+  return plan.phases[0]?.subtasks ?? [];
+}
+
 describe('implementation plan markdown', () => {
+  it('preserves logical dependencies while removing runtime state from task definitions', () => {
+    const markdown = stringifyAutocodeTaskDefinitionsMarkdown({
+      phases: [{
+        id: '1',
+        name: 'Implementation',
+        subtasks: [
+          {
+            id: '1.1',
+            title: 'Create the contract',
+            status: 'completed',
+            completion_summary: 'Old runtime result',
+            started_at: '2026-07-15T01:00:00.000Z',
+          },
+          {
+            id: '1.2',
+            title: 'Use the contract',
+            status: 'in_progress',
+            depends_on: ['1.1'],
+            retry_count: 2,
+          },
+        ],
+      }],
+    });
+
+    expect(markdown).toContain('Tasks-Contract: 1');
+    expect(markdown).toContain('_Depends on: 1.1_');
+    expect(markdown).not.toContain('Old runtime result');
+    expect(markdown).not.toContain('2026-07-15T01:00:00.000Z');
+    expect(markdown).not.toContain('retry_count');
+    expect(markdown).not.toContain('[x]');
+
+    const parsed = parseAutocodeImplementationPlanMarkdown(markdown);
+    expect(parsed.phases?.[0]?.subtasks?.[1]).toMatchObject({
+      status: 'pending',
+      depends_on: ['1.1'],
+    });
+  });
+
+  it('hydrates a slim runtime ledger without replacing persisted fingerprints', () => {
+    const specDir = mkdtempSync(join(tmpdir(), 'autocode-slim-ledger-'));
+    try {
+      writeFileSync(join(specDir, 'tasks.md'), [
+        '# Tasks',
+        '',
+        'Tasks-Contract: 1',
+        'Feature: Hydrated work',
+        '',
+        '- [ ] 1. Implementation',
+        '',
+        '  - [ ] 1.1 Update renderer shell',
+        '    - Keep the renderer shell aligned with the observable contract.',
+        '    - _Files to modify: src/page.ts_',
+        '    - _Depends on: none_',
+        '    - _Requirements: R1, AC1_',
+        '    - _Design: SYS-001, DES-001, IMP-001_',
+        '    - _Evidence: E1; src/page.ts existing shell_',
+        '    - _Verification: npm test -- page.test.ts_',
+        '',
+      ].join('\n'), 'utf8');
+      writeFileSync(join(specDir, 'design.md'), [
+        '# Design: Hydrated work',
+        '### SYS-001 Renderer owner',
+        '### DES-001 Shell responsibility',
+        '### IMP-001 Renderer implementation',
+      ].join('\n'), 'utf8');
+
+      const parsed = parseAutocodeImplementationPlanMarkdown([
+        '# Runtime Execution Ledger',
+        '',
+        '<!-- autocode-plan-meta: {"source_task":{"tasks":"tasks.md","runtime_ledger_schema":"autocode-runtime-ledger/v1","design_contract":{"path":"design.md"}},"subtaskMetadata":{"wp-1":{"work_package":true,"upstream_task_ids":["1.1"],"depends_on":[],"definition_fingerprint":"persisted-package","source_task_fingerprints":{"1.1":"persisted-task"}}}} -->',
+        '',
+        '- [ ] wp. Runtime work packages',
+        '',
+        '  - [ ] wp-1 Work package',
+        '    - _Depends on: none_',
+        '',
+      ].join('\n'));
+      const hydrated = hydrateAutocodeSlimRuntimeLedger(parsed, specDir);
+      const workPackage = hydrated.phases?.[0]?.subtasks?.[0];
+
+      expect(workPackage).toMatchObject({
+        title: 'Update renderer shell',
+        files_to_modify: ['src/page.ts'],
+        requirements: ['1.1', 'R1', 'AC1'],
+        definition_fingerprint: 'persisted-package',
+        source_task_fingerprints: { '1.1': 'persisted-task' },
+      });
+      const rewritten = stringifyAutocodeImplementationPlanMarkdown(hydrated);
+      expect(rewritten).not.toContain('src/page.ts');
+      expect(rewritten).not.toContain('_Requirements:');
+      expect(rewritten).toContain('persisted-package');
+    } finally {
+      rmSync(specDir, { recursive: true, force: true });
+    }
+  });
+
   it('renders long task descriptions as a Markdown section instead of one metadata line', () => {
     const description = [
       '# 增强记忆筛选和待审处理反馈',
@@ -110,7 +215,7 @@ describe('implementation plan markdown', () => {
 
     expect(markdown).toContain('active_started_at');
     const parsed = parseAutocodeImplementationPlanMarkdown(markdown);
-    expect(parsed.phases[0].subtasks[0].active_started_at).toBe('2026-01-01T00:05:00.000Z');
+    expect(firstPhaseSubtasks(parsed)[0]?.active_started_at).toBe('2026-01-01T00:05:00.000Z');
   });
 
   it('roundtrips plan revision and historical work package metadata', () => {
@@ -137,7 +242,7 @@ describe('implementation plan markdown', () => {
 
     const parsed = parseAutocodeImplementationPlanMarkdown(markdown);
     expect(parsed.planRevision).toBe(12);
-    expect(parsed.phases[0].subtasks[0]).toMatchObject({
+    expect(firstPhaseSubtasks(parsed)[0]).toMatchObject({
       id: 'history-1',
       status: 'completed',
       history_only: true,
@@ -157,11 +262,40 @@ describe('implementation plan markdown', () => {
       '',
     ].join('\n'));
 
-    expect(parsed.phases[0].subtasks[0].files_to_modify).toEqual([
+    expect(firstPhaseSubtasks(parsed)[0]?.files_to_modify).toEqual([
       'package.json',
       'index.html',
       'src/main.js',
     ]);
+  });
+
+  it('parses flat localized planner metadata with external colons and file intent prose', () => {
+    const parsed = parseAutocodeImplementationPlanMarkdown([
+      '# Tasks',
+      '',
+      '- [ ] 1.1 建立合法初始状态',
+      '  - _Depends on_: 无',
+      '  - _Requirements_: R1 / AC1；R3 / AC3',
+      '  - _Design_: ADR-005；DOM-001；IMP-002',
+      '  - _File intent_: 新建 `game-logic.mjs` 并导出 `createInitialState`；新建 `tests/game-logic.test.mjs`，使用 `node:assert/strict`。',
+      '  - _Done when_: 合法配置生成可重复结果。',
+      '',
+      '## 覆盖说明',
+      '',
+      'IMP-002 由任务 1.1 覆盖，不属于任务描述。',
+      '',
+    ].join('\n'));
+
+    const subtask = parsed.phases?.[0]?.subtasks?.[0];
+    expect(subtask).toMatchObject({
+      id: '1.1',
+      depends_on: [],
+      requirements: ['R1 / AC1', 'R3 / AC3'],
+      design_refs: ['ADR-005', 'DOM-001', 'IMP-002'],
+      files_to_modify: ['game-logic.mjs', 'tests/game-logic.test.mjs'],
+    });
+    expect(subtask?.description).not.toContain('覆盖说明');
+    expect(subtask?.description).not.toContain('不属于任务描述');
   });
 
   it('roundtrips localized and English architecture metadata as one structured field', () => {
@@ -181,7 +315,7 @@ describe('implementation plan markdown', () => {
       '',
     ].join('\n'));
 
-    const subtask = parsed.phases[0].subtasks[0] as Record<string, unknown>;
+    const subtask = firstPhaseSubtasks(parsed)[0] as Record<string, unknown>;
     expect(subtask.architecture).toBe(architecture);
     expect(subtask.description).toBe('Create the browser application shell.');
 
@@ -213,16 +347,16 @@ describe('implementation plan markdown', () => {
       '',
     ].join('\n'));
 
-    expect(parsed.phases[0].subtasks[0].files_to_modify).toEqual(['index.html', 'src/main.js']);
-    expect(parsed.phases[0].subtasks[0].depends_on).toEqual([]);
-    expect(parsed.phases[0].subtasks[0].requirements).toEqual(['R1', 'AC1']);
-    expect(parsed.phases[0].subtasks[0].evidence).toBe('spec.md Requirements R1; requirements.md Evidence Sources');
-    expect(parsed.phases[0].subtasks[0].verification).toEqual({
+    expect(firstPhaseSubtasks(parsed)[0]?.files_to_modify).toEqual(['index.html', 'src/main.js']);
+    expect(firstPhaseSubtasks(parsed)[0]?.depends_on).toEqual([]);
+    expect(firstPhaseSubtasks(parsed)[0]?.requirements).toEqual(['R1', 'AC1']);
+    expect(firstPhaseSubtasks(parsed)[0]?.evidence).toBe('spec.md Requirements R1; requirements.md Evidence Sources');
+    expect(firstPhaseSubtasks(parsed)[0]?.verification).toEqual({
       type: 'manual',
       run: 'Open index.html in a browser',
     });
-    expect(parsed.phases[0].subtasks[1].files_to_modify).toEqual(['src/main.js']);
-    expect(parsed.phases[0].subtasks[1].evidence).toBe('spec.md Requirements R3; requirements.md Evidence Sources');
+    expect(firstPhaseSubtasks(parsed)[1]?.files_to_modify).toEqual(['src/main.js']);
+    expect(firstPhaseSubtasks(parsed)[1]?.evidence).toBe('spec.md Requirements R3; requirements.md Evidence Sources');
   });
 
   it('compacts stored completion summaries written through subtask updates', () => {

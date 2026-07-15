@@ -40,7 +40,7 @@ Record unavailable checks with the reason. Avoid repeated equivalent commands.
 
 ## Plan Notes
 
-Update `implementation_plan.md` or progress notes only to record what was fixed and verified. Do not change the QA verdict.
+Report what was fixed and verified in the final response so the runtime can update `implementation_plan.md`. Do not edit `tasks.md`, `implementation_plan.md`, or the QA verdict.
 
 ## Final Response
 

@@ -69,6 +69,7 @@ export class TaskStateManager {
     actor.send(event as TaskEvent);
     const stateAfter = String(actor.getSnapshot().value);
     console.debug(`[TaskStateManager] After ${event.type}: state ${stateBefore} -> ${stateAfter}`);
+    this.emitUnchangedTerminalStatus(stateKey, taskId, event.type, stateBefore, stateAfter, actor);
     return true;
   }
 
@@ -107,6 +108,7 @@ export class TaskStateManager {
     actor.send(event);
     const stateAfter = String(actor.getSnapshot().value);
     console.debug(`[TaskStateManager] After UI event ${event.type}: state ${stateBefore} -> ${stateAfter}`);
+    this.emitUnchangedTerminalStatus(stateKey, taskId, event.type, stateBefore, stateAfter, actor);
   }
 
   handleManualStatusChange(taskId: string, status: TaskStatus, task: Task, project: Project): boolean {
@@ -541,6 +543,48 @@ export class TaskStateManager {
         reviewReason: contextReviewReason
       }
     });
+  }
+
+  private emitUnchangedTerminalStatus(
+    stateKey: string,
+    taskId: string,
+    eventType: string,
+    stateBefore: string,
+    stateAfter: string,
+    actor: TaskActor
+  ): void {
+    if (stateBefore !== stateAfter || !TERMINAL_EVENTS.has(eventType)) {
+      return;
+    }
+
+    const contextEntry = this.taskContextById.get(stateKey);
+    if (!contextEntry) {
+      return;
+    }
+
+    const snapshot = actor.getSnapshot();
+    const { status, reviewReason } = mapStateToLegacy(
+      stateAfter,
+      snapshot.context.reviewReason
+    );
+    const executionPhase = this.resolveExecutionPhaseForTransition(
+      stateAfter,
+      reviewReason,
+      stateBefore,
+      contextEntry.task
+    );
+
+    console.debug(
+      `[TaskStateManager] Re-emitting unchanged terminal status for ${taskId} after ${eventType}`
+    );
+    this.emitStatus(
+      stateKey,
+      taskId,
+      status,
+      reviewReason,
+      contextEntry.project.id,
+      executionPhase
+    );
   }
 
   private resolveExecutionPhaseForTransition(

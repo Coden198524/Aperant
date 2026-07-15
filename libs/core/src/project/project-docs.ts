@@ -1171,7 +1171,7 @@ function requireNonEmpty(value: string, name: string): string {
 
 function readLimitedTextFile(filePath: string, maxBytes: number): string {
   const content = readFileSync(filePath, 'utf8');
-  return limitUtf8Text(content, maxBytes, '\n...[truncated]');
+  return limitUtf8PrefixText(content, maxBytes, '\n...[truncated]');
 }
 
 function compactProjectDocReferenceContent(
@@ -1227,24 +1227,24 @@ function compactProjectDocReferenceContent(
   appendReferenceSection(
     compactLines,
     language === 'zh-CN' ? '\u5173\u952e\u6807\u9898' : 'Key headings',
-    selectHeadTailItems(headings, PROJECT_DOC_REFERENCE_HEADING_LIMIT),
+    selectLeadingItems(headings, PROJECT_DOC_REFERENCE_HEADING_LIMIT),
   );
   appendReferenceSection(
     compactLines,
     language === 'zh-CN' ? '\u6458\u8981' : 'Selected notes',
-    selectHeadTailItems(paragraphs, PROJECT_DOC_REFERENCE_PARAGRAPH_LIMIT),
+    selectLeadingItems(paragraphs, PROJECT_DOC_REFERENCE_PARAGRAPH_LIMIT),
   );
   appendReferenceSection(
     compactLines,
     language === 'zh-CN' ? '\u5173\u952e\u8981\u70b9' : 'Selected bullets',
-    selectHeadTailItems(bullets, PROJECT_DOC_REFERENCE_BULLET_LIMIT),
+    selectLeadingItems(bullets, PROJECT_DOC_REFERENCE_BULLET_LIMIT),
   );
 
   if (headings.length === 0 && bullets.length === 0 && paragraphs.length === 0) {
     compactLines.push(limitUtf8Text(normalized, Math.max(0, maxBytes - 80), '\n...[truncated]'));
   }
 
-  return limitUtf8Text(
+  return limitUtf8PrefixText(
     compactLines.join('\n').trimEnd(),
     maxBytes,
     `\n...[compact reference truncated; read ${relativePath}]`,
@@ -1269,23 +1269,11 @@ function appendReferenceSection(lines: string[], title: string, items: readonly 
   lines.push('');
 }
 
-function selectHeadTailItems(items: readonly string[], limit: number): string[] {
+function selectLeadingItems(items: readonly string[], limit: number): string[] {
   if (limit <= 0) {
     return [];
   }
-  if (items.length <= limit) {
-    return [...items];
-  }
-  if (limit === 1) {
-    return [items[0]];
-  }
-
-  const headCount = Math.ceil(limit * 0.6);
-  const tailCount = Math.max(0, limit - headCount);
-  return [
-    ...items.slice(0, headCount),
-    ...items.slice(items.length - tailCount),
-  ];
+  return items.slice(0, limit);
 }
 
 function pushUnique(items: string[], value: string): void {
@@ -1313,6 +1301,22 @@ function limitUtf8Text(content: string, maxBytes: number, suffix: string): strin
   const headBudget = Math.ceil(contentBudget * 0.65);
   const tailBudget = Math.max(0, contentBudget - headBudget);
   return `${takeUtf8Prefix(content, headBudget).trimEnd()}${suffix}${takeUtf8Suffix(content, tailBudget).trimStart()}`;
+}
+
+function limitUtf8PrefixText(content: string, maxBytes: number, suffix: string): string {
+  if (maxBytes <= 0) {
+    return '';
+  }
+  if (Buffer.byteLength(content, 'utf8') <= maxBytes) {
+    return content;
+  }
+
+  const suffixBytes = Buffer.byteLength(suffix, 'utf8');
+  const contentBudget = Math.max(0, maxBytes - suffixBytes);
+  if (contentBudget <= 0) {
+    return takeUtf8Prefix(content, maxBytes);
+  }
+  return `${takeUtf8Prefix(content, contentBudget).trimEnd()}${suffix}`;
 }
 
 function takeUtf8Prefix(content: string, maxBytes: number): string {

@@ -27,6 +27,8 @@ export interface AutocodeCoderKickoffSubtaskContext {
   title?: string;
   description?: string;
   architecture?: string;
+  designRefs?: string[];
+  designExcerpt?: string;
   phaseName?: string;
   filesToCreate: string[];
   filesToModify: string[];
@@ -95,6 +97,7 @@ export function findAutocodeSubtaskKickoffContext(
         title?: unknown;
         description?: unknown;
         architecture?: unknown;
+        design_refs?: unknown;
         files_to_create?: unknown;
         files_to_modify?: unknown;
         pattern_files?: unknown;
@@ -123,6 +126,7 @@ export function findAutocodeSubtaskKickoffContext(
         title: typeof subtaskRecord.title === 'string' ? subtaskRecord.title : undefined,
         description: typeof subtaskRecord.description === 'string' ? subtaskRecord.description : undefined,
         architecture: typeof subtaskRecord.architecture === 'string' ? subtaskRecord.architecture : undefined,
+        designRefs: toStringArray(subtaskRecord.design_refs),
         phaseName,
         filesToCreate: toStringArray(subtaskRecord.files_to_create),
         filesToModify: toStringArray(subtaskRecord.files_to_modify),
@@ -181,6 +185,9 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
     if (context.architecture) {
       lines.push(`- Architecture: ${context.architecture}`);
     }
+    if (context.designRefs?.length) {
+      lines.push(`- Binding design IDs: ${context.designRefs.join(', ')}`);
+    }
     if (context.upstreamTaskIds?.length) {
       lines.push(`- Source task IDs: ${context.upstreamTaskIds.join(', ')}`);
     }
@@ -203,6 +210,23 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
       const label = item.title ? `${item.id} ${item.title}` : item.id;
       lines.push(`- ${label}: ${item.summary}`);
     }
+  }
+
+  if (context?.designRefs?.length) {
+    lines.push('');
+    lines.push('## Binding Design Contract');
+    lines.push(`Referenced sections: ${context.designRefs.join(', ')}`);
+    if (context.designExcerpt) {
+      lines.push('');
+      lines.push(shortenForPrompt(context.designExcerpt, 6_000));
+    }
+    lines.push('');
+    lines.push('Before editing, perform a design preflight: map the target symbol to IMP-*, its SYS-* owner/interface, DES-* state/rule owner, FLOW-*/CONTRACT-* position, and any REV-* observed-source constraints.');
+    lines.push('- Follow subsystem ownership/interfaces/failure ownership, detailed responsibilities, collaborators, dependency directions, contracts, data/lifecycle/error behavior, runtime flows, engineering constraints, source evidence, and PAT-* decisions.');
+    lines.push('- Preserve the approved object, component, data-oriented, functional, procedural, or mixed paradigm, including explicit state/mutation authority, operations, lifetime, and FLOW ordering.');
+    lines.push('- Implement PAT-* only for its documented variation and stable boundary; never expand it by analogy.');
+    lines.push('- Do not add an unplanned layer, service, public interface, named pattern, dependency, persistence shape, or cross-module refactor.');
+    lines.push('- If the target is absent from IMP-*, source contradicts REV-*, or a material ownership/design change is required, stop with evidence so the task returns to planning. Do not improvise architecture.');
   }
 
   if (context?.evidence) {
@@ -433,18 +457,7 @@ function isDocumentationContext(context: AutocodeCoderKickoffSubtaskContext | nu
   }
 
   return /\b(documentation|document|docs|source analysis|code analysis|analysis report|technical report|investigation report)\b/.test(text) ||
-    /分析|文档|说明|调研|研究|报告|梳理|复核/u.test(text) ||
-    hasOnlyDocumentationOutputs(context);
-}
-
-function hasOnlyDocumentationOutputs(context: AutocodeCoderKickoffSubtaskContext | null): boolean {
-  const writeTargets = [
-    ...(context?.filesToCreate ?? []),
-    ...(context?.filesToModify ?? []),
-  ].filter((item) => item.trim().length > 0);
-
-  return writeTargets.length > 0 &&
-    writeTargets.every((item) => /\.(?:md|mdx|txt|rst|adoc)$/i.test(item.trim()));
+    /分析|文档|说明|调研|研究|报告|梳理|复核/u.test(text);
 }
 
 function hasNonDocumentationOutputs(context: AutocodeCoderKickoffSubtaskContext | null): boolean {

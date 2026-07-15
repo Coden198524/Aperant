@@ -10,9 +10,10 @@ import {
 } from './project-task-loader.js';
 
 function makeTask(overrides: Partial<AutocodeProjectTask> & { specId: string }): AutocodeProjectTask {
+  const { specId, ...taskOverrides } = overrides;
   return {
-    id: overrides.specId,
-    specId: overrides.specId,
+    id: specId,
+    specId,
     projectRoot: '/repo',
     title: 'Task',
     description: 'Task description',
@@ -20,10 +21,10 @@ function makeTask(overrides: Partial<AutocodeProjectTask> & { specId: string }):
     subtasks: [],
     logs: [],
     location: 'main',
-    specsPath: `/repo/.autocode/specs/${overrides.specId}`,
+    specsPath: `/repo/.autocode/specs/${specId}`,
     createdAt: '2026-06-19T00:00:00.000Z',
     updatedAt: '2026-06-19T00:00:00.000Z',
-    ...overrides,
+    ...taskOverrides,
   };
 }
 
@@ -904,16 +905,18 @@ describe('project task loading', () => {
       });
 
       expect(task.status).toBe('error');
-      expect(task.reviewReason).toBeUndefined();
+      expect(task.reviewReason).toBe('errors');
       expect(task.executionProgress?.phase).toBe('failed');
       expect(task.subtasks[0]?.status).toBe('failed');
       const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
       expect(rawPlan).toContain('Status: error');
+      expect(rawPlan).toContain('Review Reason: errors');
       expect(rawPlan).toContain('Execution Phase: failed');
       expect(rawPlan).toContain('"outcome":"failed"');
       expect(rawPlan).toContain('- [!] direct. Direct execution');
       expect(rawPlan).toContain('  - [!] direct-cr-20260701074920826 Direct Request Changes');
       expect(rawPlan).toContain('Direct validation failed.');
+      expect(rawPlan).toContain('_Updated: 2026-07-01T07:51:00.000Z_');
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
     }

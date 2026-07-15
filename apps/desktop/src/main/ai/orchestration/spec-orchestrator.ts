@@ -3,18 +3,18 @@
  * =================
  *
  * Drives Standard spec creation through complexity-first routing.
- * Balanced mode prefers the shortest safe path:
- *   - SIMPLE: local Standard light plan -> deterministic validation
- *   - STANDARD without research/self-critique: quick_spec -> deterministic validation
- *   - STANDARD with external facts: requirements -> research -> spec_writing -> planning -> deterministic validation
+ * Balanced mode keeps the Standard artifact chain while omitting optional
+ * discovery, research, and self-critique phases when they are unnecessary:
+ *   requirements -> spec_writing -> requirement_model -> domain_model -> design ->
+ *   design_model -> implementation_model -> design_review -> planning -> validation
  *   - COMPLEX or conservative/phased: fuller multi-phase planning with research/self-critique as needed
  *
  * After each phase, compact output summaries are carried forward so later phases
  * do not need broad redundant reads.
  */
 
-import { readFile, writeFile, access, readdir } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { readFile, writeFile, access, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { EventEmitter } from 'events';
 
 import type { AgentType } from '../config/agent-configs';
@@ -22,14 +22,15 @@ import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/proje
 import {
   AUTOCODE_TASK_ARTIFACTS,
   buildAutocodePlanQualityRetryPrompt,
+  buildAutocodeDesignQualityRetryPrompt,
   buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
   formatAutocodeRetryErrorLines,
-  isAutocodeProjectDataPath,
   saveAutocodeImplementationPlan,
   saveAutocodeTaskRequirementsSync,
+  selectAutocodeDesignRevisionStages,
   stringifyAutocodeContextMarkdown,
-  stringifyAutocodeImplementationPlanMarkdown,
   validateAutocodeStandardPlanArtifacts,
+  validateAutocodeStandardDesignStageArtifacts,
   type Phase,
 } from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
@@ -53,18 +54,12 @@ import type { WorkflowConfig } from './workflow-config';
 import { getRetryLimits, DEFAULT_WORKFLOW_CONFIG } from './workflow-config';
 import {
   inferAutocodeSpecComplexityFallback,
-  parseAutocodeProjectDocsReferenceSummary,
   selectAutocodeSpecPhases,
-  shouldForceSplitAutocodeImplementationPlan,
-  shouldRunAutocodeSpecResearchPhase,
 } from '@autocode/core/runtime/spec-orchestrator-strategy';
 
 // =============================================================================
 // Constants
 // =============================================================================
-
-/** Maximum retries for a single phase (configurable via WorkflowConfig) */
-const MAX_PHASE_RETRIES = 2;
 
 /** Maximum characters of a single phase output summary to carry forward. */
 const MAX_PHASE_OUTPUT_SIZE = 2_600;
@@ -97,8 +92,13 @@ export type SpecPhase =
   | 'spec_writing'
   | 'self_critique'
   | 'planning'
-  | 'validation'
-  | 'quick_spec';
+  | 'requirement_model'
+  | 'domain_model'
+  | 'design'
+  | 'design_model'
+  | 'implementation_model'
+  | 'design_review'
+  | 'validation';
 
 function formatSpecPhaseNameForLog(phase: SpecPhase, language?: SupportedLanguage): string {
   const labels: Record<SpecPhase, string> = language === 'zh-CN'
@@ -112,8 +112,13 @@ function formatSpecPhaseNameForLog(phase: SpecPhase, language?: SupportedLanguag
         spec_writing: '\u89c4\u683c\u6587\u6863',
         self_critique: '\u81ea\u6211\u5ba1\u67e5',
         planning: '\u4efb\u52a1\u8ba1\u5212',
+        requirement_model: '\u9700\u6c42\u6a21\u578b',
+        domain_model: '\u9886\u57df\u6a21\u578b',
+        design: '\u67b6\u6784\u51b3\u7b56',
+        design_model: '\u8bbe\u8ba1\u6a21\u578b',
+        implementation_model: '\u5b9e\u73b0\u6a21\u578b',
+        design_review: '\u72ec\u7acb\u8bbe\u8ba1\u8bc4\u5ba1',
         validation: '\u8ba1\u5212\u6821\u9a8c',
-        quick_spec: '\u6807\u51c6\u8f7b\u91cf\u89c4\u5212',
       }
     : {
         complexity_assessment: 'Complexity assessment',
@@ -125,8 +130,13 @@ function formatSpecPhaseNameForLog(phase: SpecPhase, language?: SupportedLanguag
         spec_writing: 'Specification writing',
         self_critique: 'Self critique',
         planning: 'Task planning',
+        requirement_model: 'Requirement model',
+        domain_model: 'Domain model',
+        design: 'Architecture decision',
+        design_model: 'Design model',
+        implementation_model: 'Implementation model',
+        design_review: 'Independent design review',
         validation: 'Plan validation',
-        quick_spec: 'Standard light planning',
       };
 
   return labels[phase] ?? phase.replace(/_/g, ' ');
@@ -143,19 +153,14 @@ const PHASE_AGENT_MAP: Record<SpecPhase, AgentType> = {
   spec_writing: 'spec_writer',
   self_critique: 'spec_critic',
   planning: 'planner',
+  requirement_model: 'software_designer',
+  domain_model: 'software_designer',
+  design: 'software_designer',
+  design_model: 'software_designer',
+  implementation_model: 'software_designer',
+  design_review: 'design_critic',
   validation: 'spec_validation',
-  quick_spec: 'spec_writer',
 } as const;
-
-type DocumentationProfile = 'general-source' | 'game-mmo-source';
-
-const GAME_MMO_DOCUMENTATION_FOCUS = [
-  'gameplay systems, progression loops, combat, quests, items, economy, social, and faction mechanics',
-  'client runtime, engine integration, rendering, animation, asset loading, world/scene streaming, and UI integration',
-  'server authority, simulation boundaries, network protocol, replication, synchronization, prediction, and reconciliation',
-  'data/config/content pipeline, persistence, account state, economy state, migrations, and tooling data contracts',
-  'GM/editor/production tools, build/release pipeline, performance budgets, security/anti-cheat, telemetry, and live operations',
-] as const;
 
 /** Maps each phase to the output files it typically produces */
 const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
@@ -166,8 +171,13 @@ const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
   context: [AUTOCODE_TASK_ARTIFACTS.context],
   spec_writing: ['spec.md'],
   self_critique: ['spec.md'],
+  requirement_model: [AUTOCODE_TASK_ARTIFACTS.requirementModel],
+  domain_model: [AUTOCODE_TASK_ARTIFACTS.domainModel],
+  design: [AUTOCODE_TASK_ARTIFACTS.design],
+  design_model: [AUTOCODE_TASK_ARTIFACTS.designModel],
+  implementation_model: [AUTOCODE_TASK_ARTIFACTS.implementationModel],
+  design_review: [AUTOCODE_TASK_ARTIFACTS.designReview],
   planning: [AUTOCODE_TASK_ARTIFACTS.tasks],
-  quick_spec: [AUTOCODE_TASK_ARTIFACTS.specFile, AUTOCODE_TASK_ARTIFACTS.tasks],
 };
 
 const STRUCTURED_JSON_PHASE_OUTPUTS: Partial<Record<SpecPhase, string>> = {
@@ -184,6 +194,51 @@ interface SpecState {
   completedPhases: SpecPhase[];
   lastUpdated: string;
 }
+
+const VALID_SPEC_PHASES: ReadonlySet<string> = new Set<SpecPhase>([
+  'discovery',
+  'requirements',
+  'complexity_assessment',
+  'historical_context',
+  'research',
+  'context',
+  'spec_writing',
+  'self_critique',
+  'planning',
+  'requirement_model',
+  'domain_model',
+  'design',
+  'design_model',
+  'implementation_model',
+  'design_review',
+  'validation',
+]);
+
+const VALID_COMPLEXITY_TIERS: ReadonlySet<string> = new Set<ComplexityTier>([
+  'simple',
+  'standard',
+  'complex',
+]);
+
+const STATE_PHASE_ARTIFACTS: Partial<Record<SpecPhase, readonly string[]>> = {
+  discovery: [AUTOCODE_TASK_ARTIFACTS.context],
+  requirements: [AUTOCODE_TASK_ARTIFACTS.requirements],
+  research: [AUTOCODE_TASK_ARTIFACTS.research],
+  context: [AUTOCODE_TASK_ARTIFACTS.context],
+  spec_writing: [AUTOCODE_TASK_ARTIFACTS.specFile],
+  self_critique: [AUTOCODE_TASK_ARTIFACTS.specFile],
+  requirement_model: [AUTOCODE_TASK_ARTIFACTS.requirementModel],
+  domain_model: [AUTOCODE_TASK_ARTIFACTS.domainModel],
+  design: [AUTOCODE_TASK_ARTIFACTS.design],
+  design_model: [AUTOCODE_TASK_ARTIFACTS.designModel],
+  implementation_model: [AUTOCODE_TASK_ARTIFACTS.implementationModel],
+  design_review: [AUTOCODE_TASK_ARTIFACTS.designReview],
+  planning: [
+    AUTOCODE_TASK_ARTIFACTS.tasks,
+    AUTOCODE_TASK_ARTIFACTS.implementationPlan,
+  ],
+  validation: ['spec_validation_report.md'],
+};
 
 /** Configuration for the spec orchestrator */
 export interface SpecOrchestratorConfig {
@@ -217,49 +272,6 @@ export interface SpecOrchestratorConfig {
   generatePrompt: (agentType: AgentType, phase: SpecPhase, context: SpecPromptContext) => Promise<string>;
   /** Callback to run an agent session */
   runSession: (config: SpecSessionRunConfig) => Promise<SessionResult>;
-}
-
-interface StandardLightPlan {
-  specMarkdown: string;
-  implementationPlan: {
-    feature: string;
-    workflow_type: string;
-    phases: Array<{
-      id: string;
-      phase: number;
-      name: string;
-      depends_on: string[];
-      subtasks: Array<{
-        id: string;
-        title: string;
-        description: string;
-        status: 'pending';
-        files_to_create?: string[];
-        files_to_modify?: string[];
-        pattern_files?: string[];
-        requirements?: string[];
-        evidence?: string;
-        verification: {
-          type: string;
-          run: string;
-          scenario?: string;
-        };
-      }>;
-    }>;
-    documentation_depth?: 'standard' | 'deep' | 'architecture';
-    project_type?: ProjectAgentProfile['id'];
-    documentation_profile?: DocumentationProfile;
-    documentation_focus?: string[];
-    document_outputs?: {
-      final_markdown: string;
-      outline: string;
-      evidence_index: string;
-    };
-    source_task: {
-      original_request: string;
-      constraint_terms: string[];
-    };
-  };
 }
 
 /** Context passed to prompt generation */
@@ -359,36 +371,6 @@ interface FallbackComplexityAssessment {
   reasoning: string;
   needs_research?: boolean;
   needs_self_critique?: boolean;
-}
-
-interface MinimalPlanSubtask {
-  id?: string;
-  title?: string;
-  description?: string;
-  status?: string;
-  files_to_create?: string[];
-  files_to_modify?: string[];
-  requirements?: string[];
-  upstream_task_ids?: string[];
-  work_package?: boolean;
-  verification?: {
-    type?: string;
-    run?: string;
-    scenario?: string;
-  };
-  [key: string]: unknown;
-}
-
-interface MinimalPlanPhase {
-  id?: string | number;
-  phase?: number;
-  name?: string;
-  subtasks?: MinimalPlanSubtask[];
-  [key: string]: unknown;
-}
-
-interface MutableImplementationPlan extends Record<string, unknown> {
-  phases?: MinimalPlanPhase[];
 }
 
 function hasExecutableSubtasks(plan: MinimalImplementationPlan | null): boolean {
@@ -504,722 +486,6 @@ function compactSpecArtifactTaskDescription(taskDescription: string | undefined)
   ].join('');
 }
 
-function oneLine(value: string, maxLength: number): string {
-  const compact = value.replace(/\s+/g, ' ').trim();
-  return compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
-}
-
-function escapeMarkdownTableCell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
-}
-
-const CONSTRAINT_TERM_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
-  { label: 'C++', pattern: /c\+\+|cpp|cxx/i },
-  { label: 'C', pattern: /(?:^|[^\w+#])c(?:$|[^\w+#])|clang|gcc/i },
-  { label: 'Python', pattern: /python|py\b/i },
-  { label: 'JavaScript', pattern: /javascript|js\b/i },
-  { label: 'TypeScript', pattern: /typescript|ts\b/i },
-  { label: 'Java', pattern: /java\b/i },
-  { label: 'Go', pattern: /go\b|golang/i },
-  { label: 'Rust', pattern: /rust|cargo/i },
-  { label: 'C#', pattern: /c#|csharp|\.net/i },
-  { label: 'Web', pattern: /html|web|\u7f51\u9875|\u9875\u9762|\u6d4f\u89c8\u5668/i },
-  { label: 'Console', pattern: /console|\u63a7\u5236\u53f0/i },
-  { label: 'Desktop', pattern: /desktop|electron|\u684c\u9762/i },
-  { label: 'Mobile', pattern: /mobile|android|ios|\u79fb\u52a8/i },
-  { label: 'CLI', pattern: /\bcli\b|command line|\u547d\u4ee4\u884c/i },
-];
-
-function extractConstraintTerms(taskDescription: string): string[] {
-  return CONSTRAINT_TERM_PATTERNS
-    .filter((item) => item.pattern.test(taskDescription))
-    .map((item) => item.label);
-}
-
-function buildConstraintReminder(task: string, language?: SupportedLanguage): string {
-  const terms = extractConstraintTerms(task);
-  if (terms.length === 0) {
-    return '';
-  }
-
-  const termList = terms.join(', ');
-  return language === 'zh-CN'
-    ? `必须保持原始请求中的技术/平台约束：${termList}。不要改成其他语言、运行环境或交付形态，除非用户明确要求。`
-    : `Preserve the original technical/platform constraints: ${termList}. Do not switch language, runtime, or delivery format unless the user explicitly asked for it.`;
-}
-
-const COMMON_LOW_VALUE_ROOT_FILES = new Set([
-  'task_logs.jsonl',
-  'task_metadata.json',
-  AUTOCODE_TASK_ARTIFACTS.requirements,
-  AUTOCODE_TASK_ARTIFACTS.implementationPlan,
-  'spec.md',
-]);
-
-const DOCUMENTATION_SOURCE_FILE_EXTENSIONS = new Set([
-  '.c', '.cc', '.cpp', '.cxx', '.h', '.hpp',
-  '.cs', '.java', '.kt', '.go', '.rs', '.py',
-  '.js', '.jsx', '.ts', '.tsx', '.vue', '.svelte',
-]);
-
-const DOCUMENTATION_ENTRY_FILE_NAMES = [
-  'main', 'index', 'app', 'application', 'program', 'server', 'client',
-  'game', 'engine', 'core',
-];
-
-const DOCUMENTATION_SUPPORT_FILES = ['doc_outline.md', 'evidence_index.md'];
-
-const SOURCE_FILE_EXTENSIONS = new Set([
-  '.ts',
-  '.tsx',
-  '.js',
-  '.jsx',
-  '.mjs',
-  '.cjs',
-  '.cpp',
-  '.cc',
-  '.cxx',
-  '.c',
-  '.h',
-  '.hpp',
-  '.html',
-  '.css',
-  '.scss',
-  '.py',
-  '.java',
-  '.cs',
-  '.go',
-  '.rs',
-  '.php',
-  '.rb',
-  '.swift',
-  '.kt',
-]);
-
-function extensionOf(fileName: string): string {
-  const dot = fileName.lastIndexOf('.');
-  return dot >= 0 ? fileName.slice(dot).toLowerCase() : '';
-}
-
-const EXPLICIT_FILE_PATTERN = /(?:^|[\s`"'([{,:;])([A-Za-z0-9_@./-]+\.[A-Za-z0-9]{1,12})(?=$|[\s`"'\])},:;.!?])/g;
-
-const CREATE_TARGET_RULES: Array<{
-  pattern: RegExp;
-  files: string[];
-}> = [
-  { pattern: /(readme|docs?|documentation|\u6587\u6863|\u8bf4\u660e)/i, files: ['README.md'] },
-  { pattern: /(html|web|\u7f51\u9875|\u9875\u9762|\u6d4f\u89c8\u5668)/i, files: ['index.html'] },
-  { pattern: /(react|vite)/i, files: ['package.json', 'src/App.tsx'] },
-  { pattern: /(node|express|javascript|js\b)/i, files: ['package.json', 'src/index.js'] },
-  { pattern: /(typescript|ts\b)/i, files: ['package.json', 'src/index.ts'] },
-  { pattern: /(python|py\b)/i, files: ['main.py'] },
-  { pattern: /(go\b|golang)/i, files: ['go.mod', 'main.go'] },
-  { pattern: /(rust|cargo)/i, files: ['Cargo.toml', 'src/main.rs'] },
-  { pattern: /(java\b|maven|gradle)/i, files: ['src/main/java/Main.java'] },
-  { pattern: /(c#|csharp|\.net)/i, files: ['Program.cs'] },
-  { pattern: /(c\+\+|cpp|cxx|\u63a7\u5236\u53f0|console)/i, files: ['CMakeLists.txt', 'src/main.cpp'] },
-  { pattern: /(\bc\b|clang|gcc)/i, files: ['CMakeLists.txt', 'src/main.c'] },
-  { pattern: /(shell|bash|sh\b)/i, files: ['script.sh'] },
-  { pattern: /(powershell|pwsh|ps1)/i, files: ['script.ps1'] },
-];
-
-function extractExplicitTaskFiles(taskDescription: string): string[] {
-  const files: string[] = [];
-  const normalized = taskDescription.replace(/\\/g, '/');
-  for (const match of normalized.matchAll(EXPLICIT_FILE_PATTERN)) {
-    const file = match[1]?.replace(/^\.?\//, '').trim();
-    if (!file || isAutocodeProjectDataPath(file)) {
-      continue;
-    }
-    const lower = file.toLowerCase();
-    if (COMMON_LOW_VALUE_ROOT_FILES.has(lower)) {
-      continue;
-    }
-    files.push(file);
-  }
-  return uniqueStrings(files);
-}
-
-function inferAggressiveCreateFiles(taskDescription: string, patternFiles: string[]): string[] {
-  if (patternFiles.length > 0) {
-    return [];
-  }
-
-  const task = normalizeTaskDescription(taskDescription);
-  const explicitFiles = extractExplicitTaskFiles(task);
-  if (explicitFiles.length > 0) {
-    return explicitFiles.slice(0, 4);
-  }
-
-  const matched = CREATE_TARGET_RULES.find((rule) => rule.pattern.test(task));
-  return matched ? matched.files : [];
-}
-
-function _scoreAggressiveRootCandidate(fileName: string, task: string): number {
-  const lower = fileName.toLowerCase();
-  const ext = extensionOf(lower);
-  let score = 0;
-
-  if (COMMON_LOW_VALUE_ROOT_FILES.has(lower)) {
-    score -= 10;
-  }
-  if (SOURCE_FILE_EXTENSIONS.has(ext)) {
-    score += 8;
-  }
-  if (lower === 'package.json') {
-    score += 6;
-  }
-  if (lower === 'index.html' || lower.startsWith('main.') || lower.startsWith('app.')) {
-    score += 5;
-  }
-  if (lower.startsWith('readme.')) {
-    score += 1;
-  }
-
-  if (/\b(c\+\+|cpp|cxx|控制台|console)\b/i.test(task)) {
-    if (['.cpp', '.cc', '.cxx', '.h', '.hpp', '.c'].includes(ext)) score += 12;
-    if (lower.startsWith('main.')) score += 4;
-  }
-  if (/\b(html|web|网页|页面|浏览器)\b/i.test(task)) {
-    if (['.html', '.css', '.js', '.ts'].includes(ext)) score += 10;
-    if (lower === 'index.html') score += 5;
-  }
-  if (/\b(readme|文档|说明)\b/i.test(task) && lower.startsWith('readme.')) {
-    score += 12;
-  }
-
-  return score;
-}
-
-function scoreLocalizedAggressiveRootCandidate(fileName: string, task: string): number {
-  const lower = fileName.toLowerCase();
-  const ext = extensionOf(lower);
-  let score = 0;
-
-  if (COMMON_LOW_VALUE_ROOT_FILES.has(lower)) {
-    score -= 10;
-  }
-  if (SOURCE_FILE_EXTENSIONS.has(ext)) {
-    score += 8;
-  }
-  if (lower === 'package.json') {
-    score += 6;
-  }
-  if (lower === 'index.html' || lower.startsWith('main.') || lower.startsWith('app.')) {
-    score += 5;
-  }
-  if (lower.startsWith('readme.')) {
-    score += 1;
-  }
-
-  if (/(c\+\+|cpp|cxx|console|\u63a7\u5236\u53f0)/i.test(task)) {
-    if (['.cpp', '.cc', '.cxx', '.h', '.hpp', '.c'].includes(ext)) score += 12;
-    if (lower.startsWith('main.')) score += 4;
-  }
-  if (/(html|web|\u7f51\u9875|\u9875\u9762|\u6d4f\u89c8\u5668)/i.test(task)) {
-    if (['.html', '.css', '.js', '.ts'].includes(ext)) score += 10;
-    if (lower === 'index.html') score += 5;
-  }
-  if (/(readme|\u6587\u6863|\u8bf4\u660e)/i.test(task) && lower.startsWith('readme.')) {
-    score += 12;
-  }
-
-  return score;
-}
-
-async function inferAggressivePatternFiles(projectDir: string, taskDescription: string): Promise<string[]> {
-  try {
-    const task = normalizeTaskDescription(taskDescription);
-    const entries = await readdir(projectDir, { withFileTypes: true });
-    const rootFileHints = entries
-      .filter((entry) => entry.isFile())
-      .map((entry) => ({
-        name: entry.name,
-        score: scoreLocalizedAggressiveRootCandidate(entry.name, task),
-      }))
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-      .slice(0, 4)
-      .map((entry) => entry.name);
-
-    if (!isSourceDocumentationTask(taskDescription)) {
-      return rootFileHints;
-    }
-
-    const sourceDirs = entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .filter((name) => /^(src|source|sources|lib|include|app|apps|packages|core|engine)$/i.test(name))
-      .slice(0, 3);
-    const sourceFileHints = await inferDocumentationSourceFileHints(projectDir, sourceDirs);
-
-    const manifestHints = entries
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name)
-      .filter((name) => /^(package\.json|tsconfig\.json|vite\.config\.[cm]?[jt]s|CMakeLists\.txt|Makefile|Cargo\.toml|go\.mod|pyproject\.toml|pom\.xml|build\.gradle|settings\.gradle)$/i.test(name))
-      .slice(0, 3);
-
-    return Array.from(new Set([...manifestHints, ...rootFileHints, ...sourceFileHints])).slice(0, 8);
-  } catch {
-    return [];
-  }
-}
-
-async function inferDocumentationSourceFileHints(projectDir: string, sourceDirs: string[]): Promise<string[]> {
-  const hints: Array<{ path: string; score: number }> = [];
-  for (const dir of sourceDirs) {
-    try {
-      const entries = await readdir(join(projectDir, dir), { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isFile()) {
-          continue;
-        }
-        const ext = extname(entry.name).toLowerCase();
-        if (!DOCUMENTATION_SOURCE_FILE_EXTENSIONS.has(ext)) {
-          continue;
-        }
-        const base = entry.name.slice(0, entry.name.length - ext.length).toLowerCase();
-        const entryScore = DOCUMENTATION_ENTRY_FILE_NAMES.some((name) => base === name || base.includes(name)) ? 20 : 0;
-        const headerScore = ['.h', '.hpp'].includes(ext) ? 5 : 0;
-        hints.push({
-          path: `${dir}/${entry.name}`,
-          score: entryScore + headerScore,
-        });
-      }
-    } catch {
-    }
-  }
-
-  return hints
-    .filter((hint) => hint.score > 0)
-    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
-    .slice(0, 5)
-    .map((hint) => hint.path);
-}
-
-function _buildAggressiveStandardLightPlan(
-  taskDescription: string | undefined,
-  language?: SupportedLanguage,
-  patternFiles: string[] = [],
-): StandardLightPlan {
-  const task = normalizeTaskDescription(taskDescription);
-  const feature = oneLine(task, 120);
-  const title = language === 'zh-CN' ? '实现完整任务' : 'Implement complete task';
-  const phaseName = language === 'zh-CN' ? '实现' : 'Implementation';
-  const verificationRun = language === 'zh-CN'
-    ? '根据项目类型运行最小可用验证；若没有自动化验证，说明已完成的人工检查。'
-    : 'Run the smallest available project-specific verification; if none exists, describe the manual check completed.';
-  const specMarkdown = [
-    `# Specification: ${feature}`,
-    '',
-    '## Overview',
-    task,
-    '',
-    '## Workflow Type',
-    '**Type**: simple',
-    '',
-    '## Scope',
-    `- ${escapeMarkdownTableCell(task)}`,
-    '',
-    '## Implementation Notes',
-    '- Standard light mode uses one focused coder session.',
-    '- The coder should inspect only files directly needed for the task.',
-    '- No new design pattern is required unless the existing code clearly demands it.',
-    '',
-    '## Success Criteria',
-    '- Requested behavior is implemented.',
-    '- A targeted verification or clear manual check is recorded.',
-    '',
-  ].join('\n');
-
-  return {
-    specMarkdown,
-    implementationPlan: {
-      feature,
-      workflow_type: 'simple',
-      phases: [
-        {
-          id: '1',
-          phase: 1,
-          name: phaseName,
-          depends_on: [],
-          subtasks: [
-            {
-              id: '1.1',
-              title,
-              description: [
-                task,
-                '',
-                'Implement the complete requested change in one focused coding session. Read only directly relevant files before editing.',
-                'Done when: Requested behavior is complete and focused verification is recorded.',
-              ].join('\n'),
-              status: 'pending',
-              files_to_create: [],
-              files_to_modify: [],
-              ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
-              requirements: ['1.1'],
-              evidence: 'spec.md scope and user task description',
-              verification: {
-                type: 'manual',
-                run: verificationRun,
-              },
-            },
-          ],
-        },
-      ],
-      source_task: {
-        original_request: task,
-        constraint_terms: extractConstraintTerms(task),
-      },
-    },
-  };
-}
-
-function buildLocalizedAggressiveStandardLightPlan(
-  taskDescription: string | undefined,
-  language?: SupportedLanguage,
-  patternFiles: string[] = [],
-): StandardLightPlan {
-  const task = normalizeTaskDescription(taskDescription);
-  const filesToCreate = inferAggressiveCreateFiles(task, patternFiles);
-  const feature = oneLine(task, 120);
-  const isChinese = language === 'zh-CN';
-  const title = isChinese ? '\u5b9e\u73b0\u5b8c\u6574\u4efb\u52a1' : 'Implement complete task';
-  const phaseName = isChinese ? '\u5b9e\u73b0' : 'Implementation';
-  const verificationRun = isChinese
-    ? '\u6839\u636e\u9879\u76ee\u7c7b\u578b\u8fd0\u884c\u6700\u5c0f\u53ef\u7528\u9a8c\u8bc1\uff1b\u82e5\u6ca1\u6709\u81ea\u52a8\u5316\u9a8c\u8bc1\uff0c\u8bf4\u660e\u5df2\u5b8c\u6210\u7684\u4eba\u5de5\u68c0\u67e5\u3002'
-    : 'Run the smallest available project-specific verification; if none exists, describe the manual check completed.';
-  const implementationInstruction = isChinese
-    ? '\u7528\u4e00\u6b21\u805a\u7126\u7684\u7f16\u7801\u4f1a\u8bdd\u5b8c\u6210\u6574\u4e2a\u8bf7\u6c42\u3002\u7f16\u8f91\u524d\u53ea\u9605\u8bfb\u4e0e\u4efb\u52a1\u76f4\u63a5\u76f8\u5173\u7684\u6587\u4ef6\u3002'
-    : 'Implement the complete requested change in one focused coding session. Read only directly relevant files before editing.';
-  const constraintReminder = buildConstraintReminder(task, language);
-  const specMarkdown = isChinese
-    ? [
-        `# \u89c4\u683c\uff1a${feature}`,
-        '',
-        '## \u6982\u8ff0',
-        task,
-        '',
-        '## \u5de5\u4f5c\u6d41\u7c7b\u578b',
-        '**\u7c7b\u578b**\uff1a\u7b80\u5355',
-        '',
-        '## \u8303\u56f4',
-        `- ${escapeMarkdownTableCell(task)}`,
-        '',
-        '## \u5b9e\u73b0\u8981\u70b9',
-        '- \u6807\u51c6\u8f7b\u91cf\u6a21\u5f0f\u4f7f\u7528\u4e00\u6b21\u805a\u7126\u7684\u7f16\u7801\u4f1a\u8bdd\u3002',
-        '- \u7f16\u7801\u667a\u80fd\u4f53\u53ea\u5e94\u68c0\u67e5\u4e0e\u4efb\u52a1\u76f4\u63a5\u76f8\u5173\u7684\u6587\u4ef6\u3002',
-        ...(constraintReminder ? [`- ${constraintReminder}`] : []),
-        '- \u9664\u975e\u73b0\u6709\u4ee3\u7801\u660e\u786e\u9700\u8981\uff0c\u5426\u5219\u4e0d\u5f15\u5165\u65b0\u8bbe\u8ba1\u6a21\u5f0f\u3002',
-        '',
-        '## \u6210\u529f\u6807\u51c6',
-        '- \u5df2\u5b9e\u73b0\u7528\u6237\u8bf7\u6c42\u7684\u884c\u4e3a\u3002',
-        '- \u5df2\u8bb0\u5f55\u6709\u9488\u5bf9\u6027\u7684\u9a8c\u8bc1\u6216\u4eba\u5de5\u68c0\u67e5\u7ed3\u679c\u3002',
-        '',
-      ].join('\n')
-    : [
-        `# Specification: ${feature}`,
-        '',
-        '## Overview',
-        task,
-        '',
-        '## Workflow Type',
-        '**Type**: simple',
-        '',
-        '## Scope',
-        `- ${escapeMarkdownTableCell(task)}`,
-        '',
-        '## Implementation Notes',
-        '- Standard light mode uses one focused coder session.',
-        '- The coder should inspect only files directly needed for the task.',
-        ...(constraintReminder ? [`- ${constraintReminder}`] : []),
-        '- No new design pattern is required unless the existing code clearly demands it.',
-        '',
-        '## Success Criteria',
-        '- Requested behavior is implemented.',
-        '- A targeted verification or clear manual check is recorded.',
-        '',
-      ].join('\n');
-
-  return {
-    specMarkdown,
-    implementationPlan: {
-      feature,
-      workflow_type: 'simple',
-      phases: [
-        {
-          id: '1',
-          phase: 1,
-          name: phaseName,
-          depends_on: [],
-          subtasks: [
-            {
-              id: '1.1',
-              title,
-              description: [
-                task,
-                '',
-                implementationInstruction,
-                ...(constraintReminder ? ['', constraintReminder] : []),
-                'Done when: Requested behavior is complete and focused verification is recorded.',
-              ].join('\n'),
-              status: 'pending',
-              files_to_create: filesToCreate,
-              files_to_modify: [],
-              ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
-              requirements: ['1.1'],
-              evidence: 'spec.md scope and user task description',
-              verification: {
-                type: 'manual',
-                run: verificationRun,
-              },
-            },
-          ],
-        },
-      ],
-      source_task: {
-        original_request: task,
-        constraint_terms: extractConstraintTerms(task),
-      },
-    },
-  };
-}
-
-function inferDocumentationOutputFile(task: string): string {
-  const markdownPath = task.match(/(?:^|[\s"'`(（])([A-Za-z0-9_./-]+\.md)(?=$|[\s"'`)），。；;])/i)?.[1];
-  if (markdownPath) {
-    return markdownPath.replace(/\\/g, '/');
-  }
-  if (/\breadme\b|README/i.test(task)) {
-    return 'README.md';
-  }
-  return 'docs/analysis.md';
-}
-
-function inferDocumentationDepth(task: string): 'standard' | 'deep' | 'architecture' {
-  if (/\b(architecture|system design|large[-\s]?scale|end-to-end|deep|comprehensive)\b/i.test(task) ||
-    /(\u67b6\u6784|\u7cfb\u7edf\u8bbe\u8ba1|\u5927\u578b|\u5b8c\u6574|\u6df1\u5ea6|\u5168\u9762)/.test(task)) {
-    return 'architecture';
-  }
-  if (/\b(source analysis|code analysis|implementation analysis|flow|data flow|call chain)\b/i.test(task) ||
-    /(\u6e90\u7801\u5206\u6790|\u4ee3\u7801\u5206\u6790|\u5b9e\u73b0\u5206\u6790|\u6d41\u7a0b|\u6570\u636e\u6d41|\u8c03\u7528\u94fe)/.test(task)) {
-    return 'deep';
-  }
-  return 'standard';
-}
-
-function getDocumentationQualityGuidance(
-  outputFile: string,
-  depth: 'standard' | 'deep' | 'architecture',
-  language?: SupportedLanguage,
-): string[] {
-  if (language === 'zh-CN') {
-    return [
-      `文档深度：${depth}。`,
-      '先写 `doc_outline.md`：包含文档类型、目标读者、章节列表、每节要回答的问题、预计引用的文件。',
-      '再写 `evidence_index.md`：记录已阅读文件、每个关键结论的证据文件、推断项和未确认项。',
-      `最后写 \`${outputFile}\`：按大纲生成结构化 Markdown。`,
-      '最终 Markdown 必须包含：概览、范围、关键文件/模块、核心流程、数据/状态流、边界与风险、未确认项。',
-      '关键结论要标明来源文件；事实、推断、风险要分开写。',
-      '可以使用表格、流程列表和短小 Mermaid 图；不要复制大段源码。',
-    ];
-  }
-
-  return [
-    `Documentation depth: ${depth}.`,
-    'First write `doc_outline.md` with document type, audience, sections, questions each section answers, and planned source references.',
-    'Then write `evidence_index.md` as a claim-to-source ledger with files read, subsystem, evidence-backed claims, confidence, inferred/unverified claims, uncovered areas, and open questions.',
-    `Finally write \`${outputFile}\` as structured Markdown from the outline and evidence.`,
-    'Final Markdown must include: overview, scope, source evidence matrix, key files/modules, entry points, module ownership, public interfaces, core flows, data/state flow, boundaries and risks, and open questions.',
-    'Cite concrete source/config paths for important claims; separate facts, inferences, and risks.',
-    'Do not rely on README/manifests alone; follow imports/routes/IPC/API/schema/config/test/build evidence until ownership and flows are clear.',
-    'Use tables, flow lists, and small Mermaid diagrams where useful; do not copy large source blocks.',
-  ];
-}
-
-function getDocumentationProfile(agentProfile?: ProjectAgentProfile): DocumentationProfile {
-  return agentProfile?.id === 'game-mmo' ? 'game-mmo-source' : 'general-source';
-}
-
-function getGameMmoDocumentationQualityGuidance(language?: SupportedLanguage): string[] {
-  if (language === 'zh-CN') {
-    return [
-      '游戏项目必须按大型网络游戏专业维度组织：玩法系统、客户端/引擎、服务端权威、网络同步、数据配置/持久化、工具链、性能、安全反作弊、运营。',
-      '每个重要系统要说明：入口文件、运行时归属、关键数据、状态变化、跨端协议/同步边界、配置来源、生产工具入口、风险和待验证点。',
-      '文档要区分策划数值/内容配置、客户端表现、服务端判定、网络协议、存档/经济状态和 GM/运营工具，避免把不同层混在一起。',
-      '优先输出系统矩阵、跨端流程、数据生命周期、状态机/时序图、协议/配置证据表，以及性能和安全关注点。',
-    ];
-  }
-
-  return [
-    'For game projects, structure the document around large-online-game dimensions: gameplay systems, client/engine, server authority, network sync, data/config/persistence, tooling, performance, security/anti-cheat, and live operations.',
-    'For each important system, identify entry files, runtime ownership, key data, state transitions, cross-end protocol/sync boundaries, configuration sources, production-tool entry points, risks, and open questions.',
-    '`evidence_index.md` needs concrete source/config paths for each major system where present; if a domain is absent, mark it as not found or uncovered instead of guessing.',
-    'The final document must include a system matrix with source entry points, runtime owner, authoritative side, protocol/config/data path, verification hooks, risks, and open questions.',
-    'Separate design/content data, client presentation, server adjudication, network protocol, save/economy state, and GM/liveops tools instead of merging them into one generic flow.',
-    'Prefer system matrices, cross-end flows, data lifecycle notes, state/sequence diagrams, protocol/config evidence tables, and performance/security notes.',
-  ];
-}
-
-function getProfiledDocumentationQualityGuidance(
-  outputFile: string,
-  depth: 'standard' | 'deep' | 'architecture',
-  language: SupportedLanguage | undefined,
-  profile: DocumentationProfile,
-): string[] {
-  const guidance = getDocumentationQualityGuidance(outputFile, depth, language);
-  return profile === 'game-mmo-source'
-    ? [...guidance, ...getGameMmoDocumentationQualityGuidance(language)]
-    : guidance;
-}
-
-function buildSourceDocumentationStandardLightPlan(
-  taskDescription: string | undefined,
-  language?: SupportedLanguage,
-  patternFiles: string[] = [],
-  agentProfile?: ProjectAgentProfile,
-): StandardLightPlan {
-  const task = normalizeTaskDescription(taskDescription);
-  const feature = oneLine(task, 120);
-  const outputFile = inferDocumentationOutputFile(task);
-  const documentationDepth = inferDocumentationDepth(task);
-  const documentationProfile = getDocumentationProfile(agentProfile);
-  const isGameMmoDocumentation = documentationProfile === 'game-mmo-source';
-  const qualityGuidance = getProfiledDocumentationQualityGuidance(
-    outputFile,
-    documentationDepth,
-    language,
-    documentationProfile,
-  );
-  const isChinese = language === 'zh-CN';
-  const phaseName = isChinese ? '\u6587\u6863\u5206\u6790' : 'Documentation analysis';
-  const title = isChinese ? '\u5206\u6790\u6e90\u7801\u5e76\u751f\u6210\u6587\u6863' : 'Analyze source and generate documentation';
-  const outputHint = isChinese
-    ? `\u751f\u6210\u6216\u66f4\u65b0\u7528\u6237\u8981\u6c42\u7684 Markdown \u6587\u6863\u3002\u672a\u6307\u5b9a\u8f93\u51fa\u6587\u4ef6\u65f6\u4f7f\u7528 ${outputFile}\u3002\u540c\u65f6\u751f\u6210 doc_outline.md \u548c evidence_index.md\u3002`
-    : `Create or update the requested Markdown document. When no output file is specified, use ${outputFile}. Also create doc_outline.md and evidence_index.md.`;
-  const readRule = isChinese
-    ? '\u53ea\u505a\u6587\u6863\u5206\u6790\uff0c\u4e0d\u4fee\u6539\u4ea7\u54c1\u4ee3\u7801\u3002\u5148\u7528\u9879\u76ee\u6587\u6863\u53c2\u8003\u548c\u7528\u6237\u6307\u5b9a\u6587\u4ef6\u5b9a\u4f4d\u8303\u56f4\uff0c\u518d\u6cbf\u5165\u53e3\u3001\u516c\u5171\u63a5\u53e3\u3001\u914d\u7f6e\u548c\u6838\u5fc3\u8c03\u7528\u94fe\u6269\u5c55\u8bc1\u636e\u3002'
-    : 'This is documentation analysis only; do not modify product code. Use the project documentation reference and user-specified files to narrow scope, but do not stop at README/manifests; expand evidence through entry points, public interfaces, imports/routes/IPC/API/schema/config/test/build files, and core call chains.';
-  const verificationRun = isChinese
-    ? `\u786e\u8ba4 ${outputFile}\u3001doc_outline.md \u548c evidence_index.md \u5df2\u751f\u6210\uff0cMarkdown \u5305\u542b\u7ed3\u6784\u5316\u6e90\u7801\u5206\u6790\u3001\u8bc1\u636e\u6587\u4ef6\u3001\u6d41\u7a0b/\u6570\u636e\u6d41\u548c\u672a\u786e\u8ba4\u9879\u3002\u4e0d\u8981\u4e3a\u7eaf\u6587\u6863\u4efb\u52a1\u8fd0\u884c\u7f16\u8bd1\u6216 QA\u3002`
-    : `Confirm ${outputFile}, doc_outline.md, and evidence_index.md exist; evidence_index.md cites concrete source/config paths; Markdown contains structured source analysis, source evidence matrix, flows/data flow, and open questions. Do not run build or QA for documentation-only tasks.`;
-  const profileSpecLines = isGameMmoDocumentation
-    ? isChinese
-      ? [
-          '- 文档画像：大型网络游戏 / MMO 源码专业分析。',
-          '- 重点覆盖：玩法系统、客户端/引擎、服务端权威、网络同步、数据配置/持久化、工具链、性能、安全反作弊、运营。',
-        ]
-      : [
-          '- Documentation profile: large online game / MMO source analysis.',
-          '- Cover gameplay systems, client/engine, server authority, network sync, data/config/persistence, tooling, performance, security/anti-cheat, and live operations.',
-        ]
-    : [];
-  const specMarkdown = isChinese
-    ? [
-        `# \u6587\u6863\u5206\u6790\u4efb\u52a1\uff1a${feature}`,
-        '',
-        '## \u76ee\u6807',
-        task,
-        '',
-        '## \u8303\u56f4',
-        `- \u8f93\u51fa Markdown \u6587\u6863\uff1a\`${outputFile}\`\u3002`,
-        '- \u8f93\u51fa\u652f\u6491\u6587\u4ef6\uff1a`doc_outline.md`\u3001`evidence_index.md`\u3002',
-        `- \u6587\u6863\u6df1\u5ea6\uff1a${documentationDepth}\u3002`,
-        '- \u9605\u8bfb\u8db3\u591f\u7684\u5173\u952e\u6e90\u7801\u6587\u4ef6\uff0c\u652f\u6301\u7ed3\u8bba\u53ef\u8ffd\u6eaf\u3002',
-        '- \u4e0d\u505a\u4ea7\u54c1\u4ee3\u7801\u6539\u52a8\u3002',
-        ...profileSpecLines,
-        '',
-        '## \u8d28\u91cf\u6807\u51c6',
-        ...qualityGuidance.map((item) => `- ${item}`),
-        '',
-        '## \u9a8c\u6536',
-        '- \u6587\u6863\u5df2\u751f\u6210\u6216\u66f4\u65b0\u3002',
-        '- \u6587\u6863\u5305\u542b\u4ee3\u7801\u8bc1\u636e\u3001\u6838\u5fc3\u6d41\u7a0b\u3001\u8fb9\u754c\u98ce\u9669\u548c\u672a\u786e\u8ba4\u9879\u3002',
-        '',
-      ].join('\n')
-    : [
-        `# Documentation Analysis Task: ${feature}`,
-        '',
-        '## Goal',
-        task,
-        '',
-        '## Scope',
-        `- Output Markdown documentation: \`${outputFile}\`.`,
-        '- Output support files: `doc_outline.md`, `evidence_index.md`.',
-        `- Documentation depth: ${documentationDepth}.`,
-        '- Read enough key source files to make conclusions traceable.',
-        '- Cite concrete source/config file paths for major claims.',
-        '- Do not change product code.',
-        ...profileSpecLines,
-        '',
-        '## Quality Standard',
-        ...qualityGuidance.map((item) => `- ${item}`),
-        '',
-        '## Acceptance',
-        '- Documentation is created or updated.',
-        '- The document includes code evidence, core flows, boundaries/risks, and open questions.',
-        '',
-      ].join('\n');
-
-  return {
-    specMarkdown,
-    implementationPlan: {
-      feature,
-      workflow_type: 'documentation',
-      phases: [
-        {
-          id: '1',
-          phase: 1,
-          name: phaseName,
-          depends_on: [],
-          subtasks: [
-            {
-              id: '1.1',
-              title,
-              description: [
-                task,
-                '',
-                readRule,
-                outputHint,
-                ...qualityGuidance,
-                isChinese
-                  ? '\u4f18\u5148\u7528\u8868\u683c\u3001\u5206\u5c42\u6807\u9898\u3001\u6d41\u7a0b\u5217\u8868\u5448\u73b0\uff0c\u907f\u514d\u5927\u6bb5\u5806\u53e0\u6587\u5b57\u3002'
-                  : 'Prefer tables, layered headings, and flow lists instead of long prose blocks.',
-                'Done when: Requested documentation and evidence support files exist and focused verification is recorded.',
-              ].join('\n'),
-              status: 'pending',
-              files_to_create: [outputFile, ...DOCUMENTATION_SUPPORT_FILES],
-              files_to_modify: [],
-              ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
-              requirements: ['1.1'],
-              evidence: 'spec.md documentation scope; project source files; evidence_index.md',
-              verification: {
-                type: 'manual',
-                run: verificationRun,
-              },
-            },
-          ],
-        },
-      ],
-      documentation_depth: documentationDepth,
-      project_type: agentProfile?.id,
-      documentation_profile: documentationProfile,
-      documentation_focus: isGameMmoDocumentation
-        ? [...GAME_MMO_DOCUMENTATION_FOCUS]
-        : undefined,
-      document_outputs: {
-        final_markdown: outputFile,
-        outline: 'doc_outline.md',
-        evidence_index: 'evidence_index.md',
-      },
-      source_task: {
-        original_request: task,
-        constraint_terms: extractConstraintTerms(task),
-      },
-    },
-  };
-}
-
 export function isWriteToolJsonFailure(message: string): boolean {
   const lower = message.toLowerCase();
   const mentionsWriteTool = lower.includes("tool 'write'") ||
@@ -1256,23 +522,6 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
     ].join('\n');
   }
 
-  if (phase === 'quick_spec') {
-    return [
-      'RETRY QUICK SPEC WRITES',
-      '',
-      'The previous Write call was rejected before execution.',
-      '',
-      'Retry rules:',
-      `- Use the Write tool to create ${normalizedSpecDir}/spec.md.`,
-      `- Use the Write tool to create ${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
-      `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
-      '- Pass one JSON object per Write call with file_path and content.',
-      '- For spec.md, write a compact 20-60 line version first.',
-      `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} concise and parseable.`,
-      '- Do not paste the task list into the final response.',
-    ].join('\n');
-  }
-
   const structuredJsonFile = STRUCTURED_JSON_PHASE_OUTPUTS[phase];
   if (structuredJsonFile) {
     return buildStructuredJsonOutputRetryPrompt(phase, normalizedSpecDir, structuredJsonFile);
@@ -1282,12 +531,48 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
     .map((file) => `${normalizedSpecDir}/${file}`)
     .join(', ');
 
-  const phaseSpecificGuidance = phase === 'spec_writing' || phase === 'self_critique'
+  const phaseSpecificGuidance = phase === 'requirement_model'
+    ? [
+        `Write only ${AUTOCODE_TASK_ARTIFACTS.requirementModel} with RM-* scenarios, 5W1H context, success/failure flows, quality constraints, and evidence.`,
+        'Do not make architecture, class, file, or pattern decisions in the requirement model.',
+      ]
+    : phase === 'domain_model'
+      ? [
+          `Write only ${AUTOCODE_TASK_ARTIFACTS.domainModel} with DOM-* concepts derived from approved RM-* scenarios.`,
+          'Model identity, state, behavior, invariants, lifecycle, relationships, rule ownership, and concrete software mapping evidence.',
+        ]
+    : phase === 'design'
+    ? [
+        `Write only ${AUTOCODE_TASK_ARTIFACTS.design} as Design-Contract: 4 with ADR-* decisions and references to all four model files.`,
+        'Declare forward-design, reverse-engineering, or mixed analysis and keep requirement, observed, inferred, and unresolved evidence distinct.',
+        'Compare only credible candidates: local exactly one baseline, standard at most two, complex at most three.',
+        'Select architecture from business/state complexity, quality attributes, project evidence, change radius, cost, and evolution risk.',
+        'Do not copy RM-* or DOM-* bodies into design.md.',
+      ]
+    : phase === 'design_model'
+      ? [
+          `Write only ${AUTOCODE_TASK_ARTIFACTS.designModel} with SYS/DES/FLOW-or-CONTRACT and optional evidenced PAT/REV sections.`,
+          'Allocate every RM-* to SYS-* before detailed design; define state ownership, operations, dependencies, collaboration order, failures, and contracts.',
+          'Apply NOP while rejecting God coordinators, anemic objects, implicit mutation ownership, and scattered variant dispatch.',
+        ]
+    : phase === 'implementation_model'
+      ? [
+          `Write only ${AUTOCODE_TASK_ARTIFACTS.implementationModel} with IMP-* mappings to exact files, symbols, integration order, migration constraints, and verification.`,
+          'Each IMP-* must reference its SYS/DES/FLOW-or-CONTRACT path and must not invent unsupported source locations.',
+        ]
+    : phase === 'design_review'
+      ? [
+          `Write only ${AUTOCODE_TASK_ARTIFACTS.designReview}, beginning with exactly Status: PASSED or Status: REVISE.`,
+          'Do not edit any design package file; independently check architecture selection and all four model files as one traceable chain.',
+          'Check evidence provenance, RM/DOM rule ownership, SYS allocation, static/dynamic consistency, exact IMP mapping, engineering fit, NOP, and every PAT-* decision.',
+          'For reverse or mixed analysis, verify REV-* paths against exact source symbols and contradiction checks.',
+        ]
+      : phase === 'spec_writing' || phase === 'self_critique'
     ? [
         'For spec.md, write a compact 20-60 line version first.',
         'Do not copy large context blocks, full source files, long code blocks, or large tables into spec.md.',
       ]
-    : phase === 'discovery' || phase === 'context'
+      : phase === 'discovery' || phase === 'context'
       ? [
           `For ${AUTOCODE_TASK_ARTIFACTS.context}, write concise Markdown with sections: Task, Scoped Services, Architecture Summary, Files To Modify, Files To Reference, Design Patterns, Implementation Notes, Risks, Verification Suggestions, Standards References, Assumptions, Evidence Sources.`,
           'Evidence Sources must be Markdown bullets that cite exact files, symbols, lines, project docs, or verified references.',
@@ -1760,16 +1045,6 @@ function toStringArray(value: unknown): string[] {
   return value.map(stringifyCompact).filter(Boolean);
 }
 
-
-function firstArray(values: unknown[]): unknown[] {
-  for (const value of values) {
-    if (Array.isArray(value)) {
-      return value;
-    }
-  }
-  return [];
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -1810,108 +1085,6 @@ function normalizeWorkflowType(...values: unknown[]): RequirementsOutput['workfl
   return allowed.find((item) => text.includes(item)) ?? 'feature';
 }
 
-function normalizeResearchOutput(value: unknown): ResearchOutput | unknown {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return value;
-  }
-
-  const record = value as Record<string, unknown>;
-  const integrations = firstArray([
-    record.integrations_researched,
-    record.integrations,
-    record.external_dependencies,
-    record.packages,
-    record.libraries,
-  ]);
-
-  return {
-    integrations_researched: integrations.map(normalizeResearchIntegration).filter(Boolean),
-    unverified_claims: normalizeUnverifiedClaims(record.unverified_claims, record.unknowns, record.risks),
-    recommendations: uniqueStrings([
-      ...toStringArray(record.recommendations),
-      ...toStringArray(record.recommended_approach),
-      ...toStringArray(record.implementation_guidance),
-      ...toStringArray(record.validation_plan),
-      ...toStringArray(record.summary),
-      ...toStringArray(record.conclusion),
-    ]),
-    created_at: stringFrom(record.created_at, record.createdAt) || new Date().toISOString(),
-  };
-}
-
-function normalizeResearchIntegration(value: unknown): ResearchOutput['integrations_researched'][number] | null {
-  const record = isRecord(value) ? value : { name: stringifyCompact(value) };
-  const name = stringFrom(record.name, record.package, record.library, record.dependency, record.title);
-  if (!name) {
-    return null;
-  }
-
-  const verifiedPackage = isRecord(record.verified_package) ? record.verified_package : {};
-  const apiPatterns = isRecord(record.api_patterns) ? record.api_patterns : {};
-  const configuration = isRecord(record.configuration) ? record.configuration : {};
-  const verified = record.verified ?? verifiedPackage.verified;
-
-  return {
-    name,
-    type: stringFrom(record.type, record.category) || 'library',
-    verified_package: {
-      name: stringFrom(verifiedPackage.name, record.package, record.package_name, name),
-      install_command: stringFrom(verifiedPackage.install_command, record.install_command, record.install) || '',
-      version: stringFrom(verifiedPackage.version, record.version) || 'unspecified',
-      verified: typeof verified === 'boolean' ? verified : false,
-    },
-    api_patterns: {
-      imports: stringArrayFrom(apiPatterns.imports, record.imports),
-      initialization: stringFrom(apiPatterns.initialization, record.initialization, record.setup),
-      key_functions: stringArrayFrom(apiPatterns.key_functions, record.key_functions, record.apis, record.api),
-      verified_against: stringFrom(apiPatterns.verified_against, record.verified_against, record.source) || 'not verified',
-    },
-    configuration: {
-      env_vars: stringArrayFrom(configuration.env_vars, record.env_vars),
-      config_files: stringArrayFrom(configuration.config_files, record.config_files),
-      dependencies: stringArrayFrom(configuration.dependencies, record.dependencies),
-    },
-    gotchas: stringArrayFrom(record.gotchas, record.risks, record.notes),
-    research_sources: stringArrayFrom(record.research_sources, record.sources, record.documentation),
-  };
-}
-
-function normalizeUnverifiedClaims(...values: unknown[]): ResearchOutput['unverified_claims'] {
-  const items = firstArray(values);
-  return items.map((item) => {
-    if (typeof item === 'string') {
-      return {
-        claim: item,
-        reason: 'Not independently verified during this phase',
-        risk_level: 'low' as const,
-      };
-    }
-
-    const record = isRecord(item) ? item : {};
-    const claim = stringFrom(record.claim, record.description, record.risk, record.issue);
-    if (!claim) {
-      return null;
-    }
-
-    return {
-      claim,
-      reason: stringFrom(record.reason, record.status, record.mitigation) || 'Not independently verified during this phase',
-      risk_level: normalizeRiskLevel(record.risk_level, record.severity),
-    };
-  }).filter((item): item is ResearchOutput['unverified_claims'][number] => Boolean(item));
-}
-
-function normalizeRiskLevel(...values: unknown[]): ResearchOutput['unverified_claims'][number]['risk_level'] {
-  const text = stringFrom(...values).toLowerCase();
-  if (text.includes('high') || text.includes('critical') || text.includes('block')) {
-    return 'high';
-  }
-  if (text.includes('medium') || text.includes('moderate')) {
-    return 'medium';
-  }
-  return 'low';
-}
-
 type RequirementsWorkflowType = RequirementsOutput['workflow_type'];
 
 function inferRequirementsWorkflowType(
@@ -1941,6 +1114,7 @@ function buildFallbackRequirementsOutput(
 ): RequirementsOutput {
   const description = compactSpecArtifactTaskDescription(taskDescription);
   return {
+    contract_version: 1,
     task_description: description,
     workflow_type: inferRequirementsWorkflowType(description, complexity),
     services_involved: [],
@@ -1955,6 +1129,7 @@ function buildFallbackRequirementsOutput(
     evidence_sources: ['User task description'],
     standards_references: [],
     assumptions: ['Fallback requirements were generated because the requirements phase did not produce validated output.'],
+    open_questions: [],
     created_at: new Date().toISOString(),
   };
 }
@@ -1989,14 +1164,6 @@ function buildFallbackContextOutput(taskDescription?: string): SpecContextOutput
   };
 }
 
-function shouldRunResearchPhase(
-  assessment: ComplexityAssessment | null,
-  taskDescription?: string,
-  projectDocsReference?: string,
-): boolean {
-  return shouldRunAutocodeSpecResearchPhase(assessment, taskDescription, projectDocsReference);
-}
-
 function isInvestigationTaskDescription(text: string): boolean {
   const hasInvestigationIntent =
     /\b(analy[sz]e|investigate|inspect|review|understand|summari[sz]e|explain|map|audit|document)\b/i.test(text) ||
@@ -2014,10 +1181,6 @@ function isInvestigationTaskDescription(text: string): boolean {
 
 function hasTaskExternalResearchSignal(text: string): boolean {
   return /(\bapi\b|\bsdk\b|\boauth\b|\bsso\b|\bwebhook\b|\bpayment\b|\bstripe\b|\bcloud\b|\baws\b|\bazure\b|\bgcp\b|\bfirebase\b|\bsupabase\b|\bpostgres\b|\bmysql\b|\bmongodb\b|\bredis\b|\bgraphql\b|\bgrpc\b|\brest\b|\bplugin\b|\bextension\b|\bpackage\b|\blibrary\b|\bdependency\b|\bintegration\b|\bthird[-\s]?party\b|\bexternal\b|\bauth\b|\bdatabase\b|\bqueue\b|\bmessage broker\b|\bkafka\b|\brabbitmq\b|接口|集成|第三方|外部|依赖|包|库|插件|认证|授权|支付|云服务|数据库|消息队列)/i.test(text);
-}
-
-function hasProjectExternalResearchSignal(text: string): boolean {
-  return /(\boauth\b|\bsso\b|\bwebhook\b|\bpayment\b|\bstripe\b|\baws\b|\bazure\b|\bgcp\b|\bfirebase\b|\bsupabase\b|\bpostgres\b|\bmysql\b|\bmongodb\b|\bredis\b|\bgraphql\b|\bgrpc\b|\bkafka\b|\brabbitmq\b|\bthird[-\s]?party\b|\bexternal api\b|\bapi client\b|第三方|外部接口|认证|授权|支付|云服务|数据库|消息队列)/i.test(text);
 }
 
 interface MmoAssessmentHints {
@@ -2080,15 +1243,6 @@ function inferComplexityFallback(
   });
 }
 
-function parseProjectDocsReferenceSummary(projectDocsReference: string | undefined): {
-  serviceCount: number;
-  languageCount: number;
-  infrastructureCount: number;
-  hasLargeProjectSignal: boolean;
-} {
-  return parseAutocodeProjectDocsReferenceSummary(projectDocsReference);
-}
-
 function selectSpecPhases(
   complexity: ComplexityTier,
   assessment: ComplexityAssessment | null,
@@ -2105,15 +1259,8 @@ function selectSpecPhases(
   }) as SpecPhase[];
 }
 
-function shouldForceSplitImplementationPlan(
-  complexity: ComplexityTier | undefined,
-  workflowConfig: WorkflowConfig | undefined,
-): boolean {
-  return shouldForceSplitAutocodeImplementationPlan(complexity, workflowConfig);
-}
-
 function buildPlanStructuredOutputValidationRetryPrompt(
-  phase: SpecPhase,
+  _phase: SpecPhase,
   errors: string[],
   schemaHint?: string,
 ): string {
@@ -2139,10 +1286,6 @@ function buildPlanStructuredOutputValidationRetryPrompt(
     `4. Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
     '5. Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
   );
-
-  if (phase === 'quick_spec') {
-    lines.push('6. If spec.md is missing, use Write to recreate a compact spec.md as well.');
-  }
 
   return lines.join('\n');
 }
@@ -2212,11 +1355,131 @@ export class SpecOrchestrator extends EventEmitter {
       const statePath = join(this.config.specDir, SPEC_STATE_FILE);
       await access(statePath);
       const content = await readFile(statePath, 'utf-8');
-      const state = JSON.parse(content) as SpecState;
-      return state;
+      const parsed = JSON.parse(content) as unknown;
+      const record = isRecord(parsed) ? parsed : {};
+      const completedPhases: SpecPhase[] = [];
+      const seenPhases = new Set<SpecPhase>();
+      const rawCompletedPhases = Array.isArray(record.completedPhases)
+        ? record.completedPhases
+        : [];
+
+      for (const rawPhase of rawCompletedPhases) {
+        const phase = rawPhase === 'quick_spec' ? 'spec_writing' : rawPhase;
+        if (typeof phase !== 'string' || !VALID_SPEC_PHASES.has(phase)) {
+          continue;
+        }
+        const normalizedPhase = phase as SpecPhase;
+        if (!seenPhases.has(normalizedPhase)) {
+          seenPhases.add(normalizedPhase);
+          completedPhases.push(normalizedPhase);
+        }
+      }
+
+      const complexity = typeof record.complexity === 'string' && VALID_COMPLEXITY_TIERS.has(record.complexity)
+        ? record.complexity as ComplexityTier
+        : undefined;
+      const complexityReasoning = typeof record.complexityReasoning === 'string'
+        ? record.complexityReasoning
+        : undefined;
+
+      return {
+        ...(complexity ? { complexity } : {}),
+        ...(complexityReasoning ? { complexityReasoning } : {}),
+        completedPhases,
+        lastUpdated: typeof record.lastUpdated === 'string'
+          ? record.lastUpdated
+          : new Date().toISOString(),
+      };
     } catch {
       return null;
     }
+  }
+
+  private async reconcileCompletedPhases(phasesToRun: SpecPhase[]): Promise<void> {
+    const completed = new Set(this.completedPhases);
+    let completedPrefixLength = phasesToRun.length;
+
+    for (let index = 0; index < phasesToRun.length; index++) {
+      const phase = phasesToRun[index];
+      if (!completed.has(phase)) {
+        completedPrefixLength = index;
+        break;
+      }
+
+      const missingArtifacts: string[] = [];
+      for (const fileName of STATE_PHASE_ARTIFACTS[phase] ?? []) {
+        try {
+          const content = await readFile(join(this.config.specDir, fileName), 'utf-8');
+          if (!content.trim()) {
+            missingArtifacts.push(fileName);
+          }
+        } catch {
+          missingArtifacts.push(fileName);
+        }
+      }
+
+      if (missingArtifacts.length > 0) {
+        completedPrefixLength = index;
+        this.emitTyped(
+          'log',
+          `Invalidated saved ${phase} checkpoint and later phases because required artifacts are missing or empty: ${missingArtifacts.join(', ')}`,
+        );
+        break;
+      }
+
+      const checkpointErrors = await this.validateSavedPhaseCheckpoint(phase);
+      if (checkpointErrors.length > 0) {
+        completedPrefixLength = index;
+        this.emitTyped(
+          'log',
+          `Invalidated saved ${phase} checkpoint and later phases because artifact validation failed: ${checkpointErrors.slice(0, 4).join(', ')}`,
+        );
+        break;
+      }
+    }
+
+    this.completedPhases = [
+      ...(completed.has('complexity_assessment') ? ['complexity_assessment' as const] : []),
+      ...phasesToRun.slice(0, completedPrefixLength),
+    ];
+  }
+
+  private async validateSavedPhaseCheckpoint(phase: SpecPhase): Promise<string[]> {
+    if (phase === 'validation') {
+      const report = await this.readOptionalArtifact('spec_validation_report.md');
+      return report && /^Status:\s*PASSED\s*$/im.test(report)
+        ? []
+        : ['spec_validation_report.md does not contain a PASSED verdict'];
+    }
+
+    if (phase === 'planning') {
+      const quality = await this.validateStandardPlanArtifactQuality('planning', true);
+      if (quality && !quality.valid) {
+        return quality.errors;
+      }
+
+      try {
+        const plan = await loadImplementationPlanFromFiles(this.config.specDir);
+        const parsed = plan ? ImplementationPlanSchema.safeParse(plan) : null;
+        if (!parsed?.success) {
+          return parsed
+            ? parsed.error.issues.map((issue) => issue.message)
+            : [`File not found or unreadable: ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}`];
+        }
+
+        return [
+          ...(!hasExecutableSubtasks(parsed.data as MinimalImplementationPlan)
+            ? ['Implementation plan has no executable subtasks.']
+            : []),
+          ...validateImplementationPlanLanguage(parsed.data as never, this.config.language),
+        ];
+      } catch (error) {
+        return [error instanceof Error ? error.message : String(error)];
+      }
+    }
+
+    const validation = await this.validatePhaseSchema(phase);
+    return validation && !validation.valid ? validation.errors : [];
   }
 
   /**
@@ -2241,7 +1504,6 @@ export class SpecOrchestrator extends EventEmitter {
       if (savedState) {
         this.emitTyped('log', `Resuming from saved state: ${savedState.completedPhases.length} phases completed`);
         this.completedPhases = savedState.completedPhases;
-        phasesExecuted.push(...savedState.completedPhases);
 
         if (savedState.complexity) {
           this.assessment = {
@@ -2380,6 +1642,15 @@ export class SpecOrchestrator extends EventEmitter {
         this.config.workflowConfig!,
       );
 
+      await this.reconcileCompletedPhases(phasesToRun);
+      for (const phase of this.completedPhases) {
+        if (!phasesExecuted.includes(phase)) {
+          phasesExecuted.push(phase);
+        }
+        await this.capturePhaseOutput(phase);
+      }
+      await this.saveState();
+
       this.emitTyped('log', `Running ${complexity} workflow: ${phasesToRun
         .map((phase) => formatSpecPhaseNameForLog(phase, this.config.language))
         .join(' → ')}`);
@@ -2393,21 +1664,6 @@ export class SpecOrchestrator extends EventEmitter {
 
         if (this.aborted) {
           return this.outcome(false, phasesExecuted, Date.now() - startTime, 'Cancelled');
-        }
-
-        if (phase === 'quick_spec' && this.shouldWriteLocalStandardLightPlan(complexity)) {
-          const phaseNumber = phasesExecuted.length + 1;
-          const totalPhases = phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0);
-          const result = await this.writeLocalStandardLightPlan(phaseNumber, totalPhases);
-          phasesExecuted.push(phase);
-          if (!result.success) {
-            await this.saveState();
-            return this.outcome(false, phasesExecuted, Date.now() - startTime, result.errors.join('; '));
-          }
-          this.completedPhases.push(phase);
-          await this.capturePhaseOutput(phase);
-          await this.saveState();
-          continue;
         }
 
         if (phase === 'validation') {
@@ -2425,7 +1681,35 @@ export class SpecOrchestrator extends EventEmitter {
           continue;
         }
 
-        const result = await this.runPhase(phase, phasesExecuted.length + 1, phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0));
+        let result = await this.runPhase(phase, phasesExecuted.length + 1, phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0));
+        if (phase === 'design_review' && !result.success) {
+          for (let revision = 1; revision <= 2 && !result.success; revision++) {
+            await this.capturePhaseOutput('design_review');
+            const revisionPhases = selectAutocodeDesignRevisionStages(result.errors);
+            this.emitTyped('log', `Design review requested revision ${revision}/2; rerunning affected package stages: ${revisionPhases.join(', ')}`);
+            for (const revisionPhase of revisionPhases) {
+              const designResult = await this.runPhase(
+                revisionPhase,
+                phasesExecuted.length + 1,
+                phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0),
+              );
+              phasesExecuted.push(revisionPhase);
+              if (!designResult.success) {
+                result = designResult;
+                break;
+              }
+              await this.capturePhaseOutput(revisionPhase);
+            }
+            if (!result.success && result.phase !== 'design_review') {
+              break;
+            }
+            result = await this.runPhase(
+              'design_review',
+              phasesExecuted.length + 1,
+              phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0),
+            );
+          }
+        }
         phasesExecuted.push(phase);
 
         if (!result.success) {
@@ -2527,17 +1811,6 @@ export class SpecOrchestrator extends EventEmitter {
   private shouldUseLocalComplexityRouting(): boolean {
     const workflowConfig = this.config.workflowConfig;
     return workflowConfig?.optimizationLevel === 'balanced' && workflowConfig.specCreationMode !== 'phased';
-  }
-
-  private shouldWriteLocalStandardLightPlan(complexity: ComplexityTier): boolean {
-    if (complexity !== 'simple') {
-      return false;
-    }
-    if (isSourceDocumentationTask(this.config.taskDescription)) {
-      return true;
-    }
-    const optimizationLevel = this.config.workflowConfig?.optimizationLevel;
-    return optimizationLevel === 'balanced' || optimizationLevel === 'aggressive';
   }
 
   private async runDeterministicValidationPhase(
@@ -2670,7 +1943,7 @@ export class SpecOrchestrator extends EventEmitter {
 
     // Get retry limit from workflow config
     const retryLimits = getRetryLimits(this.config.workflowConfig!);
-    const maxPhaseRetries = retryLimits.specPhase;
+    const maxPhaseRetries = phase === 'design_review' ? 0 : retryLimits.specPhase;
 
     this.emitTyped('phase-start', phase, phaseNumber, totalPhases);
 
@@ -2701,9 +1974,14 @@ export class SpecOrchestrator extends EventEmitter {
       // Small structured phases can use constrained final JSON and are then
       // persisted as Markdown when appropriate. Planner phases write files
       // directly with the Write tool because task lists can be large.
-      const isPlanningPhase = phase === 'planning' || phase === 'quick_spec';
+      const isPlanningPhase = phase === 'planning';
       const structuredJsonFile = STRUCTURED_JSON_PHASE_OUTPUTS[phase];
       const outputSchema = getStructuredJsonOutputSchema(phase);
+
+      if (phase === 'design_review') {
+        await unlink(join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.designReview))
+          .catch(() => undefined);
+      }
 
       const result = await this.config.runSession({
         agentType,
@@ -2859,7 +2137,16 @@ export class SpecOrchestrator extends EventEmitter {
             // Build LLM-friendly error feedback so the agent knows what to fix
             const schemaHint = undefined;
             const isQualityFailure = schemaValidation.errors.some(isAutocodePlanQualityError);
-            schemaRetryContext = isPlanningPhase
+            schemaRetryContext = (
+              phase === 'requirement_model' ||
+              phase === 'domain_model' ||
+              phase === 'design' ||
+              phase === 'design_model' ||
+              phase === 'implementation_model' ||
+              phase === 'design_review'
+            )
+              ? buildAutocodeDesignQualityRetryPrompt(schemaValidation.errors)
+              : isPlanningPhase
               ? isQualityFailure
                 ? buildAutocodePlanQualityRetryPrompt(schemaValidation.errors)
                 : buildPlanStructuredOutputValidationRetryPrompt(phase, schemaValidation.errors, schemaHint)
@@ -3060,22 +2347,45 @@ export class SpecOrchestrator extends EventEmitter {
   /**
    * Validate phase output files against their Zod schemas.
    * Returns null for phases without schema requirements.
-   * For phases with schemas (planning, quick_spec), validates and normalizes
+   * For phases with schemas, validates and normalizes
    * the output file, writing back coerced data on success.
    */
   private async validatePhaseSchema(
     phase: SpecPhase,
   ): Promise<{ valid: boolean; errors: string[] } | null> {
+    if (
+      phase === 'requirement_model' ||
+      phase === 'domain_model' ||
+      phase === 'design' ||
+      phase === 'design_model' ||
+      phase === 'implementation_model' ||
+      phase === 'design_review'
+    ) {
+      const designPackage = await this.readDesignPackageArtifacts();
+      const designQuality = validateAutocodeStandardDesignStageArtifacts(
+        { ...designPackage, language: this.config.language },
+        phase,
+      );
+      return designQuality.valid
+        ? { valid: true, errors: [] }
+        : { valid: false, errors: designQuality.errors };
+    }
+
     const qualityValidation = await this.validateStandardPlanArtifactQuality(phase);
     if (qualityValidation && !qualityValidation.valid) {
       return qualityValidation;
     }
 
-    if (phase === 'planning' || phase === 'quick_spec') {
-      let compactErrors: string[] = [];
+    if (phase === 'planning') {
       try {
-        await this.deriveRuntimePlanFromTasks();
-        compactErrors = await this.compactAggressiveSimplePlan();
+        const complexity = this.assessment?.complexity ?? this.config.complexityOverride;
+        await this.deriveRuntimePlanFromTasks(
+          this.config.workflowConfig?.optimizationLevel === 'aggressive' && complexity === 'simple',
+        );
+        const runtimeLedgerValidation = await this.validateStandardPlanArtifactQuality(phase, true);
+        if (runtimeLedgerValidation && !runtimeLedgerValidation.valid) {
+          return runtimeLedgerValidation;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
@@ -3108,14 +2418,13 @@ export class SpecOrchestrator extends EventEmitter {
           : [];
 
         return {
-          valid: result.valid && executionErrors.length === 0 && languageErrors.length === 0 && compactErrors.length === 0,
+          valid: result.valid && executionErrors.length === 0 && languageErrors.length === 0,
           errors: result.valid
             ? [
                 ...executionErrors,
                 ...languageErrors,
-                ...compactErrors,
               ]
-            : [...result.errors, ...languageErrors, ...compactErrors],
+            : [...result.errors, ...languageErrors],
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -3133,10 +2442,15 @@ export class SpecOrchestrator extends EventEmitter {
 
   private async validateStandardPlanArtifactQuality(
     phase: SpecPhase,
+    includeRuntimeLedger = false,
   ): Promise<{ valid: boolean; errors: string[] } | null> {
     const specMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.specFile);
     const requirementsMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.requirements);
     const tasksMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.tasks);
+    const implementationPlanMarkdown = await this.readOptionalArtifact(
+      AUTOCODE_TASK_ARTIFACTS.implementationPlan,
+    );
+    const designPackage = await this.readDesignPackageArtifacts();
     const contextMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.context);
 
     const shouldValidate = (
@@ -3145,8 +2459,9 @@ export class SpecOrchestrator extends EventEmitter {
       phase === 'requirements' ||
       phase === 'spec_writing' ||
       phase === 'self_critique' ||
-      phase === 'planning' ||
-      phase === 'quick_spec'
+      phase === 'design' ||
+      phase === 'design_review' ||
+      phase === 'planning'
     );
     if (!shouldValidate) {
       return null;
@@ -3168,16 +2483,22 @@ export class SpecOrchestrator extends EventEmitter {
       requirementsMarkdown: phase === 'requirements' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning'
         ? requirementsMarkdown
         : undefined,
-      specMarkdown: phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning' || phase === 'quick_spec'
+      specMarkdown: phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning'
         ? specMarkdown
         : undefined,
-      tasksMarkdown: phase === 'planning' || phase === 'quick_spec'
+      tasksMarkdown: phase === 'planning'
         ? tasksMarkdown
         : undefined,
+      implementationPlanMarkdown: phase === 'planning' && includeRuntimeLedger
+        ? implementationPlanMarkdown
+        : undefined,
+      ...(phase === 'planning' ? designPackage : {}),
+      language: this.config.language,
       requireContextEvidence: validatesContextArtifact,
       requireRequirementsEvidence: phase === 'requirements' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning',
       requireSpecEvidence: phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning',
-      requireTaskEvidence: phase === 'planning' || phase === 'quick_spec',
+      requireTaskEvidence: phase === 'planning',
+      requireDesign: phase === 'planning',
     });
     return result.valid
       ? { valid: true, errors: [] }
@@ -3192,172 +2513,53 @@ export class SpecOrchestrator extends EventEmitter {
     }
   }
 
-  private async deriveRuntimePlanFromTasks(): Promise<void> {
+  private async readDesignPackageArtifacts() {
+    const [
+      designMarkdown,
+      requirementModelMarkdown,
+      domainModelMarkdown,
+      designModelMarkdown,
+      implementationModelMarkdown,
+      designReviewMarkdown,
+    ] = await Promise.all([
+      this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.design),
+      this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.requirementModel),
+      this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.domainModel),
+      this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.designModel),
+      this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.implementationModel),
+      this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.designReview),
+    ]);
+    return {
+      designMarkdown,
+      requirementModelMarkdown,
+      domainModelMarkdown,
+      designModelMarkdown,
+      implementationModelMarkdown,
+      designReviewMarkdown,
+    };
+  }
+
+  private async deriveRuntimePlanFromTasks(forceSingleWorkPackage = false): Promise<void> {
     const tasksMarkdown = await readFile(join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks), 'utf-8');
+    const designPackage = await this.readDesignPackageArtifacts();
+    const { designMarkdown } = designPackage;
+    if (!designMarkdown) {
+      throw new Error(AUTOCODE_TASK_ARTIFACTS.design + ' is missing.');
+    }
     const plan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(tasksMarkdown, {
       now: new Date().toISOString(),
       language: this.config.language,
       sourcePath: AUTOCODE_TASK_ARTIFACTS.tasks,
       requireTaskEvidence: true,
+      designMarkdown,
+      requirementModelMarkdown: designPackage.requirementModelMarkdown ?? undefined,
+      domainModelMarkdown: designPackage.domainModelMarkdown ?? undefined,
+      designModelMarkdown: designPackage.designModelMarkdown ?? undefined,
+      implementationModelMarkdown: designPackage.implementationModelMarkdown ?? undefined,
+      designPath: AUTOCODE_TASK_ARTIFACTS.design,
+      forceSingleWorkPackage,
     });
     await saveAutocodeImplementationPlan(this.config.specDir, plan);
-  }
-
-  private async writeLocalStandardLightPlan(
-    phaseNumber: number,
-    totalPhases: number,
-  ): Promise<SpecPhaseResult> {
-    const phase: SpecPhase = 'quick_spec';
-    this.emitTyped('phase-start', phase, phaseNumber, totalPhases);
-
-    const patternFiles = await inferAggressivePatternFiles(
-      this.config.projectDir,
-      this.config.taskDescription ?? '',
-    );
-    const plan = isSourceDocumentationTask(this.config.taskDescription)
-      ? buildSourceDocumentationStandardLightPlan(
-          this.config.taskDescription ?? 'Complete the requested task',
-          this.config.language,
-          patternFiles,
-          this.config.agentProfile,
-        )
-      : buildLocalizedAggressiveStandardLightPlan(
-          this.config.taskDescription ?? 'Complete the requested task',
-          this.config.language,
-          patternFiles,
-        );
-
-    try {
-      await writeFile(join(this.config.specDir, 'spec.md'), plan.specMarkdown, 'utf-8');
-      await writeFile(
-        join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks),
-        stringifyAutocodeImplementationPlanMarkdown(plan.implementationPlan as never).replace(
-          /^# Implementation Plan/m,
-          '# Tasks',
-        ),
-        'utf-8',
-      );
-      await this.deriveRuntimePlanFromTasks();
-
-      const result: SpecPhaseResult = { phase, success: true, errors: [], retries: 0 };
-      const patternFiles = plan.implementationPlan.phases[0]?.subtasks[0]?.pattern_files ?? [];
-      const fileHint = patternFiles.length > 0 ? `; file hints: ${patternFiles.join(', ')}` : '';
-      this.emitTyped('log', `${plan.implementationPlan.workflow_type === 'documentation' ? 'Documentation analysis' : 'Standard light workflow'} generated a Standard light plan and one-task source without an AI planning session${fileHint}`);
-      this.emitTyped('phase-complete', phase, result);
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const result: SpecPhaseResult = { phase, success: false, errors: [message], retries: 0 };
-      this.emitTyped('phase-complete', phase, result);
-      return result;
-    }
-  }
-
-  private async compactAggressiveSimplePlan(): Promise<string[]> {
-    if (this.config.workflowConfig?.optimizationLevel !== 'aggressive') {
-      return [];
-    }
-
-    const complexity = this.assessment?.complexity ?? this.config.complexityOverride;
-    if (complexity !== 'simple') {
-      return [];
-    }
-
-    try {
-      const plan = await loadImplementationPlanFromFiles(this.config.specDir) as MutableImplementationPlan | null;
-      const subtasks = (plan?.phases ?? [])
-        .flatMap((phase) => Array.isArray(phase.subtasks) ? phase.subtasks : []);
-
-      if (!plan || subtasks.length <= 1) {
-        return [];
-      }
-
-      const firstPhase = plan.phases?.[0];
-      const filesToCreate = uniqueStrings(subtasks.flatMap((subtask) => subtask.files_to_create ?? []));
-      const filesToModify = uniqueStrings(subtasks.flatMap((subtask) => subtask.files_to_modify ?? []));
-      const evidence = uniqueStrings(subtasks.flatMap((subtask) => typeof subtask.evidence === 'string' ? [subtask.evidence] : []));
-      const upstreamTaskIds = uniqueStrings(subtasks.flatMap((subtask) => {
-        const ids = Array.isArray(subtask.upstream_task_ids)
-          ? subtask.upstream_task_ids.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-          : [];
-        return ids.length > 0
-          ? ids
-          : subtask.id
-            ? [String(subtask.id)]
-            : [];
-      }));
-      const requirements = uniqueStrings([
-        ...upstreamTaskIds,
-        ...subtasks.flatMap((subtask) =>
-          Array.isArray(subtask.requirements)
-            ? subtask.requirements.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-            : [],
-        ),
-      ]);
-      const verification = [...subtasks].reverse().find((subtask) => subtask.verification)?.verification
-        ?? { type: 'manual', scenario: 'Review the completed change and run the project checks that apply to this task.' };
-      const taskItems = subtasks.flatMap((subtask) => {
-        const description = typeof subtask.description === 'string' ? subtask.description : '';
-        if (subtask.work_package === true && /\bIncluded tasks:/i.test(description)) {
-          const includedItems = description
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter((line) => /^-\s+\S+\s+.+/.test(line));
-          if (includedItems.length > 0) {
-            return includedItems;
-          }
-        }
-        const label = subtask.title?.trim() || subtask.description?.trim() || subtask.id || 'Implementation step';
-        return [`- ${label}`];
-      });
-      const taskList = taskItems.join('\n');
-      const sourceTaskTitles = taskItems
-        .map((item) => item.replace(/^-\s+/, '').replace(/^\S+\s+/, '').trim())
-        .filter(Boolean);
-      const compactTitle = sourceTaskTitles.length > 1
-        ? `Work package: ${sourceTaskTitles[0]} (+${sourceTaskTitles.length - 1} related tasks)`
-        : sourceTaskTitles[0]
-          ? `Work package: ${sourceTaskTitles[0]}`
-          : 'Work package: Implement complete task';
-
-      plan.phases = [
-        {
-          id: firstPhase?.id ?? firstPhase?.phase ?? '1',
-          phase: firstPhase?.phase ?? 1,
-          name: firstPhase?.name ?? 'Implementation',
-          subtasks: [
-            {
-              id: '1.1',
-              title: compactTitle,
-              description: [
-                'Implement the complete requested change in one focused coding session.',
-                '',
-                'Scope:',
-                taskList,
-                '',
-                'Done when: All included scope items are complete and focused verification is recorded.',
-              ].join('\n'),
-              status: 'pending',
-              ...(filesToCreate.length > 0 ? { files_to_create: filesToCreate } : {}),
-              ...(filesToModify.length > 0 ? { files_to_modify: filesToModify } : {}),
-              ...(requirements.length > 0 ? { requirements } : {}),
-              ...(evidence.length > 0 ? { evidence: evidence.join('; ') } : {}),
-              verification,
-              upstream_source: AUTOCODE_TASK_ARTIFACTS.tasks,
-              upstream_task_ids: upstreamTaskIds,
-              work_package: true,
-            },
-          ],
-        },
-      ];
-
-      await saveImplementationPlanToFiles(this.config.specDir, plan as never);
-      this.emitTyped('log', `Aggressive workflow compacted implementation plan from ${subtasks.length} subtasks to 1 coder session`);
-      return [];
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return [`Failed to compact aggressive implementation plan: ${message}`];
-    }
   }
 
   private async writeSpecValidationReport(): Promise<string[]> {
@@ -3456,7 +2658,7 @@ export class SpecOrchestrator extends EventEmitter {
       if (phase === 'validation') {
         return profile.qaReview;
       }
-      if (phase === 'quick_spec' || phase === 'spec_writing') {
+      if (phase === 'spec_writing') {
         return profile.specOrchestrator;
       }
       if (phase === 'self_critique') {

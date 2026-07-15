@@ -9,7 +9,7 @@ const mockReadFile = vi.fn();
 const mockWriteFile = vi.fn();
 const mockUnlink = vi.fn();
 const mockLoadAutocodeImplementationPlan = vi.fn();
-const mockSaveAutocodeImplementationPlan = vi.fn();
+const mockUpdateAutocodeImplementationPlan = vi.fn();
 
 vi.mock('node:fs/promises', () => ({
   readFile: (...args: unknown[]) => mockReadFile(...args),
@@ -19,7 +19,7 @@ vi.mock('node:fs/promises', () => ({
 
 vi.mock('@autocode/core', () => ({
   loadAutocodeImplementationPlan: (...args: unknown[]) => mockLoadAutocodeImplementationPlan(...args),
-  saveAutocodeImplementationPlan: (...args: unknown[]) => mockSaveAutocodeImplementationPlan(...args),
+  updateAutocodeImplementationPlan: (...args: unknown[]) => mockUpdateAutocodeImplementationPlan(...args),
 }));
 
 vi.mock('../../utils/json-repair', () => ({
@@ -106,7 +106,7 @@ describe('QALoop', () => {
     mockWriteFile.mockReset().mockResolvedValue(undefined);
     mockUnlink.mockReset().mockResolvedValue(undefined);
     mockLoadAutocodeImplementationPlan.mockReset();
-    mockSaveAutocodeImplementationPlan.mockReset().mockResolvedValue(undefined);
+    mockUpdateAutocodeImplementationPlan.mockReset().mockResolvedValue(undefined);
   });
 
   // -------------------------------------------------------------------------
@@ -477,6 +477,10 @@ describe('QALoop', () => {
       qa_signoff: { status: 'rejected', issues_found: issues },
     };
     mockLoadAutocodeImplementationPlan.mockResolvedValue(plan);
+    mockUpdateAutocodeImplementationPlan.mockImplementation(async (
+      _specDir: string,
+      updater: (currentPlan: typeof plan) => typeof plan,
+    ) => updater(plan));
 
     const loop = new QALoop(makeConfig());
     const recordIteration = (loop as unknown as {
@@ -490,8 +494,8 @@ describe('QALoop', () => {
 
     await recordIteration(1, 'rejected', issues, 1234);
 
-    expect(mockSaveAutocodeImplementationPlan).toHaveBeenCalledTimes(1);
-    const savedPlan = mockSaveAutocodeImplementationPlan.mock.calls[0][1] as {
+    expect(mockUpdateAutocodeImplementationPlan).toHaveBeenCalledTimes(1);
+    const savedPlan = plan as typeof plan & {
       qa_iteration_history: Array<{ issues: Array<Record<string, string>> }>;
       qa_signoff: { issues_found: Array<Record<string, string>> };
     };

@@ -5,6 +5,12 @@ export const AUTOCODE_SPECS_DIR_NAME = 'specs';
 export const AUTOCODE_TASK_ARTIFACTS = {
   context: 'context.md',
   research: 'research.md',
+  design: 'design.md',
+  requirementModel: 'requirement_model.md',
+  domainModel: 'domain_model.md',
+  designModel: 'design_model.md',
+  implementationModel: 'implementation_model.md',
+  designReview: 'design_review.md',
   tasks: 'tasks.md',
   implementationPlan: 'implementation_plan.md',
   specFile: 'spec.md',
@@ -18,6 +24,18 @@ export const AUTOCODE_TASK_ARTIFACTS = {
   runResult: 'autocode-run-result.json',
   planningTransaction: 'planning-transaction.json',
 } as const;
+
+export const AUTOCODE_STANDARD_DESIGN_MODEL_ARTIFACTS = [
+  AUTOCODE_TASK_ARTIFACTS.requirementModel,
+  AUTOCODE_TASK_ARTIFACTS.domainModel,
+  AUTOCODE_TASK_ARTIFACTS.designModel,
+  AUTOCODE_TASK_ARTIFACTS.implementationModel,
+] as const;
+
+export const AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS = [
+  AUTOCODE_TASK_ARTIFACTS.design,
+  ...AUTOCODE_STANDARD_DESIGN_MODEL_ARTIFACTS,
+] as const;
 
 export type AutocodeTaskArtifactName = keyof typeof AUTOCODE_TASK_ARTIFACTS;
 export type AutocodeTaskArtifactFileName = (typeof AUTOCODE_TASK_ARTIFACTS)[AutocodeTaskArtifactName];

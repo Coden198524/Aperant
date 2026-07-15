@@ -624,7 +624,7 @@ describe('ImplementationPlanSchema', () => {
   });
 
   it('coerces flat files_to_modify/implementation_order format into phases', () => {
-    // This is the format some models (especially Standard light planning) produce:
+    // This is the format some older Standard planning models produced:
     // flat files_to_modify with changes + implementation_order strings
     const flatPlan = {
       files_to_modify: [

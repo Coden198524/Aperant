@@ -19,14 +19,14 @@ import {
   type TechnologyStack,
 } from '@autocode/core';
 
-const PROJECT_PROMPT_PROFILE_VERSION = 15;
+const PROJECT_PROMPT_PROFILE_VERSION = 17;
 const PROJECT_PROMPT_NAMES = [
-  'spec_quick',
   'planner',
   'coder',
   'qa_reviewer',
   'qa_fixer',
 ] as const;
+const REMOVED_PROJECT_PROMPT_NAMES = ['spec_quick'] as const;
 
 const SOURCE_EXTENSIONS = new Set([
   '.c',
@@ -434,7 +434,7 @@ function inferWorkflow(size: AutocodeProjectSize): AutocodeProjectPromptProfile[
   if (size === 'small') {
     return {
       promptIntensity: promptIntensityBySize[size],
-      specStyle: 'quick',
+      specStyle: 'standard',
       planningGuidance: 'Use a simple implementation flow unless the request clearly spans separate modules or dependency boundaries.',
       contextGuidance: 'Prefer targeted file reads. Do not perform broad discovery when the task already points to the affected files.',
       validationGuidance: 'Run the smallest relevant build, typecheck, lint, or test command available. Manual verification is acceptable for simple UI/text changes.',
@@ -668,6 +668,13 @@ export async function initializeWebProjectPromptProfile(
   const promptOverrides = generateAutocodeProjectPromptOverrides(profile);
   const promptsDir = getAutocodeProjectPromptsDir(projectPath);
   await mkdir(promptsDir, { recursive: true });
+
+  for (const promptName of REMOVED_PROJECT_PROMPT_NAMES) {
+    const promptPath = join(promptsDir, `${promptName}.md`);
+    if (existsSync(promptPath) && await isGeneratedPrompt(promptPath)) {
+      await unlink(promptPath);
+    }
+  }
 
   if (options.overwrite) {
     const managedPromptNames = new Set(Object.keys(promptOverrides));

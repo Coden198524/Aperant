@@ -427,8 +427,9 @@ describe('Autocode runtime agent messages', () => {
     expect(message.content).toContain('LATEST_REQUIRED_FEEDBACK');
     expect(message.content).toContain('FINAL_CHANGE_REQUEST_TAIL_CONSTRAINT');
     expect(message.content).toContain('Flow documents: HUMAN_INPUT.md; change_requests.jsonl; tasks.md; implementation_plan.md');
-    expect(message.content).toContain('do not write implementation_plan.md directly');
-    expect(message.content).toContain('Keep one canonical checklist item');
+    expect(message.content).toContain('do not write implementation_plan.md');
+    expect(message.content).toContain('staged Standard owner flow');
+    expect(message.content).toContain('completed task definitions');
     expect(message.content).not.toContain('preserve completed work that remains valid, reset affected work to pending with needs_revision notes, add new work');
     expect(message.content).not.toContain('OLD_FEEDBACK_SHOULD_NOT_BE_IN_PROMPT');
   });

@@ -26,8 +26,12 @@ import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
 import {
   AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY,
+  AUTOCODE_STANDARD_CHANGE_REQUESTS_FILE,
+  AUTOCODE_STANDARD_PLANNING_OWNER_STAGE_ORDER,
   AUTOCODE_TASK_ARTIFACTS,
   buildAutocodePlanQualityRetryPrompt,
+  buildAutocodeDesignPackageMarkdown,
+  buildAutocodeDesignQualityRetryPrompt,
   buildAutocodePlanningStructuredOutputRetryPrompt,
   buildAutocodePlanningStructuredOutputValidationRetryPrompt,
   buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
@@ -42,10 +46,22 @@ import {
   parseAutocodeImplementationPlanMarkdown,
   stringifyAutocodeImplementationPlanMarkdown,
   validateAutocodeStandardPlanArtifacts,
+  validateAutocodeStandardDesignArtifacts,
   validateAutocodePlanningSchedulingMetadata,
   getAutocodeQaReportStatus,
+  getAutocodeDesignDocumentFingerprint,
+  getAutocodeDesignPackageFingerprint,
+  getAutocodeDesignReviewStatus,
+  selectAutocodeDesignRevisionStages,
+  validateAutocodeStandardDesignStageArtifacts,
+  RequirementsOutputSchema,
+  parseAutocodeStandardPlanningOwnerPlan,
+  stringifyAutocodeTaskRequirementsMarkdown,
   validateAutocodeQaReportQuality,
   type AutocodeTaskRuntimeConcurrencyResolved,
+  type AutocodeStandardPlanningOwnerPlan,
+  type AutocodeStandardPlanningOwnerStage,
+  type AutocodeDesignPackageStage,
   type Phase,
 } from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
@@ -76,22 +92,82 @@ const PRE_QA_RETURN_ISSUE_MAX_CHARS = 240;
 const PRE_QA_RETURN_REASON_MAX_CHARS = 1_800;
 const STANDARD_SPEC_SEED_ERROR_PREFIX =
   `${AUTOCODE_TASK_ARTIFACTS.specFile} is still the manual Standard planning seed`;
+const STANDARD_CHANGE_REQUESTS_FILE = AUTOCODE_STANDARD_CHANGE_REQUESTS_FILE;
+type StandardPlanningOwnerStage = AutocodeStandardPlanningOwnerStage;
+const STANDARD_PLANNING_OWNER_STAGE_ORDER =
+  AUTOCODE_STANDARD_PLANNING_OWNER_STAGE_ORDER;
 const STANDARD_PLANNING_SOURCE_ARTIFACTS = [
   AUTOCODE_TASK_ARTIFACTS.specFile,
   AUTOCODE_TASK_ARTIFACTS.requirements,
-  AUTOCODE_TASK_ARTIFACTS.tasks,
   AUTOCODE_TASK_ARTIFACTS.context,
+  AUTOCODE_TASK_ARTIFACTS.design,
+  AUTOCODE_TASK_ARTIFACTS.requirementModel,
+  AUTOCODE_TASK_ARTIFACTS.domainModel,
+  AUTOCODE_TASK_ARTIFACTS.designModel,
+  AUTOCODE_TASK_ARTIFACTS.implementationModel,
+  AUTOCODE_TASK_ARTIFACTS.designReview,
+  AUTOCODE_TASK_ARTIFACTS.tasks,
 ] as const;
 const STANDARD_PLANNING_TRANSACTION_ARTIFACTS = [
   ...STANDARD_PLANNING_SOURCE_ARTIFACTS,
   AUTOCODE_TASK_ARTIFACTS.implementationPlan,
 ] as const;
 const STANDARD_PLANNING_CHECKPOINTS = new Set([
+  'requirements_validated',
+  'spec_validated',
+  'design_written',
+  'requirement_model_validated',
+  'domain_model_validated',
+  'design_validated',
+  'design_model_validated',
+  'implementation_model_validated',
+  'design_reviewed',
   'sources_validated',
+  'tasks_validated',
   'plan_derived',
   'plan_validated',
   'committed',
 ]);
+const STANDARD_PLANNING_CHECKPOINT_RANK: Record<string, number> = {
+  requirements_validated: 10,
+  spec_validated: 20,
+  sources_validated: 25,
+  design_written: 25,
+  requirement_model_validated: 30,
+  domain_model_validated: 40,
+  design_validated: 50,
+  design_model_validated: 60,
+  implementation_model_validated: 70,
+  design_reviewed: 80,
+  tasks_validated: 90,
+  plan_derived: 100,
+  plan_validated: 110,
+  committed: 120,
+};
+const STANDARD_DESIGN_OWNER_STAGES = [
+  'requirement_model',
+  'domain_model',
+  'design',
+  'design_model',
+  'implementation_model',
+  'design_review',
+] as const satisfies readonly AutocodeDesignPackageStage[];
+const STANDARD_DESIGN_STAGE_CHECKPOINT: Record<AutocodeDesignPackageStage, string> = {
+  requirement_model: 'requirement_model_validated',
+  domain_model: 'domain_model_validated',
+  design: 'design_validated',
+  design_model: 'design_model_validated',
+  implementation_model: 'implementation_model_validated',
+  design_review: 'design_reviewed',
+};
+const STANDARD_DESIGN_STAGE_ARTIFACT: Partial<Record<AutocodeDesignPackageStage, string>> = {
+  requirement_model: AUTOCODE_TASK_ARTIFACTS.requirementModel,
+  domain_model: AUTOCODE_TASK_ARTIFACTS.domainModel,
+  design: AUTOCODE_TASK_ARTIFACTS.design,
+  design_model: AUTOCODE_TASK_ARTIFACTS.designModel,
+  implementation_model: AUTOCODE_TASK_ARTIFACTS.implementationModel,
+  design_review: AUTOCODE_TASK_ARTIFACTS.designReview,
+};
 const TRACEABLE_PLANNING_EVIDENCE_PATTERN =
   /\b(spec\.md|requirements\.md|context\.md|research\.md|agents\.md|readme|official|standard|docs?|source|project)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/i;
 
@@ -135,268 +211,6 @@ function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
     subtask.completion_summary.trim().length > 0;
 }
 
-function uniqueNonEmptyStrings(values: readonly string[], maxItems: number): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const value of values) {
-    const normalized = compactMarkdownBulletText(value);
-    if (!normalized) {
-      continue;
-    }
-    const key = normalized.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    result.push(normalized);
-    if (result.length >= maxItems) {
-      break;
-    }
-  }
-  return result;
-}
-
-function compactMarkdownBulletText(value: string, maxChars = 180): string {
-  const compacted = value
-    .replace(/\r\n/g, '\n')
-    .replace(/^\s*(?:[-*]|\d+\.)\s+/, '')
-    .replace(/^\s*\[[ xX/!-]\]\s+/, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!compacted || /^(?:none|n\/a|na|unknown|todo|tbd)$/i.test(compacted)) {
-    return '';
-  }
-  if (compacted.length <= maxChars) {
-    return compacted;
-  }
-  return `${compacted.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
-}
-
-function appendEvidenceSuffix(value: string, evidence: string): string {
-  const compacted = compactMarkdownBulletText(value);
-  if (!compacted) {
-    return '';
-  }
-  if (/\bEvidence\s*:/i.test(compacted)) {
-    return compacted;
-  }
-  return `${compacted} (Evidence: ${evidence})`;
-}
-
-function getLocalMarkdownSection(markdown: string | null | undefined, heading: string): string {
-  if (!markdown) {
-    return '';
-  }
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = new RegExp(`^##\\s+${escaped}\\b[^\\n]*\\n([\\s\\S]*?)(?=^##\\s+|(?![\\s\\S]))`, 'im')
-    .exec(markdown.replace(/\r\n/g, '\n'));
-  return match?.[1]?.trim() ?? '';
-}
-
-function getMarkdownListItems(markdown: string): string[] {
-  return markdown
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map((line) => line.match(/^\s*(?:[-*]|\d+\.)\s+(.*?)\s*$/)?.[1] ?? '')
-    .map((line) => line.replace(/^\[[ xX/!-]\]\s+/, '').trim())
-    .filter(Boolean);
-}
-
-function getSectionListItems(markdown: string | null | undefined, headings: readonly string[]): string[] {
-  return headings.flatMap((heading) => getMarkdownListItems(getLocalMarkdownSection(markdown, heading)));
-}
-
-function getFirstMarkdownHeading(markdown: string | null | undefined): string {
-  if (!markdown) {
-    return '';
-  }
-  for (const line of markdown.replace(/\r\n/g, '\n').split('\n')) {
-    const match = /^#\s+(.+?)\s*$/.exec(line);
-    if (match) {
-      const title = compactMarkdownBulletText(match[1], 120);
-      if (title && !/\bStandard mode task\b/i.test(title) && !/^(?:Requirements|Tasks)$/i.test(title)) {
-        return title;
-      }
-    }
-  }
-  return '';
-}
-
-function getTasksFeatureTitle(tasksMarkdown: string | null | undefined): string {
-  if (!tasksMarkdown) {
-    return '';
-  }
-  const match = /^Feature:\s*(.+?)\s*$/im.exec(tasksMarkdown);
-  return compactMarkdownBulletText(match?.[1] ?? '', 120);
-}
-
-function stringifyCompactPlanValue(value: unknown): string {
-  if (typeof value === 'string') {
-    return compactMarkdownBulletText(value);
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    return compactMarkdownBulletText(value.map(stringifyCompactPlanValue).filter(Boolean).join(', '));
-  }
-  const record = asRecord(value);
-  if (record) {
-    const preferred = stringFrom(
-      record.run ??
-      record.command ??
-      record.description ??
-      record.proves ??
-      record.path ??
-      record.type ??
-      record.name,
-    );
-    if (preferred) {
-      return compactMarkdownBulletText(preferred);
-    }
-    try {
-      return compactMarkdownBulletText(JSON.stringify(value), 180);
-    } catch {
-      return '';
-    }
-  }
-  return '';
-}
-
-interface StandardSpecTaskSummary {
-  id: string;
-  title: string;
-  description: string;
-  verification: string;
-  completion: string;
-  files: string[];
-}
-
-function extractStandardSpecTaskSummaries(tasksMarkdown: string | null | undefined): StandardSpecTaskSummary[] {
-  if (!tasksMarkdown) {
-    return [];
-  }
-
-  try {
-    const parsed = parseAutocodeImplementationPlanMarkdown(tasksMarkdown);
-    const phases = Array.isArray(parsed.phases) ? parsed.phases : [];
-    const summaries: StandardSpecTaskSummary[] = [];
-    for (const phase of phases) {
-      const phaseRecord = asRecord(phase);
-      const subtasks = Array.isArray(phaseRecord?.subtasks)
-        ? phaseRecord.subtasks
-        : Array.isArray(phaseRecord?.chunks)
-          ? phaseRecord.chunks
-          : [];
-      for (const rawSubtask of subtasks) {
-        const subtask = asRecord(rawSubtask);
-        if (!subtask) {
-          continue;
-        }
-        const id = stringFrom(subtask.id ?? subtask.subtask_id);
-        const title = compactMarkdownBulletText(stringFrom(subtask.title ?? subtask.description), 140);
-        const description = compactMarkdownBulletText(stringFrom(subtask.description), 180);
-        const files = uniqueNonEmptyStrings([
-          ...stringArrayFrom(subtask.files_to_create),
-          ...stringArrayFrom(subtask.files_to_modify),
-          ...stringArrayFrom(subtask.files),
-        ], 4);
-        summaries.push({
-          id,
-          title: title || description || (id ? `Work package ${id}` : 'Work package'),
-          description,
-          verification: stringifyCompactPlanValue(subtask.verification),
-          completion: stringifyCompactPlanValue(subtask.completion_summary ?? subtask.notes),
-          files,
-        });
-      }
-    }
-    return summaries;
-  } catch {
-    return [];
-  }
-}
-
-function buildCompactStandardSpecFromArtifacts(input: {
-  specMarkdown: string | null;
-  requirementsMarkdown: string | null;
-  tasksMarkdown: string | null;
-  humanInputMarkdown: string | null;
-}): string | null {
-  const taskSummaries = extractStandardSpecTaskSummaries(input.tasksMarkdown);
-  const seedRequest = compactMarkdownBulletText(getLocalMarkdownSection(input.specMarkdown, 'Request'), 180);
-  const humanInput = compactMarkdownBulletText(input.humanInputMarkdown ?? '', 180);
-  const requirements = uniqueNonEmptyStrings([
-    ...getSectionListItems(input.requirementsMarkdown, ['User Requirements', 'Requirements']),
-    ...taskSummaries.map((task) => task.title),
-    seedRequest,
-    humanInput ? `Address latest reviewer feedback: ${humanInput}` : '',
-  ], 6).map((item) => appendEvidenceSuffix(
-    item,
-    item === humanInput || item.startsWith('Address latest reviewer feedback')
-      ? 'HUMAN_INPUT.md'
-      : item === seedRequest
-        ? 'spec.md Request'
-        : 'requirements.md; tasks.md',
-  )).filter(Boolean);
-
-  const acceptance = uniqueNonEmptyStrings([
-    ...getSectionListItems(input.requirementsMarkdown, ['Acceptance Criteria', 'Success Criteria']),
-    ...taskSummaries.map((task) => task.completion || task.verification || task.description || task.title),
-  ], 6).map((item) => appendEvidenceSuffix(item, 'requirements.md; tasks.md')).filter(Boolean);
-
-  const designNotes = uniqueNonEmptyStrings([
-    taskSummaries.length > 0
-      ? 'Use tasks.md as the executable work package source; implementation_plan.md is derived from those tasks.'
-      : '',
-    taskSummaries.some((task) => task.files.length > 0)
-      ? `Affected files are constrained by tasks.md metadata: ${uniqueNonEmptyStrings(taskSummaries.flatMap((task) => task.files), 6).join(', ')}.`
-      : '',
-    humanInput
-      ? 'Treat HUMAN_INPUT.md as same-task iteration feedback when deciding which work packages need rerun.'
-      : '',
-  ], 4).map((item) => appendEvidenceSuffix(item, 'tasks.md; HUMAN_INPUT.md')).filter(Boolean);
-
-  const evidence = uniqueNonEmptyStrings([
-    humanInput ? `HUMAN_INPUT.md latest reviewer feedback: ${humanInput}` : '',
-    seedRequest ? `spec.md Request: ${seedRequest}` : '',
-    ...requirements.slice(0, 2).map((item) => `requirements.md requirement: ${item.replace(/\s+\(Evidence:.*?\)\s*$/i, '')}`),
-    ...taskSummaries.slice(0, 3).map((task) => `tasks.md work package ${task.id || ''}: ${task.title}`),
-  ], 8);
-
-  if (requirements.length === 0 && acceptance.length === 0 && evidence.length === 0) {
-    return null;
-  }
-
-  const title = getTasksFeatureTitle(input.tasksMarkdown) ||
-    getFirstMarkdownHeading(input.specMarkdown) ||
-    getFirstMarkdownHeading(input.requirementsMarkdown) ||
-    'Standard Task Spec';
-
-  const lines = [
-    `# ${title}`,
-    '',
-    '## Requirements',
-    '',
-    ...(requirements.length > 0 ? requirements.map((item) => `- ${item}`) : ['- Implement the scoped Standard task. (Evidence: spec.md Request)']),
-    '',
-    '## Design Notes',
-    '',
-    ...(designNotes.length > 0 ? designNotes.map((item) => `- ${item}`) : ['- Keep planning compact and derive runtime work packages from tasks.md. (Evidence: tasks.md)']),
-    '',
-    '## Acceptance And Verification',
-    '',
-    ...(acceptance.length > 0 ? acceptance.map((item) => `- ${item}`) : ['- Complete each executable tasks.md work package and record focused verification. (Evidence: tasks.md)']),
-    '',
-    '## Evidence',
-    '',
-    ...(evidence.length > 0 ? evidence.map((item) => `- ${item}`) : ['- spec.md Request and tasks.md define the scoped Standard task.']),
-    '',
-  ];
-
-  return lines.join('\n');
-}
-
 export function formatPreQAReturnToCodingReason(
   issues: readonly string[],
   attempt: number,
@@ -435,6 +249,8 @@ interface StandardPlanningArtifactSnapshot {
   }>;
 }
 
+type StandardPlanningOwnerPlan = AutocodeStandardPlanningOwnerPlan;
+
 interface StandardPlanningTransactionState {
   version: 1;
   id: string;
@@ -446,9 +262,32 @@ interface StandardPlanningTransactionState {
   resumedAt?: string;
   resumedFromStage?: string;
   checkpoint?: string;
+  changeRequestId?: string;
+  ownerStages?: StandardPlanningOwnerStage[];
   detail?: string;
   baselineArtifactHashes: Record<string, string | null>;
+  baselineArtifacts?: Record<string, string | null>;
   artifactHashes: Record<string, string | null>;
+}
+
+function hasReachedStandardPlanningCheckpoint(
+  transaction: StandardPlanningTransactionState,
+  checkpoint: string,
+): boolean {
+  const currentRank = STANDARD_PLANNING_CHECKPOINT_RANK[transaction.checkpoint ?? ''] ?? 0;
+  const requiredRank = STANDARD_PLANNING_CHECKPOINT_RANK[checkpoint] ?? Number.POSITIVE_INFINITY;
+  return currentRank >= requiredRank;
+}
+
+function getValidatedStandardDesignStages(
+  transaction: StandardPlanningTransactionState,
+): AutocodeDesignPackageStage[] {
+  return STANDARD_DESIGN_OWNER_STAGES.filter((stage) =>
+    hasReachedStandardPlanningCheckpoint(
+      transaction,
+      STANDARD_DESIGN_STAGE_CHECKPOINT[stage],
+    )
+  );
 }
 
 async function getStandardPlanningArtifactHashes(
@@ -458,6 +297,19 @@ async function getStandardPlanningArtifactHashes(
     try {
       const content = await readFile(join(specDir, fileName), 'utf-8');
       return [fileName, createHash('sha256').update(content, 'utf8').digest('hex')] as const;
+    } catch {
+      return [fileName, null] as const;
+    }
+  }));
+  return Object.fromEntries(entries);
+}
+
+async function getStandardPlanningArtifactContents(
+  specDir: string,
+): Promise<Record<string, string | null>> {
+  const entries = await Promise.all(STANDARD_PLANNING_TRANSACTION_ARTIFACTS.map(async (fileName) => {
+    try {
+      return [fileName, await readFile(join(specDir, fileName), 'utf-8')] as const;
     } catch {
       return [fileName, null] as const;
     }
@@ -482,6 +334,7 @@ async function writeStandardPlanningTransaction(
 
 async function beginStandardPlanningTransaction(
   specDir: string,
+  ownerPlan: StandardPlanningOwnerPlan,
 ): Promise<StandardPlanningTransactionState> {
   const filePath = join(specDir, AUTOCODE_TASK_ARTIFACTS.planningTransaction);
   const now = new Date().toISOString();
@@ -489,13 +342,30 @@ async function beginStandardPlanningTransaction(
   try {
     const parsed = JSON.parse(await readFile(filePath, 'utf-8')) as StandardPlanningTransactionState;
     if (parsed?.version === 1 && parsed.phase === 'planning' && parsed.status !== 'completed') {
-      previous = parsed;
+      const requestCreatedAtMs = ownerPlan.changeRequestCreatedAt
+        ? Date.parse(ownerPlan.changeRequestCreatedAt)
+        : Number.NaN;
+      const transactionCreatedAtMs = Date.parse(parsed.createdAt);
+      const compatibleLegacyRequest = Boolean(
+        ownerPlan.changeRequestId &&
+        !parsed.changeRequestId &&
+        Number.isFinite(requestCreatedAtMs) &&
+        Number.isFinite(transactionCreatedAtMs) &&
+        transactionCreatedAtMs >= requestCreatedAtMs - 1_000,
+      );
+      const samePlanningRequest = ownerPlan.changeRequestId
+        ? parsed.changeRequestId === ownerPlan.changeRequestId || compatibleLegacyRequest
+        : !parsed.changeRequestId;
+      if (samePlanningRequest) {
+        previous = parsed;
+      }
     }
   } catch {
     // A missing or malformed journal starts a new planning transaction.
   }
 
   const artifactHashes = await getStandardPlanningArtifactHashes(specDir);
+  const artifactContents = await getStandardPlanningArtifactContents(specDir);
   const previousCheckpoint = previous?.checkpoint ?? (
     previous && STANDARD_PLANNING_CHECKPOINTS.has(previous.stage) ? previous.stage : undefined
   );
@@ -507,9 +377,14 @@ async function beginStandardPlanningTransaction(
         resumedAt: now,
         resumedFromStage: previous.stage,
         checkpoint: previousCheckpoint,
+        ...(ownerPlan.changeRequestId
+          ? { changeRequestId: ownerPlan.changeRequestId }
+          : {}),
+        ownerStages: [...ownerPlan.stages],
         updatedAt: now,
         baselineArtifactHashes:
           previous.baselineArtifactHashes ?? previous.artifactHashes ?? artifactHashes,
+        baselineArtifacts: previous.baselineArtifacts ?? artifactContents,
         artifactHashes,
       }
     : {
@@ -520,7 +395,12 @@ async function beginStandardPlanningTransaction(
         stage: 'started',
         createdAt: now,
         updatedAt: now,
+        ...(ownerPlan.changeRequestId
+          ? { changeRequestId: ownerPlan.changeRequestId }
+          : {}),
+        ownerStages: [...ownerPlan.stages],
         baselineArtifactHashes: artifactHashes,
+        baselineArtifacts: artifactContents,
         artifactHashes,
       };
   await writeStandardPlanningTransaction(specDir, transaction);
@@ -548,25 +428,32 @@ async function updateStandardPlanningTransaction(
   await writeStandardPlanningTransaction(specDir, transaction);
 }
 
-function shouldResumeStandardPlanningFromExistingSources(
+function shouldResumeStandardPlanningFromExistingTasks(
   transaction: StandardPlanningTransactionState,
 ): boolean {
   if (!transaction.resumedAt) {
     return false;
   }
-  if (
-    transaction.checkpoint === 'sources_validated' ||
-    transaction.checkpoint === 'plan_derived' ||
-    transaction.checkpoint === 'plan_validated'
-  ) {
+  if (hasReachedStandardPlanningCheckpoint(transaction, 'tasks_validated')) {
     return true;
   }
 
-  return STANDARD_PLANNING_SOURCE_ARTIFACTS.some((fileName) => {
-    const currentHash = transaction.artifactHashes[fileName];
-    const baselineHash = transaction.baselineArtifactHashes[fileName];
-    return currentHash !== null && currentHash !== baselineHash;
-  });
+  const fileName = AUTOCODE_TASK_ARTIFACTS.tasks;
+  const currentHash = transaction.artifactHashes[fileName];
+  const baselineHash = transaction.baselineArtifactHashes[fileName];
+  return currentHash !== null && currentHash !== baselineHash;
+}
+
+function hasReachedStandardDesignReviewCheckpoint(
+  transaction: StandardPlanningTransactionState,
+): boolean {
+  return hasReachedStandardPlanningCheckpoint(transaction, 'design_reviewed');
+}
+
+function hasReachedStandardDesignValidationCheckpoint(
+  transaction: StandardPlanningTransactionState,
+): boolean {
+  return hasReachedStandardPlanningCheckpoint(transaction, 'design_validated');
 }
 
 /** Maps build phases to their agent types */
@@ -631,6 +518,8 @@ export interface PromptContext {
   recoveryHints?: string;
   /** Number of previous attempts on current subtask */
   attemptCount: number;
+  /** Independent Standard design-package owner currently being generated. */
+  designStage?: AutocodeDesignPackageStage;
 }
 
 /** Minimal subtask info for prompt generation */
@@ -684,6 +573,8 @@ export interface SessionRunConfig {
   abortSignal?: AbortSignal;
   cliModel?: string;
   cliThinking?: string;
+  /** Standard design-package owner stage used for a focused kickoff message. */
+  specPhase?: AutocodeDesignPackageStage;
   /** Optional Zod schema for structured output (uses AI SDK Output.object()) */
   outputSchema?: import('zod').ZodSchema;
 }
@@ -756,6 +647,40 @@ function stringArrayFrom(value: unknown): string[] {
   return Array.isArray(value)
     ? value.map(stringFrom).filter(Boolean)
     : [];
+}
+
+function getSessionStructuredJson(result: SessionResult): unknown {
+  if (result.structuredOutput) {
+    return result.structuredOutput;
+  }
+
+  for (let index = result.messages.length - 1; index >= 0; index--) {
+    const message = result.messages[index];
+    if (message.role !== 'assistant' || !message.content.trim()) {
+      continue;
+    }
+    const text = message.content.trim();
+    const candidates = new Set<string>([text]);
+    for (const match of text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+      if (match[1]?.trim()) {
+        candidates.add(match[1].trim());
+      }
+    }
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      candidates.add(text.slice(firstBrace, lastBrace + 1));
+    }
+    for (const candidate of candidates) {
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        // Try the next compact JSON candidate.
+      }
+    }
+  }
+
+  return undefined;
 }
 
 function isProjectDocumentationTaskMetadata(value: unknown): boolean {
@@ -967,6 +892,12 @@ export class BuildOrchestrator extends EventEmitter {
       }
       await saveImplementationPlanToFiles(this.config.specDir, preCodingValidation.data as never);
 
+      const designContractError = await this.validateRuntimeDesignContract(preCodingValidation.data as ImplementationPlan);
+      if (designContractError) {
+        this.emitTyped('log', `Pre-coding design contract validation failed: ${designContractError}`);
+        return this.buildOutcome(false, Date.now() - startTime, designContractError);
+      }
+
       // Check if build is already complete
       if (await this.isBuildComplete()) {
         const completedPlan = await this.loadPlan();
@@ -1054,7 +985,37 @@ export class BuildOrchestrator extends EventEmitter {
     return true;
   }
 
-  private async deriveRuntimePlanFromStandardTasks(): Promise<{ success: boolean; error?: string }> {
+  private async validateRuntimeDesignContract(plan: ImplementationPlan): Promise<string | undefined> {
+    const planRecord = plan as unknown as Record<string, unknown>;
+    const sourceTask = asRecord(planRecord.source_task);
+    const designContract = asRecord(sourceTask?.design_contract);
+    const expectedFingerprint = stringFrom(designContract?.fingerprint);
+    if (!expectedFingerprint) {
+      // Compatibility: an existing validated Standard plan may finish once;
+      // its next replan upgrades it to the latest design contract.
+      return undefined;
+    }
+
+    const designPackage = await this.readStandardDesignPackageArtifacts();
+    const { designMarkdown, designReviewMarkdown } = designPackage;
+    if (!designMarkdown) {
+      return `${AUTOCODE_TASK_ARTIFACTS.design} is missing for the active runtime plan; return to planning.`;
+    }
+    const actualFingerprint = Number(designContract?.version) === 4
+      ? getAutocodeDesignPackageFingerprint(designPackage)
+      : getAutocodeDesignDocumentFingerprint(designMarkdown);
+    if (actualFingerprint !== expectedFingerprint) {
+      return `The approved design package changed after the runtime plan was derived; return to planning before coding.`;
+    }
+    if (!designReviewMarkdown || getAutocodeDesignReviewStatus(designReviewMarkdown) !== 'PASSED') {
+      return `${AUTOCODE_TASK_ARTIFACTS.designReview} is missing or not PASSED; return to planning before coding.`;
+    }
+    return undefined;
+  }
+
+  private async deriveRuntimePlanFromStandardTasks(
+    snapshot?: StandardPlanningArtifactSnapshot,
+  ): Promise<{ success: boolean; error?: string }> {
     if (!this.shouldDeriveRuntimePlanFromStandardTasks()) {
       return { success: true };
     }
@@ -1062,8 +1023,16 @@ export class BuildOrchestrator extends EventEmitter {
     const tasksPath = join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks);
     try {
       const tasksMarkdown = await readFile(tasksPath, 'utf-8');
+      const designPackage = await this.readStandardDesignPackageArtifacts();
+      const { designMarkdown } = designPackage;
+      if (!designMarkdown) {
+        throw new Error(AUTOCODE_TASK_ARTIFACTS.design + ' is missing.');
+      }
       const previousPlanMarkdown = this.config.forcePlanning === true
-        ? await this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.implementationPlan) ?? undefined
+        ? this.getStandardPlanningArtifactSnapshotContent(
+            snapshot,
+            AUTOCODE_TASK_ARTIFACTS.implementationPlan,
+          ) ?? await this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.implementationPlan) ?? undefined
         : undefined;
       const now = new Date().toISOString();
       const plan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(tasksMarkdown, {
@@ -1073,6 +1042,12 @@ export class BuildOrchestrator extends EventEmitter {
         requireTaskEvidence: true,
         includeCompletedTasks: this.config.forcePlanning === true,
         preserveCompletedStateFromPreviousPlanMarkdown: previousPlanMarkdown,
+        designMarkdown,
+        requirementModelMarkdown: designPackage.requirementModelMarkdown ?? undefined,
+        domainModelMarkdown: designPackage.domainModelMarkdown ?? undefined,
+        designModelMarkdown: designPackage.designModelMarkdown ?? undefined,
+        implementationModelMarkdown: designPackage.implementationModelMarkdown ?? undefined,
+        designPath: AUTOCODE_TASK_ARTIFACTS.design,
       });
       await saveImplementationPlanToFiles(this.config.specDir, plan as never);
       this.emitTyped('log', translateLogMessage('Generated runtime work packages from tasks.md', this.config.language));
@@ -1085,24 +1060,44 @@ export class BuildOrchestrator extends EventEmitter {
 
   private async validateStandardPlanArtifactQuality(
     tasksMarkdown?: string,
+    snapshot?: StandardPlanningArtifactSnapshot,
   ): Promise<string[]> {
-    const [specMarkdown, requirementsMarkdown, rawContextMarkdown] = await Promise.all([
+    const [specMarkdown, requirementsMarkdown, rawContextMarkdown, designPackage] = await Promise.all([
       this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.specFile),
       this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.requirements),
       this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.context),
+      this.readStandardDesignPackageArtifacts(),
     ]);
     const contextMarkdown = await this.ensureProjectDocumentationContextArtifact(rawContextMarkdown);
     const result = validateAutocodeStandardPlanArtifacts({
       specMarkdown,
       requirementsMarkdown,
       tasksMarkdown: tasksMarkdown ?? await this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.tasks),
+      previousTasksMarkdown: this.getStandardPlanningArtifactSnapshotContent(
+        snapshot,
+        AUTOCODE_TASK_ARTIFACTS.tasks,
+      ),
+      previousImplementationPlanMarkdown: this.getStandardPlanningArtifactSnapshotContent(
+        snapshot,
+        AUTOCODE_TASK_ARTIFACTS.implementationPlan,
+      ),
       contextMarkdown,
+      ...designPackage,
+      language: this.config.language,
       requireSpecEvidence: true,
       requireRequirementsEvidence: true,
       requireTaskEvidence: true,
       requireContextEvidence: Boolean(contextMarkdown),
+      requireDesign: true,
     });
     return result.errors;
+  }
+
+  private getStandardPlanningArtifactSnapshotContent(
+    snapshot: StandardPlanningArtifactSnapshot | undefined,
+    fileName: string,
+  ): string | null | undefined {
+    return snapshot?.artifacts.find((artifact) => artifact.fileName === fileName)?.content;
   }
 
   private async ensureProjectDocumentationContextArtifact(contextMarkdown: string | null): Promise<string | null> {
@@ -1139,11 +1134,42 @@ export class BuildOrchestrator extends EventEmitter {
     }
   }
 
-  private async captureStandardPlanningArtifactSnapshot(): Promise<StandardPlanningArtifactSnapshot> {
+  private async readStandardDesignPackageArtifacts() {
+    const [
+      designMarkdown,
+      requirementModelMarkdown,
+      domainModelMarkdown,
+      designModelMarkdown,
+      implementationModelMarkdown,
+      designReviewMarkdown,
+    ] = await Promise.all([
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.design),
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.requirementModel),
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.domainModel),
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.designModel),
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.implementationModel),
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.designReview),
+    ]);
+    return {
+      designMarkdown,
+      requirementModelMarkdown,
+      domainModelMarkdown,
+      designModelMarkdown,
+      implementationModelMarkdown,
+      designReviewMarkdown,
+    };
+  }
+
+  private async captureStandardPlanningArtifactSnapshot(
+    transaction?: StandardPlanningTransactionState,
+  ): Promise<StandardPlanningArtifactSnapshot> {
     const suffix = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
     const artifacts = await Promise.all(STANDARD_PLANNING_TRANSACTION_ARTIFACTS.map(async (fileName) => ({
       fileName,
-      content: await this.readOptionalPlanArtifact(fileName),
+      content: transaction?.baselineArtifacts &&
+        Object.hasOwn(transaction.baselineArtifacts, fileName)
+        ? transaction.baselineArtifacts[fileName]
+        : await this.readOptionalPlanArtifact(fileName),
     })));
 
     return { suffix, artifacts };
@@ -1152,13 +1178,45 @@ export class BuildOrchestrator extends EventEmitter {
   private async restoreStandardPlanningArtifactSnapshot(
     snapshot: StandardPlanningArtifactSnapshot,
     reason: string,
-    options: { preserveValidatedSources?: boolean } = {},
+    options: {
+      preserveValidatedRequirements?: boolean;
+      preserveValidatedSpec?: boolean;
+      preserveValidatedDesign?: boolean;
+      preserveValidatedDesignStages?: readonly AutocodeDesignPackageStage[];
+      preserveValidatedDesignReview?: boolean;
+      preserveValidatedTasks?: boolean;
+    } = {},
   ): Promise<void> {
     let restoredCount = 0;
     let savedFailedCount = 0;
 
     for (const artifact of snapshot.artifacts) {
-      if (options.preserveValidatedSources && artifact.fileName !== AUTOCODE_TASK_ARTIFACTS.implementationPlan) {
+      if (
+        options.preserveValidatedRequirements &&
+        artifact.fileName === AUTOCODE_TASK_ARTIFACTS.requirements
+      ) {
+        continue;
+      }
+      if (
+        options.preserveValidatedSpec &&
+        artifact.fileName === AUTOCODE_TASK_ARTIFACTS.specFile
+      ) {
+        continue;
+      }
+      const designStage = STANDARD_DESIGN_OWNER_STAGES.find((stage) =>
+        STANDARD_DESIGN_STAGE_ARTIFACT[stage] === artifact.fileName
+      );
+      if (
+        designStage &&
+        (
+          options.preserveValidatedDesign ||
+          options.preserveValidatedDesignStages?.includes(designStage) ||
+          (designStage === 'design_review' && options.preserveValidatedDesignReview)
+        )
+      ) {
+        continue;
+      }
+      if (options.preserveValidatedTasks && artifact.fileName === AUTOCODE_TASK_ARTIFACTS.tasks) {
         continue;
       }
       const filePath = join(this.config.specDir, artifact.fileName);
@@ -1222,201 +1280,15 @@ export class BuildOrchestrator extends EventEmitter {
     }
   }
 
-  private async validateStandardPlanArtifactQualityWithRepair(): Promise<string[]> {
-    let errors = await this.validateStandardPlanArtifactQuality();
-    if (errors.length === 0) {
-      return errors;
-    }
-
-    const repaired = await this.repairStandardPlanEvidenceArtifacts(errors);
-    if (!repaired) {
-      return errors;
-    }
-
-    errors = await this.validateStandardPlanArtifactQuality();
-    this.emitTyped(
-      'log',
-      errors.length > 0
-        ? `Repaired Standard planning evidence metadata; remaining quality issues: ${errors.join(', ')}`
-        : 'Repaired Standard planning evidence metadata',
-    );
-    return errors;
-  }
-
-  private async repairStandardPlanEvidenceArtifacts(errors: readonly string[]): Promise<boolean> {
-    let repaired = false;
-
-    const shouldReplaceSpecSeed = errors.some((error) => error.startsWith(STANDARD_SPEC_SEED_ERROR_PREFIX));
-    if (shouldReplaceSpecSeed) {
-      repaired = await this.replaceManualStandardSpecSeed() || repaired;
-    }
-
-    const shouldRepairSpec = errors.some((error) =>
-      error === `${AUTOCODE_TASK_ARTIFACTS.specFile} missing "## Evidence" section.` ||
-      error === `${AUTOCODE_TASK_ARTIFACTS.specFile} Requirements section must cite Evidence for requirements or acceptance criteria.` ||
-      error === `${AUTOCODE_TASK_ARTIFACTS.specFile} Design Notes must cite Evidence or move unverified claims to Assumptions/Open Questions.`
-    );
-    if (shouldRepairSpec) {
-      repaired = await this.ensureMarkdownEvidenceSection(
-        AUTOCODE_TASK_ARTIFACTS.specFile,
-        'Evidence',
-        [
-          '- User task description, requirements.md, and tasks.md define the Standard planning scope.',
-          '- Generated Standard artifacts provide the requirement and verification trace for this task.',
-        ],
-      ) || repaired;
-    }
-
-    const shouldRepairRequirements = errors.some((error) =>
-      error === `${AUTOCODE_TASK_ARTIFACTS.requirements} missing non-empty "Evidence Sources" section.`
-    );
-    if (shouldRepairRequirements) {
-      repaired = await this.ensureMarkdownEvidenceSection(
-        AUTOCODE_TASK_ARTIFACTS.requirements,
-        'Evidence Sources',
-        [
-          '- User task description.',
-          '- spec.md planning requirements and acceptance criteria.',
-        ],
-      ) || repaired;
-    }
-
-    const shouldRepairTasks = errors.some((error) =>
-      /\btasks\.md task \S+ missing _Evidence: \.\.\._ metadata\./.test(error) ||
-      /\btasks\.md task \S+ has vague _Evidence_;/.test(error) ||
-      /\bAutocode task \S+ missing traceable _Evidence: \.\.\._ metadata\b/.test(error)
-    );
-    if (shouldRepairTasks) {
-      repaired = await this.ensureTasksTraceableEvidenceMetadata() || repaired;
-    }
-
-    return repaired;
-  }
-
-  private async replaceManualStandardSpecSeed(): Promise<boolean> {
-    const [specMarkdown, requirementsMarkdown, tasksMarkdown, humanInputMarkdown] = await Promise.all([
-      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.specFile),
-      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.requirements),
-      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.tasks),
-      this.readOptionalPlanArtifact('HUMAN_INPUT.md'),
-    ]);
-
-    const replacement = buildCompactStandardSpecFromArtifacts({
-      specMarkdown,
-      requirementsMarkdown,
-      tasksMarkdown,
-      humanInputMarkdown,
-    });
-    if (!replacement || replacement.trim() === specMarkdown?.replace(/\r\n/g, '\n').trim()) {
-      return false;
-    }
-
-    await writeFile(
-      join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.specFile),
-      replacement,
-      'utf-8',
-    );
-    return true;
-  }
-
-  private async ensureMarkdownEvidenceSection(
-    fileName: string,
-    heading: string,
-    evidenceLines: string[],
-  ): Promise<boolean> {
-    const filePath = join(this.config.specDir, fileName);
-    let markdown: string;
-    try {
-      markdown = await readFile(filePath, 'utf-8');
-    } catch {
-      return false;
-    }
-
-    const normalized = markdown.replace(/\r\n/g, '\n');
-    const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const headingPattern = new RegExp(`(^\\s*##\\s+${escapedHeading}\\b[^\\n]*\\n)`, 'im');
-    const headingMatch = headingPattern.exec(normalized);
-    const evidenceBlock = `${evidenceLines.join('\n')}\n`;
-    let next: string;
-
-    if (!headingMatch) {
-      next = `${normalized.trimEnd()}\n\n## ${heading}\n\n${evidenceBlock}`;
-    } else {
-      const sectionStart = headingMatch.index + headingMatch[0].length;
-      const rest = normalized.slice(sectionStart);
-      const nextHeadingMatch = /^\s*##\s+\S.*$/im.exec(rest);
-      const sectionEnd = nextHeadingMatch ? sectionStart + nextHeadingMatch.index : normalized.length;
-      const section = normalized.slice(sectionStart, sectionEnd);
-      if (/(?:^|\n)\s*(?:[-*]|\d+\.)\s+\S/.test(section)) {
-        return false;
-      }
-      next = `${normalized.slice(0, sectionStart).trimEnd()}\n\n${evidenceBlock}${normalized.slice(sectionEnd).replace(/^\n+/, '\n')}`;
-    }
-
-    if (next === normalized) {
-      return false;
-    }
-    await writeFile(filePath, next, 'utf-8');
-    return true;
-  }
-
-  private async ensureTasksTraceableEvidenceMetadata(): Promise<boolean> {
-    const filePath = join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks);
-    let markdown: string;
-    try {
-      markdown = await readFile(filePath, 'utf-8');
-    } catch {
-      return false;
-    }
-
-    let parsedTasks: unknown;
-    try {
-      parsedTasks = parseAutocodeImplementationPlanMarkdown(markdown);
-    } catch {
-      return false;
-    }
-
-    const plan = asRecord(parsedTasks);
-    const phases = Array.isArray(plan?.phases) ? plan.phases : [];
-    let changed = false;
-    for (const phase of phases) {
-      const phaseRecord = asRecord(phase);
-      const subtasks = Array.isArray(phaseRecord?.subtasks)
-        ? phaseRecord.subtasks
-        : Array.isArray(phaseRecord?.chunks)
-          ? phaseRecord.chunks
-          : [];
-      for (const subtask of subtasks) {
-        const subtaskRecord = asRecord(subtask);
-        if (!subtaskRecord || hasTraceablePlanningEvidence(subtaskRecord.evidence)) {
-          continue;
-        }
-        const id = stringFrom(subtaskRecord.id ?? subtaskRecord.subtask_id);
-        const existingEvidence = stringFrom(subtaskRecord.evidence);
-        const fallbackEvidence = [
-          existingEvidence,
-          'spec.md Requirements',
-          'requirements.md Evidence Sources',
-          id ? `${AUTOCODE_TASK_ARTIFACTS.tasks} ${id}` : AUTOCODE_TASK_ARTIFACTS.tasks,
-        ].filter(Boolean).join('; ');
-        subtaskRecord.evidence = fallbackEvidence;
-        changed = true;
-      }
-    }
-
-    if (!changed || !plan) {
-      return false;
-    }
-
-    await writeFile(filePath, stringifyAutocodeImplementationPlanMarkdown(plan as never), 'utf-8');
-    return true;
-  }
-
   private async tryCompletePlanningFromExistingStandardArtifacts(
     errorMessage: string,
     allowGranularityWarnings: boolean,
+    snapshot?: StandardPlanningArtifactSnapshot,
   ): Promise<{ success: boolean; error?: string }> {
-    const artifactQualityErrors = await this.validateStandardPlanArtifactQualityWithRepair();
+    const artifactQualityErrors = await this.validateStandardPlanArtifactQuality(
+      undefined,
+      snapshot,
+    );
     if (artifactQualityErrors.length > 0) {
       if (allowGranularityWarnings && hasOnlyAutocodePlanTaskGranularityErrors(artifactQualityErrors)) {
         this.emitTyped(
@@ -1431,7 +1303,7 @@ export class BuildOrchestrator extends EventEmitter {
       }
     }
 
-    const derivedPlan = await this.deriveRuntimePlanFromStandardTasks();
+    const derivedPlan = await this.deriveRuntimePlanFromStandardTasks(snapshot);
     if (!derivedPlan.success) {
       return {
         success: false,
@@ -1496,6 +1368,474 @@ export class BuildOrchestrator extends EventEmitter {
     return { success: true };
   }
 
+  private async resolveStandardPlanningOwnerPlan(): Promise<StandardPlanningOwnerPlan> {
+    if (this.config.forcePlanning !== true) {
+      return {
+        stages: ['design', 'design_review', 'tasks'],
+        source: 'initial',
+      };
+    }
+
+    let changeRequestsMarkdown: string;
+    try {
+      changeRequestsMarkdown = await readFile(
+        join(this.config.specDir, STANDARD_CHANGE_REQUESTS_FILE),
+        'utf-8',
+      );
+    } catch {
+      this.emitTyped(
+        'log',
+        'No change_requests.jsonl owner-stage contract was found; using the legacy design-to-tasks planning flow.',
+      );
+      return {
+        stages: ['design', 'design_review', 'tasks'],
+        source: 'legacy_force',
+      };
+    }
+
+    const ownerPlan = parseAutocodeStandardPlanningOwnerPlan(changeRequestsMarkdown);
+    if (ownerPlan) {
+      this.emitTyped(
+        'log',
+        `Incremental Standard planning owner stages: ${ownerPlan.stages.join(' -> ')}`,
+      );
+      return ownerPlan;
+    }
+
+    this.emitTyped(
+      'log',
+      'change_requests.jsonl has no valid Standard planning entry; using the full owner-stage flow for recovery.',
+    );
+    return {
+      stages: [...STANDARD_PLANNING_OWNER_STAGE_ORDER],
+      source: 'invalid_change_request',
+    };
+  }
+
+  private async validateStandardRequirementsAndSpec(
+    includeSpec: boolean,
+  ): Promise<string[]> {
+    const [requirementsMarkdown, specMarkdown] = await Promise.all([
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.requirements),
+      includeSpec
+        ? this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.specFile)
+        : Promise.resolve(null),
+    ]);
+    const quality = validateAutocodeStandardPlanArtifacts({
+      requirementsMarkdown,
+      ...(includeSpec ? { specMarkdown } : {}),
+      language: this.config.language,
+      requireRequirementsEvidence: true,
+      requireSpecEvidence: includeSpec,
+      requireTaskEvidence: false,
+      requireContextEvidence: false,
+      requireDesign: false,
+    });
+    return quality.errors;
+  }
+
+  private async runStandardRequirementsOwnerStage(
+    transaction: StandardPlanningTransactionState,
+    maxRetries: number,
+  ): Promise<{ success: boolean; error?: string }> {
+    if (hasReachedStandardPlanningCheckpoint(transaction, 'requirements_validated')) {
+      this.emitTyped('log', 'Reusing checkpointed requirements.md owner output.');
+      return { success: true };
+    }
+
+    let retryContext: string | undefined;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (this.aborted) {
+        return { success: false, error: 'Build cancelled' };
+      }
+
+      this.iteration++;
+      this.emitTyped('iteration-start', this.iteration, 'planning');
+      const prompt = await this.config.generatePrompt('spec_gatherer', 'planning', {
+        iteration: this.iteration,
+        planningRetryContext: retryContext,
+        attemptCount: attempt,
+      });
+      const result = await this.config.runSession({
+        agentType: 'spec_gatherer',
+        phase: 'planning',
+        systemPrompt: prompt,
+        specDir: this.config.specDir,
+        projectDir: this.config.projectDir,
+        sessionNumber: this.iteration,
+        abortSignal: this.config.abortSignal,
+        cliModel: this.config.cliModel,
+        cliThinking: this.config.cliThinking,
+        outputSchema: RequirementsOutputSchema,
+      });
+      this.emitTyped('session-complete', result, 'planning');
+
+      if (result.outcome === 'cancelled') {
+        return { success: false, error: 'Build cancelled' };
+      }
+      if (result.outcome === 'auth_failure' || result.outcome === 'rate_limited') {
+        return {
+          success: false,
+          error: result.error?.message ?? 'Requirements owner session failed',
+        };
+      }
+
+      const acceptedOutcome = result.outcome === 'completed' ||
+        result.outcome === 'max_steps' ||
+        result.outcome === 'context_window';
+      const structuredJson = acceptedOutcome ? getSessionStructuredJson(result) : undefined;
+      const parsedRequirements = RequirementsOutputSchema.safeParse(structuredJson);
+      if (acceptedOutcome && parsedRequirements.success) {
+        try {
+          await writeFile(
+            join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.requirements),
+            stringifyAutocodeTaskRequirementsMarkdown(parsedRequirements.data),
+            'utf-8',
+          );
+          const errors = await this.validateStandardRequirementsAndSpec(false);
+          if (errors.length === 0) {
+            await updateStandardPlanningTransaction(
+              this.config.specDir,
+              transaction,
+              'requirements_validated',
+              'active',
+            );
+            return { success: true };
+          }
+          retryContext = [
+            'REPAIR REQUIREMENTS OWNER OUTPUT',
+            ...formatAutocodeRetryErrorLines(errors, { maxCharsPerError: 180 }),
+            'Return complete requirements JSON only. Preserve unaffected stable IDs.',
+          ].join('\n');
+        } catch (error) {
+          retryContext = `requirements.md could not be persisted: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      } else {
+        const error = result.error?.message ?? (
+          parsedRequirements.success
+            ? 'Requirements owner session did not complete.'
+            : parsedRequirements.error.issues.map((issue) => issue.message).join('; ')
+        );
+        retryContext = `Requirements owner output was not valid JSON: ${error}`;
+      }
+
+      this.emitTyped(
+        'log',
+        `Requirements owner stage failed validation (attempt ${attempt + 1}/${maxRetries + 1}); retrying only requirements.md.`,
+      );
+    }
+
+    return {
+      success: false,
+      error: `requirements.md owner stage failed after ${maxRetries + 1} attempts: ${retryContext ?? 'unknown error'}`,
+    };
+  }
+
+  private async runStandardSpecOwnerStage(
+    transaction: StandardPlanningTransactionState,
+    maxRetries: number,
+  ): Promise<{ success: boolean; error?: string }> {
+    if (hasReachedStandardPlanningCheckpoint(transaction, 'spec_validated')) {
+      this.emitTyped('log', 'Reusing checkpointed spec.md owner output.');
+      return { success: true };
+    }
+
+    let retryContext: string | undefined;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (this.aborted) {
+        return { success: false, error: 'Build cancelled' };
+      }
+
+      this.iteration++;
+      this.emitTyped('iteration-start', this.iteration, 'planning');
+      const prompt = await this.config.generatePrompt('spec_writer', 'planning', {
+        iteration: this.iteration,
+        planningRetryContext: retryContext,
+        attemptCount: attempt,
+      });
+      const result = await this.config.runSession({
+        agentType: 'spec_writer',
+        phase: 'planning',
+        systemPrompt: prompt,
+        specDir: this.config.specDir,
+        projectDir: this.config.projectDir,
+        sessionNumber: this.iteration,
+        abortSignal: this.config.abortSignal,
+        cliModel: this.config.cliModel,
+        cliThinking: this.config.cliThinking,
+      });
+      this.emitTyped('session-complete', result, 'planning');
+
+      if (result.outcome === 'cancelled') {
+        return { success: false, error: 'Build cancelled' };
+      }
+      if (result.outcome === 'auth_failure' || result.outcome === 'rate_limited') {
+        return {
+          success: false,
+          error: result.error?.message ?? 'Specification owner session failed',
+        };
+      }
+
+      if (
+        result.outcome === 'completed' ||
+        result.outcome === 'max_steps' ||
+        result.outcome === 'context_window'
+      ) {
+        const errors = await this.validateStandardRequirementsAndSpec(true);
+        if (errors.length === 0) {
+          await updateStandardPlanningTransaction(
+            this.config.specDir,
+            transaction,
+            'spec_validated',
+            'active',
+          );
+          return { success: true };
+        }
+        retryContext = [
+          'REPAIR SPECIFICATION OWNER OUTPUT',
+          ...formatAutocodeRetryErrorLines(errors, { maxCharsPerError: 180 }),
+          'Write only spec.md. Keep observable SCN-* behavior and reference R*/AC*/E* IDs.',
+        ].join('\n');
+      } else {
+        retryContext = result.error?.message ?? 'Specification owner session failed.';
+      }
+
+      this.emitTyped(
+        'log',
+        `Specification owner stage failed validation (attempt ${attempt + 1}/${maxRetries + 1}); retrying only spec.md.`,
+      );
+    }
+
+    return {
+      success: false,
+      error: `spec.md owner stage failed after ${maxRetries + 1} attempts: ${retryContext ?? 'unknown error'}`,
+    };
+  }
+
+  private async validateExistingStandardDesignForTaskPlanning(): Promise<string[]> {
+    const designPackage = await this.readStandardDesignPackageArtifacts();
+    const quality = validateAutocodeStandardDesignArtifacts({
+      ...designPackage,
+      language: this.config.language,
+      requireReview: true,
+      requireTaskReferences: false,
+    });
+    return quality.errors;
+  }
+
+  private async validateStandardDesignOwnerStage(
+    stage: AutocodeDesignPackageStage,
+  ): Promise<string[]> {
+    const designPackage = await this.readStandardDesignPackageArtifacts();
+    return validateAutocodeStandardDesignStageArtifacts(
+      { ...designPackage, language: this.config.language },
+      stage,
+    ).errors;
+  }
+
+  private async runStandardDesignOwnerStage(
+    stage: AutocodeDesignPackageStage,
+    planningTransaction: StandardPlanningTransactionState,
+    options: {
+      forceRun?: boolean;
+      retryContext?: string;
+      maxRetries?: number;
+    } = {},
+  ): Promise<{ success: boolean; error?: string; errors?: string[] }> {
+    const checkpoint = STANDARD_DESIGN_STAGE_CHECKPOINT[stage];
+    if (
+      !options.forceRun &&
+      hasReachedStandardPlanningCheckpoint(planningTransaction, checkpoint)
+    ) {
+      const checkpointErrors = await this.validateStandardDesignOwnerStage(stage);
+      if (checkpointErrors.length === 0) {
+        this.emitTyped('log', `Reusing checkpointed ${stage} owner output.`);
+        return { success: true };
+      }
+      this.emitTyped(
+        'log',
+        `Checkpointed ${stage} artifact is invalid; rerunning its owner: ${checkpointErrors.join(', ')}`,
+      );
+    }
+
+    let retryContext = options.retryContext;
+    const maxRetries = stage === 'design_review' ? 1 : options.maxRetries ?? 2;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (this.aborted) {
+        return { success: false, error: 'Build cancelled' };
+      }
+
+      this.iteration++;
+      this.emitTyped('iteration-start', this.iteration, 'planning');
+      const agentType: AgentType = stage === 'design_review'
+        ? 'design_critic'
+        : 'software_designer';
+      if (stage === 'design_review') {
+        await unlink(join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.designReview))
+          .catch(() => undefined);
+      }
+      const systemPrompt = await this.config.generatePrompt(agentType, 'planning', {
+        iteration: this.iteration,
+        planningRetryContext: retryContext,
+        attemptCount: attempt,
+        designStage: stage,
+      });
+      const result = await this.config.runSession({
+        agentType,
+        phase: 'planning',
+        specPhase: stage,
+        systemPrompt,
+        specDir: this.config.specDir,
+        projectDir: this.config.projectDir,
+        sessionNumber: this.iteration,
+        abortSignal: this.config.abortSignal,
+        cliModel: this.config.cliModel,
+        cliThinking: this.config.cliThinking,
+      });
+      this.emitTyped('session-complete', result, 'planning');
+
+      if (result.outcome === 'cancelled') {
+        return { success: false, error: 'Build cancelled' };
+      }
+      if (result.outcome === 'auth_failure' || result.outcome === 'rate_limited') {
+        return {
+          success: false,
+          error: result.error?.message ?? `${stage} owner session failed`,
+        };
+      }
+
+      const acceptedOutcome = result.outcome === 'completed' ||
+        result.outcome === 'max_steps' ||
+        result.outcome === 'context_window';
+      if (acceptedOutcome) {
+        const errors = await this.validateStandardDesignOwnerStage(stage);
+        if (errors.length === 0) {
+          await updateStandardPlanningTransaction(
+            this.config.specDir,
+            planningTransaction,
+            checkpoint,
+            'active',
+          );
+          return { success: true };
+        }
+        if (stage === 'design_review') {
+          return {
+            success: false,
+            error: `Independent design review requested revision: ${errors.join(', ')}`,
+            errors,
+          };
+        }
+        retryContext = buildAutocodeDesignQualityRetryPrompt(errors);
+        this.emitTyped(
+          'log',
+          `${stage} owner validation failed (attempt ${attempt + 1}/${maxRetries + 1}): ${errors.join(', ')}`,
+        );
+        continue;
+      }
+
+      const error = result.error?.message ?? `${stage} owner session failed`;
+      retryContext = buildAutocodeDesignQualityRetryPrompt([error]);
+      this.emitTyped(
+        'log',
+        `${stage} owner session failed (attempt ${attempt + 1}/${maxRetries + 1}): ${error}`,
+      );
+    }
+
+    return {
+      success: false,
+      error: `${stage} owner failed deterministic validation after ${maxRetries + 1} attempts.`,
+    };
+  }
+
+  private async ensureStandardDesignForPlanning(
+    planningTransaction: StandardPlanningTransactionState,
+    requestedOwnerStages: readonly AutocodeStandardPlanningOwnerStage[] = STANDARD_DESIGN_OWNER_STAGES,
+  ): Promise<{ success: boolean; error?: string }> {
+    const existingPackage = await this.readStandardDesignPackageArtifacts();
+    const existingQuality = validateAutocodeStandardDesignArtifacts({
+      ...existingPackage,
+      language: this.config.language,
+      requireReview: true,
+      requireTaskReferences: false,
+    });
+    const mayReuseReviewedDesign = existingQuality.valid && (
+      this.config.forcePlanning !== true ||
+      hasReachedStandardDesignReviewCheckpoint(planningTransaction)
+    );
+    if (mayReuseReviewedDesign) {
+      await updateStandardPlanningTransaction(
+        this.config.specDir,
+        planningTransaction,
+        'design_reviewed',
+        'active',
+      );
+      return { success: true };
+    }
+
+    const selectedStages = STANDARD_DESIGN_OWNER_STAGES.filter((stage) =>
+      requestedOwnerStages.includes(stage)
+    );
+    let generationStages = selectedStages.filter((stage) => stage !== 'design_review');
+    if (generationStages.length === 0 && !selectedStages.includes('design_review')) {
+      return {
+        success: false,
+        error: 'No Standard design owner stage was selected.',
+      };
+    }
+    let retryContext: string | undefined = buildAutocodeDesignQualityRetryPrompt(
+      existingQuality.errors,
+    );
+
+    for (let revision = 0; revision <= 2; revision++) {
+      for (const stage of generationStages) {
+        const stageResult = await this.runStandardDesignOwnerStage(
+          stage,
+          planningTransaction,
+          {
+            forceRun: revision > 0,
+            retryContext,
+          },
+        );
+        if (!stageResult.success) {
+          return {
+            success: false,
+            error: stageResult.error ?? `${stage} owner failed.`,
+          };
+        }
+        retryContext = undefined;
+      }
+
+      const reviewResult = await this.runStandardDesignOwnerStage(
+        'design_review',
+        planningTransaction,
+        {
+          forceRun: revision > 0 || generationStages.length > 0,
+          retryContext,
+        },
+      );
+      if (reviewResult.success) {
+        return { success: true };
+      }
+      if (reviewResult.error === 'Build cancelled') {
+        return { success: false, error: reviewResult.error };
+      }
+
+      const reviewErrors = reviewResult.errors ?? [reviewResult.error ?? 'Design review failed'];
+      generationStages = selectAutocodeDesignRevisionStages(reviewErrors)
+        .filter((stage) => stage !== 'design_review');
+      retryContext = buildAutocodeDesignQualityRetryPrompt(reviewErrors);
+      this.emitTyped(
+        'log',
+        `Independent design review requested revision ${revision + 1}/2; rerunning: ${generationStages.join(' -> ')}`,
+      );
+    }
+
+    return {
+      success: false,
+      error: 'Standard design failed deterministic validation or independent review after two revisions.',
+    };
+  }
+
   /**
    * Run the planning phase: invoke planner agent to create upstream tasks.md,
    * then derive implementation_plan.md runtime work packages.
@@ -1509,10 +1849,27 @@ export class BuildOrchestrator extends EventEmitter {
     // Get retry limit from workflow config
     const retryLimits = getRetryLimits(this.config.workflowConfig ?? DEFAULT_WORKFLOW_CONFIG);
     const maxPlanningRetries = retryLimits.planning;
-    const artifactSnapshot = await this.captureStandardPlanningArtifactSnapshot();
-    const planningTransaction = await beginStandardPlanningTransaction(this.config.specDir);
-    let validatedPlanningSources = false;
+    const ownerPlan = await this.resolveStandardPlanningOwnerPlan();
+    const requestedDesignOwnerStages = STANDARD_DESIGN_OWNER_STAGES.filter((stage) =>
+      ownerPlan.stages.includes(stage)
+    );
+    const planningTransaction = await beginStandardPlanningTransaction(
+      this.config.specDir,
+      ownerPlan,
+    );
+    const artifactSnapshot = await this.captureStandardPlanningArtifactSnapshot(planningTransaction);
+    let validatedRequirements = ownerPlan.stages.includes('requirements') &&
+      hasReachedStandardPlanningCheckpoint(planningTransaction, 'requirements_validated');
+    let validatedSpec = ownerPlan.stages.includes('spec') &&
+      hasReachedStandardPlanningCheckpoint(planningTransaction, 'spec_validated');
+    let validatedDesign = requestedDesignOwnerStages.length > 0 &&
+      hasReachedStandardPlanningCheckpoint(planningTransaction, 'design_reviewed');
+    let validatedTasks = hasReachedStandardPlanningCheckpoint(
+      planningTransaction,
+      'tasks_validated',
+    );
     const completePlanning = async (): Promise<{ success: true }> => {
+      delete planningTransaction.baselineArtifacts;
       await updateStandardPlanningTransaction(
         this.config.specDir,
         planningTransaction,
@@ -1522,32 +1879,86 @@ export class BuildOrchestrator extends EventEmitter {
       return { success: true };
     };
     const failPlanning = async (error: string): Promise<{ success: false; error: string }> => {
+      const validatedDesignStages = getValidatedStandardDesignStages(planningTransaction);
       await this.restoreStandardPlanningArtifactSnapshot(
         artifactSnapshot,
         error.replace(/\s+/g, ' ').slice(0, 180),
-        { preserveValidatedSources: validatedPlanningSources },
+        {
+          preserveValidatedRequirements: validatedRequirements,
+          preserveValidatedSpec: validatedSpec,
+          preserveValidatedDesign: validatedDesign,
+          preserveValidatedDesignStages: validatedDesignStages,
+          preserveValidatedDesignReview: validatedDesignStages.includes('design_review'),
+          preserveValidatedTasks: validatedTasks,
+        },
       );
+      const hasValidatedCheckpoint = validatedRequirements ||
+        validatedSpec ||
+        validatedDesignStages.length > 0 ||
+        validatedDesign ||
+        validatedTasks;
       await updateStandardPlanningTransaction(
         this.config.specDir,
         planningTransaction,
-        validatedPlanningSources ? 'repair_required' : 'failed',
-        validatedPlanningSources ? 'repair_required' : 'failed',
+        hasValidatedCheckpoint ? 'repair_required' : 'failed',
+        hasValidatedCheckpoint ? 'repair_required' : 'failed',
         error,
       );
       return { success: false, error };
     };
 
-    if (shouldResumeStandardPlanningFromExistingSources(planningTransaction)) {
+    if (ownerPlan.stages.includes('requirements')) {
+      const requirementsResult = await this.runStandardRequirementsOwnerStage(
+        planningTransaction,
+        maxPlanningRetries,
+      );
+      if (!requirementsResult.success) {
+        return failPlanning(requirementsResult.error ?? 'Standard requirements failed.');
+      }
+      validatedRequirements = true;
+    }
+
+    if (ownerPlan.stages.includes('spec')) {
+      const specResult = await this.runStandardSpecOwnerStage(
+        planningTransaction,
+        maxPlanningRetries,
+      );
+      if (!specResult.success) {
+        return failPlanning(specResult.error ?? 'Standard specification failed.');
+      }
+      validatedSpec = true;
+    }
+
+    if (requestedDesignOwnerStages.length > 0) {
+      const designResult = await this.ensureStandardDesignForPlanning(
+        planningTransaction,
+        requestedDesignOwnerStages,
+      );
+      if (!designResult.success) {
+        return failPlanning(designResult.error ?? 'Standard design failed.');
+      }
+      validatedDesign = true;
+    } else {
+      const designErrors = await this.validateExistingStandardDesignForTaskPlanning();
+      if (designErrors.length > 0) {
+        return failPlanning(
+          `tasks-only planning requires an existing approved design contract: ${designErrors.join(', ')}`,
+        );
+      }
+    }
+
+    if (shouldResumeStandardPlanningFromExistingTasks(planningTransaction)) {
       this.emitTyped(
         'log',
-        'Resuming interrupted Standard planning from persisted artifacts before starting another planner session.',
+        'Resuming interrupted Standard task planning from persisted tasks.md before starting another planner session.',
       );
       const resumedResult = await this.tryCompletePlanningFromExistingStandardArtifacts(
         'interrupted planning recovery',
         true,
+        artifactSnapshot,
       );
       if (resumedResult.success) {
-        validatedPlanningSources = true;
+        validatedTasks = true;
         await updateStandardPlanningTransaction(
           this.config.specDir,
           planningTransaction,
@@ -1608,6 +2019,7 @@ export class BuildOrchestrator extends EventEmitter {
           ? await this.tryCompletePlanningFromExistingStandardArtifacts(
             errorMessage,
             true,
+            artifactSnapshot,
           )
           : null;
         if (existingArtifactResult?.success) {
@@ -1620,6 +2032,17 @@ export class BuildOrchestrator extends EventEmitter {
         ) {
           planningRetryContext = buildAutocodePlanningStructuredOutputRetryPrompt(errorMessage);
           this.emitTyped('log', 'Planning failed while writing tasks.md; retrying with Markdown guidance...');
+          continue;
+        }
+        if (attempt < maxPlanningRetries) {
+          planningRetryContext = buildAutocodeStandardTasksValidationRetryPrompt([
+            errorMessage,
+            existingArtifactResult?.error ?? '',
+          ].filter(Boolean));
+          this.emitTyped(
+            'log',
+            'Planner session failed before tasks.md was validated; retrying only the tasks owner stage.',
+          );
           continue;
         }
         return failPlanning(existingArtifactResult?.error
@@ -1641,7 +2064,10 @@ export class BuildOrchestrator extends EventEmitter {
         }
       }
 
-      const artifactQualityErrors = await this.validateStandardPlanArtifactQualityWithRepair();
+      const artifactQualityErrors = await this.validateStandardPlanArtifactQuality(
+        undefined,
+        artifactSnapshot,
+      );
       if (artifactQualityErrors.length > 0) {
         validationFailures++;
         this.emitTyped('log', `Standard plan artifact quality failed (attempt ${validationFailures}): ${artifactQualityErrors.join(', ')}`);
@@ -1662,51 +2088,16 @@ export class BuildOrchestrator extends EventEmitter {
         }
       }
 
-      validatedPlanningSources = true;
+      validatedTasks = true;
       await updateStandardPlanningTransaction(
         this.config.specDir,
         planningTransaction,
-        'sources_validated',
+        'tasks_validated',
         'active',
       );
 
-      const derivedPlan = await this.deriveRuntimePlanFromStandardTasks();
+      const derivedPlan = await this.deriveRuntimePlanFromStandardTasks(artifactSnapshot);
       if (!derivedPlan.success) {
-        const repairedTasksEvidence = await this.repairStandardPlanEvidenceArtifacts([
-          derivedPlan.error ?? '',
-        ]);
-        if (repairedTasksEvidence) {
-          const repairedDerivedPlan = await this.deriveRuntimePlanFromStandardTasks();
-          if (repairedDerivedPlan.success) {
-            await updateStandardPlanningTransaction(
-              this.config.specDir,
-              planningTransaction,
-              'plan_derived',
-              'active',
-            );
-            const finalizedPlan = await this.finalizeDerivedRuntimePlan();
-            if (finalizedPlan.success) {
-              await updateStandardPlanningTransaction(
-                this.config.specDir,
-                planningTransaction,
-                'plan_validated',
-                'active',
-              );
-              return completePlanning();
-            }
-            const validationErrors = finalizedPlan.errors;
-            validationFailures++;
-            this.emitTyped('log', `Plan validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}. Retrying with Markdown plan guidance...`);
-            if (validationFailures > maxPlanningRetries) {
-              return failPlanning(
-                `Implementation plan validation failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
-              );
-            }
-            planningRetryContext = buildAutocodePlanningStructuredOutputValidationRetryPrompt(validationErrors);
-            this.emitTyped('log', `Falling back to full re-plan (attempt ${validationFailures + 1})...`);
-            continue;
-          }
-        }
         const validationErrors = [`${AUTOCODE_TASK_ARTIFACTS.tasks} is missing or invalid: ${derivedPlan.error}`];
         validationFailures++;
         this.emitTyped('log', `Standard planning validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}`);
@@ -2265,12 +2656,21 @@ export class BuildOrchestrator extends EventEmitter {
       }
 
       const validation = ImplementationPlanSchema.safeParse(plan);
-      if (validation.success) {
-        const schedulingErrors = validatePlanningSchedulingMetadata(validation.data as ImplementationPlan, this.config);
-        if (schedulingErrors.length > 0) {
-          this.emitTyped('log', `Existing plan is missing scheduling metadata; regenerating plan: ${schedulingErrors.slice(0, 4).join(', ')}`);
-          return true;
-        }
+      if (!validation.success) {
+        const validationErrors = validation.error.issues
+          .map((issue) => issue.message)
+          .filter(Boolean);
+        this.emitTyped(
+          'log',
+          `Existing implementation plan is invalid; regenerating plan: ${validationErrors.slice(0, 4).join(', ') || 'schema validation failed'}`,
+        );
+        return true;
+      }
+
+      const schedulingErrors = validatePlanningSchedulingMetadata(validation.data as ImplementationPlan, this.config);
+      if (schedulingErrors.length > 0) {
+        this.emitTyped('log', `Existing plan is missing scheduling metadata; regenerating plan: ${schedulingErrors.slice(0, 4).join(', ')}`);
+        return true;
       }
 
       return false;

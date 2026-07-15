@@ -769,7 +769,7 @@ describe('E2E Smoke Tests', () => {
 
       expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('task:update', 'task-001', {
         title: 'Updated Task Title'
-      });
+      }, undefined);
       expect(result).toMatchObject({
         success: true,
         data: expect.objectContaining({
@@ -849,7 +849,7 @@ describe('E2E Smoke Tests', () => {
       const deleteTask = electronAPI['deleteTask'] as (id: string) => Promise<unknown>;
       const deleteResult = await deleteTask('task-001');
 
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('task:delete', 'task-001');
+      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith('task:delete', 'task-001', undefined);
       expect(deleteResult).toMatchObject({ success: true });
 
       // Verify task no longer in list

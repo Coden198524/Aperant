@@ -836,7 +836,13 @@ export function registerAgenteventsHandlers(
           const specDir = path.join(specProject.path, specsBaseDir, specTask.specId);
           const specFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
           const planPath = getPlanPath(specProject, specTask);
-          const requireReviewBeforeCoding = specTask.metadata?.requireReviewBeforeCoding === true;
+          const currentTaskState = taskStateManager.getCurrentState(taskId, specProject.id);
+          const planRequiresReview = finalPlan?.status === 'human_review' &&
+            finalPlan.reviewReason === 'plan_review';
+          const requireReviewBeforeCoding =
+            specTask.metadata?.requireReviewBeforeCoding === true ||
+            currentTaskState === 'plan_review' ||
+            planRequiresReview;
           if (requireReviewBeforeCoding) {
             const specExists = existsSync(specFilePath);
             const planFileExists = existsSync(planPath);
@@ -853,17 +859,19 @@ export function registerAgenteventsHandlers(
             const subtaskCount = parsedPlan?.phases?.flatMap((phase) => phase.subtasks || []).length || 0;
             if (specExists && parsedPlan && subtaskCount > 0) {
               console.warn(`[Task ${taskId}] Plan review required before coding - waiting for manual approval`);
-              taskStateManager.handleUiEvent(
-                taskId,
-                {
-                  type: 'PLANNING_COMPLETE',
-                  hasSubtasks: true,
-                  subtaskCount,
-                  requireReviewBeforeCoding: true
-                },
-                specTask,
-                specProject
-              );
+              if (currentTaskState !== 'plan_review') {
+                taskStateManager.handleUiEvent(
+                  taskId,
+                  {
+                    type: 'PLANNING_COMPLETE',
+                    hasSubtasks: true,
+                    subtaskCount,
+                    requireReviewBeforeCoding: true
+                  },
+                  specTask,
+                  specProject
+                );
+              }
               return;
             }
 
@@ -894,7 +902,7 @@ export function registerAgenteventsHandlers(
           }
 
           if (existsSync(specFilePath)) {
-            console.warn(`[Task ${taskId}] Spec created successfully 鈥?starting task execution`);
+            console.warn(`[Task ${taskId}] Spec created successfully - starting task execution`);
             // Re-watch the spec directory for the build phase
             fileWatcher.watch(taskId, specDir, specProject.id).catch((err) => {
               console.error(`[agent-events-handlers] Failed to re-watch spec dir for ${taskId}:`, err);
@@ -913,7 +921,7 @@ export function registerAgenteventsHandlers(
               specProject.id
             );
           } else {
-            console.warn(`[Task ${taskId}] Spec creation succeeded but spec.md not found 鈥?not starting execution`);
+            console.warn(`[Task ${taskId}] Spec creation succeeded but spec.md not found - not starting execution`);
           }
         }
       }
@@ -1136,10 +1144,8 @@ export function registerAgenteventsHandlers(
 
     safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_PROGRESS, taskId, plan, resolvedProjectId);
 
-    // Re-stamp XState status fields if the backend overwrote the plan file without them.
-    // The planner agent writes implementation_plan.md via the Write tool, which replaces
-    // the entire file and strips the frontend's status/xstateState/executionPhase fields.
-    // This causes tasks to snap back to backlog on refresh.
+    // Re-stamp XState fields when a runtime ledger rewrite came from an older
+    // producer that did not preserve status/xstateState/executionPhase metadata.
     const planWithStatus = plan as { xstateState?: string; executionPhase?: string; status?: string };
     const currentXState = taskStateManager.getCurrentState(taskId, resolvedProjectId);
     if (currentXState && !planWithStatus.xstateState && task && project) {

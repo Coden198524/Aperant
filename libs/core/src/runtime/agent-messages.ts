@@ -377,25 +377,25 @@ export function buildAutocodeTaskExecutionMessages(
     parts.push('');
     if (input.forcePlanning) {
       parts.push(hasSameTaskReviewFeedback
-        ? `Treat the previous ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as runtime-state context for an incremental same-task iteration. For Standard tasks, address the latest Human Review Input by updating only affected parts of spec.md, requirements.md, and tasks.md; do not edit ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md.`
-        : `Treat the previous ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as runtime-state context only. For Standard tasks, repair spec.md, requirements.md, and tasks.md only as needed to satisfy planning validation; do not edit ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md.`);
-      parts.push('Use the Autocode Standard iteration flow incrementally: changed requirements/design -> affected tasks -> derived implementation plan. Do not regenerate the whole task plan. Keep one canonical checklist item per behavior/file/requirement boundary; do not append a second task for work already represented in tasks.md.');
+        ? `Treat the previous ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as runtime-state context for an incremental same-task iteration. Read the latest iteration.flowDocuments/impacts and update only their canonical owners in order: requirements.md -> spec.md -> requirement_model.md -> domain_model.md -> design.md -> design_model.md -> implementation_model.md -> design_review.md -> tasks.md. Each stage writes only its own artifact. Do not edit ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives its slim ledger after validation.`
+        : `Treat the previous ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as runtime-state context only. Repair only the owning artifact named by validation, then revalidate downstream references. Do not edit ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives its slim ledger from validated tasks.md.`);
+      parts.push('Use the staged Standard iteration flow incrementally and stop after planning for human review. requirements.md owns requirement facts; spec.md owns SCN-* behavior; the five-file design package separates RM, DOM, architecture/ADR, detailed design, and IMP mapping; tasks.md owns static definitions. Reference stable IDs instead of copying prose.');
       if (hasSameTaskReviewFeedback) {
-        parts.push('If existing work needs revision for the latest human change request, edit that checklist item in place, reset it to pending, and put any needs_revision marker only in a detail note or metadata line. Never prefix task titles or work package titles with needs_revision, obsolete, or other state labels.');
-        parts.push('Add pending tasks only for genuinely new requirements or verification gaps, and remove or compact obsolete executable checklist items after recording the change request.');
+        parts.push('Completed task definitions are immutable history: keep them unchanged and create a new task ID for revised work. Revise only still-pending definitions in place. Every tasks.md checkbox remains [ ]; runtime state is never stored there.');
+        parts.push('Add definitions only for genuinely new requirements, revisions, or verification gaps. Preserve unaffected definitions and dependencies; never prefix titles with revision, obsolete, retry, or state labels.');
       } else {
         parts.push('No HUMAN_INPUT.md or non-empty change_requests.jsonl was found. Treat this as an internal planning artifact repair, not a human RequestChanges iteration.');
         parts.push('Regenerate invalid or broad tasks as ordinary pending checklist items. Do not add revision-state markers, obsolete markers, or state-label prefixes to task titles or work package titles.');
       }
-      parts.push('For same-task iterations, follow the Standard Iteration Protocol in HUMAN_INPUT.md or the latest change_requests.jsonl entry: update the required Standard artifacts first, refresh verification metadata, and leave the task ready for the next coding/test/commit pass. Do not code in this planning pass.');
+      parts.push('Follow the Standard Iteration Protocol in HUMAN_INPUT.md or the latest change_requests.jsonl entry, then leave the validated plan in human review. Do not code in this planning pass.');
     } else {
-      parts.push(`Resume pending or in-progress runtime work items. Leave completed work items alone. Mark each finished work item completed in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`);
+      parts.push(`Resume the current pending or in-progress runtime work item and leave completed work alone. Do not edit tasks.md or ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; report completion, verification, blockers, and changed files for the runtime to record.`);
       parts.push('If the latest change request includes an iteration contract, run the requested validation and keep the result commit-ready using the normal task commit flow when commits are enabled.');
     }
   } else {
     parts.push(input.forcePlanning
-      ? `Address Human Review Input if present. For Standard tasks, update only affected parts of spec.md, requirements.md, and tasks.md using the incremental Autocode Standard iteration flow; do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} directly because the runtime derives it from validated tasks.md. Keep one canonical checklist item per behavior/file/requirement boundary, follow the Standard Iteration Protocol when present, and do not code in this planning pass.`
-      : `No implementation plan exists yet. Start by updating spec.md and tasks.md using Standard planning, then create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and runtime work items before implementing each item.`);
+      ? `Address Human Review Input through the staged Standard owner flow. Update only artifacts listed by the latest change-request impacts, preserve stable IDs and completed task definitions, write no duplicate prose across artifacts, and do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it after validation. Stop for human review without coding.`
+      : `No runtime ledger exists yet. Return to Standard planning; requirements.md, spec.md, the complete five-file Design-Contract: 4 package, design_review.md, and tasks.md must be produced by their owning stages before the runtime derives ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Do not code or create the ledger manually.`);
   }
 
   return [{ role: 'user', content: parts.join('\n') }];

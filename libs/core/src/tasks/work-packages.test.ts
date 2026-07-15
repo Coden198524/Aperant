@@ -14,10 +14,11 @@ import { parseAutocodeImplementationPlanMarkdown } from './plan-store.js';
 import { validateImplementationPlanLanguage } from '../schema/plan-language.js';
 
 function makeTask(overrides: Partial<AutocodeRuntimeTask> & { id: string }): AutocodeRuntimeTask {
+  const { id, ...taskOverrides } = overrides;
   return {
-    id: overrides.id,
-    title: `Task ${overrides.id}`,
-    description: `Implement task ${overrides.id}.`,
+    id,
+    title: `Task ${id}`,
+    description: `Implement task ${id}.`,
     status: 'pending',
     phaseId: '1',
     phaseName: 'Implementation',
@@ -26,8 +27,9 @@ function makeTask(overrides: Partial<AutocodeRuntimeTask> & { id: string }): Aut
     patternFiles: [],
     dependsOn: [],
     requirements: [],
+    designRefs: [],
     verification: '',
-    ...overrides,
+    ...taskOverrides,
   };
 }
 
@@ -181,13 +183,16 @@ describe('runtime work package balancing', () => {
     const subtasks = preservedPlan.phases[0].subtasks ?? [];
 
     expect(subtasks).toHaveLength(2);
-    const historicalSubtask = subtasks.find((subtask) =>
-      subtask.status === 'completed' && subtask.requirements?.includes('R1')
-    );
+    const historicalSubtask = subtasks.find((subtask) => subtask.history_only === true);
     expect(historicalSubtask?.history_only).toBe(true);
+    expect(historicalSubtask?.status).toBe('completed');
+    expect(historicalSubtask?.upstream_task_ids).toEqual(['1.1']);
     expect(historicalSubtask?.depends_on).toEqual([]);
+    expect(historicalSubtask?.requirements).toBeUndefined();
     expect(subtasks.some((subtask) =>
-      subtask.status === 'pending' && subtask.requirements?.includes('R9')
+      subtask.history_only !== true &&
+      subtask.status === 'pending' &&
+      subtask.requirements?.includes('R9')
     )).toBe(true);
   });
   it('uses the previous runtime plan instead of tasks.md checkboxes during Standard iteration', () => {
@@ -428,11 +433,13 @@ describe('runtime work package balancing', () => {
     expect(subtasks).toHaveLength(2);
     expect(new Set(ids).size).toBe(ids.length);
     expect(subtasks.some((subtask) =>
+      subtask.history_only === true &&
       subtask.status === 'completed' &&
-      String(subtask.title).includes('Create page shell') &&
+      subtask.upstream_task_ids?.includes('1.1') &&
       subtask.completed_at === '2026-06-18T00:10:00.000Z'
     )).toBe(true);
     expect(subtasks.some((subtask) =>
+      subtask.history_only !== true &&
       subtask.status === 'pending' &&
       String(subtask.title).includes('Revise page shell')
     )).toBe(true);
@@ -840,5 +847,137 @@ describe('runtime work package balancing', () => {
     ]);
     expect(packages.every((workPackage) => workPackage.tasks.length <= 5)).toBe(true);
     expect(Math.max(...efforts) - Math.min(...efforts)).toBeLessThanOrEqual(1);
+  });
+});
+
+const TRACKED_DESIGN = [
+  '# Design: Tracked work packages',
+  '',
+  '## Design Model',
+  '### DES-001 First responsibility',
+  'Keep the first behavior inside src/first.ts.',
+  '### FLOW-001 First flow',
+  'The first caller uses the existing contract.',
+  '### DES-002 Second responsibility',
+  'Keep the second behavior inside src/second.ts.',
+  '### FLOW-002 Second flow',
+  'The second caller uses the existing contract.',
+  '',
+  '## Implementation Model',
+  '### IMP-001 First implementation',
+  'Modify src/first.ts and its focused test.',
+  '### IMP-002 Second implementation',
+  'Modify src/second.ts and its focused test.',
+  '',
+  '## Risks And Evolution',
+  'Preserve both existing contracts.',
+  '',
+].join('\n');
+
+function makeTrackedTasks(completed: boolean): string {
+  const checkbox = completed ? 'x' : ' ';
+  return [
+    '# Tasks',
+    '',
+    'Feature: Tracked work packages',
+    'Workflow: feature',
+    'Status: pending',
+    '',
+    '- [ ] 1. Implementation',
+    '',
+    `  - [${checkbox}] 1.1 Update first behavior`,
+    '    - Update the first behavior without changing its public contract.',
+    '    - _Files to modify: src/first.ts_',
+    '    - _Depends on: none_',
+    '    - _Requirements: R1, AC1_',
+    '    - _Design: DES-001, FLOW-001, IMP-001_',
+    '    - _Evidence: spec.md R1; requirements.md Evidence Sources_',
+    '    - _Done when: the first behavior passes its focused check_',
+    '    - _Verification: npm test -- first.test.ts_',
+    '',
+    `  - [${checkbox}] 1.2 Update second behavior`,
+    '    - Update the second behavior without changing its public contract.',
+    '    - _Files to modify: src/second.ts_',
+    '    - _Depends on: none_',
+    '    - _Requirements: R2, AC2_',
+    '    - _Design: DES-002, FLOW-002, IMP-002_',
+    '    - _Evidence: spec.md R2; requirements.md Evidence Sources_',
+    '    - _Done when: the second behavior passes its focused check_',
+    '    - _Verification: npm test -- second.test.ts_',
+    '',
+  ].join('\n');
+}
+
+function buildTrackedPlan(
+  designMarkdown: string,
+  completed: boolean,
+  previousPlanMarkdown?: string,
+) {
+  return buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
+    makeTrackedTasks(completed),
+    {
+      now: completed ? '2026-07-12T00:00:00.000Z' : '2026-07-12T01:00:00.000Z',
+      sourcePath: 'tasks.md',
+      includeCompletedTasks: true,
+      requireTaskEvidence: true,
+      designMarkdown,
+      designPath: 'design.md',
+      preserveCompletedStateFromPreviousPlanMarkdown: previousPlanMarkdown,
+    },
+  );
+}
+
+function activeSubtasks(plan: ReturnType<typeof buildTrackedPlan>) {
+  return (plan.phases[0]?.subtasks ?? []).filter((subtask) => !subtask.history_only);
+}
+
+describe('runtime design fingerprint preservation', () => {
+  it('preserves completed work when referenced design sections are unchanged', () => {
+    const previous = buildTrackedPlan(TRACKED_DESIGN, true);
+    const next = buildTrackedPlan(
+      TRACKED_DESIGN,
+      false,
+      stringifyAutocodeImplementationPlanMarkdown(previous),
+    );
+
+    expect(activeSubtasks(next).every((subtask) => subtask.status === 'completed')).toBe(true);
+    expect(previous.source_task).toMatchObject({
+      design_contract: {
+        version: 3,
+        path: 'design.md',
+      },
+    });
+  });
+
+  it('resets only work that references a changed design section', () => {
+    const previous = buildTrackedPlan(TRACKED_DESIGN, true);
+    const changedDesign = TRACKED_DESIGN.replace(
+      'Keep the first behavior inside src/first.ts.',
+      'Keep the first behavior inside src/first.ts and preserve its new lifecycle rule.',
+    );
+    const next = buildTrackedPlan(
+      changedDesign,
+      false,
+      stringifyAutocodeImplementationPlanMarkdown(previous),
+    );
+    const subtasks = activeSubtasks(next);
+
+    expect(subtasks.find((subtask) => subtask.upstream_task_ids?.includes('1.1'))?.status).toBe('pending');
+    expect(subtasks.find((subtask) => subtask.upstream_task_ids?.includes('1.2'))?.status).toBe('completed');
+  });
+
+  it('does not reset work for an unrelated design section change', () => {
+    const previous = buildTrackedPlan(TRACKED_DESIGN, true);
+    const changedDesign = TRACKED_DESIGN.replace(
+      'Preserve both existing contracts.',
+      'Preserve both existing contracts and monitor the same residual risk.',
+    );
+    const next = buildTrackedPlan(
+      changedDesign,
+      false,
+      stringifyAutocodeImplementationPlanMarkdown(previous),
+    );
+
+    expect(activeSubtasks(next).every((subtask) => subtask.status === 'completed')).toBe(true);
   });
 });

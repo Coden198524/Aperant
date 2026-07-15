@@ -5,6 +5,7 @@ import {
 } from '../runtime/work-dependencies.js';
 import type {
   MutableAutocodePlan,
+  MutableAutocodePlanWithPhases,
   MutableAutocodePlanPhase,
   MutableAutocodePlanSubtask,
 } from './plan-file.js';
@@ -14,6 +15,17 @@ import {
   stringifyAutocodeImplementationPlanMarkdown,
 } from './plan-store.js';
 import { isTraceableAutocodeEvidence } from './plan-quality.js';
+import {
+  buildAutocodeDesignPackageMarkdown,
+  getAutocodeDesignContractVersion,
+  getAutocodeDesignDocumentFingerprint,
+  getAutocodeDesignReferenceFingerprint,
+} from './design-quality.js';
+import {
+  AUTOCODE_RUNTIME_LEDGER_SCHEMA,
+  AUTOCODE_RUNTIME_LEDGER_DYNAMIC_SUBTASK_FIELDS,
+  buildAutocodeRuntimeDefinitionFingerprint,
+} from './runtime-ledger.js';
 
 export { stringifyAutocodeImplementationPlanMarkdown };
 
@@ -30,6 +42,8 @@ export interface AutocodeRuntimeTask {
   patternFiles: string[];
   dependsOn: string[];
   requirements: string[];
+  designRefs: string[];
+  designFingerprint?: string;
   architecture?: string;
   evidence?: string;
   verification?: unknown;
@@ -52,6 +66,13 @@ export interface BuildAutocodeRuntimeWorkPackagePhasesInput {
   requireTaskEvidence?: boolean;
   includeCompletedTasks?: boolean;
   preserveCompletedStateFromPreviousPlanMarkdown?: string;
+  designMarkdown?: string;
+  requirementModelMarkdown?: string;
+  domainModelMarkdown?: string;
+  designModelMarkdown?: string;
+  implementationModelMarkdown?: string;
+  designPath?: string;
+  forceSingleWorkPackage?: boolean;
   emptyTasksFallback?: MutableAutocodePlanSubtask;
 }
 
@@ -66,6 +87,13 @@ export interface BuildAutocodeRuntimeImplementationPlanFromTasksInput {
   requireTaskEvidence?: boolean;
   includeCompletedTasks?: boolean;
   preserveCompletedStateFromPreviousPlanMarkdown?: string;
+  designMarkdown?: string;
+  requirementModelMarkdown?: string;
+  domainModelMarkdown?: string;
+  designModelMarkdown?: string;
+  implementationModelMarkdown?: string;
+  designPath?: string;
+  forceSingleWorkPackage?: boolean;
 }
 
 const AUTOCODE_WORK_PACKAGE_MAX_TASKS = 5;
@@ -74,13 +102,27 @@ const AUTOCODE_WORK_PACKAGE_MAX_ESTIMATED_EFFORT = 20;
 const AUTOCODE_RUNTIME_TASK_TITLE_STATE_TAG =
   '(?:needs[_\\s-]*revision|revision[_\\s-]*required|obsolete|superseded|deprecated)';
 
+function resolveAutocodeRuntimeDesignMarkdown(input: {
+  designMarkdown?: string;
+  requirementModelMarkdown?: string;
+  domainModelMarkdown?: string;
+  designModelMarkdown?: string;
+  implementationModelMarkdown?: string;
+}): string | undefined {
+  if (getAutocodeDesignContractVersion(input.designMarkdown) !== 4) {
+    return input.designMarkdown;
+  }
+  return buildAutocodeDesignPackageMarkdown(input) || input.designMarkdown;
+}
+
 export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
   tasksMarkdown: string,
   input: BuildAutocodeRuntimeImplementationPlanFromTasksInput,
-): MutableAutocodePlan {
+): MutableAutocodePlanWithPhases {
   const parsedTasks = parseAutocodeImplementationPlanMarkdown(tasksMarkdown);
   const parsedPhases = getExecutableParsedPhases(parsedTasks.phases);
   const sourcePath = input.sourcePath || AUTOCODE_TASK_ARTIFACTS.tasks;
+  const runtimeDesignMarkdown = resolveAutocodeRuntimeDesignMarkdown(input);
   const phases = buildAutocodeRuntimeWorkPackagePhases({
     parsedPhases,
     language: input.language,
@@ -89,6 +131,9 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
     requireTaskEvidence: input.requireTaskEvidence,
     includeCompletedTasks: input.includeCompletedTasks,
     preserveCompletedStateFromPreviousPlanMarkdown: input.preserveCompletedStateFromPreviousPlanMarkdown,
+    designMarkdown: runtimeDesignMarkdown,
+    designPath: input.designPath,
+    forceSingleWorkPackage: input.forceSingleWorkPackage,
   });
 
   if (!hasRuntimeWorkPackages(phases)) {
@@ -99,7 +144,7 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
     ? parsedTasks.source_task as Record<string, unknown>
     : {};
 
-  const runtimePlan: MutableAutocodePlan = {
+  const runtimePlan: MutableAutocodePlanWithPhases = {
     ...parsedTasks,
     feature: input.title || parsedTasks.feature || getAutocodeRuntimePlanFeatureFallback(input.language),
     description: input.description || parsedTasks.description || '',
@@ -113,24 +158,44 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
       ...parsedSourceTask,
       kind: input.sourceKind || 'autocode-tasks',
       tasks: sourcePath,
+      language: input.language,
+      runtime_ledger_schema: AUTOCODE_RUNTIME_LEDGER_SCHEMA,
       runtime_granularity: 'work_package',
       ownership: {
         upstream: input.upstreamOwner || 'autocode-tasks',
         downstream: 'autocode-runtime',
       },
+      ...(runtimeDesignMarkdown?.trim()
+        ? {
+            design_contract: {
+              version: getAutocodeDesignContractVersion(input.designMarkdown) ?? 3,
+              path: input.designPath || AUTOCODE_TASK_ARTIFACTS.design,
+              paths: getAutocodeDesignContractVersion(input.designMarkdown) === 4
+                ? [
+                    AUTOCODE_TASK_ARTIFACTS.design,
+                    AUTOCODE_TASK_ARTIFACTS.requirementModel,
+                    AUTOCODE_TASK_ARTIFACTS.domainModel,
+                    AUTOCODE_TASK_ARTIFACTS.designModel,
+                    AUTOCODE_TASK_ARTIFACTS.implementationModel,
+                  ]
+                : [input.designPath || AUTOCODE_TASK_ARTIFACTS.design],
+              fingerprint: getAutocodeDesignDocumentFingerprint(runtimeDesignMarkdown),
+            },
+          }
+        : {}),
     },
   };
 
   return preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown(
     runtimePlan,
     input.preserveCompletedStateFromPreviousPlanMarkdown,
-  );
+  ) as MutableAutocodePlanWithPhases;
 }
 
-export function preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown(
-  plan: MutableAutocodePlan,
+export function preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown<T extends MutableAutocodePlan>(
+  plan: T,
   previousPlanMarkdown: string | undefined,
-): MutableAutocodePlan {
+): T {
   if (!previousPlanMarkdown?.trim()) {
     return plan;
   }
@@ -145,43 +210,43 @@ export function preserveAutocodeRuntimePlanCompletedStateFromPreviousMarkdown(
   }
 }
 
-export function preserveAutocodeRuntimePlanCompletedState(
-  plan: MutableAutocodePlan,
+export function preserveAutocodeRuntimePlanCompletedState<T extends MutableAutocodePlan>(
+  plan: T,
   previousPlan: MutableAutocodePlan | null | undefined,
-): MutableAutocodePlan {
+): T {
   if (!previousPlan) {
     return plan;
   }
 
-  const completedBySignature = new Map<string, MutableAutocodePlanSubtask>();
+  const previousBySignature = new Map<string, MutableAutocodePlanSubtask>();
   for (const previousSubtask of getRuntimePlanSubtasks(previousPlan)) {
-    if (previousSubtask.status !== 'completed') {
-      continue;
-    }
     const signature = buildRuntimePlanSubtaskContentSignature(previousSubtask);
     if (signature) {
-      completedBySignature.set(signature, previousSubtask);
+      previousBySignature.set(signature, previousSubtask);
     }
   }
 
-  if (completedBySignature.size > 0) {
+  if (previousBySignature.size > 0) {
     for (const subtask of getRuntimePlanSubtasks(plan)) {
       const signature = buildRuntimePlanSubtaskContentSignature(subtask);
-      const previousCompleted = signature ? completedBySignature.get(signature) : undefined;
-      if (!previousCompleted) {
+      const previousSubtask = signature ? previousBySignature.get(signature) : undefined;
+      if (!previousSubtask) {
         continue;
       }
-      applyCompletedRuntimePlanSubtaskState(subtask, previousCompleted);
+      applyRuntimePlanSubtaskExecutionHistory(subtask, previousSubtask);
+      if (previousSubtask.status === 'completed') {
+        subtask.status = 'completed';
+      }
     }
   }
 
   return appendOmittedCompletedRuntimeSubtasks(plan, previousPlan);
 }
 
-function appendOmittedCompletedRuntimeSubtasks(
-  plan: MutableAutocodePlan,
+function appendOmittedCompletedRuntimeSubtasks<T extends MutableAutocodePlan>(
+  plan: T,
   previousPlan: MutableAutocodePlan,
-): MutableAutocodePlan {
+): T {
   const previousCompletedSubtasks = getRuntimePlanSubtasks(previousPlan)
     .filter((subtask) => subtask.status === 'completed');
   if (previousCompletedSubtasks.length === 0) {
@@ -270,25 +335,22 @@ function cloneMutableAutocodePlanSubtask(subtask: MutableAutocodePlanSubtask): M
   return JSON.parse(JSON.stringify(subtask)) as MutableAutocodePlanSubtask;
 }
 
-const COMPLETED_RUNTIME_SUBTASK_STATE_FIELDS = [
-  'completed_at',
-  'completion_summary',
+const LEGACY_RUNTIME_SUBTASK_STATE_FIELDS = [
   'completionSummary',
   'completed_summary',
-  'notes',
   'actual_output',
-  'duration_ms',
-  'started_at',
 ] as const;
 
-function applyCompletedRuntimePlanSubtaskState(
+function applyRuntimePlanSubtaskExecutionHistory(
   subtask: MutableAutocodePlanSubtask,
-  previousCompleted: MutableAutocodePlanSubtask,
+  previousSubtask: MutableAutocodePlanSubtask,
 ): void {
-  subtask.status = 'completed';
   const target = subtask as Record<string, unknown>;
-  const source = previousCompleted as Record<string, unknown>;
-  for (const field of COMPLETED_RUNTIME_SUBTASK_STATE_FIELDS) {
+  const source = previousSubtask as Record<string, unknown>;
+  for (const field of [
+    ...AUTOCODE_RUNTIME_LEDGER_DYNAMIC_SUBTASK_FIELDS,
+    ...LEGACY_RUNTIME_SUBTASK_STATE_FIELDS,
+  ]) {
     if (source[field] !== undefined) {
       target[field] = source[field];
     }
@@ -309,6 +371,11 @@ function buildRuntimePlanSubtaskContentSignature(subtask: MutableAutocodePlanSub
     return '';
   }
 
+  const definitionFingerprint = singleLine(stringFrom(subtask.definition_fingerprint));
+  if (definitionFingerprint) {
+    return JSON.stringify({ upstreamTaskIds, definitionFingerprint });
+  }
+
   return JSON.stringify({
     upstreamTaskIds,
     title: singleLine(stringFrom(subtask.title)),
@@ -316,6 +383,9 @@ function buildRuntimePlanSubtaskContentSignature(subtask: MutableAutocodePlanSub
     filesToModify: toStringArray(subtask.files_to_modify).sort(),
     patternFiles: toStringArray(subtask.pattern_files).sort(),
     requirements: toStringArray(subtask.requirements).sort(),
+    designRefs: toStringArray(subtask.design_refs).sort(),
+    designFingerprint: stringFrom(subtask.design_fingerprint),
+    designTaskFingerprints: stableRuntimePlanSignatureValue(subtask.design_task_fingerprints),
     architecture: normalizeRuntimePlanSignatureText(stringFrom(subtask.architecture)),
     verification: stableRuntimePlanSignatureValue(subtask.verification),
     upstreamSource: singleLine(stringFrom(subtask.upstream_source)),
@@ -409,6 +479,14 @@ function isAutocodeRuntimeTaskCompatibleWithCompletedSubtask(
   task: AutocodeRuntimeTask,
   completedSubtask: MutableAutocodePlanSubtask,
 ): boolean {
+  const sourceTaskFingerprints = completedSubtask.source_task_fingerprints;
+  if (sourceTaskFingerprints && typeof sourceTaskFingerprints === 'object' && !Array.isArray(sourceTaskFingerprints)) {
+    const previousFingerprint = stringFrom(
+      (sourceTaskFingerprints as Record<string, unknown>)[task.id],
+    );
+    return Boolean(previousFingerprint) &&
+      previousFingerprint === buildAutocodeRuntimeDefinitionFingerprint([task]);
+  }
   const completedDescription = stringFrom(completedSubtask.description);
   if (
     !normalizedRuntimePlanSignatureIncludes(completedDescription, task.id) ||
@@ -422,12 +500,31 @@ function isAutocodeRuntimeTaskCompatibleWithCompletedSubtask(
     runtimeTaskStringsAreCoveredBySubtask(task.filesToModify, completedSubtask.files_to_modify) &&
     runtimeTaskStringsAreCoveredBySubtask(task.patternFiles, completedSubtask.pattern_files) &&
     runtimeTaskStringsAreCoveredBySubtask(task.requirements, completedSubtask.requirements) &&
+    runtimeTaskStringsAreCoveredBySubtask(task.designRefs, completedSubtask.design_refs) &&
+    runtimeTaskDesignFingerprintIsCompatible(task, completedSubtask) &&
     normalizedRuntimePlanSignatureIncludes(stringFrom(completedSubtask.architecture), task.architecture || '') &&
     normalizedRuntimePlanSignatureIncludes(stringFrom(completedSubtask.evidence), task.evidence || '') &&
     normalizedRuntimePlanSignatureIncludes(
       stringifyAutocodeRuntimeVerification(completedSubtask.verification),
       stringifyAutocodeRuntimeVerification(task.verification),
     );
+}
+
+function runtimeTaskDesignFingerprintIsCompatible(
+  task: AutocodeRuntimeTask,
+  completedSubtask: MutableAutocodePlanSubtask,
+): boolean {
+  if (!task.designFingerprint) {
+    return true;
+  }
+  const fingerprints = completedSubtask.design_task_fingerprints;
+  if (!fingerprints || typeof fingerprints !== 'object' || Array.isArray(fingerprints)) {
+    // Legacy completed plans predate design fingerprints. Preserve them once;
+    // the newly derived plan records a fingerprint for future iterations.
+    return true;
+  }
+  const previous = stringFrom((fingerprints as Record<string, unknown>)[task.id]);
+  return !previous || previous === task.designFingerprint;
 }
 
 function runtimeTaskStringsAreCoveredBySubtask(values: string[], completedValues: unknown): boolean {
@@ -448,26 +545,19 @@ function normalizedRuntimePlanSignatureIncludes(value: string, expected: string)
 export function buildAutocodeRuntimeWorkPackagePhases(
   input: BuildAutocodeRuntimeWorkPackagePhasesInput,
 ): MutableAutocodePlanPhase[] {
-  const flattenedTasks = flattenAutocodeRuntimeTasks(input.parsedPhases, input.language, input.sourceName);
-  const previousCompletionSourceMarkdown = input.preserveCompletedStateFromPreviousPlanMarkdown;
-  const shouldUsePreviousPlanAsCompletionSource = hasCompletedAutocodeRuntimePlanSubtasks(
-    previousCompletionSourceMarkdown,
+  const runtimeDesignMarkdown = resolveAutocodeRuntimeDesignMarkdown(input);
+  const flattenedTasks = flattenAutocodeRuntimeTasks(
+    input.parsedPhases,
+    input.language,
+    input.sourceName,
+    runtimeDesignMarkdown,
   );
-  const tasksReadyForCompletionPreservation = shouldUsePreviousPlanAsCompletionSource
-    ? resetAutocodeRuntimeTaskCompletedStatusForIteration(flattenedTasks)
-    : flattenedTasks;
-  const completionPreservedTasks = shouldUsePreviousPlanAsCompletionSource
-    ? preserveAutocodeRuntimeTaskCompletedStateFromPreviousMarkdown(
-        tasksReadyForCompletionPreservation,
-        previousCompletionSourceMarkdown,
-      )
-    : tasksReadyForCompletionPreservation;
   const evidenceReadyTasks = input.requireTaskEvidence
-    ? normalizeAutocodeRuntimeTaskEvidenceMetadata(completionPreservedTasks, {
+    ? normalizeAutocodeRuntimeTaskEvidenceMetadata(flattenedTasks, {
         sourceName: input.sourceName || 'Autocode',
         sourcePath: input.sourcePath || AUTOCODE_TASK_ARTIFACTS.tasks,
       })
-    : completionPreservedTasks;
+    : flattenedTasks;
   if (input.requireTaskEvidence) {
     const evidenceErrors = validateAutocodeRuntimeTaskEvidenceMetadata(
       evidenceReadyTasks,
@@ -477,9 +567,22 @@ export function buildAutocodeRuntimeWorkPackagePhases(
       throw new Error(evidenceErrors.join('; '));
     }
   }
-  const runtimeTasks = completeAutocodeRuntimeTaskDependencyGraph(
+  const dependencyReadyTasks = completeAutocodeRuntimeTaskDependencyGraph(
     evidenceReadyTasks,
   );
+  const previousCompletionSourceMarkdown = input.preserveCompletedStateFromPreviousPlanMarkdown;
+  const shouldUsePreviousPlanAsCompletionSource = hasCompletedAutocodeRuntimePlanSubtasks(
+    previousCompletionSourceMarkdown,
+  );
+  const tasksReadyForCompletionPreservation = shouldUsePreviousPlanAsCompletionSource
+    ? resetAutocodeRuntimeTaskCompletedStatusForIteration(dependencyReadyTasks)
+    : dependencyReadyTasks;
+  const runtimeTasks = shouldUsePreviousPlanAsCompletionSource
+    ? preserveAutocodeRuntimeTaskCompletedStateFromPreviousMarkdown(
+        tasksReadyForCompletionPreservation,
+        previousCompletionSourceMarkdown,
+      )
+    : tasksReadyForCompletionPreservation;
   assertAutocodeRuntimeTasksHaveValidDependencies(runtimeTasks, `${input.sourceName || 'Autocode'} task`);
   const executableTasks = input.includeCompletedTasks === false
     ? omitCompletedAutocodeRuntimeTasks(runtimeTasks)
@@ -497,7 +600,16 @@ export function buildAutocodeRuntimeWorkPackagePhases(
     return [];
   }
 
-  const workPackages = groupAutocodeRuntimeTasksIntoWorkPackages(executableTasks, input.language);
+  const workPackages = input.forceSingleWorkPackage
+    ? [{
+        id: 'wp-1',
+        title: buildAutocodeRuntimeWorkPackageTitle(executableTasks, input.language),
+        phaseId: 'wp',
+        phaseName: buildAutocodeRuntimeWorkPackagePhaseName(executableTasks, input.language),
+        tasks: executableTasks,
+        dependsOn: [],
+      }]
+    : groupAutocodeRuntimeTasksIntoWorkPackages(executableTasks, input.language);
   return [
     {
       id: 'wp',
@@ -507,6 +619,7 @@ export function buildAutocodeRuntimeWorkPackagePhases(
           language: input.language,
           sourceName: input.sourceName || 'Autocode',
           sourcePath: input.sourcePath || AUTOCODE_TASK_ARTIFACTS.tasks,
+          designMarkdown: runtimeDesignMarkdown,
         }),
       ),
     },
@@ -553,6 +666,7 @@ export function flattenAutocodeRuntimeTasks(
   parsedPhases: Array<Record<string, unknown>>,
   language?: string,
   sourceName = 'Autocode',
+  designMarkdown?: string,
 ): AutocodeRuntimeTask[] {
   const tasks: AutocodeRuntimeTask[] = [];
   for (const [phaseIndex, phase] of parsedPhases.entries()) {
@@ -578,6 +692,7 @@ export function flattenAutocodeRuntimeTasks(
         fallbackTitle,
       );
       const description = sanitizeAutocodeRuntimeTaskDescription(stringFrom(subtask.description) || title, title);
+      const designRefs = toStringArray(subtask.design_refs).map((ref) => ref.toUpperCase());
       tasks.push({
         id,
         title,
@@ -594,6 +709,10 @@ export function flattenAutocodeRuntimeTasks(
         patternFiles: toStringArray(subtask.pattern_files),
         dependsOn: sanitizeAutocodeRuntimeDependencyIds(subtask.depends_on),
         requirements: toStringArray(subtask.requirements),
+        designRefs,
+        ...(designMarkdown?.trim() && designRefs.length > 0
+          ? { designFingerprint: getAutocodeDesignReferenceFingerprint(designMarkdown, designRefs) }
+          : {}),
         architecture: stringFrom(subtask.architecture),
         evidence: stringFrom(subtask.evidence),
         verification: subtask.verification,
@@ -904,6 +1023,7 @@ function buildAutocodeRuntimeWorkPackageSubtask(
     language?: string;
     sourceName: string;
     sourcePath: string;
+    designMarkdown?: string;
   },
 ): MutableAutocodePlanSubtask {
   const upstreamTaskIds = workPackage.tasks.map((task) => task.id);
@@ -916,6 +1036,18 @@ function buildAutocodeRuntimeWorkPackageSubtask(
   ]);
   const evidence = uniqueAutocodeRuntimeStrings(workPackage.tasks.map((task) => task.evidence || ''));
   const architecture = uniqueAutocodeRuntimeStrings(workPackage.tasks.map((task) => task.architecture || ''));
+  const designRefs = uniqueAutocodeRuntimeStrings(workPackage.tasks.flatMap((task) => task.designRefs));
+  const designTaskFingerprints = Object.fromEntries(
+    workPackage.tasks
+      .filter((task) => Boolean(task.designFingerprint))
+      .map((task) => [task.id, task.designFingerprint]),
+  );
+  const sourceTaskFingerprints = Object.fromEntries(
+    workPackage.tasks.map((task) => [
+      task.id,
+      buildAutocodeRuntimeDefinitionFingerprint([task]),
+    ]),
+  );
   const hasWriteIntent = filesToCreate.length > 0 || filesToModify.length > 0 || patternFiles.length > 0;
 
   return {
@@ -928,6 +1060,13 @@ function buildAutocodeRuntimeWorkPackageSubtask(
     ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
     depends_on: workPackage.dependsOn,
     ...(requirements.length > 0 ? { requirements } : {}),
+    ...(designRefs.length > 0 ? { design_refs: designRefs } : {}),
+    ...(input.designMarkdown?.trim() && designRefs.length > 0
+      ? { design_fingerprint: getAutocodeDesignReferenceFingerprint(input.designMarkdown, designRefs) }
+      : {}),
+    ...(Object.keys(designTaskFingerprints).length > 0
+      ? { design_task_fingerprints: designTaskFingerprints }
+      : {}),
     ...(architecture.length > 0 ? { architecture: architecture.join('; ') } : {}),
     ...(evidence.length > 0 ? { evidence: evidence.join('; ') } : {}),
     verification: {
@@ -936,6 +1075,8 @@ function buildAutocodeRuntimeWorkPackageSubtask(
     },
     upstream_source: input.sourcePath,
     upstream_task_ids: upstreamTaskIds,
+    definition_fingerprint: buildAutocodeRuntimeDefinitionFingerprint(workPackage.tasks),
+    source_task_fingerprints: sourceTaskFingerprints,
     work_package: true,
   };
 }
@@ -960,6 +1101,7 @@ function buildRuntimeWorkPackageDescription(
         `- ${task.id} ${sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)}`,
         `  ${singleLine(sanitizeAutocodeRuntimeTaskDescription(task.description, sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)))}`,
         ...(task.architecture ? [`  Architecture: ${singleLine(task.architecture)}`] : []),
+        ...(task.designRefs.length > 0 ? [`  Design: ${task.designRefs.join(', ')}`] : []),
         ...(task.evidence ? [`  Evidence: ${singleLine(task.evidence)}`] : []),
         ...(task.dependsOn.length > 0 ? [`  依赖：${task.dependsOn.join(', ')}`] : []),
       ]),
@@ -979,6 +1121,7 @@ function buildRuntimeWorkPackageDescription(
       `- ${task.id} ${sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)}`,
       `  ${singleLine(sanitizeAutocodeRuntimeTaskDescription(task.description, sanitizeAutocodeRuntimeTaskTitle(task.title, task.id)))}`,
       ...(task.architecture ? [`  Architecture: ${singleLine(task.architecture)}`] : []),
+      ...(task.designRefs.length > 0 ? [`  Design: ${task.designRefs.join(', ')}`] : []),
       ...(task.evidence ? [`  Evidence: ${singleLine(task.evidence)}`] : []),
       ...(task.dependsOn.length > 0 ? [`  Upstream prerequisites: ${task.dependsOn.join(', ')}`] : []),
     ]),

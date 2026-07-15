@@ -193,6 +193,33 @@ describe('TaskCard', () => {
     const progress = screen.getByTestId('phase-progress-indicator');
     expect(progress).not.toHaveAttribute('data-phase', 'complete');
     expect(progress).toHaveAttribute('data-phase', 'planning');
-    expect(progress).toHaveAttribute('data-phase-progress', '0');
+    expect(progress).toHaveAttribute('data-phase-progress', '50');
+  });
+
+  it('uses work-package completion instead of stale planning progress after request changes', () => {
+    const task = createTask();
+    task.status = 'in_progress';
+    task.executionProgress = {
+      phase: 'planning',
+      phaseProgress: 100,
+      overallProgress: 100,
+      message: 'Incremental planning finished',
+    };
+    task.subtasks = [
+      { id: 'subtask-1', title: 'Already done', description: 'Already done', status: 'completed', files: [] },
+      { id: 'subtask-2', title: 'Requested change', description: 'Requested change', status: 'pending', files: [] },
+    ];
+
+    render(
+      <TaskCard
+        task={task}
+        onClick={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('phase-progress-indicator')).toHaveAttribute(
+      'data-phase-progress',
+      '50',
+    );
   });
 });

@@ -10,8 +10,13 @@ export type AutocodeSpecPhase =
   | 'spec_writing'
   | 'self_critique'
   | 'planning'
-  | 'validation'
-  | 'quick_spec';
+  | 'requirement_model'
+  | 'domain_model'
+  | 'design'
+  | 'design_model'
+  | 'implementation_model'
+  | 'design_review'
+  | 'validation';
 
 export interface AutocodeSpecWorkflowConfigLike {
   optimizationLevel?: string;
@@ -38,8 +43,8 @@ export interface AutocodeFallbackComplexityAssessment {
 }
 
 export const AUTOCODE_SPEC_COMPLEXITY_PHASES: Record<AutocodeSpecComplexityTier, AutocodeSpecPhase[]> = {
-  simple: ['quick_spec', 'validation'],
-  standard: ['discovery', 'requirements', 'spec_writing', 'planning', 'validation'],
+  simple: ['requirements', 'spec_writing', 'requirement_model', 'domain_model', 'design', 'design_model', 'implementation_model', 'design_review', 'planning', 'validation'],
+  standard: ['discovery', 'requirements', 'spec_writing', 'requirement_model', 'domain_model', 'design', 'design_model', 'implementation_model', 'design_review', 'planning', 'validation'],
   complex: [
     'discovery',
     'requirements',
@@ -47,12 +52,16 @@ export const AUTOCODE_SPEC_COMPLEXITY_PHASES: Record<AutocodeSpecComplexityTier,
     'context',
     'spec_writing',
     'self_critique',
+    'requirement_model',
+    'domain_model',
+    'design',
+    'design_model',
+    'implementation_model',
+    'design_review',
     'planning',
     'validation',
   ],
 };
-
-export const AUTOCODE_AGGRESSIVE_SIMPLE_SPEC_PHASES: AutocodeSpecPhase[] = ['quick_spec'];
 
 export function normalizeAutocodeSpecTaskDescription(taskDescription: string | undefined): string {
   return (taskDescription ?? '').trim();
@@ -115,9 +124,7 @@ export function selectAutocodeSpecPhases(input: {
   projectIndex?: string;
   workflowConfig: AutocodeSpecWorkflowConfigLike;
 }): AutocodeSpecPhase[] {
-  const phases = input.workflowConfig.optimizationLevel === 'aggressive' && input.complexity === 'simple'
-    ? [...AUTOCODE_AGGRESSIVE_SIMPLE_SPEC_PHASES]
-    : [...AUTOCODE_SPEC_COMPLEXITY_PHASES[input.complexity]];
+  const phases = [...AUTOCODE_SPEC_COMPLEXITY_PHASES[input.complexity]];
 
   const conservativeSpecFlow = input.workflowConfig.optimizationLevel === 'conservative' ||
     input.workflowConfig.specCreationMode === 'phased';
@@ -129,7 +136,7 @@ export function selectAutocodeSpecPhases(input: {
   }
 
   if (input.complexity === 'simple' && isAutocodeSourceDocumentationTask(input.taskDescription)) {
-    return ['quick_spec'];
+    return ['requirements', 'spec_writing', 'requirement_model', 'domain_model', 'design', 'design_model', 'implementation_model', 'design_review', 'planning', 'validation'];
   }
 
   const needsResearch = shouldRunAutocodeSpecResearchPhase(
@@ -140,7 +147,7 @@ export function selectAutocodeSpecPhases(input: {
   const needsSelfCritique = input.assessment?.needs_self_critique === true;
 
   if (input.complexity === 'standard' && !conservativeSpecFlow && !needsResearch && !needsSelfCritique) {
-    return ['quick_spec', 'validation'];
+    return ['requirements', 'spec_writing', 'requirement_model', 'domain_model', 'design', 'design_model', 'implementation_model', 'design_review', 'planning', 'validation'];
   }
 
   const researchIndex = phases.indexOf('research');
@@ -157,9 +164,11 @@ export function selectAutocodeSpecPhases(input: {
   }
 
   if (input.assessment?.needs_self_critique && !phases.includes('self_critique')) {
-    const planningIdx = phases.indexOf('planning');
-    if (planningIdx !== -1) {
-      phases.splice(planningIdx, 0, 'self_critique');
+    const insertBefore = phases.indexOf('requirement_model') !== -1
+      ? phases.indexOf('requirement_model')
+      : phases.indexOf('planning');
+    if (insertBefore !== -1) {
+      phases.splice(insertBefore, 0, 'self_critique');
     }
   }
 
@@ -345,7 +354,7 @@ export function inferAutocodeSpecComplexityFallback(input: {
   return {
     complexity: 'simple',
     confidence: 0.62,
-    reasoning: 'local fallback found no broad, cross-boundary, or high-risk signals; using Standard light planning',
+    reasoning: 'local fallback found no broad, cross-boundary, or high-risk signals; using the normal Standard specification flow',
     needs_research: needsExternalResearch,
     needs_self_critique: false,
   };

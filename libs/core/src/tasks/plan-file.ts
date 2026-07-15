@@ -15,6 +15,15 @@ export interface AutocodeTokenUsage {
 export interface MutableAutocodePlanSubtask extends Record<string, unknown> {
   id?: string;
   status?: string;
+  files?: string[];
+  files_to_create?: string[];
+  files_to_modify?: string[];
+  pattern_files?: string[];
+  depends_on?: string[];
+  requirements?: string[];
+  design_refs?: string[];
+  upstream_task_ids?: string[];
+  history_only?: boolean;
   started_at?: string | null;
   active_started_at?: string | null;
   completed_at?: string | null;
@@ -29,6 +38,7 @@ export interface MutableAutocodePlanPhase extends Record<string, unknown> {
 
 export interface MutableAutocodePlan extends Record<string, unknown> {
   feature?: string;
+  workflow_type?: string;
   description?: string;
   created_at?: string;
   updated_at?: string;
@@ -40,6 +50,10 @@ export interface MutableAutocodePlan extends Record<string, unknown> {
   executionPhase?: string;
   phases?: MutableAutocodePlanPhase[];
   tokenUsage?: AutocodeTokenUsage;
+}
+
+export interface MutableAutocodePlanWithPhases extends MutableAutocodePlan {
+  phases: MutableAutocodePlanPhase[];
 }
 
 export interface AutocodeTaskPlanSeed {
