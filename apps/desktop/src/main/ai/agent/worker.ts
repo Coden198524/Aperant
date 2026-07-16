@@ -739,7 +739,7 @@ function buildPlanReviewIterationDirective(session: SerializableSessionConfig): 
     `Read ${promptSpecDir}/HUMAN_INPUT.md and treat it as required reviewer feedback.`,
     `If ${promptSpecDir}/change_requests.jsonl exists, use its latest entry as the active same-task iteration contract.`,
     `Read the latest change request impacts/flowDocuments and run only the affected owner stages in order: ${promptSpecDir}/requirements.md, spec.md, requirement_model.md, domain_model.md, design.md, design_model.md, implementation_model.md, design_review.md, then tasks.md.`,
-    'Each stage writes only its own artifact. requirements.md owns facts; spec.md owns SCN-* behavior; the five-file design package separately owns RM, DOM, architecture/ADR, detailed design, and IMP mapping; tasks.md owns static work definitions.',
+    'Each stage writes only its own artifact. requirements.md owns facts; spec.md owns SCN-* behavior; the Design-Contract: 5 package separately owns RM/FUN/SSD, DOM, architecture/ADR, SYS/DES/STATE/FLOW/CONTRACT/PAT/REV, and LANG/IMP; tasks.md owns static work definitions.',
     `Do not edit ${promptSpecDir}/implementation_plan.md; the runtime derives its slim status/timing/retry/failure/commit ledger after tasks.md validation.`,
     'Reference stable IDs across artifacts instead of copying requirement, evidence, design, or task prose. Keep unaffected IDs and sections stable.',
     'Keep every tasks.md checkbox [ ]. Completed task definitions are immutable history: preserve them unchanged and add revised work under a new task ID. Still-pending definitions may be revised in place.',

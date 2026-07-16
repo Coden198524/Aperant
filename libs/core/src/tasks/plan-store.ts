@@ -8,7 +8,10 @@ import {
   withAutocodeRuntimeFileWriteLock,
   withAutocodeRuntimeFileWriteLockSync,
 } from '../runtime/workspace-claims.js';
-import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
+import {
+  AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS,
+  AUTOCODE_TASK_ARTIFACTS,
+} from './artifacts.js';
 import type {
   MutableAutocodePlan,
   MutableAutocodePlanWithPhases,
@@ -22,7 +25,11 @@ import {
   isAutocodeSlimRuntimeLedger,
   type AutocodeRuntimeDefinitionFingerprintInput,
 } from './runtime-ledger.js';
-import { getAutocodeDesignReferenceFingerprint } from './design-quality.js';
+import {
+  buildAutocodeDesignPackageMarkdown,
+  getAutocodeDesignReferenceFingerprint,
+  validateAutocodeDesignPackageIdentity,
+} from './design-quality.js';
 
 export type AutocodePlanMarkdownStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'failed';
 
@@ -1157,16 +1164,10 @@ export function hydrateAutocodeSlimRuntimeLedger<T extends MutableAutocodePlan>(
     }
   }
 
-  const designContract = asPlanRecord(sourceTask?.design_contract);
-  const designPath = resolveLinkedTasksPath(specDir, stringifyPlanValue(designContract?.path));
-  let designMarkdown = '';
-  if (designPath && existsSync(designPath)) {
-    try {
-      designMarkdown = readFileSync(designPath, 'utf-8');
-    } catch {
-      designMarkdown = '';
-    }
-  }
+  const designMarkdown = readRuntimeDesignPackageMarkdown(
+    specDir,
+    asPlanRecord(sourceTask?.design_contract),
+  );
 
   for (const phase of plan.phases ?? []) {
     phase.name = getRuntimeWorkPackagePhaseName(plan);
@@ -1244,6 +1245,44 @@ export function hydrateAutocodeSlimRuntimeLedger<T extends MutableAutocodePlan>(
   plan.workflow_type = plan.workflow_type || tasksPlan.workflow_type;
   plan.description = plan.description || tasksPlan.description;
   return plan;
+}
+
+function readRuntimeDesignPackageMarkdown(
+  specDir: string,
+  designContract: Record<string, unknown> | null | undefined,
+): string {
+  const declaredPaths = arrayFromUnknown(designContract?.paths);
+  if (
+    Number(designContract?.version) !== 5 ||
+    stringifyPlanValue(designContract?.path) !== AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS[0] ||
+    declaredPaths.length !== AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS.length ||
+    declaredPaths.some((value, index) => value !== AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS[index])
+  ) {
+    return '';
+  }
+
+  const markdowns: string[] = [];
+  for (const relativePath of AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS) {
+    const artifactPath = resolveLinkedTasksPath(specDir, relativePath);
+    if (!artifactPath || !existsSync(artifactPath)) {
+      return '';
+    }
+    try {
+      markdowns.push(readFileSync(artifactPath, 'utf-8'));
+    } catch {
+      return '';
+    }
+  }
+  const designPackage = {
+    designMarkdown: markdowns[0],
+    requirementModelMarkdown: markdowns[1],
+    domainModelMarkdown: markdowns[2],
+    designModelMarkdown: markdowns[3],
+    implementationModelMarkdown: markdowns[4],
+  };
+  return validateAutocodeDesignPackageIdentity(designPackage).length === 0
+    ? buildAutocodeDesignPackageMarkdown(designPackage)
+    : '';
 }
 
 function getRuntimeWorkPackagePhaseName(plan: MutableAutocodePlan): string {

@@ -22,6 +22,9 @@ import {
   type SpecSessionRunConfig,
 } from './spec-orchestrator';
 import { MMO_AGENT_PROFILE } from '../config/project-agent-profile';
+import {
+  buildStandardDesignV5Fixture,
+} from '../../../../../../libs/core/src/tasks/standard-design-v5.test-fixture.js';
 
 const TEST_CONTEXT_EVIDENCE = {
   path: 'src/App.tsx',
@@ -33,201 +36,28 @@ const TEST_CONTEXT_EVIDENCE = {
 
 const TEST_TASK_EVIDENCE = 'E1; context.md src/App.tsx lines 1-20; spec.md SCN-1';
 const TEST_REQUIREMENT_EVIDENCE = 'User task description and context.md evidence inventory.';
-const TEST_DESIGN_REFS = ['ADR-001', 'SYS-001', 'DES-001', 'FLOW-001', 'IMP-001'];
-const TEST_STANDARD_DESIGN = [
-  '# Design: Standard planning fixture',
-  'Design-Contract: 3',
-  'Design-Depth: local',
-  'Design-Revision: 1',
-  '',
-  '## Scope And Evidence',
-  '- Analysis direction: forward-design',
-  '- Primary source of truth: mixed',
-  '- Requirement evidence: requirement - requirements.md R-001 defines the workflow result',
-  '- Project evidence: observed - src/App.tsx#handleWorkflow owns the current UI flow',
-  '- Design inferences: none - the requirement and source establish the local boundary',
-  '- Unresolved evidence: none',
-  '## Complexity Assessment',
-  '- Primary complexity driver: one local behavior',
-  '- Business rules and state: preserve the existing task invariant',
-  '- Boundary and contract impact: no public contract changes',
-  '- Quality-attribute risks: existing workflow compatibility',
-  '- Depth rationale: one existing module is affected',
-  '## Existing Architecture Fit',
-  'Reuse src/App.tsx and the existing dependency direction.',
-  '## Engineering Adaptation',
-  '- Delivery context: existing-system',
-  '- System shape: local-utility',
-  '- Project paradigm: mixed',
-  '- Paradigm rationale: preserve the existing React component boundary',
-  '- Object-model applicability: low',
-  '- Object-model rationale: one local UI workflow has no independent object lifecycle',
-  '- Existing boundaries to preserve: src/App.tsx component boundary',
-  '- Existing patterns to reuse: src/App.tsx workflow handler',
-  '- Language/framework constraints: TypeScript and React',
-  '- Integration and test seams: src/App.test.tsx focused test',
-  '## Design Budget',
-  '- Expected modules changed: 2',
-  '- New modules allowed: 0',
-  '- New public contracts allowed: 0',
-  '- New dependencies allowed: 0',
-  '- New architectural patterns: none',
-  '## Architecture Decision',
-  '### ADR-001 Preserve the existing boundary',
-  '- Decision: preserve the current component-to-store dependency direction',
-  '- Status: accepted',
-  '- Decision drivers: RM-001 changes one local workflow without a public contract change',
-  '- Alternatives considered: splitting the workflow into additional boundaries was rejected',
-  '- Trade-offs: minimal change radius while retaining the current component boundary',
-  '- Evidence basis: requirement - requirements.md R-001; observed - src/App.tsx#handleWorkflow',
-  '## Requirement Model',
-  '### RM-001 Complete the requested behavior',
-  '- Actor and goal: user obtains the requested result',
-  '- Business context: Who=user; What=request result; Why=complete workflow; When=user action; Where=existing UI; How=invoke the established workflow',
-  '- Trigger and preconditions: existing workflow is available',
-  '- Normal flow: invoke, compute, and expose the result',
-  '- Alternate or failure flow: preserve the existing error',
-  '- Outcome: requested result is visible',
-  '- Constraints: existing workflow remains compatible',
-  '- Quality constraints: Compatibility=existing store contract; Reliability=preserve error behavior',
-  '- Evidence basis: requirement - requirements.md R-001',
-  '## Domain Model',
-  '### DOM-001 Existing task state',
-  '- Concept kind: entity',
-  '- Business meaning: current task execution status',
-  '- Identity and state: task identity and current status',
-  '- Behavior: validate supported status transitions',
-  '- Responsibilities: validate current status',
-  '- Rules and invariants: only supported status changes are accepted',
-  '- Ownership and lifecycle: task owns status for its lifecycle',
-  '- Relationships: workflow reads task status',
-  '- Software mapping: existing - src/App.tsx task state',
-  '- Evidence basis: observed - src/App.tsx#taskState',
-  '## System Responsibility Allocation',
-  '### SYS-001 Existing workflow boundary',
-  '- Subsystem or boundary: React component and task-store workflow boundary',
-  '- Allocated requirements: RM-001',
-  '- Owns: workflow projection and current UI error behavior',
-  '- Provides: visible result through the existing component',
-  '- Requires: DOM-001 state from the existing task store',
-  '- Data and control boundary: user action enters the component and store state returns to rendering',
-  '- Failure ownership: DES-001 preserves the existing UI failure path',
-  '- Evidence basis: observed - src/App.tsx#handleWorkflow',
-  '## Design Model',
-  '### DES-001 Existing module responsibility',
-  '- Element: module - existing workflow component',
-  '- System allocation: SYS-001',
-  '- Role stereotype: module',
-  '- Owned state: none; reads DOM-001 state',
-  '- Public operations: handle workflow',
-  '- Responsibilities: implement requested behavior',
-  '- Collaborators: existing task store',
-  '- Dependencies: current task state',
-  '- Encapsulation boundary: private workflow logic',
-  '- Does not own: persisted task state',
-  '- Evidence basis: observed - src/App.tsx#handleWorkflow',
-  '### FLOW-001 Existing runtime flow',
-  '- Trigger: user invokes the existing workflow',
-  '- Participants: DES-001',
-  '- Steps: DES-001 delegates to the task store and renders the returned result',
-  '- State changes: none',
-  '- Failure paths: preserve existing error response',
-  '- Evidence basis: observed - src/App.tsx#handleWorkflow',
-  '## Change And Pattern Analysis',
-  '- Verified variation points: none',
-  '- Variation inventory: none',
-  '- Candidate patterns evaluated: none',
-  '- Simplest change mechanism: update the existing component',
-  '- Selected patterns: none',
-  '## Implementation Model',
-  '### IMP-001 Focused implementation',
-  '- Project files and symbols: src/App.tsx workflow; src/App.test.tsx',
-  '- Design mapping: implements SYS-001, DES-001, and FLOW-001',
-  '- Integration constraints: preserve existing store contract',
-  '- Verification: run the focused component test',
-  '- Evidence basis: observed - src/App.tsx#handleWorkflow',
-  '## Applicable Design Principles',
-  '- Cohesion decision: keep one behavior in the existing component',
-  '- Coupling and dependency decision: preserve component to store direction',
-  '- Encapsulation decision: keep workflow logic private to DES-001',
-  '- SOLID trade-offs: SRP applies and no interface is justified',
-  '- Underdesign checks: DES-001 remains focused and is not a generic manager',
-  '## Rejected Complexity',
-  '- Reject new services and event buses because the flow is local.',
-  '## Risks And Evolution',
-  'Preserve the existing public contract.',
-  '## Traceability',
-  '- RM-001 -> ADR-001 -> DOM-001 -> SYS-001 -> DES-001 -> FLOW-001 -> IMP-001',
-  '',
-].join('\n');
-function sectionRange(source: string, start: string, end?: string): string {
-  const startIndex = source.indexOf(start);
-  const endIndex = end ? source.indexOf(end, startIndex + start.length) : source.length;
-  return source.slice(startIndex, endIndex < 0 ? source.length : endIndex).trim();
-}
+const TEST_DESIGN_REFS = [
+  'ADR-001',
+  'RM-001',
+  'FUN-001',
+  'SSD-001',
+  'DOM-001',
+  'SYS-001',
+  'DES-001',
+  'STATE-001',
+  'FLOW-001',
+  'LANG-001',
+  'IMP-001',
+];
 
-function buildV4DesignPackage(source: string) {
-  const preArchitecture = source
-    .slice(0, source.indexOf('## Architecture Decision'))
-    .replace('Design-Contract: 3', 'Design-Contract: 4')
-    .trim();
-  const architectureDecision = sectionRange(source, '## Architecture Decision', '## Requirement Model');
-  const changeAnalysis = sectionRange(source, '## Change And Pattern Analysis', '## Implementation Model');
-  const closingSections = sectionRange(source, '## Applicable Design Principles');
-  const modelDocument = (title: string, kind: string, body: string) => [
-    `# ${title}: Standard planning fixture`,
-    'Design-Contract: 4',
-    'Design-Revision: 1',
-    'Design-Root: design.md',
-    `Model-Kind: ${kind}`,
-    '',
-    body,
-  ].join('\n');
-
-  return {
-    design: [
-      preArchitecture,
-      '## Architecture Candidates',
-      '- Architecture baseline: preserve the observed component-to-store boundary',
-      '- Candidate count: 1',
-      '- Candidate comparison: existing boundary | exact fit | smallest radius | retains current coupling | low migration risk',
-      '- Selected architecture: existing component-to-store boundary',
-      '- Selection rationale: observed ownership and local scope make the current boundary the smallest complete choice',
-      '- Rejected alternatives: new service layer rejected because it adds a boundary without a current variation',
-      '- Evolution trigger: multiple independent workflow policies or an external transport requirement',
-      architectureDecision,
-      '## Model Package',
-      '- Requirement model: requirement_model.md',
-      '- Domain model: domain_model.md',
-      '- Design model: design_model.md',
-      '- Implementation model: implementation_model.md',
-      changeAnalysis,
-      closingSections,
-    ].join('\n'),
-    requirementModel: modelDocument(
-      'Requirement Model',
-      'requirement',
-      sectionRange(source, '## Requirement Model', '## Domain Model'),
-    ),
-    domainModel: modelDocument(
-      'Domain Model',
-      'domain',
-      sectionRange(source, '## Domain Model', '## System Responsibility Allocation'),
-    ),
-    designModel: modelDocument(
-      'Design Model',
-      'design',
-      sectionRange(source, '## System Responsibility Allocation', '## Change And Pattern Analysis'),
-    ),
-    implementationModel: modelDocument(
-      'Implementation Model',
-      'implementation',
-      sectionRange(source, '## Implementation Model', '## Applicable Design Principles'),
-    ),
-  };
-}
-
-const TEST_STANDARD_DESIGN_PACKAGE = buildV4DesignPackage(TEST_STANDARD_DESIGN);
+const TEST_STANDARD_DESIGN_V5_FIXTURE = buildStandardDesignV5Fixture();
+const TEST_STANDARD_DESIGN_PACKAGE = {
+  design: TEST_STANDARD_DESIGN_V5_FIXTURE.designMarkdown,
+  requirementModel: TEST_STANDARD_DESIGN_V5_FIXTURE.requirementModelMarkdown,
+  domainModel: TEST_STANDARD_DESIGN_V5_FIXTURE.domainModelMarkdown,
+  designModel: TEST_STANDARD_DESIGN_V5_FIXTURE.designModelMarkdown,
+  implementationModel: TEST_STANDARD_DESIGN_V5_FIXTURE.implementationModelMarkdown,
+};
 const TEST_STANDARD_DESIGN_REVIEW = [
   'Status: PASSED',
   '',

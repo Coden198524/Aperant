@@ -245,6 +245,7 @@ describe('buildAutocodeSpecKickoffMessage', () => {
 
     expect(message).toContain('Create or repair only E:/Work/App/.autocode/specs/001-task/tasks.md');
     expect(message).toContain('Tasks-Contract: 1 static definition catalog with [ ] checkboxes');
+    expect(message).toContain('the complete five-file design package: design.md, requirement_model.md, domain_model.md, design_model.md, and implementation_model.md');
     expect(message).toContain('Preserve completed historical definitions unchanged');
     expect(message).toContain('Do not write E:/Work/App/.autocode/specs/001-task/implementation_plan.md');
     expect(message).not.toContain('First update E:/Work/App/.autocode/specs/001-task/spec.md');

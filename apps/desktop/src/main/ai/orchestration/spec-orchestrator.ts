@@ -533,17 +533,17 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
 
   const phaseSpecificGuidance = phase === 'requirement_model'
     ? [
-        `Write only ${AUTOCODE_TASK_ARTIFACTS.requirementModel} with RM-* scenarios, 5W1H context, success/failure flows, quality constraints, and evidence.`,
+        `Write only ${AUTOCODE_TASK_ARTIFACTS.requirementModel} as Design-Contract: 5 with complete RM-* use cases, 5W1H, all exact 8C constraints, ordered actions/outputs/value/exceptions, deduplicated FUN-* capabilities, and one Mermaid SSD-* per use case. Format SSDs with autonumber, actor-left/System-right declaration order, activation bars, actor-to-System requests, coarse System self-processing, and dashed observable responses; do not expose product internals as participants.`,
         'Do not make architecture, class, file, or pattern decisions in the requirement model.',
       ]
     : phase === 'domain_model'
       ? [
-          `Write only ${AUTOCODE_TASK_ARTIFACTS.domainModel} with DOM-* concepts derived from approved RM-* scenarios.`,
-          'Model identity, state, behavior, invariants, lifecycle, relationships, rule ownership, and concrete software mapping evidence.',
+          `Write only ${AUTOCODE_TASK_ARTIFACTS.domainModel} with DOM-* concepts derived from approved RM/FUN/SSD evidence using find nouns, add attributes, and connect relationships.`,
+          'Produce a method-free Mermaid classDiagram with labeled concept boxes, concept-kind stereotypes, attributes, and association multiplicities at both ends. Represent business actors as role concepts; do not make software class, method, framework, or file mappings.',
         ]
     : phase === 'design'
     ? [
-        `Write only ${AUTOCODE_TASK_ARTIFACTS.design} as Design-Contract: 4 with ADR-* decisions and references to all four model files.`,
+        `Write only ${AUTOCODE_TASK_ARTIFACTS.design} as Design-Contract: 5 with ADR-* decisions and references to all four model files.`,
         'Declare forward-design, reverse-engineering, or mixed analysis and keep requirement, observed, inferred, and unresolved evidence distinct.',
         'Compare only credible candidates: local exactly one baseline, standard at most two, complex at most three.',
         'Select architecture from business/state complexity, quality attributes, project evidence, change radius, cost, and evolution risk.',
@@ -551,20 +551,20 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
       ]
     : phase === 'design_model'
       ? [
-          `Write only ${AUTOCODE_TASK_ARTIFACTS.designModel} with SYS/DES/FLOW-or-CONTRACT and optional evidenced PAT/REV sections.`,
-          'Allocate every RM-* to SYS-* before detailed design; define state ownership, operations, dependencies, collaboration order, failures, and contracts.',
+          `Write only ${AUTOCODE_TASK_ARTIFACTS.designModel} with SYS/DES/STATE/FLOW-or-CONTRACT and optional evidenced PAT/REV sections.`,
+          'Allocate every RM/FUN to SYS before detailed design; map DOM names/attributes and use-case verbs to DES owners, apply SOLID/pattern decisions, and produce class, state, and sequence diagrams.',
           'Apply NOP while rejecting God coordinators, anemic objects, implicit mutation ownership, and scattered variant dispatch.',
         ]
     : phase === 'implementation_model'
       ? [
-          `Write only ${AUTOCODE_TASK_ARTIFACTS.implementationModel} with IMP-* mappings to exact files, symbols, integration order, migration constraints, and verification.`,
-          'Each IMP-* must reference its SYS/DES/FLOW-or-CONTRACT path and must not invent unsupported source locations.',
+          `Write only ${AUTOCODE_TASK_ARTIFACTS.implementationModel} with LANG-* coding constraints and IMP-* mappings to exact classes/elements, files, symbols, lifecycle, integration order, migration constraints, and verification.`,
+          'Each IMP-* must reference LANG plus its SYS/DES/STATE/FLOW-or-CONTRACT path and must not invent unsupported source locations.',
         ]
     : phase === 'design_review'
       ? [
           `Write only ${AUTOCODE_TASK_ARTIFACTS.designReview}, beginning with exactly Status: PASSED or Status: REVISE.`,
           'Do not edit any design package file; independently check architecture selection and all four model files as one traceable chain.',
-          'Check evidence provenance, RM/DOM rule ownership, SYS allocation, static/dynamic consistency, exact IMP mapping, engineering fit, NOP, and every PAT-* decision.',
+          'Check 5W1H8C use cases, FUN deduplication, SSD coverage, noun/attribute/relation analysis, domain-to-software mapping, SOLID, diagrams, LANG constraints, SYS allocation, exact IMP mapping, engineering fit, NOP, and every PAT-* decision.',
           'For reverse or mixed analysis, verify REV-* paths against exact source symbols and contradiction checks.',
         ]
       : phase === 'spec_writing' || phase === 'self_critique'

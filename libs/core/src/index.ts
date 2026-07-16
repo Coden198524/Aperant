@@ -1572,6 +1572,7 @@ export {
   getAutocodeDesignReviewStatus,
   parseAutocodeDesignSections,
   selectAutocodeDesignRevisionStages,
+  validateAutocodeDesignPackageIdentity,
   validateAutocodeStandardDesignArtifacts,
   validateAutocodeStandardDesignStageArtifacts,
   validateAutocodeTaskDesignReferences,

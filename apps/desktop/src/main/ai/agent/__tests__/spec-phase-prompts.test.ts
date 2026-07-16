@@ -53,10 +53,11 @@ describe('spec phase prompt mapping', () => {
     const mmoPlanner = readPrompt('mmo_system_designer.md');
 
     expect(orchestrator).toContain('requirement_modeler -> domain_modeler -> software_designer -> design_modeler -> implementation_modeler');
-    expect(orchestrator).toContain('shared `Design-Contract: 4` and `Design-Revision`');
+    expect(orchestrator).toContain('shared `Design-Contract: 5` and `Design-Revision`');
+    expect(orchestrator).toContain('reject every other design contract version');
     expect(orchestrator).not.toContain('quick_spec');
-    expect(validationFixer).toContain('`requirement_model.md`: behavioral analysis');
-    expect(validationFixer).toContain('`implementation_model.md`: exact repository bridge');
+    expect(validationFixer).toContain('`requirement_model.md`: requirement analysis');
+    expect(validationFixer).toContain('`implementation_model.md`: language/toolchain `LANG-*` constraints');
     expect(validationFixer).toContain('Never move a model body into `design.md`');
     expect(reviewer).toContain('Referenced sections across `requirement_model.md`, `domain_model.md`, `design.md`, `design_model.md`, and `implementation_model.md`');
     expect(followupPlanner).toContain('canonical design-package owner');
@@ -82,15 +83,23 @@ describe('spec phase prompt mapping', () => {
     const implementationModelerPrompt = readPrompt('implementation_modeler.md');
     const criticPrompt = readPrompt('design_critic.md');
 
-    expect(designerPrompt).toContain('Design-Contract: 4');
+    expect(designerPrompt).toContain('Design-Contract: 5');
     expect(designerPrompt).toContain('Never choose by implementation language alone');
     expect(designerPrompt).toContain('Analysis direction');
     expect(designerPrompt).toContain('Candidate patterns evaluated');
     expect(designerPrompt).toContain('God coordinators, anemic models');
     expect(requirementModelerPrompt).toContain('### RM-001');
-    expect(requirementModelerPrompt).toContain('Alternate or failure flow');
+    expect(requirementModelerPrompt).toContain('Alternate and exception flows');
+    expect(requirementModelerPrompt).toContain('5W1H8C');
+    expect(requirementModelerPrompt).toContain('autonumber');
+    expect(requirementModelerPrompt).toContain('actor-to-System request messages');
+    expect(requirementModelerPrompt).toContain('System->>System');
+    expect(requirementModelerPrompt).toContain('never expose its database, service, module, class, UI widget');
     expect(domainModelerPrompt).toContain('### DOM-001');
     expect(domainModelerPrompt).toContain('Rules and invariants');
+    expect(domainModelerPrompt).toContain('direction LR');
+    expect(domainModelerPrompt).toContain('<<role>>');
+    expect(domainModelerPrompt).toContain('quoted multiplicity at both ends');
     expect(designModelerPrompt).toContain('### SYS-001');
     expect(designModelerPrompt).toContain('### DES-001');
     expect(designModelerPrompt).toContain('CRC reasoning');
@@ -136,13 +145,13 @@ describe('spec phase prompt mapping', () => {
 
   it('keeps Standard prompts within concise bundled budgets', () => {
     const budgets: Record<string, number> = {
-      'planner.md': 3600,
+      'planner.md': 4000,
       'software_designer.md': 15_000,
-      'design_critic.md': 6000,
+      'design_critic.md': 6500,
       'spec_writer.md': 2200,
-      'spec_orchestrator_agentic.md': 2200,
+      'spec_orchestrator_agentic.md': 2400,
       'complexity_assessor.md': 1800,
-      'coder.md': 3700,
+      'coder.md': 4100,
       'qa_reviewer.md': 3000,
     };
 

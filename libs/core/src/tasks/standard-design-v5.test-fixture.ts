@@ -1,19 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import {
-  AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT,
-  buildAutocodeDesignPackageMarkdown,
-  buildAutocodeDesignQualityRetryPrompt,
-  getAutocodeDesignPackageFingerprint,
-  getAutocodeDesignContractVersion,
-  parseAutocodeDesignSections,
-  validateAutocodeStandardDesignArtifacts,
-  validateAutocodeStandardDesignStageArtifacts,
-  validateAutocodeTaskDesignReferences,
-} from './design-quality.js';
-
 const fence = '```';
 
-const designMarkdown = `# Design: Task submission
+export const designMarkdown = `# Design: Task submission
 Design-Contract: 5
 Design-Depth: local
 Design-Revision: 2
@@ -106,7 +93,7 @@ Regression risk is limited to transition validation and is covered by focused un
 - RM-001 -> FUN-001 -> SSD-001 -> DOM-001 -> ADR-001 -> SYS-001 -> DES-001 -> STATE-001 -> FLOW-001 -> LANG-001 -> IMP-001
 `;
 
-const requirementModelMarkdown = `# Requirement Model: Task submission
+export const requirementModelMarkdown = `# Requirement Model: Task submission
 Design-Contract: 5
 Design-Revision: 2
 Design-Root: design.md
@@ -162,7 +149,7 @@ sequenceDiagram
 ${fence}
 `;
 
-const domainModelMarkdown = `# Domain Model: Task submission
+export const domainModelMarkdown = `# Domain Model: Task submission
 Design-Contract: 5
 Design-Revision: 2
 Design-Root: design.md
@@ -200,7 +187,7 @@ classDiagram
 ${fence}
 `;
 
-const designModelMarkdown = `# Design Model: Task submission
+export const designModelMarkdown = `# Design Model: Task submission
 Design-Contract: 5
 Design-Revision: 2
 Design-Root: design.md
@@ -288,7 +275,7 @@ sequenceDiagram
 ${fence}
 `;
 
-const implementationModelMarkdown = `# Implementation Model: Task submission
+export const implementationModelMarkdown = `# Implementation Model: Task submission
 Design-Contract: 5
 Design-Revision: 2
 Design-Root: design.md
@@ -319,12 +306,12 @@ Model-Kind: implementation
 - Evidence basis: observed - apps/desktop/src/main/task-service.ts; requirement - requirement_model.md FUN-001
 `;
 
-const reviewMarkdown = `Status: PASSED
+export const reviewMarkdown = `Status: PASSED
 
 The complete Design-Contract: 5 package is traceable, cohesive, and proportionate to the verified scope.
 `;
 
-const tasksMarkdown = `# Tasks
+export const tasksMarkdown = `# Tasks
 
 - [ ] 1. Task submission
   - [ ] 1.1 Implement and verify task submission
@@ -335,7 +322,7 @@ const tasksMarkdown = `# Tasks
     - _Verification: focused unit tests, service tests, typecheck, and desktop build_
 `;
 
-function buildV5Package() {
+export function buildStandardDesignV5Fixture() {
   return {
     designMarkdown,
     requirementModelMarkdown,
@@ -344,352 +331,3 @@ function buildV5Package() {
     implementationModelMarkdown,
   };
 }
-
-function validatePackage(overrides: Partial<ReturnType<typeof buildV5Package>> = {}) {
-  return validateAutocodeStandardDesignArtifacts({
-    ...buildV5Package(),
-    ...overrides,
-    designReviewMarkdown: reviewMarkdown,
-    tasksMarkdown,
-  });
-}
-
-function removeRange(source: string, start: string, end: string): string {
-  const startIndex = source.indexOf(start);
-  const endIndex = source.indexOf(end, startIndex);
-  return source.slice(0, startIndex) + source.slice(endIndex);
-}
-
-describe('Design-Contract: 5 quality validation', () => {
-  it('accepts a complete v5 design package and task traceability', () => {
-    const result = validatePackage();
-
-    expect(result.errors).toEqual([]);
-    expect(result.contractVersion).toBe(5);
-    expect(result.sections.map((section) => section.id)).toEqual(expect.arrayContaining([
-      'ADR-001',
-      'RM-001',
-      'FUN-001',
-      'SSD-001',
-      'DOM-001',
-      'SYS-001',
-      'DES-001',
-      'STATE-001',
-      'FLOW-001',
-      'LANG-001',
-      'IMP-001',
-    ]));
-  });
-
-  it('validates each v5 generation stage before downstream generation', () => {
-    expect(validateAutocodeStandardDesignStageArtifacts(
-      { requirementModelMarkdown },
-      'requirement_model',
-    ).errors).toEqual([]);
-    expect(validateAutocodeStandardDesignStageArtifacts(
-      { requirementModelMarkdown, domainModelMarkdown, designMarkdown },
-      'design',
-    ).errors).toEqual([]);
-    expect(validateAutocodeStandardDesignStageArtifacts(
-      { requirementModelMarkdown, domainModelMarkdown, designMarkdown, designModelMarkdown },
-      'design_model',
-    ).errors).toEqual([]);
-    expect(validateAutocodeStandardDesignStageArtifacts(
-      buildV5Package(),
-      'implementation_model',
-    ).errors).toEqual([]);
-  });
-
-  it('recognizes only v5 and rejects v3 or v4 roots', () => {
-    expect(getAutocodeDesignContractVersion(designMarkdown)).toBe(5);
-    for (const version of [3, 4]) {
-      const legacy = designMarkdown.replace('Design-Contract: 5', 'Design-Contract: ' + version);
-      expect(getAutocodeDesignContractVersion(legacy)).toBeUndefined();
-      expect(validatePackage({ designMarkdown: legacy }).errors).toContain(
-        'design.md must declare Design-Contract: 5; older design contracts are unsupported.',
-      );
-    }
-    expect(getAutocodeDesignContractVersion(
-      designMarkdown.replace('Design-Contract: 5', 'Design-Contract: 5\nDesign-Contract: 4'),
-    )).toBeUndefined();
-  });
-
-  it('requires every exact 8C assignment', () => {
-    const malformed = requirementModelMarkdown.replace(
-      'Compliance=audit metadata remains attributable;',
-      'Regulation=audit metadata remains attributable;',
-    );
-
-    expect(validatePackage({ requirementModelMarkdown: malformed }).errors).toContain(
-      'requirement_model.md RM-001 8C constraints must define exactly one Compliance=... assignment.',
-    );
-  });
-
-  it('rejects constraint dimensions outside the exact 8C set', () => {
-    const malformed = requirementModelMarkdown.replace(
-      'Compatibility=preserve the current task service contract',
-      'Compatibility=preserve the current task service contract; Scalability=add unlimited workers',
-    );
-
-    expect(validatePackage({ requirementModelMarkdown: malformed }).errors).toContain(
-      'requirement_model.md RM-001 8C constraints must not define Scalability=...; allowed dimensions are Performance, Cost, Time, Reliability, Security, Compliance, Technology, Compatibility.',
-    );
-  });
-
-  it('rejects duplicate normalized functions', () => {
-    const duplicateSection = [
-      '',
-      '### FUN-002 Validate and submit task',
-      '- Function description: validate a draft and persist one accepted task transition',
-      '- Involved use cases: RM-001',
-      '- Merge decision: distinct - this intentionally duplicates FUN-001 for validation',
-      '- Evidence basis: requirement - requirement_model.md RM-001',
-      '',
-      '## System Sequence Diagrams',
-    ].join('\n');
-    const duplicate = requirementModelMarkdown.replace(
-      '\n## System Sequence Diagrams',
-      duplicateSection,
-    );
-
-    expect(validatePackage({ requirementModelMarkdown: duplicate }).errors).toEqual(
-      expect.arrayContaining([expect.stringContaining('duplicate the same normalized capability; merge them.')]),
-    );
-  });
-
-  it('requires exactly one SSD for every use case', () => {
-    const withoutSequence = requirementModelMarkdown.replace(/### SSD-001[\s\S]*$/u, '');
-
-    expect(validatePackage({ requirementModelMarkdown: withoutSequence }).errors).toEqual(
-      expect.arrayContaining([
-        'requirement_model.md use case RM-001 must have exactly one SSD-* system sequence diagram.',
-      ]),
-    );
-  });
-
-  it('requires numbered actor-System SSD presentation with processing and activation', () => {
-    const malformed = requirementModelMarkdown
-      .replace('    autonumber\n', '')
-      .replace('    activate System\n', '')
-      .replace('    deactivate System\n', '')
-      .replace(/^\s*System->>System:.*\n/gmu, '')
-      .replaceAll('System-->>Member:', 'System->>Member:');
-
-    expect(validatePackage({ requirementModelMarkdown: malformed }).errors).toEqual(
-      expect.arrayContaining([
-        'requirement_model.md SSD-001 SSD must enable Mermaid autonumber so business messages are displayed in order.',
-        'requirement_model.md SSD-001 SSD must show at least one dashed System-to-primary-actor observable response.',
-        'requirement_model.md SSD-001 SSD must show at least one coarse System-to-System processing responsibility.',
-        'requirement_model.md SSD-001 SSD must show a complete System activation and deactivation interval.',
-      ]),
-    );
-  });
-
-  it('requires the primary actor first and stable System alias second', () => {
-    const reversed = requirementModelMarkdown.replace(
-      '    actor Member as Project member\n    participant System as Task system',
-      '    participant System as Task system\n    actor Member as Project member',
-    );
-
-    expect(validatePackage({ requirementModelMarkdown: reversed }).errors).toEqual(
-      expect.arrayContaining([
-        'requirement_model.md SSD-001 SSD must declare the primary business actor first so it appears on the left.',
-        'requirement_model.md SSD-001 SSD must declare the product second with the stable alias System.',
-      ]),
-    );
-  });
-
-  it('rejects software methods in the domain class diagram', () => {
-    const withMethod = domainModelMarkdown.replace(
-      '        rejectionReason\n',
-      '        rejectionReason\n        submitDraft()\n',
-    );
-
-    expect(validatePackage({ domainModelMarkdown: withMethod }).errors).toContain(
-      'domain_model.md Domain Class Diagram must not define software methods.',
-    );
-  });
-
-  it('rejects software access modifiers in the domain class diagram', () => {
-    const withVisibility = domainModelMarkdown.replace(
-      '        rejectionReason\n',
-      '        +rejectionReason\n',
-    );
-
-    expect(validatePackage({ domainModelMarkdown: withVisibility }).errors).toContain(
-      'domain_model.md Domain Class Diagram must not define software access modifiers.',
-    );
-  });
-
-  it('requires labeled domain boxes with concept-kind stereotypes and left-to-right layout', () => {
-    const malformed = domainModelMarkdown
-      .replace('    direction LR\n', '')
-      .replace('    class DOM_001["Task"] {', '    class DOM_001 {')
-      .replace('        <<entity>>\n', '');
-
-    expect(validatePackage({ domainModelMarkdown: malformed }).errors).toEqual(
-      expect.arrayContaining([
-        'domain_model.md Domain Class Diagram must use direction LR for a readable relationship layout.',
-        'domain_model.md Domain Class Diagram DOM-001 must use a localized visible label on its DOM_* alias.',
-        'domain_model.md Domain Class Diagram DOM-001 must show the <<entity>> concept-kind stereotype.',
-      ]),
-    );
-  });
-
-  it('requires multiplicity at both ends of domain associations', () => {
-    const relatedConcept = `
-### DOM-002 Project member
-- Concept kind: role
-- Noun sources: RM-001
-- Business meaning: the business role that submits a task
-- Attributes: memberId: stable business identity
-- Identity: memberId identifies one project member
-- Rules and invariants: one member may submit multiple tasks
-- Lifecycle states: none - the use case does not define a member lifecycle
-- Relationships: DOM-002 submits DOM-001
-- Related use cases: RM-001
-- Evidence basis: requirement - requirement_model.md RM-001
-`;
-    const withoutMultiplicity = domainModelMarkdown
-      .replace('\n## Domain Class Diagram', `\n${relatedConcept}\n## Domain Class Diagram`)
-      .replace(
-        '        rejectionReason\n    }\n',
-        [
-          '        rejectionReason',
-          '    }',
-          '    class DOM_002["Project member"] {',
-          '        <<role>>',
-          '        memberId',
-          '    }',
-          '    DOM_002 --> DOM_001 : submits',
-          '',
-        ].join('\n'),
-      );
-
-    expect(validatePackage({ domainModelMarkdown: withoutMultiplicity }).errors).toContain(
-      'domain_model.md Domain Class Diagram association, aggregation, or composition must show quoted multiplicity at both ends.',
-    );
-  });
-
-  it('requires domain mappings to be summarized explicitly', () => {
-    const missingSummary = designModelMarkdown.replace(
-      '- Mapped concepts: DOM-001 -> DES-001 because task identity, attributes, and invariants require one state owner',
-      '- Mapped concepts: none - no concepts listed',
-    );
-
-    expect(validatePackage({ designModelMarkdown: missingSummary }).errors).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('DES-001 mapping must also appear in the Mapped concepts summary.'),
-      ]),
-    );
-  });
-
-  it('requires all five SOLID decisions', () => {
-    const missingDip = designModelMarkdown.replace(
-      '; DIP=n/a - the existing persistence port already isolates the mechanism',
-      '',
-    );
-
-    expect(validatePackage({ designModelMarkdown: missingDip }).errors).toContain(
-      'design_model.md DES-001 SOLID rationale must define exactly one DIP=... assignment.',
-    );
-  });
-
-  it('requires a STATE diagram for every stateful design element', () => {
-    const withoutState = removeRange(
-      designModelMarkdown,
-      '### STATE-001 Task submission lifecycle',
-      '## Sequence Diagrams',
-    );
-
-    expect(validatePackage({ designModelMarkdown: withoutState }).errors).toContain(
-      'design_model.md stateful element DES-001 must own a STATE-* diagram.',
-    );
-  });
-
-  it('requires FLOW entries to contain Mermaid sequence diagrams', () => {
-    const withoutSequence = designModelMarkdown.replace(
-      'sequenceDiagram\n    participant Service as SYS-001',
-      'flowchart TD\n    participant Service as SYS-001',
-    );
-
-    expect(validatePackage({ designModelMarkdown: withoutSequence }).errors).toContain(
-      'design_model.md FLOW-001 must contain a Mermaid sequenceDiagram.',
-    );
-  });
-
-  it('requires every implementation entry to apply a LANG constraint', () => {
-    const withoutLanguage = implementationModelMarkdown.replace(
-      '- Coding constraints: LANG-001',
-      '- Coding constraints: none - no coding constraints selected',
-    );
-
-    expect(validatePackage({ implementationModelMarkdown: withoutLanguage }).errors).toContain(
-      'implementation_model.md IMP-001 Coding constraints must reference at least one LANG-*.',
-    );
-  });
-
-  it('rejects a broken end-to-end traceability order', () => {
-    const broken = designMarkdown.replace(
-      'RM-001 -> FUN-001 -> SSD-001 -> DOM-001',
-      'DOM-001 -> RM-001 -> FUN-001 -> SSD-001',
-    );
-
-    expect(validatePackage({ designMarkdown: broken }).errors).toEqual(
-      expect.arrayContaining([expect.stringContaining('in that order')]),
-    );
-  });
-
-  it('requires executable tasks to reference FUN and LANG entries', () => {
-    const incompleteTasks = tasksMarkdown
-      .replace('FUN-001, ', '')
-      .replace('LANG-001, ', '');
-    const errors = validateAutocodeTaskDesignReferences(
-      incompleteTasks,
-      buildAutocodeDesignPackageMarkdown(buildV5Package()),
-    );
-
-    expect(errors).toEqual(expect.arrayContaining([
-      'tasks.md task 1.1 references implementation work but omits its FUN-* capability.',
-      'tasks.md task 1.1 references implementation work but omits its LANG-* coding constraints.',
-    ]));
-  });
-
-  it('requires Chinese review prose for a Chinese task', () => {
-    expect(validateAutocodeStandardDesignArtifacts({
-      ...buildV5Package(),
-      designReviewMarkdown: reviewMarkdown,
-      language: 'zh-CN',
-      requireTaskReferences: false,
-    }).errors).toContain(
-      'design_review.md review prose must use Simplified Chinese for language zh-CN. Keep only the required Status token and technical identifiers in English.',
-    );
-
-    expect(validateAutocodeStandardDesignArtifacts({
-      ...buildV5Package(),
-      designReviewMarkdown: 'Status: PASSED\n\n\u8bbe\u8ba1\u8bc1\u636e\u5145\u5206\uff0c\u804c\u8d23\u8fb9\u754c\u6e05\u6670\uff0c\u4e14\u6ca1\u6709\u8fc7\u5ea6\u8bbe\u8ba1\u3002',
-      language: 'zh-CN',
-      requireTaskReferences: false,
-    }).errors).toEqual([]);
-  });
-
-  it('emits a v5-only repair prompt and machine contract', () => {
-    const retryPrompt = buildAutocodeDesignQualityRetryPrompt([
-      'design.md must declare Design-Contract: 5; older design contracts are unsupported.',
-      'Design-Contract: 5 package must define at least one LANG-* section.',
-    ]);
-
-    expect(retryPrompt).toContain('Use Design-Contract: 5 across design.md and all four model files');
-    expect(retryPrompt).toContain('### LANG-001 <localized language/toolchain title>');
-    expect(retryPrompt).not.toContain('Design-Contract: 3');
-    expect(retryPrompt).not.toContain('Design-Contract: 4');
-    expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).toContain('Design-Contract: 5');
-    expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).not.toContain('Design-Contract: 4');
-  });
-
-  it('fingerprints the full five-artifact package deterministically', () => {
-    expect(getAutocodeDesignPackageFingerprint(buildV5Package())).toHaveLength(64);
-    expect(getAutocodeDesignPackageFingerprint(buildV5Package()))
-      .toBe(getAutocodeDesignPackageFingerprint({ ...buildV5Package() }));
-  });
-});

@@ -1,5 +1,10 @@
 ﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getAutocodeDesignPackageFingerprint } from '@autocode/core/tasks/design-quality';
+import {
+  buildStandardDesignV5Fixture,
+} from '../../../../../../../libs/core/src/tasks/standard-design-v5.test-fixture.js';
+
 const mockReadFile = vi.fn();
 const mockWriteFile = vi.fn();
 const mockRename = vi.fn();
@@ -150,7 +155,7 @@ const STRICT_STANDARD_TASKS_MD = [
   '    - _Files to modify: src/file-1.ts_',
   '    - _Depends on: none_',
   '    - _Requirements: R1, AC1, SCN-001_',
-  '    - _Design: ADR-001, SYS-001, DES-001, FLOW-001, IMP-001_',
+  '    - _Design: ADR-001, RM-001, FUN-001, SSD-001, DOM-001, SYS-001, DES-001, STATE-001, FLOW-001, LANG-001, IMP-001_',
   '    - _Evidence: E1; src/file-1.ts existing workflow_',
   '    - _Done when: SCN-001 is represented by one focused work package_',
   '    - _Verification: npm test -- file-1.test.ts_',
@@ -172,206 +177,14 @@ function makeStandardPlanningChangeRequest(
     },
   }) + '\n';
 }
-const LEGACY_STANDARD_DESIGN_MD = [
-  '# Design: Test task',
-  'Design-Contract: 3',
-  'Design-Depth: local',
-  'Design-Revision: 1',
-  '',
-  '## Scope And Evidence',
-  '- Analysis direction: forward-design',
-  '- Primary source of truth: mixed',
-  '- Requirement evidence: requirement - requirements.md R-001 defines the workflow result',
-  '- Project evidence: observed - src/file-1.ts#handleWorkflow owns the current behavior',
-  '- Design inferences: none - the requirement and source establish the local boundary',
-  '- Unresolved evidence: none',
-  '## Complexity Assessment',
-  '- Primary complexity driver: one local behavior',
-  '- Business rules and state: preserve the task invariant',
-  '- Boundary and contract impact: no public contract changes',
-  '- Quality-attribute risks: existing workflow compatibility',
-  '- Depth rationale: one existing module is affected',
-  '## Existing Architecture Fit',
-  'Reuse src/file-1.ts and the existing dependency direction.',
-  '## Engineering Adaptation',
-  '- Delivery context: existing-system',
-  '- System shape: local-utility',
-  '- Project paradigm: mixed',
-  '- Paradigm rationale: preserve the existing TypeScript workflow module',
-  '- Object-model applicability: low',
-  '- Object-model rationale: one local workflow has no independent object lifecycle',
-  '- Existing boundaries to preserve: src/file-1.ts module boundary',
-  '- Existing patterns to reuse: src/file-1.ts workflow handler',
-  '- Language/framework constraints: TypeScript existing runtime',
-  '- Integration and test seams: src/file-1.test.ts focused test',
-  '## Design Budget',
-  '- Expected modules changed: 2',
-  '- New modules allowed: 0',
-  '- New public contracts allowed: 0',
-  '- New dependencies allowed: 0',
-  '- New architectural patterns: none',
-  '## Architecture Decision',
-  '### ADR-001 Preserve the existing boundary',
-  '- Decision: preserve the current caller-to-workflow dependency direction',
-  '- Status: accepted',
-  '- Decision drivers: RM-001 changes one local result without a public contract change',
-  '- Alternatives considered: splitting the workflow into additional boundaries was rejected',
-  '- Trade-offs: minimal change radius while retaining the current module boundary',
-  '- Evidence basis: requirement - requirements.md R-001; observed - src/file-1.ts#handleWorkflow',
-  '## Requirement Model',
-  '### RM-001 Complete the requested behavior',
-  '- Actor and goal: user obtains the requested result',
-  '- Business context: Who=user; What=request result; Why=complete workflow; When=workflow invocation; Where=existing caller; How=invoke the established workflow',
-  '- Trigger and preconditions: existing workflow is available',
-  '- Normal flow: invoke, compute, and return the result',
-  '- Alternate or failure flow: preserve the existing error',
-  '- Outcome: requested result is exposed',
-  '- Constraints: existing contract remains compatible',
-  '- Quality constraints: Compatibility=existing workflow contract; Reliability=preserve error behavior',
-  '- Evidence basis: requirement - requirements.md R-001',
-  '## Domain Model',
-  '### DOM-001 Existing task state',
-  '- Concept kind: entity',
-  '- Business meaning: current task execution status',
-  '- Identity and state: task identity and current status',
-  '- Behavior: validate supported status transitions',
-  '- Responsibilities: validate current status',
-  '- Rules and invariants: only supported status changes are accepted',
-  '- Ownership and lifecycle: task owns status for its lifecycle',
-  '- Relationships: workflow reads task status',
-  '- Software mapping: existing - src/file-1.ts task state',
-  '- Evidence basis: observed - src/file-1.ts#taskState',
-  '## System Responsibility Allocation',
-  '### SYS-001 Existing workflow boundary',
-  '- Subsystem or boundary: caller-to-workflow module boundary',
-  '- Allocated requirements: RM-001',
-  '- Owns: workflow result calculation and current error behavior',
-  '- Provides: compatible result to the existing caller',
-  '- Requires: DOM-001 current task state',
-  '- Data and control boundary: caller initiates control and DES-001 returns result data',
-  '- Failure ownership: DES-001 preserves the existing workflow error path',
-  '- Evidence basis: observed - src/file-1.ts#handleWorkflow',
-  '## Design Model',
-  '### DES-001 Existing module responsibility',
-  '- Element: module - existing workflow module',
-  '- System allocation: SYS-001',
-  '- Role stereotype: module',
-  '- Owned state: none; reads DOM-001 state',
-  '- Public operations: handle workflow',
-  '- Responsibilities: implement requested behavior',
-  '- Collaborators: existing caller',
-  '- Dependencies: current task state',
-  '- Encapsulation boundary: private workflow logic',
-  '- Does not own: caller rendering',
-  '- Evidence basis: observed - src/file-1.ts#handleWorkflow',
-  '### FLOW-001 Existing runtime flow',
-  '- Trigger: caller invokes existing contract',
-  '- Participants: DES-001',
-  '- Steps: DES-001 reads DOM-001, computes, and returns the result',
-  '- State changes: none',
-  '- Failure paths: preserve existing error response',
-  '- Evidence basis: observed - src/file-1.ts#handleWorkflow',
-  '## Change And Pattern Analysis',
-  '- Verified variation points: none',
-  '- Variation inventory: none',
-  '- Candidate patterns evaluated: none',
-  '- Simplest change mechanism: update the existing module',
-  '- Selected patterns: none',
-  '## Implementation Model',
-  '### IMP-001 Focused implementation',
-  '- Project files and symbols: src/file-1.ts handler; src/file-1.test.ts',
-  '- Design mapping: implements SYS-001, DES-001, and FLOW-001',
-  '- Integration constraints: preserve existing contract',
-  '- Verification: run the focused test',
-  '- Evidence basis: observed - src/file-1.ts#handleWorkflow',
-  '## Applicable Design Principles',
-  '- Cohesion decision: keep one behavior in the existing module',
-  '- Coupling and dependency decision: preserve the current caller direction',
-  '- Encapsulation decision: keep workflow logic private to DES-001',
-  '- SOLID trade-offs: SRP applies and no interface is justified',
-  '- Underdesign checks: DES-001 remains focused and is not a generic manager',
-  '## Rejected Complexity',
-  '- Reject new services and event buses because the flow is local.',
-  '## Risks And Evolution',
-  'Preserve the existing public contract.',
-  '## Traceability',
-  '- RM-001 -> ADR-001 -> DOM-001 -> SYS-001 -> DES-001 -> FLOW-001 -> IMP-001',
-  '',
-].join('\n');
 
-function sectionRange(source: string, start: string, end?: string): string {
-  const startIndex = source.indexOf(start);
-  const endIndex = end ? source.indexOf(end, startIndex + start.length) : source.length;
-  return source.slice(startIndex, endIndex < 0 ? source.length : endIndex).trim();
-}
-
-function buildV4DesignPackage(source: string) {
-  const preArchitecture = source
-    .slice(0, source.indexOf('## Architecture Decision'))
-    .replace('Design-Contract: 3', 'Design-Contract: 4')
-    .trim();
-  const architectureDecision = sectionRange(source, '## Architecture Decision', '## Requirement Model');
-  const changeAnalysis = sectionRange(source, '## Change And Pattern Analysis', '## Implementation Model');
-  const closingSections = sectionRange(source, '## Applicable Design Principles');
-  const modelDocument = (title: string, kind: string, body: string) => [
-    `# ${title}: Standard planning fixture`,
-    'Design-Contract: 4',
-    'Design-Revision: 1',
-    'Design-Root: design.md',
-    `Model-Kind: ${kind}`,
-    '',
-    body,
-  ].join('\n');
-
-  return {
-    design: [
-      preArchitecture,
-      '## Architecture Candidates',
-      '- Architecture baseline: preserve the observed caller-to-workflow boundary',
-      '- Candidate count: 1',
-      '- Candidate comparison: existing boundary | exact fit | smallest radius | retains current coupling | low migration risk',
-      '- Selected architecture: existing caller-to-workflow boundary',
-      '- Selection rationale: observed ownership and local scope make the current boundary the smallest complete choice',
-      '- Rejected alternatives: new service layer rejected because it adds a boundary without a current variation',
-      '- Evolution trigger: multiple independent workflow policies or an external transport requirement',
-      architectureDecision,
-      '## Model Package',
-      '- Requirement model: requirement_model.md',
-      '- Domain model: domain_model.md',
-      '- Design model: design_model.md',
-      '- Implementation model: implementation_model.md',
-      changeAnalysis,
-      closingSections,
-    ].join('\n'),
-    requirementModel: modelDocument(
-      'Requirement Model',
-      'requirement',
-      sectionRange(source, '## Requirement Model', '## Domain Model'),
-    ),
-    domainModel: modelDocument(
-      'Domain Model',
-      'domain',
-      sectionRange(source, '## Domain Model', '## System Responsibility Allocation'),
-    ),
-    designModel: modelDocument(
-      'Design Model',
-      'design',
-      sectionRange(source, '## System Responsibility Allocation', '## Change And Pattern Analysis'),
-    ),
-    implementationModel: modelDocument(
-      'Implementation Model',
-      'implementation',
-      sectionRange(source, '## Implementation Model', '## Applicable Design Principles'),
-    ),
-  };
-}
-
-const STANDARD_DESIGN_PACKAGE = buildV4DesignPackage(LEGACY_STANDARD_DESIGN_MD);
-const STANDARD_DESIGN_MD = STANDARD_DESIGN_PACKAGE.design;
-const STANDARD_REQUIREMENT_MODEL_MD = STANDARD_DESIGN_PACKAGE.requirementModel;
-const STANDARD_DOMAIN_MODEL_MD = STANDARD_DESIGN_PACKAGE.domainModel;
-const STANDARD_DESIGN_MODEL_MD = STANDARD_DESIGN_PACKAGE.designModel;
-const STANDARD_IMPLEMENTATION_MODEL_MD = STANDARD_DESIGN_PACKAGE.implementationModel;
+const STANDARD_DESIGN_PACKAGE = buildStandardDesignV5Fixture();
+const STANDARD_DESIGN_MD = STANDARD_DESIGN_PACKAGE.designMarkdown;
+const STANDARD_REQUIREMENT_MODEL_MD = STANDARD_DESIGN_PACKAGE.requirementModelMarkdown;
+const STANDARD_DOMAIN_MODEL_MD = STANDARD_DESIGN_PACKAGE.domainModelMarkdown;
+const STANDARD_DESIGN_MODEL_MD = STANDARD_DESIGN_PACKAGE.designModelMarkdown;
+const STANDARD_IMPLEMENTATION_MODEL_MD = STANDARD_DESIGN_PACKAGE.implementationModelMarkdown;
+const STANDARD_DESIGN_FINGERPRINT = getAutocodeDesignPackageFingerprint(STANDARD_DESIGN_PACKAGE);
 const STANDARD_DESIGN_REVIEW_MD = [
   'Status: PASSED',
   '',
@@ -385,7 +198,8 @@ function withStandardDesignMetadata(tasksMarkdown: string): string {
   }
   return tasksMarkdown.replace(
     /^(\s*)-\s+_Requirements:[^\r\n]*_\s*$/gm,
-    (line, indent: string) => `${line}\n${indent}- _Design: ADR-001, SYS-001, DES-001, FLOW-001, IMP-001_`,
+    (line, indent: string) =>
+      `${line}\n${indent}- _Design: ADR-001, RM-001, FUN-001, SSD-001, DOM-001, SYS-001, DES-001, STATE-001, FLOW-001, LANG-001, IMP-001_`,
   );
 }
 
@@ -422,6 +236,21 @@ function readStandardArtifactOrReject(filePath: string): Promise<string> {
 
 function makePlan(statuses: string[], withSchedulingMetadata = true): string {
   return JSON.stringify({
+    source_task: {
+      kind: 'autocode-tasks',
+      design_contract: {
+        version: 5,
+        path: 'design.md',
+        paths: [
+          'design.md',
+          'requirement_model.md',
+          'domain_model.md',
+          'design_model.md',
+          'implementation_model.md',
+        ],
+        fingerprint: STANDARD_DESIGN_FINGERPRINT,
+      },
+    },
     phases: [
       {
         id: 'phase-1',
@@ -589,7 +418,9 @@ function makeTasks(statuses: string[], withSchedulingMetadata = true): string {
       lines.push(`    - _Files to modify: src/file-${index + 1}.ts_`);
       lines.push(`    - _Depends on: ${index === 0 ? 'none' : `1.${index}`}_`);
       lines.push(`    - _Requirements: 1.${index + 1}_`);
-      lines.push('    - _Design: ADR-001, SYS-001, DES-001, FLOW-001, IMP-001_');
+      lines.push(
+        '    - _Design: ADR-001, RM-001, FUN-001, SSD-001, DOM-001, SYS-001, DES-001, STATE-001, FLOW-001, LANG-001, IMP-001_',
+      );
       lines.push(`    - _Evidence: spec.md Subtask ${index + 1}_`);
       lines.push(`    - _Done when: Subtask ${index + 1} is implemented and the focused check passes_`);
       lines.push('    - _Verification: Run focused check_');
@@ -819,8 +650,15 @@ describe('BuildOrchestrator QA recovery', () => {
     const error = await orchestrator.validateRuntimeDesignContract({
       source_task: {
         design_contract: {
-          version: 2,
+          version: 5,
           path: 'design.md',
+          paths: [
+            'design.md',
+            'requirement_model.md',
+            'domain_model.md',
+            'design_model.md',
+            'implementation_model.md',
+          ],
           fingerprint: 'stale-design-fingerprint',
         },
       },
@@ -830,7 +668,68 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(mockIterateSubtasks).not.toHaveBeenCalled();
   });
 
-  it('allows one compatibility pass for legacy runtime plans without a design contract', async () => {
+  it('rejects runtime plans that do not bind the exact v5 package paths', async () => {
+    const orchestrator = makeOrchestrator() as unknown as {
+      validateRuntimeDesignContract: (
+        plan: Record<string, unknown>,
+      ) => Promise<string | undefined>;
+    };
+
+    await expect(orchestrator.validateRuntimeDesignContract({
+      source_task: {
+        design_contract: {
+          version: 5,
+          path: 'design.md',
+          paths: ['design.md'],
+          fingerprint: 'manual-fingerprint',
+        },
+      },
+    })).resolves.toContain('does not bind the exact five-file Design-Contract: 5 package');
+    expect(mockReadFile).not.toHaveBeenCalled();
+  });
+
+  it.each([3, 4])('rejects a v%s model even when its runtime fingerprint matches', async (version) => {
+    const malformedDesignModel = STANDARD_DESIGN_MODEL_MD.replace(
+      'Design-Contract: 5',
+      `Design-Contract: ${version}`,
+    );
+    mockReadFile.mockImplementation((path: string) =>
+      String(path).endsWith('design_model.md')
+        ? Promise.resolve(malformedDesignModel)
+        : readStandardArtifactOrReject(path)
+    );
+    const malformedPackage = {
+      designMarkdown: STANDARD_DESIGN_MD,
+      requirementModelMarkdown: STANDARD_REQUIREMENT_MODEL_MD,
+      domainModelMarkdown: STANDARD_DOMAIN_MODEL_MD,
+      designModelMarkdown: malformedDesignModel,
+      implementationModelMarkdown: STANDARD_IMPLEMENTATION_MODEL_MD,
+    };
+    const orchestrator = makeOrchestrator() as unknown as {
+      validateRuntimeDesignContract: (
+        plan: Record<string, unknown>,
+      ) => Promise<string | undefined>;
+    };
+
+    await expect(orchestrator.validateRuntimeDesignContract({
+      source_task: {
+        design_contract: {
+          version: 5,
+          path: 'design.md',
+          paths: [
+            'design.md',
+            'requirement_model.md',
+            'domain_model.md',
+            'design_model.md',
+            'implementation_model.md',
+          ],
+          fingerprint: getAutocodeDesignPackageFingerprint(malformedPackage),
+        },
+      },
+    })).resolves.toContain('design_model.md must declare Design-Contract: 5');
+  });
+
+  it('rejects legacy runtime plans without a v5 design contract', async () => {
     const orchestrator = makeOrchestrator() as unknown as {
       validateRuntimeDesignContract: (
         plan: Record<string, unknown>,
@@ -839,7 +738,7 @@ describe('BuildOrchestrator QA recovery', () => {
 
     await expect(orchestrator.validateRuntimeDesignContract({
       source_task: { kind: 'legacy-standard-plan' },
-    })).resolves.toBeUndefined();
+    })).resolves.toContain('no Design-Contract: 5 package fingerprint');
     expect(mockReadFile).not.toHaveBeenCalled();
   });
 

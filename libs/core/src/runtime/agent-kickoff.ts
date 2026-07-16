@@ -57,20 +57,20 @@ function buildAutocodeDesignStageKickoffMessage(input: {
   incremental?: boolean;
 }): string {
   const action = input.incremental ? 'Create or incrementally revise' : 'Create';
-  const common = `for: ${input.taskDescription}. Project root: ${input.projectDir}. Preserve unaffected stable IDs, use Design-Contract: 4, and do not edit tasks or source code.`;
+  const common = `for: ${input.taskDescription}. Project root: ${input.projectDir}. Preserve unaffected stable IDs, use Design-Contract: 5, and do not edit tasks or source code.`;
   switch (input.specPhase) {
     case 'requirement_model':
-      return `${action} ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirementModel} ${common} Derive RM-* scenarios, 5W1H context, normal/failure flows, constraints, quality attributes, and evidence from requirements.md and spec.md. Do not define architecture, classes, files, or patterns.`;
+      return `${action} ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirementModel} ${common} Derive complete RM-* use cases with 5W1H, all exact 8C dimensions, actions/outputs/value/exceptions, deduplicated FUN-* capabilities, and one Mermaid SSD-* per use case. Format each SSD with autonumber, the primary business actor declared before stable alias System, activation bars, actor-to-System requests, coarse System self-processing, and dashed observable responses; keep internal components out of the black-box system boundary. Distinguish requirement facts from industry inference and unresolved questions. Do not define architecture, classes, files, or patterns.`;
     case 'domain_model':
-      return `${action} ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.domainModel} ${common} Read the approved requirement model and derive DOM-* identity, state, behavior, invariants, lifecycle, relationships, and rule ownership. Reject anemic concepts and generic managers.`;
+      return `${action} ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.domainModel} ${common} Read approved RM/FUN/SSD models and apply find nouns, add attributes, and connect relationships. Produce a technology-neutral DOM-* model and method-free Mermaid classDiagram with labeled concept boxes, concept-kind stereotypes, attributes, and association multiplicities at both ends; represent business actors as role concepts and do not map software methods or files.`;
     case 'design':
       return `${action} ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.design} ${common} Compare only credible architecture candidates within the selected depth, record ADR-* decisions and trade-offs, keep a bounded Design Budget, and reference all four model files. Do not copy model bodies into design.md.`;
     case 'design_model':
-      return `${action} ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.designModel} ${common} Read approved requirement/domain models and design.md. Allocate every RM-* through SYS-* and define DES-* state/behavior ownership, ordered FLOW/CONTRACT collaboration, failures, dependencies, and only evidence-backed PAT/REV decisions.`;
+      return `${action} ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.designModel} ${common} Read approved requirement/domain models and design.md. Allocate every RM/FUN through SYS, selectively map DOM names/attributes and scenario verbs to DES state/method owners, apply all five SOLID principles and evidence-backed patterns, and produce class, STATE, and FLOW sequence diagrams.`;
     case 'implementation_model':
-      return `${action} ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationModel} ${common} Read the approved design package and create IMP-* mappings to exact files, symbols, integration order, migration constraints, and focused verification. Do not invent unsupported paths.`;
+      return `${action} ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationModel} ${common} Read the approved design package, derive evidence-backed LANG-* constraints for each concrete language/toolchain, and create IMP-* class realizations mapped to exact files, symbols, lifecycle, integration order, migration constraints, and focused verification. Do not invent unsupported paths.`;
     default:
-      return `${action} the Design-Contract: 4 package in ${input.specDir} ${common} Keep design.md focused on architecture and place RM, DOM, detailed design, and IMP entries only in their four dedicated model files.`;
+      return `${action} the Design-Contract: 5 package in ${input.specDir} ${common} Keep design.md focused on architecture and place RM/FUN/SSD, DOM, detailed design diagrams, and LANG/IMP entries only in their four dedicated model files.`;
   }
 }
 
@@ -135,7 +135,7 @@ export function buildAutocodeSpecKickoffMessage(
         });
         break;
       case 'design_critic':
-        baseMessage = `Independently review the complete Design-Contract: 4 package in ${promptSpecDir} against requirements and project evidence. Check architecture selection, all four model files, rule ownership, responsibility/collaboration, exact implementation mapping, engineering fit, NOP, and every PAT-* decision. Write only ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.designReview}, beginning with Status: PASSED or Status: REVISE. Do not edit design artifacts or generate tasks. Project root: ${promptProjectDir}.`;
+        baseMessage = `Independently review the complete Design-Contract: 5 package in ${promptSpecDir} against requirements and project evidence. Check 5W1H8C use cases, FUN deduplication, SSD coverage, domain noun/attribute/relation analysis, architecture selection, selective class mapping, SOLID and pattern decisions, class/state/sequence diagrams, LANG constraints, exact IMP mapping, engineering fit, and NOP. Write only ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.designReview}, beginning with Status: PASSED or Status: REVISE. Do not edit design artifacts or generate tasks. Project root: ${promptProjectDir}.`;
         break;
       case 'spec_critic':
         baseMessage = `Review ${promptSpecDir}/spec.md against requirements.md for observable coverage and clarity. Improve only SCN-* behavior, boundaries, failures, compatibility, and verification references in spec.md. Do not copy requirements or add architecture, files, or tasks.`;
@@ -630,7 +630,7 @@ export function buildAutocodeAgentKickoffMessage(
         break;
       case 'planner':
         baseMessage = [
-          `Read approved ${promptSpecDir}/requirements.md, spec.md, and ${AUTOCODE_TASK_ARTIFACTS.design}; require ${AUTOCODE_TASK_ARTIFACTS.designReview} to say Status: PASSED.`,
+          `Read approved ${promptSpecDir}/requirements.md, spec.md, and the complete five-file design package: ${AUTOCODE_TASK_ARTIFACTS.design}, ${AUTOCODE_TASK_ARTIFACTS.requirementModel}, ${AUTOCODE_TASK_ARTIFACTS.domainModel}, ${AUTOCODE_TASK_ARTIFACTS.designModel}, and ${AUTOCODE_TASK_ARTIFACTS.implementationModel}; require ${AUTOCODE_TASK_ARTIFACTS.designReview} to say Status: PASSED.`,
           `Create or repair only ${promptSpecDir}/tasks.md as a Tasks-Contract: 1 static definition catalog with [ ] checkboxes.`,
           'Keep definitions executable, E*-evidence-backed, dependency-aware, and traceable to R*/AC*/SCN-* plus rule owners, responsibilities/flows, selected PAT-*, and IMP-* units.',
           'Preserve completed historical definitions unchanged; put revised work under a new task ID.',
@@ -648,7 +648,7 @@ export function buildAutocodeAgentKickoffMessage(
               taskDescription: 'the active Standard task and Request Changes',
               incremental: input.forcePlanning === true,
             })
-          : `Follow the current staged design instruction and create or incrementally revise only its named Design-Contract: 4 artifact in ${promptSpecDir}. Read approved upstream model files, active RequestChanges, and targeted project evidence. Preserve unaffected IDs, keep design.md focused on architecture, and keep RM/DOM/detailed-design/IMP bodies in their dedicated files. Do not create tasks or code. Project root: ${promptProjectDir}.`;
+          : `Follow the current staged design instruction and create or incrementally revise only its named Design-Contract: 5 artifact in ${promptSpecDir}. Read approved upstream model files, active RequestChanges, and targeted project evidence. Preserve unaffected IDs, keep design.md focused on architecture, and keep RM/FUN/SSD, DOM, detailed design diagrams, and LANG/IMP bodies in their dedicated files. Do not create tasks or code. Project root: ${promptProjectDir}.`;
         break;
       case 'design_critic':
         baseMessage = `Independently review the complete five-file design package in ${promptSpecDir} against requirements, active RequestChanges, and project evidence. Check architecture selection, model consistency, rule ownership, responsibility/collaboration, exact implementation mapping, engineering fit, NOP, and every PAT-* decision. Write only ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.designReview}, beginning with Status: PASSED or Status: REVISE. Do not edit design artifacts, tasks, or code. Project root: ${promptProjectDir}.`;

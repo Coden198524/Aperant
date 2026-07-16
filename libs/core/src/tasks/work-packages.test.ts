@@ -852,8 +852,48 @@ describe('runtime work package balancing', () => {
 
 const TRACKED_DESIGN = [
   '# Design: Tracked work packages',
+  'Design-Contract: 5',
+  'Design-Depth: local',
+  'Design-Revision: 1',
   '',
-  '## Design Model',
+  '## Risks And Evolution',
+  'Preserve both existing contracts.',
+  '',
+].join('\n');
+
+const TRACKED_REQUIREMENT_MODEL = [
+  '# Requirement Model: Tracked work packages',
+  'Design-Contract: 5',
+  'Design-Revision: 1',
+  'Design-Root: design.md',
+  'Model-Kind: requirement',
+  '',
+  '### FUN-001 First behavior',
+  'Update the first behavior.',
+  '### FUN-002 Second behavior',
+  'Update the second behavior.',
+  '',
+].join('\n');
+
+const TRACKED_DOMAIN_MODEL = [
+  '# Domain Model: Tracked work packages',
+  'Design-Contract: 5',
+  'Design-Revision: 1',
+  'Design-Root: design.md',
+  'Model-Kind: domain',
+  '',
+  '### DOM-001 Tracked behavior',
+  'Represents behavior retained across iterations.',
+  '',
+].join('\n');
+
+const TRACKED_DESIGN_MODEL = [
+  '# Design Model: Tracked work packages',
+  'Design-Contract: 5',
+  'Design-Revision: 1',
+  'Design-Root: design.md',
+  'Model-Kind: design',
+  '',
   '### DES-001 First responsibility',
   'Keep the first behavior inside src/first.ts.',
   '### FLOW-001 First flow',
@@ -863,14 +903,21 @@ const TRACKED_DESIGN = [
   '### FLOW-002 Second flow',
   'The second caller uses the existing contract.',
   '',
-  '## Implementation Model',
+].join('\n');
+
+const TRACKED_IMPLEMENTATION_MODEL = [
+  '# Implementation Model: Tracked work packages',
+  'Design-Contract: 5',
+  'Design-Revision: 1',
+  'Design-Root: design.md',
+  'Model-Kind: implementation',
+  '',
+  '### LANG-001 TypeScript rules',
+  'Use the observed TypeScript toolchain.',
   '### IMP-001 First implementation',
   'Modify src/first.ts and its focused test.',
   '### IMP-002 Second implementation',
   'Modify src/second.ts and its focused test.',
-  '',
-  '## Risks And Evolution',
-  'Preserve both existing contracts.',
   '',
 ].join('\n');
 
@@ -890,7 +937,7 @@ function makeTrackedTasks(completed: boolean): string {
     '    - _Files to modify: src/first.ts_',
     '    - _Depends on: none_',
     '    - _Requirements: R1, AC1_',
-    '    - _Design: DES-001, FLOW-001, IMP-001_',
+    '    - _Design: FUN-001, DES-001, FLOW-001, LANG-001, IMP-001_',
     '    - _Evidence: spec.md R1; requirements.md Evidence Sources_',
     '    - _Done when: the first behavior passes its focused check_',
     '    - _Verification: npm test -- first.test.ts_',
@@ -900,7 +947,7 @@ function makeTrackedTasks(completed: boolean): string {
     '    - _Files to modify: src/second.ts_',
     '    - _Depends on: none_',
     '    - _Requirements: R2, AC2_',
-    '    - _Design: DES-002, FLOW-002, IMP-002_',
+    '    - _Design: FUN-002, DES-002, FLOW-002, LANG-001, IMP-002_',
     '    - _Evidence: spec.md R2; requirements.md Evidence Sources_',
     '    - _Done when: the second behavior passes its focused check_',
     '    - _Verification: npm test -- second.test.ts_',
@@ -912,6 +959,7 @@ function buildTrackedPlan(
   designMarkdown: string,
   completed: boolean,
   previousPlanMarkdown?: string,
+  designModelMarkdown = TRACKED_DESIGN_MODEL,
 ) {
   return buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
     makeTrackedTasks(completed),
@@ -921,6 +969,10 @@ function buildTrackedPlan(
       includeCompletedTasks: true,
       requireTaskEvidence: true,
       designMarkdown,
+      requirementModelMarkdown: TRACKED_REQUIREMENT_MODEL,
+      domainModelMarkdown: TRACKED_DOMAIN_MODEL,
+      designModelMarkdown,
+      implementationModelMarkdown: TRACKED_IMPLEMENTATION_MODEL,
       designPath: 'design.md',
       preserveCompletedStateFromPreviousPlanMarkdown: previousPlanMarkdown,
     },
@@ -932,6 +984,30 @@ function activeSubtasks(plan: ReturnType<typeof buildTrackedPlan>) {
 }
 
 describe('runtime design fingerprint preservation', () => {
+  it('rejects an incomplete v5 design package before runtime plan creation', () => {
+    expect(() => buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
+      makeTrackedTasks(false),
+      {
+        now: '2026-07-12T01:00:00.000Z',
+        sourcePath: 'tasks.md',
+        requireTaskEvidence: true,
+        designMarkdown: TRACKED_DESIGN,
+        requirementModelMarkdown: TRACKED_REQUIREMENT_MODEL,
+        domainModelMarkdown: TRACKED_DOMAIN_MODEL,
+        designModelMarkdown: TRACKED_DESIGN_MODEL,
+      },
+    )).toThrow('implementation_model.md is missing from the Design-Contract: 5 package.');
+  });
+
+  it.each([3, 4])('rejects a v%s model document before runtime plan creation', (version) => {
+    expect(() => buildTrackedPlan(
+      TRACKED_DESIGN,
+      false,
+      undefined,
+      TRACKED_DESIGN_MODEL.replace('Design-Contract: 5', `Design-Contract: ${version}`),
+    )).toThrow('design_model.md must declare Design-Contract: 5.');
+  });
+
   it('preserves completed work when referenced design sections are unchanged', () => {
     const previous = buildTrackedPlan(TRACKED_DESIGN, true);
     const next = buildTrackedPlan(
@@ -943,22 +1019,30 @@ describe('runtime design fingerprint preservation', () => {
     expect(activeSubtasks(next).every((subtask) => subtask.status === 'completed')).toBe(true);
     expect(previous.source_task).toMatchObject({
       design_contract: {
-        version: 3,
+        version: 5,
         path: 'design.md',
+        paths: [
+          'design.md',
+          'requirement_model.md',
+          'domain_model.md',
+          'design_model.md',
+          'implementation_model.md',
+        ],
       },
     });
   });
 
   it('resets only work that references a changed design section', () => {
     const previous = buildTrackedPlan(TRACKED_DESIGN, true);
-    const changedDesign = TRACKED_DESIGN.replace(
+    const changedDesignModel = TRACKED_DESIGN_MODEL.replace(
       'Keep the first behavior inside src/first.ts.',
       'Keep the first behavior inside src/first.ts and preserve its new lifecycle rule.',
     );
     const next = buildTrackedPlan(
-      changedDesign,
+      TRACKED_DESIGN,
       false,
       stringifyAutocodeImplementationPlanMarkdown(previous),
+      changedDesignModel,
     );
     const subtasks = activeSubtasks(next);
 

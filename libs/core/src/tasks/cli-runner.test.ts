@@ -8,11 +8,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DIRECT_CHANGE_REQUEST_LIMIT } from '../runtime/agent-messages.js';
 import {
   AUTOCODE_CLI_TASK_DESCRIPTION_MAX_CHARS,
-  createAutocodeTaskRunPlan,
+  createAutocodeTaskRunPlan as createAutocodeTaskRunPlanBase,
   resolveAutocodeTaskRunnerDependency,
 } from './cli-runner.js';
+import { getAutocodeDesignPackageFingerprint } from './design-quality.js';
 import { loadAutocodeImplementationPlanSync } from './plan-store.js';
 import { createAutocodeTask, getAutocodeSpecDir } from './spec-store.js';
+import { buildStandardDesignV5Fixture } from './standard-design-v5.test-fixture.js';
 import {
   buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
   stringifyAutocodeImplementationPlanMarkdown,
@@ -31,206 +33,13 @@ function createDirectCustomLatestContinuation(scriptPath: string, displayName = 
   };
 }
 
-const LEGACY_VALID_STANDARD_DESIGN = [
-  '# Design: Standard planning fixture',
-  'Design-Contract: 3',
-  'Design-Depth: local',
-  'Design-Revision: 1',
-  '',
-  '## Scope And Evidence',
-  '- Analysis direction: forward-design',
-  '- Primary source of truth: mixed',
-  '- Requirement evidence: requirement - requirements.md R-001 defines the command result',
-  '- Project evidence: observed - src/existing.ts#handleCommand owns the current behavior',
-  '- Design inferences: none - the requirement and source establish the local boundary',
-  '- Unresolved evidence: none',
-  '## Complexity Assessment',
-  '- Primary complexity driver: one local behavior',
-  '- Business rules and state: preserve the existing task invariant',
-  '- Boundary and contract impact: no public contract changes',
-  '- Quality-attribute risks: existing command compatibility',
-  '- Depth rationale: one existing module is affected',
-  '## Existing Architecture Fit',
-  'Reuse src/existing.ts and the current dependency direction.',
-  '## Engineering Adaptation',
-  '- Delivery context: existing-system',
-  '- System shape: local-utility',
-  '- Project paradigm: mixed',
-  '- Paradigm rationale: preserve the existing TypeScript module boundary',
-  '- Object-model applicability: low',
-  '- Object-model rationale: one local behavior has no independent object lifecycle',
-  '- Existing boundaries to preserve: src/existing.ts module boundary',
-  '- Existing patterns to reuse: src/existing.ts command handler',
-  '- Language/framework constraints: TypeScript existing runtime',
-  '- Integration and test seams: src/existing.test.ts focused test',
-  '## Design Budget',
-  '- Expected modules changed: 2',
-  '- New modules allowed: 0',
-  '- New public contracts allowed: 0',
-  '- New dependencies allowed: 0',
-  '- New architectural patterns: none',
-  '## Architecture Decision',
-  '### ADR-001 Preserve the existing boundary',
-  '- Decision: preserve the current caller-to-command dependency direction',
-  '- Status: accepted',
-  '- Decision drivers: RM-001 changes one local result without a public contract change',
-  '- Alternatives considered: splitting the command into additional boundaries was rejected',
-  '- Trade-offs: minimal change radius while retaining the current synchronous command',
-  '- Evidence basis: requirement - requirements.md R-001; observed - src/existing.ts#handleCommand',
-  '## Requirement Model',
-  '### RM-001 Complete the requested behavior',
-  '- Actor and goal: user obtains the requested result',
-  '- Business context: Who=user; What=request result; Why=complete command workflow; When=command invocation; Where=existing caller; How=invoke the established command',
-  '- Trigger and preconditions: existing workflow is available',
-  '- Normal flow: invoke, compute, and return the result',
-  '- Alternate or failure flow: preserve the existing error',
-  '- Outcome: requested result is exposed',
-  '- Constraints: existing contract remains compatible',
-  '- Quality constraints: Compatibility=existing command contract; Reliability=preserve error behavior',
-  '- Evidence basis: requirement - requirements.md R-001',
-  '## Domain Model',
-  '### DOM-001 Existing task state',
-  '- Concept kind: entity',
-  '- Business meaning: current task execution status',
-  '- Identity and state: task identity and current status',
-  '- Behavior: validate supported status transitions',
-  '- Responsibilities: validate current status',
-  '- Rules and invariants: only supported status changes are accepted',
-  '- Ownership and lifecycle: task owns status for its lifecycle',
-  '- Relationships: command reads task status',
-  '- Software mapping: existing - src/existing.ts task state',
-  '- Evidence basis: observed - src/existing.ts#taskState',
-  '## System Responsibility Allocation',
-  '### SYS-001 Existing command boundary',
-  '- Subsystem or boundary: caller-to-command module boundary',
-  '- Allocated requirements: RM-001',
-  '- Owns: command result calculation and current error behavior',
-  '- Provides: compatible result to the existing caller',
-  '- Requires: DOM-001 current task state',
-  '- Data and control boundary: caller initiates control and DES-001 returns result data',
-  '- Failure ownership: DES-001 preserves the existing command error path',
-  '- Evidence basis: observed - src/existing.ts#handleCommand',
-  '## Design Model',
-  '### DES-001 Existing module responsibility',
-  '- Element: module - existing command module',
-  '- System allocation: SYS-001',
-  '- Role stereotype: module',
-  '- Owned state: none; reads DOM-001 task state',
-  '- Public operations: handle command',
-  '- Responsibilities: implement requested behavior',
-  '- Collaborators: existing caller',
-  '- Dependencies: current task state',
-  '- Encapsulation boundary: private command logic',
-  '- Does not own: caller rendering',
-  '- Evidence basis: observed - src/existing.ts#handleCommand',
-  '### FLOW-001 Existing runtime flow',
-  '- Trigger: caller invokes existing contract',
-  '- Participants: DES-001',
-  '- Steps: DES-001 reads DOM-001, computes, and returns the result',
-  '- State changes: none',
-  '- Failure paths: preserve existing error response',
-  '- Evidence basis: observed - src/existing.ts#handleCommand',
-  '## Change And Pattern Analysis',
-  '- Verified variation points: none',
-  '- Variation inventory: none',
-  '- Candidate patterns evaluated: none',
-  '- Simplest change mechanism: update the existing module',
-  '- Selected patterns: none',
-  '## Implementation Model',
-  '### IMP-001 Focused implementation',
-  '- Project files and symbols: src/existing.ts handler; src/existing.test.ts',
-  '- Design mapping: implements SYS-001, DES-001, and FLOW-001',
-  '- Integration constraints: preserve existing contract',
-  '- Verification: run the focused test',
-  '- Evidence basis: observed - src/existing.ts#handleCommand',
-  '## Applicable Design Principles',
-  '- Cohesion decision: keep one behavior in the existing module',
-  '- Coupling and dependency decision: preserve the current caller direction',
-  '- Encapsulation decision: keep command logic private to DES-001',
-  '- SOLID trade-offs: SRP applies and no interface is justified',
-  '- Underdesign checks: DES-001 remains a focused module rather than a generic manager',
-  '## Rejected Complexity',
-  '- Reject new services and event buses because the flow is local.',
-  '## Risks And Evolution',
-  'Preserve the existing public contract.',
-  '## Traceability',
-  '- RM-001 -> ADR-001 -> DOM-001 -> SYS-001 -> DES-001 -> FLOW-001 -> IMP-001',
-  '',
-].join('\n');
 
-function sectionRange(source: string, start: string, end?: string): string {
-  const startIndex = source.indexOf(start);
-  const endIndex = end ? source.indexOf(end, startIndex + start.length) : source.length;
-  return source.slice(startIndex, endIndex < 0 ? source.length : endIndex).trim();
-}
-
-function buildV4DesignPackage(source: string) {
-  const preArchitecture = source
-    .slice(0, source.indexOf('## Architecture Decision'))
-    .replace('Design-Contract: 3', 'Design-Contract: 4')
-    .trim();
-  const architectureDecision = sectionRange(source, '## Architecture Decision', '## Requirement Model');
-  const changeAnalysis = sectionRange(source, '## Change And Pattern Analysis', '## Implementation Model');
-  const closingSections = sectionRange(source, '## Applicable Design Principles');
-  const modelDocument = (title: string, kind: string, body: string) => [
-    `# ${title}: Standard planning fixture`,
-    'Design-Contract: 4',
-    'Design-Revision: 1',
-    'Design-Root: design.md',
-    `Model-Kind: ${kind}`,
-    '',
-    body,
-  ].join('\n');
-
-  return {
-    design: [
-      preArchitecture,
-      '## Architecture Candidates',
-      '- Architecture baseline: preserve the observed caller-to-command boundary',
-      '- Candidate count: 1',
-      '- Candidate comparison: existing boundary | exact fit | smallest radius | retains current coupling | low migration risk',
-      '- Selected architecture: existing caller-to-command boundary',
-      '- Selection rationale: observed ownership and local scope make the current boundary the smallest complete choice',
-      '- Rejected alternatives: new service layer rejected because it adds a boundary without a current variation',
-      '- Evolution trigger: multiple independent command policies or an external transport requirement',
-      architectureDecision,
-      '## Model Package',
-      '- Requirement model: requirement_model.md',
-      '- Domain model: domain_model.md',
-      '- Design model: design_model.md',
-      '- Implementation model: implementation_model.md',
-      changeAnalysis,
-      closingSections,
-    ].join('\n'),
-    requirementModel: modelDocument(
-      'Requirement Model',
-      'requirement',
-      sectionRange(source, '## Requirement Model', '## Domain Model'),
-    ),
-    domainModel: modelDocument(
-      'Domain Model',
-      'domain',
-      sectionRange(source, '## Domain Model', '## System Responsibility Allocation'),
-    ),
-    designModel: modelDocument(
-      'Design Model',
-      'design',
-      sectionRange(source, '## System Responsibility Allocation', '## Change And Pattern Analysis'),
-    ),
-    implementationModel: modelDocument(
-      'Implementation Model',
-      'implementation',
-      sectionRange(source, '## Implementation Model', '## Applicable Design Principles'),
-    ),
-  };
-}
-
-const VALID_STANDARD_DESIGN_PACKAGE = buildV4DesignPackage(LEGACY_VALID_STANDARD_DESIGN);
-const VALID_STANDARD_DESIGN = VALID_STANDARD_DESIGN_PACKAGE.design;
-const VALID_STANDARD_REQUIREMENT_MODEL = VALID_STANDARD_DESIGN_PACKAGE.requirementModel;
-const VALID_STANDARD_DOMAIN_MODEL = VALID_STANDARD_DESIGN_PACKAGE.domainModel;
-const VALID_STANDARD_DESIGN_MODEL = VALID_STANDARD_DESIGN_PACKAGE.designModel;
-const VALID_STANDARD_IMPLEMENTATION_MODEL = VALID_STANDARD_DESIGN_PACKAGE.implementationModel;
+const VALID_STANDARD_DESIGN_PACKAGE = buildStandardDesignV5Fixture();
+const VALID_STANDARD_DESIGN = VALID_STANDARD_DESIGN_PACKAGE.designMarkdown;
+const VALID_STANDARD_REQUIREMENT_MODEL = VALID_STANDARD_DESIGN_PACKAGE.requirementModelMarkdown;
+const VALID_STANDARD_DOMAIN_MODEL = VALID_STANDARD_DESIGN_PACKAGE.domainModelMarkdown;
+const VALID_STANDARD_DESIGN_MODEL = VALID_STANDARD_DESIGN_PACKAGE.designModelMarkdown;
+const VALID_STANDARD_IMPLEMENTATION_MODEL = VALID_STANDARD_DESIGN_PACKAGE.implementationModelMarkdown;
 
 const VALID_STANDARD_DESIGN_REVIEW = [
   'Status: PASSED',
@@ -289,7 +98,8 @@ function withStandardDesignMetadata(tasksMarkdown: string): string {
   }
   return tasksMarkdown.replace(
     /^(\s*)-\s+_Requirements:[^\r\n]*_\s*$/gm,
-    (line, indent: string) => `${line}\n${indent}- _Design: ADR-001, SYS-001, DES-001, FLOW-001, IMP-001_`,
+    (line, indent: string) =>
+      `${line}\n${indent}- _Design: ADR-001, RM-001, FUN-001, SSD-001, DOM-001, SYS-001, DES-001, STATE-001, FLOW-001, LANG-001, IMP-001_`,
   );
 }
 
@@ -300,6 +110,78 @@ function writeValidStandardDesignArtifacts(specDir: string): void {
   writeFileSync(join(specDir, 'design_model.md'), VALID_STANDARD_DESIGN_MODEL, 'utf8');
   writeFileSync(join(specDir, 'implementation_model.md'), VALID_STANDARD_IMPLEMENTATION_MODEL, 'utf8');
   writeFileSync(join(specDir, 'design_review.md'), VALID_STANDARD_DESIGN_REVIEW, 'utf8');
+}
+
+function createAutocodeTaskRunPlan(
+  input: Parameters<typeof createAutocodeTaskRunPlanBase>[0],
+): ReturnType<typeof createAutocodeTaskRunPlanBase> {
+  if (input.phase === 'coding') {
+    const specDir = getAutocodeSpecDir({
+      projectRoot: input.projectRoot,
+      dataDirName: input.dataDirName,
+      specId: input.taskId,
+    });
+    const planPath = join(specDir, 'implementation_plan.md');
+    if (existsSync(planPath)) {
+      const fixture = buildStandardDesignV5Fixture();
+      const artifactEntries = [
+        ['design.md', fixture.designMarkdown],
+        ['requirement_model.md', fixture.requirementModelMarkdown],
+        ['domain_model.md', fixture.domainModelMarkdown],
+        ['design_model.md', fixture.designModelMarkdown],
+        ['implementation_model.md', fixture.implementationModelMarkdown],
+        ['design_review.md', VALID_STANDARD_DESIGN_REVIEW],
+      ] as const;
+      for (const [fileName, markdown] of artifactEntries) {
+        const artifactPath = join(specDir, fileName);
+        if (!existsSync(artifactPath)) {
+          writeFileSync(artifactPath, markdown, 'utf8');
+        }
+      }
+      const designPackage = {
+        designMarkdown: readFileSync(join(specDir, 'design.md'), 'utf8'),
+        requirementModelMarkdown: readFileSync(join(specDir, 'requirement_model.md'), 'utf8'),
+        domainModelMarkdown: readFileSync(join(specDir, 'domain_model.md'), 'utf8'),
+        designModelMarkdown: readFileSync(join(specDir, 'design_model.md'), 'utf8'),
+        implementationModelMarkdown: readFileSync(join(specDir, 'implementation_model.md'), 'utf8'),
+      };
+      const planMarkdown = readFileSync(planPath, 'utf8');
+      const metadataPattern = /<!--\s*autocode-plan-meta:\s*(\{[^\r\n]*\})\s*-->/;
+      const metadataMatch = metadataPattern.exec(planMarkdown);
+      const metadata = metadataMatch
+        ? JSON.parse(metadataMatch[1]) as Record<string, unknown>
+        : {};
+      const sourceTask = metadata.source_task &&
+        typeof metadata.source_task === 'object' &&
+        !Array.isArray(metadata.source_task)
+        ? metadata.source_task as Record<string, unknown>
+        : {};
+      metadata.source_task = {
+        ...sourceTask,
+        design_contract: {
+          version: 5,
+          path: 'design.md',
+          paths: [
+            'design.md',
+            'requirement_model.md',
+            'domain_model.md',
+            'design_model.md',
+            'implementation_model.md',
+          ],
+          fingerprint: getAutocodeDesignPackageFingerprint(designPackage),
+        },
+      };
+      const metadataLine = `<!-- autocode-plan-meta: ${JSON.stringify(metadata)} -->`;
+      writeFileSync(
+        planPath,
+        metadataMatch
+          ? planMarkdown.replace(metadataPattern, metadataLine)
+          : planMarkdown.replace(/(Execution Phase:[^\r\n]*\r?\n)/, `$1${metadataLine}\n`),
+        'utf8',
+      );
+    }
+  }
+  return createAutocodeTaskRunPlanBase(input);
 }
 
 describe('Autocode CLI runner prompt', () => {
@@ -990,10 +872,13 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('const STANDARD_DESIGN_STAGE_MAX_RETRIES = 3;');
     expect(runner).toContain('buildAutocodeDesignQualityRetryPrompt(errors)');
     expect(runner).toContain('standardDesignMachineContractPrompt');
-    expect(runner).toContain('- DOM Concept kind: entity|value-object|domain-service|policy|event|technical|other');
+    expect(runner).toContain('- DOM Concept kind: entity|value-object|aggregate|domain-service|policy|event|role|resource|technical|other');
     expect(runner).toContain('- DES Element: module|class|component|function|store|process|data-structure|other - <localized concrete element or symbol>');
-    expect(runner).toContain('Declare Design-Contract: 4');
-    expect(runner).toContain('SYS|DES|FLOW|CONTRACT|PAT|REV|IMP');
+    expect(runner).toContain('Declare Design-Contract: 5');
+    expect(runner).toContain('await validateRunnerRuntimeDesignContract()');
+    expect(runner).toContain('validateAutocodeDesignPackageIdentity');
+    expect(runner).toContain('does not bind the exact five-file Design-Contract: 5 package');
+    expect(runner).toContain('ADR|RM|FUN|SSD|DOM|SYS|DES|STATE|FLOW|CONTRACT|PAT|REV|LANG|IMP');
     expect(runner).toContain('map the target symbol to IMP-*');
     expect(runner).toContain('its SYS-* owner/interface');
     expect(runner).toContain('Preserve the approved object, component, data-oriented, functional, procedural, or mixed paradigm');
@@ -1261,7 +1146,7 @@ describe('Autocode CLI runner prompt', () => {
       `                  : prompt.includes('# Standard Task Planning Stage') ? 'tasks' : 'unknown';`,
       `  const designAttempt = stage === 'design' ? (existsSync(join(specDir, 'design.md')) ? 2 : 1) : 0;`,
       `  mkdirSync(specDir, { recursive: true });`,
-      `  appendFileSync(callsPath, JSON.stringify({ stage, pid: process.pid, designAttempt, hadReview: stage === 'design_review' && existsSync(join(specDir, 'design_review.md')), hasBudgetContract: prompt.includes('- Expected modules changed: <non-negative integer>') && prompt.includes('do not use headings for these fields'), hasRetryHeader: prompt.includes('The Standard design artifacts failed deterministic validation.'), hasShortIdError: prompt.includes('heading ADR-1 is invalid'), hasLateEvidenceError: prompt.includes('Unresolved evidence must be exactly'), hasPrinciplesContract: prompt.includes('- Applicable Design Principles: Cohesion decision;') }) + '\\n', 'utf8');`,
+      `  appendFileSync(callsPath, JSON.stringify({ stage, pid: process.pid, designAttempt, hadReview: stage === 'design_review' && existsSync(join(specDir, 'design_review.md')), hasBudgetContract: prompt.includes('- Expected modules changed: <non-negative integer>') && prompt.includes('do not use headings for these fields'), hasRetryHeader: prompt.includes('The Standard design artifacts failed deterministic validation.'), hasShortIdError: prompt.includes('heading ADR-1 is invalid'), hasLateEvidenceError: prompt.includes('Unresolved evidence must be exactly'), hasPrinciplesContract: prompt.includes('- Applicable Design Principles: Single-responsibility decision;') }) + '\\n', 'utf8');`,
       `  if (stage === 'requirements') {`,
       `    writeFileSync(join(specDir, 'requirements.md'), ${JSON.stringify(requirementsMarkdown)}, 'utf8');`,
       `  } else if (stage === 'spec') {`,
@@ -2412,6 +2297,10 @@ describe('Autocode CLI runner prompt', () => {
         requireTaskEvidence: true,
         includeCompletedTasks: true,
         designMarkdown: VALID_STANDARD_DESIGN,
+        requirementModelMarkdown: VALID_STANDARD_REQUIREMENT_MODEL,
+        domainModelMarkdown: VALID_STANDARD_DOMAIN_MODEL,
+        designModelMarkdown: VALID_STANDARD_DESIGN_MODEL,
+        implementationModelMarkdown: VALID_STANDARD_IMPLEMENTATION_MODEL,
         designPath: 'design.md',
       },
     );
@@ -3358,12 +3247,25 @@ describe('Autocode CLI runner prompt', () => {
       phase: 'coding',
     });
 
-    execFileSync(process.execPath, [plan.runnerFilePath], {
-      cwd: projectRoot,
-      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
-      stdio: 'pipe',
-      timeout: 15_000,
-    });
+    try {
+      execFileSync(process.execPath, [plan.runnerFilePath], {
+        cwd: projectRoot,
+        env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+        stdio: 'pipe',
+        timeout: 15_000,
+      });
+    } catch (error) {
+      const failure = error as { stdout?: Buffer; stderr?: Buffer; message?: string };
+      throw new Error([
+        failure.message,
+        failure.stdout?.toString('utf8'),
+        failure.stderr?.toString('utf8'),
+        existsSync(join(specDir, 'task_logs.jsonl'))
+          ? readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8')
+          : '',
+        readFileSync(join(specDir, 'implementation_plan.md'), 'utf8'),
+      ].filter(Boolean).join('\n'));
+    }
 
     const order = readFileSync(orderPath, 'utf8').trim().split(/\r?\n/);
     expect(order).toContain('start:wp-1');
@@ -3755,22 +3657,39 @@ describe('Autocode CLI runner prompt', () => {
       dataDirName,
       specId: '008-coding-design-excerpt',
     });
-    writeFileSync(join(specDir, 'design.md'), [
-      '# Design: Focused coding fixture',
-      '',
-      '## System Responsibility Allocation',
-      '### SYS-001 Included system owner',
-      '- Owns: current work package behavior',
-      '### SYS-999 Unrelated system owner',
-      '- Owns: unrelated behavior',
-      '## Source Reconstruction',
-      '### REV-001 Included source reconstruction',
-      '- Runtime path: ExistingApi#run -> ExistingStore#apply',
-      '## Implementation Model',
-      '### IMP-001 Included implementation',
-      '- Project files and symbols: src/example.ts#run',
-      '',
-    ].join('\n'), 'utf8');
+    writeValidStandardDesignArtifacts(specDir);
+    writeFileSync(
+      join(specDir, 'design_model.md'),
+      VALID_STANDARD_DESIGN_MODEL
+        .replace('### SYS-001 Task service boundary', '### SYS-001 Included system owner')
+        .replace(
+          '## Domain To Software Mapping',
+          [
+            '### SYS-999 Unrelated system owner',
+            '- Owns: unrelated behavior',
+            '',
+            '## Domain To Software Mapping',
+          ].join('\n'),
+        )
+        .replace(
+          '## Class Diagram',
+          [
+            '### REV-001 Included source reconstruction',
+            '- Runtime path: ExistingApi#run -> ExistingStore#apply',
+            '',
+            '## Class Diagram',
+          ].join('\n'),
+        ),
+      'utf8',
+    );
+    writeFileSync(
+      join(specDir, 'implementation_model.md'),
+      VALID_STANDARD_IMPLEMENTATION_MODEL.replace(
+        '### IMP-001 Realize task submission',
+        '### IMP-001 Included implementation',
+      ),
+      'utf8',
+    );
     writeFileSync(join(specDir, 'implementation_plan.md'), [
       '# Implementation Plan',
       'Feature: Bind coding to focused design',

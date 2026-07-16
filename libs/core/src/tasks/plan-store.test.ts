@@ -10,6 +10,7 @@ import {
   stringifyAutocodeTaskDefinitionsMarkdown,
   updateAutocodePlanSubtask,
 } from './plan-store.js';
+import { buildStandardDesignV5Fixture } from './standard-design-v5.test-fixture.js';
 
 function firstPhaseSubtasks(plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>) {
   return plan.phases[0]?.subtasks ?? [];
@@ -57,6 +58,7 @@ describe('implementation plan markdown', () => {
   it('hydrates a slim runtime ledger without replacing persisted fingerprints', () => {
     const specDir = mkdtempSync(join(tmpdir(), 'autocode-slim-ledger-'));
     try {
+      const designPackage = buildStandardDesignV5Fixture();
       writeFileSync(join(specDir, 'tasks.md'), [
         '# Tasks',
         '',
@@ -75,17 +77,21 @@ describe('implementation plan markdown', () => {
         '    - _Verification: npm test -- page.test.ts_',
         '',
       ].join('\n'), 'utf8');
-      writeFileSync(join(specDir, 'design.md'), [
-        '# Design: Hydrated work',
-        '### SYS-001 Renderer owner',
-        '### DES-001 Shell responsibility',
-        '### IMP-001 Renderer implementation',
-      ].join('\n'), 'utf8');
+      const designArtifacts = [
+        ['design.md', designPackage.designMarkdown],
+        ['requirement_model.md', designPackage.requirementModelMarkdown],
+        ['domain_model.md', designPackage.domainModelMarkdown],
+        ['design_model.md', designPackage.designModelMarkdown],
+        ['implementation_model.md', designPackage.implementationModelMarkdown],
+      ] as const;
+      for (const [fileName, markdown] of designArtifacts) {
+        writeFileSync(join(specDir, fileName), markdown, 'utf8');
+      }
 
       const parsed = parseAutocodeImplementationPlanMarkdown([
         '# Runtime Execution Ledger',
         '',
-        '<!-- autocode-plan-meta: {"source_task":{"tasks":"tasks.md","runtime_ledger_schema":"autocode-runtime-ledger/v1","design_contract":{"path":"design.md"}},"subtaskMetadata":{"wp-1":{"work_package":true,"upstream_task_ids":["1.1"],"depends_on":[],"definition_fingerprint":"persisted-package","source_task_fingerprints":{"1.1":"persisted-task"}}}} -->',
+        '<!-- autocode-plan-meta: {"source_task":{"tasks":"tasks.md","runtime_ledger_schema":"autocode-runtime-ledger/v1","design_contract":{"version":5,"path":"design.md","paths":["design.md","requirement_model.md","domain_model.md","design_model.md","implementation_model.md"]}},"subtaskMetadata":{"wp-1":{"work_package":true,"upstream_task_ids":["1.1"],"depends_on":[],"definition_fingerprint":"persisted-package","source_task_fingerprints":{"1.1":"persisted-task"}}}} -->',
         '',
         '- [ ] wp. Runtime work packages',
         '',
@@ -102,6 +108,7 @@ describe('implementation plan markdown', () => {
         requirements: ['1.1', 'R1', 'AC1'],
         definition_fingerprint: 'persisted-package',
         source_task_fingerprints: { '1.1': 'persisted-task' },
+        design_task_fingerprints: { '1.1': expect.any(String) },
       });
       const rewritten = stringifyAutocodeImplementationPlanMarkdown(hydrated);
       expect(rewritten).not.toContain('src/page.ts');

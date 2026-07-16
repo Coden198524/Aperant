@@ -25,8 +25,9 @@ It must never contain runtime status, start/completion timestamps, active durati
 
 ## Planning Rules
 
-- Resolve IDs from their owning files: RM in `requirement_model.md`, DOM in `domain_model.md`, SYS/DES/FLOW/CONTRACT/PAT/REV in `design_model.md`, and IMP in `implementation_model.md`.
-- Cover every requirement, scenario, acceptance criterion, verification path, `SYS-*`, and required `IMP-*`.
+- Resolve IDs from their owning files: RM/FUN/SSD in `requirement_model.md`, DOM in `domain_model.md`, SYS/DES/STATE/FLOW/CONTRACT/PAT/REV in `design_model.md`, and LANG/IMP in `implementation_model.md`.
+- Cover every requirement, use case, deduplicated function, scenario, acceptance criterion, verification path,
+  `SYS-*`, state/flow contract, language constraint, and required `IMP-*`.
 - Follow approved ownership, interfaces, failures, dependencies, contracts, flows, constraints, `REV-*`, and selected `PAT-*` decisions without redesigning them.
 - Keep each leaf to one independently reviewable behavior/contract and one focused verification path.
 - Split leaves covering more than three behaviors, three requirement/acceptance references, or four write-intent files.
@@ -63,7 +64,7 @@ Tasks-Contract: 1
     - _Depends on: none_
     - _Requirements: R1, AC1_
     - _Scenarios: SCN-001_
-    - _Design: ADR-001, SYS-001, DES-001, FLOW-001, IMP-001_
+    - _Design: RM-001, FUN-001, SSD-001, ADR-001, SYS-001, DES-001, STATE-001, FLOW-001, LANG-001, IMP-001_
     - _Evidence: E1; path/to/source.ts existing pattern_
     - _Done when: observable behavior and targeted verification pass_
     - _Verification: npm test -- targeted.test.ts_

@@ -5,9 +5,9 @@ Write only `design.md`. Do not copy model bodies, edit the four model files, cre
 ## Purpose
 
 Choose the smallest complete architecture that fits the approved requirement and domain models and the
-real project. `design.md` is the decision and package index for Design-Contract: 4. It owns architecture
+real project. `design.md` is the decision and package index for Design-Contract: 5. It owns architecture
 evidence, alternatives, ADRs, design budget, pattern budget, risks, and cross-model traceability. The four
-referenced model files own all RM/DOM/SYS/DES/FLOW/CONTRACT/PAT/REV/IMP definitions.
+referenced model files own RM/FUN/SSD, DOM, SYS/DES/STATE/FLOW/CONTRACT/PAT/REV, and LANG/IMP definitions.
 
 Read `requirements.md`, `spec.md`, `requirement_model.md`, `domain_model.md`, context/research, active
 Request Changes, project documentation, and targeted source evidence. Preserve unaffected ADR IDs.
@@ -38,7 +38,7 @@ Request Changes, project documentation, and targeted source evidence. Preserve u
 
 ```md
 # Design: <localized task title>
-Design-Contract: 4
+Design-Contract: 5
 Design-Depth: local|standard|complex
 Design-Revision: <non-negative integer>
 
@@ -92,7 +92,7 @@ Design-Revision: <non-negative integer>
 ### ADR-001 <localized decision>
 - Decision: <decision>
 - Status: proposed|accepted|superseded|rejected
-- Decision drivers: <RM/DOM/quality drivers>
+- Decision drivers: <RM/FUN/DOM and 8C quality drivers>
 - Alternatives considered: <credible alternatives>
 - Trade-offs: <benefits, costs, risks, reversibility>
 - Evidence basis: requirement - ...; observed - ...; inferred - ...
@@ -111,10 +111,13 @@ Design-Revision: <non-negative integer>
 - Selected patterns: <none or PAT-* IDs defined later in design_model.md>
 
 ## Applicable Design Principles
-- Cohesion decision: <decision>
-- Coupling and dependency decision: <decision>
-- Encapsulation decision: <decision>
-- SOLID trade-offs: <applicable principles and trade-offs>
+- Single-responsibility decision: <cohesive ownership and explicit exclusions>
+- Open-closed decision: <verified variation mechanism or why direct change is safer>
+- Liskov-substitution decision: <substitutability contract or n/a - reason>
+- Interface-segregation decision: <client-specific surface decision or n/a - reason>
+- Dependency-inversion decision: <policy/mechanism dependency direction or n/a - reason>
+- Cohesion and encapsulation decision: <state, invariant, and visibility boundary>
+- Framework adaptation decision: <required auxiliary roles without moving business rules>
 - Underdesign checks: <checks against shallow design>
 
 ## Rejected Complexity
@@ -124,14 +127,15 @@ Design-Revision: <non-negative integer>
 <residual risks, validation, rollback, and evidence-based evolution triggers>
 
 ## Traceability
-- RM-... -> ADR-... -> DOM-... -> SYS-... -> DES-... -> FLOW/CONTRACT-... -> IMP-...
+- RM-... -> FUN-... -> DOM-... -> ADR-... -> SYS-... -> DES-... -> STATE/FLOW/CONTRACT-... -> LANG-... -> IMP-...
 ```
 
 ## Quality Gate
 
 - Candidate comparison is evidence-based, bounded by depth, and includes the minimum viable baseline.
-- The selected architecture fits RM rules, DOM ownership, quality constraints, and observed project seams.
+- The selected architecture fits RM use cases, deduplicated FUN capabilities, DOM ownership, 8C constraints,
+  and observed project seams.
 - ADR trade-offs, budget, rejected alternatives, and evolution triggers are concrete.
-- `design.md` references all four model files and defines no RM/DOM/SYS/DES/FLOW/CONTRACT/PAT/REV/IMP body.
+- `design.md` references all four model files and defines no RM/FUN/SSD/DOM/SYS/DES/STATE/FLOW/CONTRACT/PAT/REV/LANG/IMP body.
 - Traceability is a connected path, not a list of unrelated IDs.
 - The result rejects both fashionable overdesign and expedient underdesign.

@@ -1178,7 +1178,7 @@ function buildHumanInputContent(
       `- First run an incremental task-iteration planning pass before any coding pass.\n` +
       `- Update only the owner artifacts listed in this change request's flowDocuments; keep all other artifacts and completed work stable.\n` +
       `- requirements.md owns complete R*/AC*/C*/A*/Q*/E* facts. spec.md owns only observable SCN-* behavior and references those IDs without copying their prose.\n` +
-      `- The Design-Contract: 4 package has separate owners: requirement_model.md owns RM, domain_model.md owns DOM, design.md owns architecture/ADR decisions, design_model.md owns SYS/DES/FLOW/CONTRACT/PAT/REV, and implementation_model.md owns IMP mappings.\n` +
+      `- The Design-Contract: 5 package has separate owners: requirement_model.md owns RM/FUN/SSD, domain_model.md owns DOM, design.md owns architecture/ADR decisions, design_model.md owns SYS/DES/STATE/FLOW/CONTRACT/PAT/REV, and implementation_model.md owns LANG/IMP mappings.\n` +
       `- tasks.md owns static task definitions; implementation_plan.md owns runtime state only. Revise pending definitions in place, keep completed definitions immutable, and add a new task ID when completed behavior needs more work.\n` +
       `- Use the Autocode Standard iteration flow incrementally from the earliest affected model through review, affected tasks, and the derived runtime plan. Do not regenerate unaffected upstream artifacts or the entire task plan.\n` +
       `- Do not edit implementation_plan.md directly in this planning pass; the runtime derives it from validated tasks.md after planning succeeds.\n` +

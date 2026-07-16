@@ -8,6 +8,12 @@ import remarkGfm from 'remark-gfm';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { FileTree } from './FileTree';
+import {
+  getMermaidChartSource,
+  isMermaidCodeBlock,
+  isMermaidPreChild,
+  MermaidDiagram,
+} from './markdown/MermaidDiagram';
 import { useFileExplorerStore } from '../stores/file-explorer-store';
 import { cn } from '../lib/utils';
 import type { FileExplorerChangeEvent, FileNode } from '../../shared/types';
@@ -86,14 +92,25 @@ const markdownComponents: Components = {
   blockquote: ({ className, ...props }) => (
     <blockquote className={cn('mb-3 border-l-4 border-[#3C3C3C] bg-[#252526] px-3 py-2 text-[#C8C8C8]', className)} {...props} />
   ),
-  code: ({ className, children, ...props }) => (
-    <code className={cn('rounded bg-[#2D2D2D] px-1.5 py-0.5 font-mono text-[0.9em] text-[#CE9178]', className)} {...props}>
-      {children}
-    </code>
-  ),
-  pre: ({ className, ...props }) => (
-    <pre className={cn('mb-4 overflow-auto rounded border border-[#3C3C3C] bg-[#1E1E1E] p-3 text-xs leading-relaxed text-[#D4D4D4]', className)} {...props} />
-  ),
+  code: ({ className, children, ...props }) => {
+    if (isMermaidCodeBlock(className)) {
+      return <MermaidDiagram chart={getMermaidChartSource(children)} theme="dark" />;
+    }
+
+    return (
+      <code className={cn('rounded bg-[#2D2D2D] px-1.5 py-0.5 font-mono text-[0.9em] text-[#CE9178]', className)} {...props}>
+        {children}
+      </code>
+    );
+  },
+  pre: ({ className, children, ...props }) => {
+    if (isMermaidPreChild(children)) return <>{children}</>;
+    return (
+      <pre className={cn('mb-4 overflow-auto rounded border border-[#3C3C3C] bg-[#1E1E1E] p-3 text-xs leading-relaxed text-[#D4D4D4]', className)} {...props}>
+        {children}
+      </pre>
+    );
+  },
   table: ({ className, ...props }) => (
     <div className="mb-4 overflow-auto rounded border border-[#3C3C3C]">
       <table className={cn('w-full border-collapse text-sm text-[#D4D4D4]', className)} {...props} />

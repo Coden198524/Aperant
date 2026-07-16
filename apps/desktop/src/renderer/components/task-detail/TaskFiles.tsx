@@ -3,6 +3,12 @@ import { useTranslation } from 'react-i18next';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
+  getMermaidChartSource,
+  isMermaidCodeBlock,
+  isMermaidPreChild,
+  MermaidDiagram,
+} from '../markdown/MermaidDiagram';
+import {
   FileText,
   FileJson,
   Loader2,
@@ -463,16 +469,25 @@ export function TaskFiles({ task }: TaskFilesProps) {
         {children}
       </blockquote>
     ),
-    code: ({ children, className }) => (
-      <code className={cn('rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground', className)}>
-        {children}
-      </code>
-    ),
-    pre: ({ children }) => (
-      <pre className="my-4 overflow-x-auto rounded-md border border-border bg-muted/50 p-3 text-foreground">
-        {children}
-      </pre>
-    ),
+    code: ({ children, className }) => {
+      if (isMermaidCodeBlock(className)) {
+        return <MermaidDiagram chart={getMermaidChartSource(children)} />;
+      }
+
+      return (
+        <code className={cn('rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground', className)}>
+          {children}
+        </code>
+      );
+    },
+    pre: ({ children }) => {
+      if (isMermaidPreChild(children)) return <>{children}</>;
+      return (
+        <pre className="my-4 overflow-x-auto rounded-md border border-border bg-muted/50 p-3 text-foreground">
+          {children}
+        </pre>
+      );
+    },
     table: ({ children }) => (
       <div className="my-4 overflow-x-auto">
         <table className="w-full border-collapse text-sm">

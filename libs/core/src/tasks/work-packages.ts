@@ -17,9 +17,9 @@ import {
 import { isTraceableAutocodeEvidence } from './plan-quality.js';
 import {
   buildAutocodeDesignPackageMarkdown,
-  getAutocodeDesignContractVersion,
   getAutocodeDesignDocumentFingerprint,
   getAutocodeDesignReferenceFingerprint,
+  validateAutocodeDesignPackageIdentity,
 } from './design-quality.js';
 import {
   AUTOCODE_RUNTIME_LEDGER_SCHEMA,
@@ -109,8 +109,12 @@ function resolveAutocodeRuntimeDesignMarkdown(input: {
   designModelMarkdown?: string;
   implementationModelMarkdown?: string;
 }): string | undefined {
-  if (getAutocodeDesignContractVersion(input.designMarkdown) !== 4) {
-    return input.designMarkdown;
+  if (!input.designMarkdown?.trim()) {
+    return undefined;
+  }
+  const identityErrors = validateAutocodeDesignPackageIdentity(input);
+  if (identityErrors.length > 0) {
+    throw new Error(identityErrors.join(' '));
   }
   return buildAutocodeDesignPackageMarkdown(input) || input.designMarkdown;
 }
@@ -131,7 +135,11 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
     requireTaskEvidence: input.requireTaskEvidence,
     includeCompletedTasks: input.includeCompletedTasks,
     preserveCompletedStateFromPreviousPlanMarkdown: input.preserveCompletedStateFromPreviousPlanMarkdown,
-    designMarkdown: runtimeDesignMarkdown,
+    designMarkdown: input.designMarkdown,
+    requirementModelMarkdown: input.requirementModelMarkdown,
+    domainModelMarkdown: input.domainModelMarkdown,
+    designModelMarkdown: input.designModelMarkdown,
+    implementationModelMarkdown: input.implementationModelMarkdown,
     designPath: input.designPath,
     forceSingleWorkPackage: input.forceSingleWorkPackage,
   });
@@ -168,17 +176,15 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
       ...(runtimeDesignMarkdown?.trim()
         ? {
             design_contract: {
-              version: getAutocodeDesignContractVersion(input.designMarkdown) ?? 3,
+              version: 5,
               path: input.designPath || AUTOCODE_TASK_ARTIFACTS.design,
-              paths: getAutocodeDesignContractVersion(input.designMarkdown) === 4
-                ? [
-                    AUTOCODE_TASK_ARTIFACTS.design,
-                    AUTOCODE_TASK_ARTIFACTS.requirementModel,
-                    AUTOCODE_TASK_ARTIFACTS.domainModel,
-                    AUTOCODE_TASK_ARTIFACTS.designModel,
-                    AUTOCODE_TASK_ARTIFACTS.implementationModel,
-                  ]
-                : [input.designPath || AUTOCODE_TASK_ARTIFACTS.design],
+              paths: [
+                AUTOCODE_TASK_ARTIFACTS.design,
+                AUTOCODE_TASK_ARTIFACTS.requirementModel,
+                AUTOCODE_TASK_ARTIFACTS.domainModel,
+                AUTOCODE_TASK_ARTIFACTS.designModel,
+                AUTOCODE_TASK_ARTIFACTS.implementationModel,
+              ],
               fingerprint: getAutocodeDesignDocumentFingerprint(runtimeDesignMarkdown),
             },
           }

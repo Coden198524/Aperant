@@ -395,7 +395,7 @@ export function buildAutocodeTaskExecutionMessages(
   } else {
     parts.push(input.forcePlanning
       ? `Address Human Review Input through the staged Standard owner flow. Update only artifacts listed by the latest change-request impacts, preserve stable IDs and completed task definitions, write no duplicate prose across artifacts, and do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it after validation. Stop for human review without coding.`
-      : `No runtime ledger exists yet. Return to Standard planning; requirements.md, spec.md, the complete five-file Design-Contract: 4 package, design_review.md, and tasks.md must be produced by their owning stages before the runtime derives ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Do not code or create the ledger manually.`);
+      : `No runtime ledger exists yet. Return to Standard planning; requirements.md, spec.md, the complete five-file Design-Contract: 5 package, design_review.md, and tasks.md must be produced by their owning stages before the runtime derives ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Do not code or create the ledger manually.`);
   }
 
   return [{ role: 'user', content: parts.join('\n') }];

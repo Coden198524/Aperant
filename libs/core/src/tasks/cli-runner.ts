@@ -332,7 +332,7 @@ function buildTaskRunPrompt(input: {
       'Follow the owner-stage instruction appended to this prompt. That instruction is authoritative for this invocation.',
       '- requirements.md owns full R*/AC*/C*/A*/Q*/E* facts.',
       '- spec.md owns observable SCN-* behavior and references requirement/evidence IDs.',
-      '- requirement_model.md owns RM behavior; domain_model.md owns DOM rules/state; design.md owns architecture/ADR/budgets/index/traceability; design_model.md owns SYS/DES/FLOW/CONTRACT/PAT/REV; implementation_model.md owns IMP repository mappings.',
+      '- requirement_model.md owns RM/FUN/SSD; domain_model.md owns DOM concepts/attributes/relationships; design.md owns architecture/ADR/budgets/index/traceability; design_model.md owns SYS/DES/STATE/FLOW/CONTRACT/PAT/REV; implementation_model.md owns LANG/IMP repository mappings.',
       '- tasks.md owns static task definitions with [ ] checkboxes only.',
       '- implementation_plan.md is a runtime-owned ledger derived after tasks validation.',
       '- Write only the artifact named by the active owner stage. Do not repair downstream artifacts in the same invocation.',
@@ -1185,10 +1185,10 @@ const CLI_RATE_LIMIT_SIGNAL_PATTERNS = [
 ];
 
 initializeCliMemoryRuntime()
-  .then((contextBlock) => {
+  .then(async (contextBlock) => {
     memoryContextBlock = contextBlock;
     if (phase === 'coding') {
-      const designContractError = validateRunnerRuntimeDesignContract();
+      const designContractError = await validateRunnerRuntimeDesignContract();
       if (designContractError) {
         void finishRun(1, undefined, designContractError, designContractError);
       } else {
@@ -1198,10 +1198,10 @@ initializeCliMemoryRuntime()
       void startNonCodingRuntimeWithPlanningRecovery(buildPromptWithMemoryContext(prompt));
     }
   })
-  .catch((error) => {
+  .catch(async (error) => {
     appendTaskLogEntry(logPhase, 'info', 'Memory context unavailable: ' + (error instanceof Error ? error.message : String(error)));
     if (phase === 'coding') {
-      const designContractError = validateRunnerRuntimeDesignContract();
+      const designContractError = await validateRunnerRuntimeDesignContract();
       if (designContractError) {
         void finishRun(1, undefined, designContractError, designContractError);
       } else {
@@ -3430,7 +3430,7 @@ function readRunnerDesignExcerpt(refs) {
       current = [];
     };
     for (const line of markdown.replace(/\\r\\n/g, '\\n').split('\\n')) {
-      const idHeading = /^#{3,6}\\s+((?:ADR|RM|DOM|SYS|DES|FLOW|CONTRACT|PAT|REV|IMP)-\\d{3,})\\b/i.exec(line);
+      const idHeading = /^#{3,6}\\s+((?:ADR|RM|FUN|SSD|DOM|SYS|DES|STATE|FLOW|CONTRACT|PAT|REV|LANG|IMP)-\\d{3,})\\b/i.exec(line);
       if (idHeading) {
         flush();
         const id = idHeading[1].toUpperCase();
@@ -6365,7 +6365,7 @@ function compactRunnerDirectValidationReason(value) {
   }
   return normalized.slice(0, 497).trimEnd() + '...';
 }
-function validateRunnerRuntimeDesignContract() {
+async function validateRunnerRuntimeDesignContract() {
   const metadata = readPlanMachineMetadata(readCurrentPlanContent());
   const sourceTask = metadata && metadata.source_task && typeof metadata.source_task === 'object'
     ? metadata.source_task
@@ -6377,32 +6377,58 @@ function validateRunnerRuntimeDesignContract() {
     ? contract.fingerprint.trim()
     : '';
   if (!expectedFingerprint) {
-    return undefined;
+    return 'The runtime plan has no Design-Contract: 5 package fingerprint; return to planning before coding.';
   }
-  const designMarkdown = readOptionalArtifact(artifacts.design || 'design.md');
-  if (!designMarkdown) {
-    return (artifacts.design || 'design.md') + ' is missing for the active runtime plan; return to planning.';
+  if (Number(contract.version) !== 5) {
+    return 'The runtime plan uses an unsupported design contract; return to planning and regenerate Design-Contract: 5 before coding.';
   }
-  const packagePaths = Number(contract.version) === 4
-    ? [
-        artifacts.design || 'design.md',
-        artifacts.requirementModel || 'requirement_model.md',
-        artifacts.domainModel || 'domain_model.md',
-        artifacts.designModel || 'design_model.md',
-        artifacts.implementationModel || 'implementation_model.md',
-      ]
-    : [artifacts.design || 'design.md'];
+  const packageEntries = [
+    ['designMarkdown', artifacts.design || 'design.md'],
+    ['requirementModelMarkdown', artifacts.requirementModel || 'requirement_model.md'],
+    ['domainModelMarkdown', artifacts.domainModel || 'domain_model.md'],
+    ['designModelMarkdown', artifacts.designModel || 'design_model.md'],
+    ['implementationModelMarkdown', artifacts.implementationModel || 'implementation_model.md'],
+  ];
+  const packagePaths = packageEntries.map((entry) => entry[1]);
+  const declaredPaths = Array.isArray(contract.paths)
+    ? contract.paths.map((value) => String(value || '').trim())
+    : [];
+  if (
+    String(contract.path || '').trim() !== packagePaths[0] ||
+    declaredPaths.length !== packagePaths.length ||
+    declaredPaths.some((value, index) => value !== packagePaths[index])
+  ) {
+    return 'The runtime plan does not bind the exact five-file Design-Contract: 5 package; return to planning.';
+  }
   const packageParts = [];
-  for (const fileName of packagePaths) {
+  const packageInput = {};
+  for (const [fieldName, fileName] of packageEntries) {
     const markdown = readOptionalArtifact(fileName);
+    packageInput[fieldName] = markdown;
     if (!markdown) {
       return fileName + ' is missing for the active runtime plan; return to planning.';
     }
-    packageParts.push(Number(contract.version) === 4
-      ? '<!-- Design artifact: ' + fileName + ' -->\\n' + markdown.trim()
-      : markdown.trim());
+    packageParts.push('<!-- Design artifact: ' + fileName + ' -->\\n' + markdown.trim());
   }
   const fingerprintSource = packageParts.join('\\n\\n').trim();
+  if (!designQualityModulePath) {
+    return 'The Design-Contract: 5 validator is unavailable; return to planning before coding.';
+  }
+  try {
+    const moduleUrl = pathToFileURL(designQualityModulePath).href;
+    const designQuality = await import(moduleUrl);
+    const validateIdentity = designQuality.validateAutocodeDesignPackageIdentity;
+    if (typeof validateIdentity !== 'function') {
+      return 'The Design-Contract: 5 identity validator is unavailable; return to planning before coding.';
+    }
+    const identityErrors = validateIdentity(packageInput);
+    if (Array.isArray(identityErrors) && identityErrors.length > 0) {
+      return 'The active design package is not a valid Design-Contract: 5 package: ' + identityErrors.join(' ');
+    }
+  } catch (error) {
+    return 'Unable to validate the Design-Contract: 5 package: ' +
+      (error instanceof Error ? error.message : String(error));
+  }
   const actualFingerprint = createHash('sha256')
     .update(fingerprintSource.replace(/\\r\\n/g, '\\n'), 'utf8')
     .digest('hex');
@@ -6914,10 +6940,11 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Task: ' + taskDescription,
       '',
       'Write only ' + join(specDir, standardDesignStageArtifact.requirement_model) + '.',
-      'Read approved requirements.md and spec.md plus active Request Changes. Preserve unaffected RM-* IDs.',
-      'Derive cohesive, independently verifiable RM-* scenarios from actors, goals, triggers, ordered normal behavior, alternate/failure behavior, outcomes, constraints, quality needs, and R*/AC*/SCN*/E* evidence.',
-      'Apply 5W1H and 8C only where they expose a real boundary, decision, failure, or missing fact. Mark uncertainty as unresolved; never invent implementation facts.',
-      'Declare Design-Contract: 4, the shared Design-Revision, Design-Root: design.md, and Model-Kind: requirement.',
+      'Read approved requirements.md and spec.md plus active Request Changes. Preserve unaffected RM/FUN/SSD IDs.',
+      'Derive complete RM-* use cases with scenario, ordered actions and outputs, customer value, alternatives/exceptions, postconditions, and R*/AC*/SCN*/E* evidence.',
+      'Apply 5W1H exactly as Who, Where, When, What, Why, How and 8C exactly as Performance, Cost, Time, Reliability, Security, Compliance, Technology, Compatibility.',
+      'Extract and deduplicate FUN-* capabilities across use cases. Create exactly one Mermaid SSD-* system sequence diagram per RM-* using autonumber, actor-left/System-right declaration order, System activation bars, actor-to-System requests, coarse System self-processing, and dashed observable responses. Keep the product black-box and do not expose internal components as participants. Distinguish requirement facts from industry inference and unresolved questions.',
+      'Declare Design-Contract: 5, the shared Design-Revision, Design-Root: design.md, and Model-Kind: requirement.',
       'Do not choose architecture, classes, modules, files, protocols, patterns, or tasks.',
       'Follow the deterministic package contract below:',
       standardDesignMachineContractPrompt,
@@ -6934,10 +6961,10 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Task: ' + taskDescription,
       '',
       'Write only ' + join(specDir, standardDesignStageArtifact.domain_model) + '.',
-      'Read requirement_model.md, requirements.md, spec.md, active Request Changes, and targeted project terminology. Preserve unaffected DOM-* IDs.',
-      'Derive technology-neutral concepts from RM actions and outcomes. Give every material state, rule, invariant, behavior, mutation authority, relationship, and lifecycle an explicit owner.',
-      'Classify concepts with the exact Concept kind tokens. Reject CRUD-only records, synonym duplication, speculative abstractions, anemic objects, and generic managers/services that absorb unrelated behavior.',
-      'Declare Design-Contract: 4, the shared Design-Revision, Design-Root: design.md, and Model-Kind: domain.',
+      'Read requirement_model.md, requirements.md, spec.md, active Request Changes, and targeted domain evidence. Preserve unaffected DOM-* IDs.',
+      'Apply find nouns, add attributes, and connect relationships to RM/FUN/SSD evidence. Record retained/excluded nouns, synonym merges, domain attributes, identity, rules, lifecycle states, direction, multiplicity, and ownership.',
+      'Produce a Mermaid classDiagram with labeled domain concept boxes, concept-kind stereotypes, attributes, and association multiplicities at both ends. Represent business actors as role concepts. Do not define software methods, framework roles, files, controllers, repositories, or implementation mappings.',
+      'Declare Design-Contract: 5, the shared Design-Revision, Design-Root: design.md, and Model-Kind: domain.',
       'Do not choose architecture, detailed software elements, file changes, patterns, or tasks.',
       'Follow the deterministic package contract below:',
       standardDesignMachineContractPrompt,
@@ -6960,7 +6987,7 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Use object-oriented analysis only when identity, state, invariants, lifecycle, and collaboration justify it. Otherwise select component, data-oriented, functional, procedural, framework-owned, or mixed design from evidence; no language implies a paradigm.',
       'Apply NOP only to verified variation. Reject speculative layers and patterns, but also reject God coordinators, anemic models, implicit ownership, boundary bypass, and scattered state/type/policy dispatch.',
       'Start the document with exactly "# Design: <localized task title>". Keep "Design" and the ASCII colon unchanged.',
-      'Declare Design-Contract: 4, Design-Depth, Design-Revision, and one analysis direction. Define ADR-* only and reference all four model files.',
+      'Declare Design-Contract: 5, Design-Depth, Design-Revision, and one analysis direction. Define ADR-* only and reference all four model files.',
       'Include Scope And Evidence, Complexity Assessment, Existing Architecture Fit, Engineering Adaptation, Design Budget, Architecture Candidates, Architecture Decision, Model Package, Change And Pattern Analysis, Applicable Design Principles, Rejected Complexity, Risks And Evolution, and Traceability.',
       'Follow the complete deterministic machine contract below. This contract is generated from the same token definitions used by validation:',
       standardDesignMachineContractPrompt,
@@ -6982,11 +7009,12 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Task: ' + taskDescription,
       '',
       'Write only ' + join(specDir, standardDesignStageArtifact.design_model) + '.',
-      'Read approved requirement_model.md, domain_model.md, design.md, active Request Changes, and targeted project evidence. Preserve unaffected SYS/DES/FLOW/CONTRACT/PAT/REV IDs and obey ADR-* decisions.',
-      'Allocate every RM-* to SYS-* before defining DES-* elements. Make state, rules, mutation authority, public operations, responsibilities, collaborators, dependencies, encapsulation, non-responsibilities, failure ownership, lifecycle, and ordered runtime collaboration explicit.',
-      'Use CRC-style responsibility reasoning and require static ownership to agree with FLOW/CONTRACT mutation and error paths. Coordinators sequence work; they do not absorb domain rules.',
+      'Read approved requirement_model.md, domain_model.md, design.md, active Request Changes, and targeted project evidence. Preserve unaffected SYS/DES/STATE/FLOW/CONTRACT/PAT/REV IDs and obey ADR-* decisions.',
+      'Allocate every RM-* and FUN-* to SYS-* before defining DES-* elements. Selectively map DOM names and attributes, derive methods from RM/FUN/SSD verbs, and assign each operation to its data/invariant owner.',
+      'Apply SRP, OCP, LSP, ISP, and DIP with concrete decisions or justified n/a results. Add framework auxiliary elements only for observed obligations. Use CRC responsibility reasoning and prevent coordinators from absorbing domain rules.',
+      'Produce a software class diagram, STATE-* Mermaid state diagrams for stateful DES owners, and one Mermaid sequenceDiagram per FLOW-*; require diagrams and machine fields to agree.',
       'Select project paradigm from evidence, not language. Apply NOP: compare direct mechanisms with applicable patterns only at verified variation points; local selects none, standard at most two, complex at most three.',
-      'Declare Design-Contract: 4, the same Design-Revision as design.md, Design-Root: design.md, and Model-Kind: design.',
+      'Declare Design-Contract: 5, the same Design-Revision as design.md, Design-Root: design.md, and Model-Kind: design.',
       'Do not edit architecture, upstream models, implementation mapping, tasks, or source.',
       'Follow the deterministic package contract below:',
       standardDesignMachineContractPrompt,
@@ -7003,10 +7031,11 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Task: ' + taskDescription,
       '',
       'Write only ' + join(specDir, standardDesignStageArtifact.implementation_model) + '.',
-      'Read the complete approved design package, project documentation, active Request Changes, and only source needed to verify affected boundaries. Preserve unaffected IMP-* IDs.',
-      'Map every in-scope SYS/DES/FLOW-or-CONTRACT and selected PAT/REV path to observed or explicitly new files, exact symbols, schemas/contracts, construction and lifecycle points, integration order, compatibility/migration constraints, and focused verification.',
+      'Read the complete approved design package, project documentation, active Request Changes, build/compiler/lint/test configuration, and only source needed to verify affected boundaries. Preserve unaffected LANG/IMP IDs.',
+      'Define LANG-* constraints for every in-scope language/toolchain: version, naming, formatting, types/interfaces, class visibility, errors, resources/lifecycle, concurrency/state, framework integration, tests, and documentation.',
+      'Map every in-scope SYS/DES/STATE/FLOW-or-CONTRACT and selected PAT/REV path to exact class/element realization, observed or explicitly new files, symbols, construction/lifecycle points, integration order, compatibility/migration constraints, and focused verification.',
       'Distinguish modify, create, delete, migrate, and test intent. Never claim an existing path or symbol without observation; mark uncertainty unresolved instead of inventing it.',
-      'Declare Design-Contract: 4, the same Design-Revision as design.md, Design-Root: design.md, and Model-Kind: implementation.',
+      'Declare Design-Contract: 5, the same Design-Revision as design.md, Design-Root: design.md, and Model-Kind: implementation.',
       'This is an implementation map, not a task list or source implementation. Do not edit upstream design, tasks, or code.',
       'Follow the deterministic package contract below:',
       standardDesignMachineContractPrompt,
@@ -7020,10 +7049,10 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       '',
       'Project root: ' + cwd,
       'Spec directory: ' + specDir,
-      'Review the complete Design-Contract: 4 package: design.md, requirement_model.md, domain_model.md, design_model.md, and implementation_model.md against requirements.md, spec.md, context/research, active Request Changes, and targeted project evidence.',
+      'Review the complete Design-Contract: 5 package: design.md, requirement_model.md, domain_model.md, design_model.md, and implementation_model.md against requirements.md, spec.md, context/research, active Request Changes, and targeted project evidence.',
       'Write only ' + join(specDir, artifacts.designReview || 'design_review.md') + '.',
       'Start with exactly Status: PASSED or Status: REVISE.',
-      'Check architecture candidate comparison, evidence provenance, RM scenarios, domain identity/state/rule/lifecycle ownership, SYS allocation/interfaces/failure ownership, DES responsibilities, ordered collaboration, exact IMP mapping, project-paradigm fit, dependency direction, feasibility, testability, Design Budget, and connected traceability.',
+      'Check architecture candidates, evidence provenance, complete 5W1H8C use cases, FUN deduplication, SSD coverage, noun/attribute/relation analysis, method-free domain diagram, selective domain-to-software mapping, all SOLID decisions, class/state/sequence diagrams, LANG constraints, SYS allocation, DES ownership, exact IMP mapping, feasibility, testability, Design Budget, and connected traceability.',
       'Apply NOP but reject both extremes: mechanically mapped abstractions and shallow designs with God coordinators, anemic objects, implicit state ownership, or scattered state/type/policy conditionals.',
       'Require every concrete variation to compare the direct mechanism with applicable pattern candidates. Do not approve pattern avoidance when multiple current variants and a stable boundary already exist.',
       'For reverse/mixed work, require outside-in REV paths, exact source symbols, contradiction checks, and justified confidence. Do not approve inferred claims as observed facts.',
@@ -7215,10 +7244,10 @@ function resetStandardPlanningValidationFrom(stage) {
 
 function selectStandardDesignRevisionStartStage(validationError) {
   const text = String(validationError || '');
-  if (/\\bRM-[0-9]+\\b|requirement_model\\.md/i.test(text)) return 'requirement_model';
+  if (/\\b(?:RM|FUN|SSD)-[0-9]+\\b|requirement_model\\.md/i.test(text)) return 'requirement_model';
   if (/\\bDOM-[0-9]+\\b|domain_model\\.md/i.test(text)) return 'domain_model';
-  if (/\\b(?:SYS|DES|FLOW|CONTRACT|PAT|REV)-[0-9]+\\b|design_model\\.md/i.test(text)) return 'design_model';
-  if (/\\bIMP-[0-9]+\\b|implementation_model\\.md/i.test(text)) return 'implementation_model';
+  if (/\\b(?:SYS|DES|STATE|FLOW|CONTRACT|PAT|REV)-[0-9]+\\b|design_model\\.md/i.test(text)) return 'design_model';
+  if (/\\b(?:LANG|IMP)-[0-9]+\\b|implementation_model\\.md/i.test(text)) return 'implementation_model';
   return 'design';
 }
 
@@ -7773,11 +7802,11 @@ function buildArtifactValidationRetryPrompt(validationError) {
   const rawValidationError = String(validationError || '');
   const shouldRepairSpecArtifact = standardTasksMode && /\\bspec\\.md\\b/i.test(rawValidationError);
   const shouldRepairRequirementsArtifact = standardTasksMode && /\\brequirements\\.md\\b/i.test(rawValidationError);
-  const shouldRepairRequirementModelArtifact = standardTasksMode && /\\brequirement_model\\.md\\b|\\bRM-[0-9]+\\b/i.test(rawValidationError);
+  const shouldRepairRequirementModelArtifact = standardTasksMode && /\\brequirement_model\\.md\\b|\\b(?:RM|FUN|SSD)-[0-9]+\\b/i.test(rawValidationError);
   const shouldRepairDomainModelArtifact = standardTasksMode && /\\bdomain_model\\.md\\b|\\bDOM-[0-9]+\\b/i.test(rawValidationError);
   const shouldRepairDesignArtifact = standardTasksMode && /\\bdesign\\.md\\b/i.test(rawValidationError);
-  const shouldRepairDesignModelArtifact = standardTasksMode && /\\bdesign_model\\.md\\b|\\b(?:SYS|DES|FLOW|CONTRACT|PAT|REV)-[0-9]+\\b/i.test(rawValidationError);
-  const shouldRepairImplementationModelArtifact = standardTasksMode && /\\bimplementation_model\\.md\\b|\\bIMP-[0-9]+\\b/i.test(rawValidationError);
+  const shouldRepairDesignModelArtifact = standardTasksMode && /\\bdesign_model\\.md\\b|\\b(?:SYS|DES|STATE|FLOW|CONTRACT|PAT|REV)-[0-9]+\\b/i.test(rawValidationError);
+  const shouldRepairImplementationModelArtifact = standardTasksMode && /\\bimplementation_model\\.md\\b|\\b(?:LANG|IMP)-[0-9]+\\b/i.test(rawValidationError);
   const shouldRepairDesignReviewArtifact = standardTasksMode && /\\bdesign_review\\.md\\b/i.test(rawValidationError);
   if (standardTasksMode) {
     const ownerStage = shouldRepairRequirementsArtifact

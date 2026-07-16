@@ -26,6 +26,7 @@ import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
 import {
   AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY,
+  AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS,
   AUTOCODE_STANDARD_CHANGE_REQUESTS_FILE,
   AUTOCODE_STANDARD_PLANNING_OWNER_STAGE_ORDER,
   AUTOCODE_TASK_ARTIFACTS,
@@ -46,10 +47,10 @@ import {
   parseAutocodeImplementationPlanMarkdown,
   stringifyAutocodeImplementationPlanMarkdown,
   validateAutocodeStandardPlanArtifacts,
+  validateAutocodeDesignPackageIdentity,
   validateAutocodeStandardDesignArtifacts,
   validateAutocodePlanningSchedulingMetadata,
   getAutocodeQaReportStatus,
-  getAutocodeDesignDocumentFingerprint,
   getAutocodeDesignPackageFingerprint,
   getAutocodeDesignReviewStatus,
   selectAutocodeDesignRevisionStages,
@@ -991,9 +992,21 @@ export class BuildOrchestrator extends EventEmitter {
     const designContract = asRecord(sourceTask?.design_contract);
     const expectedFingerprint = stringFrom(designContract?.fingerprint);
     if (!expectedFingerprint) {
-      // Compatibility: an existing validated Standard plan may finish once;
-      // its next replan upgrades it to the latest design contract.
-      return undefined;
+      return `The runtime plan has no Design-Contract: 5 package fingerprint; return to planning before coding.`;
+    }
+    if (Number(designContract?.version) !== 5) {
+      return `The runtime plan uses an unsupported design contract; return to planning and regenerate Design-Contract: 5 before coding.`;
+    }
+    const declaredPath = stringFrom(designContract?.path);
+    const declaredPaths = Array.isArray(designContract?.paths)
+      ? designContract.paths.map((value) => stringFrom(value) ?? '')
+      : [];
+    if (
+      declaredPath !== AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS[0] ||
+      declaredPaths.length !== AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS.length ||
+      declaredPaths.some((value, index) => value !== AUTOCODE_STANDARD_DESIGN_PACKAGE_ARTIFACTS[index])
+    ) {
+      return `The runtime plan does not bind the exact five-file Design-Contract: 5 package; return to planning.`;
     }
 
     const designPackage = await this.readStandardDesignPackageArtifacts();
@@ -1001,9 +1014,11 @@ export class BuildOrchestrator extends EventEmitter {
     if (!designMarkdown) {
       return `${AUTOCODE_TASK_ARTIFACTS.design} is missing for the active runtime plan; return to planning.`;
     }
-    const actualFingerprint = Number(designContract?.version) === 4
-      ? getAutocodeDesignPackageFingerprint(designPackage)
-      : getAutocodeDesignDocumentFingerprint(designMarkdown);
+    const identityErrors = validateAutocodeDesignPackageIdentity(designPackage);
+    if (identityErrors.length > 0) {
+      return `The active design package is not a valid Design-Contract: 5 package: ${identityErrors.join(' ')}`;
+    }
+    const actualFingerprint = getAutocodeDesignPackageFingerprint(designPackage);
     if (actualFingerprint !== expectedFingerprint) {
       return `The approved design package changed after the runtime plan was derived; return to planning before coding.`;
     }

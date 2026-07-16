@@ -14,16 +14,16 @@ Coordinate the owner-only Standard pipeline. Pass stable IDs between stages; nev
 ## Ownership
 
 - `requirements.md`: full `R/AC/C/A/Q/E` facts; `spec.md`: observable `SCN-*` behavior and ID references.
-- `requirement_model.md`: `RM-*` behavior; `domain_model.md`: technology-neutral `DOM-*` rules, state, ownership, and lifecycle.
+- `requirement_model.md`: `RM-*` use cases, deduplicated `FUN-*`, and `SSD-*`; `domain_model.md`: technology-neutral `DOM-*` concepts, attributes, relationships, rules, and lifecycle.
 - `design.md`: architecture evidence/candidates, `ADR-*`, budgets, index, risks, traceability; no model bodies.
-- `design_model.md`: `SYS/DES/FLOW` plus applicable `CONTRACT/PAT/REV`; `implementation_model.md`: exact `IMP-*` repository mappings.
+- `design_model.md`: `SYS/DES/STATE/FLOW` plus applicable `CONTRACT/PAT/REV`; `implementation_model.md`: `LANG-*` constraints and exact `IMP-*` repository mappings.
 - `design_review.md`: package verdict, exactly one `Status: PASSED|REVISE`; `tasks.md`: static `[ ]` definitions.
 - `context.md`/`research.md`: evidence only; `implementation_plan.md`: runtime ledger, never model-written.
 
 ## Constraints
 
 - Write only the active owner's artifact inside the spec directory.
-- Keep shared `Design-Contract: 4` and `Design-Revision` across all five design files.
+- Require shared `Design-Contract: 5` and `Design-Revision` across all five design files; reject every other design contract version.
 - Keep JSON/JSONL/config artifacts as structured data; use Markdown only for prose artifacts.
 - Do not modify source, git, app JSON/JSONL state, manifests, settings, metadata, indexes, or parsed config.
 - Preserve unaffected IDs and completed historical task definitions during iteration.
