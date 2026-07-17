@@ -49,6 +49,7 @@ import {
   type DirectCompletionFallbackDecision,
   type DirectFallbackPlan,
 } from "./direct-completion-fallback";
+import { isDirectDevelopmentTask } from "../../shared/utils/task-mode";
 
 // Timeout for fallback safety net to check if task is still stuck after process exit
 const STUCK_TASK_FALLBACK_TIMEOUT_MS = 500;
@@ -166,14 +167,7 @@ function continueTaskExecutionAfterPlanning(input: {
 }
 
 function isDirectModeTask(task: Task | undefined, plan?: ImplementationPlan | null): boolean {
-  const metadata = task?.metadata;
-  const planRecord = plan as (ImplementationPlan & {
-    direct_execution?: { enabled?: unknown };
-  }) | null | undefined;
-  return metadata?.workflowMode === 'off' ||
-    metadata?.developmentMode === 'direct' ||
-    planRecord?.workflow_type === 'direct' ||
-    planRecord?.direct_execution?.enabled === true;
+  return isDirectDevelopmentTask(task, plan);
 }
 
 function syncDirectCompletionArtifactsToMain(project: Project, task: Task): void {

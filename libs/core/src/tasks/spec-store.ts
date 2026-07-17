@@ -37,7 +37,7 @@ export type AutocodeTaskStatus =
   | 'pr_created'
   | 'error';
 
-export type AutocodeReviewReason = 'completed' | 'errors' | 'qa_rejected' | 'plan_review' | 'stopped';
+export type AutocodeReviewReason = 'completed' | 'errors' | 'qa_rejected' | 'plan_review' | 'stopped' | 'needs_input';
 
 export type AutocodeTaskCategory =
   | 'feature'

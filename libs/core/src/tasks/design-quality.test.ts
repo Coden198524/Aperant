@@ -3,9 +3,11 @@ import {
   AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT,
   buildAutocodeDesignPackageMarkdown,
   buildAutocodeDesignQualityRetryPrompt,
+  detectAutocodeDesignReviewHumanInputGate,
   getAutocodeDesignPackageFingerprint,
   getAutocodeDesignContractVersion,
   parseAutocodeDesignSections,
+  selectAutocodeDesignRevisionStages,
   validateAutocodeStandardDesignArtifacts,
   validateAutocodeStandardDesignStageArtifacts,
   validateAutocodeTaskDesignReferences,
@@ -400,6 +402,125 @@ describe('Design-Contract: 5 quality validation', () => {
     ).errors).toEqual([]);
   });
 
+  it('accepts multi-word and multi-entry unresolved evidence values', () => {
+    const withOpenQuestion = designMarkdown.replace(
+      '- Unresolved evidence: none',
+      '- Unresolved evidence: unresolved - requirements.md Q1 has not fixed the spawn layout and rotation pivot',
+    );
+    expect(validatePackage({ designMarkdown: withOpenQuestion }).errors).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('Unresolved evidence must be exactly')]),
+    );
+
+    const withMultipleQuestions = designMarkdown.replace(
+      '- Unresolved evidence: none',
+      '- Unresolved evidence: unresolved - Q1 spawn layout is open; unresolved - Q2 fall interval is open',
+    );
+    expect(validatePackage({ designMarkdown: withMultipleQuestions }).errors).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('Unresolved evidence must be exactly')]),
+    );
+  });
+
+  it('rejects unresolved evidence that lacks the exact prefix or the exact "none" token', () => {
+    const withoutPrefix = designMarkdown.replace(
+      '- Unresolved evidence: none',
+      '- Unresolved evidence: pending - the spawn layout is still open',
+    );
+    expect(validatePackage({ designMarkdown: withoutPrefix }).errors).toEqual(
+      expect.arrayContaining([expect.stringContaining('Unresolved evidence must be exactly')]),
+    );
+
+    const noneWithReason = designMarkdown.replace(
+      '- Unresolved evidence: none',
+      '- Unresolved evidence: none - nothing outstanding',
+    );
+    expect(validatePackage({ designMarkdown: noneWithReason }).errors).toEqual(
+      expect.arrayContaining([expect.stringContaining('Unresolved evidence must be exactly')]),
+    );
+  });
+
+  it('rejects misplaced root machine fields during the design owner stage', () => {
+    const malformedDesign = designMarkdown.replace(
+      '- Analysis direction: forward-design',
+      'Analysis direction: forward-design',
+    );
+
+    expect(validateAutocodeStandardDesignStageArtifacts(
+      { requirementModelMarkdown, domainModelMarkdown, designMarkdown: malformedDesign },
+      'design',
+    ).errors).toContain(
+      'design.md Scope And Evidence must contain machine field - Analysis direction: <value>.',
+    );
+  });
+
+  it('detects design-model mappings, derivation, and ordering before implementation mapping', () => {
+    const malformedDesignModel = designModelMarkdown
+      .replace(
+        '- Mapped concepts: DOM-001 -> DES-001 because task identity, attributes, and invariants require one state owner',
+        '- Mapped concepts: none - no concepts listed',
+      )
+      .replace(
+        '- Method derivation: RM-001 submit and FUN-001 validate submit from SSD-001 -> submitDraft -> DES-001',
+        '- Method derivation: submit the draft through the state owner',
+      )
+      .replace(
+        '- Steps: DES-001 validates DOM-001 invariants -> DES-001 transitions state -> SYS-001 persists and returns the result',
+        '- Steps: DES-001 validates; DES-001 transitions; SYS-001 persists',
+      )
+      .replace(
+        '- Participants: DES-001',
+        '- Participants: DES-001, DES-999',
+      );
+
+    const errors = validateAutocodeStandardDesignStageArtifacts(
+      {
+        requirementModelMarkdown,
+        domainModelMarkdown,
+        designMarkdown: designMarkdown.replace(
+          'Design-Depth: local',
+          'Design-Depth: standard',
+        ),
+        designModelMarkdown: malformedDesignModel,
+      },
+      'design_model',
+    ).errors;
+
+    expect(errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('DES-001 mapping must also appear in the Mapped concepts summary.'),
+      expect.stringContaining('DES-001 Method derivation must reference RM, FUN, or SSD verbs.'),
+      expect.stringContaining('FLOW-001 Steps must express an explicit order with arrows or numbered steps.'),
+    ]));
+  });
+
+  it('routes validation errors by their owning artifact before inspecting referenced IDs', () => {
+    expect(selectAutocodeDesignRevisionStages([
+      'design.md Traceability must connect RM-001 through FUN-*, SSD-*, and DOM-*.',
+    ])).toEqual(['design', 'design_model', 'implementation_model']);
+    expect(selectAutocodeDesignRevisionStages([
+      'design.md Model Package must contain - Requirement model: requirement_model.md.',
+    ])).toEqual(['design', 'design_model', 'implementation_model']);
+    expect(selectAutocodeDesignRevisionStages([
+      'design_model.md DES-001 Method derivation must reference RM-001 verbs.',
+    ])).toEqual(['design_model', 'implementation_model']);
+    expect(selectAutocodeDesignRevisionStages([
+      'implementation_model.md IMP-001 lacks coverage.',
+      'design.md Traceability must include IMP-001.',
+    ])).toEqual(['design', 'design_model', 'implementation_model']);
+  });
+
+  it('accepts root project files and explained no-pattern declarations', () => {
+    const result = validatePackage({
+      designMarkdown: designMarkdown
+        .replace('- New architectural patterns: none', '- New architectural patterns: none - no verified variation')
+        .replace('- Selected patterns: none', '- Selected patterns: none - direct behavior is sufficient'),
+      implementationModelMarkdown: implementationModelMarkdown.replace(
+        /^- Project files and symbols:.*$/m,
+        '- Project files and symbols: CMakeLists.txt; README.md',
+      ),
+    });
+
+    expect(result.errors).toEqual([]);
+  });
+
   it('recognizes only v5 and rejects v3 or v4 roots', () => {
     expect(getAutocodeDesignContractVersion(designMarkdown)).toBe(5);
     for (const version of [3, 4]) {
@@ -422,6 +543,64 @@ describe('Design-Contract: 5 quality validation', () => {
 
     expect(validatePackage({ requirementModelMarkdown: malformed }).errors).toContain(
       'requirement_model.md RM-001 8C constraints must define exactly one Compliance=... assignment.',
+    );
+  });
+
+  it('rejects full-width semicolons between Scenario/5W1H dimensions (must use ASCII separators)', () => {
+    // Regression: dimension fields are split on ASCII ";"; localized (zh-CN) runs often
+    // emit full-width "；" which hides every dimension after the first. The machine
+    // contract prompt must therefore require ASCII separators for Scenario and 5W1H.
+    const scenarioMalformed = requirementModelMarkdown.replace(
+      '- Scenario: Who=project member; Where=task editor; When=after entering required task data',
+      '- Scenario: Who=project member；Where=task editor；When=after entering required task data',
+    );
+    expect(validatePackage({ requirementModelMarkdown: scenarioMalformed }).errors).toEqual(
+      expect.arrayContaining([
+        'requirement_model.md RM-001 Scenario must define exactly one Where=... assignment.',
+        'requirement_model.md RM-001 Scenario must define exactly one When=... assignment.',
+      ]),
+    );
+  });
+
+  it('rejects forward-design paired with source-only truth (prompt must declare the pairing)', () => {
+    const forwardSource = designMarkdown.replace(
+      '- Primary source of truth: requirement',
+      '- Primary source of truth: source',
+    );
+    expect(validatePackage({ designMarkdown: forwardSource }).errors).toEqual(
+      expect.arrayContaining([
+        'design.md forward-design cannot declare source as its only primary source of truth.',
+      ]),
+    );
+  });
+
+  it('rejects local depth that adds a dependency (prompt must declare the budget rule)', () => {
+    const localWithDependency = designMarkdown.replace(
+      '- New dependencies allowed: 0',
+      '- New dependencies allowed: 1',
+    );
+    expect(validatePackage({ designMarkdown: localWithDependency }).errors).toEqual(
+      expect.arrayContaining([
+        'design.md local design may not add a dependency without escalating its depth and evidence.',
+      ]),
+    );
+  });
+
+  it('rejects full-width semicolons between architecture candidate entries', () => {
+    // Regression: Candidate comparison is split on ASCII ";" and must contain exactly
+    // Candidate count entries. A localized full-width "；" collapses multiple candidates
+    // into one entry, so the machine contract prompt must require ASCII separators.
+    const fullWidthCandidates = designMarkdown
+      .replace('Design-Depth: local', 'Design-Depth: standard')
+      .replace('- Candidate count: 1', '- Candidate count: 2')
+      .replace(
+        '- Candidate comparison: existing task boundary | satisfies the complete submission flow | keeps state and invariants cohesive | retains the current service dependency | limits migration and regression risk',
+        '- Candidate comparison: existing boundary | fits the flow | keeps invariants cohesive | retains one dependency | limits regression risk；new workflow service | also fits the flow | adds isolation seams | adds indirection cost | adds migration risk',
+      );
+    expect(validatePackage({ designMarkdown: fullWidthCandidates }).errors).toEqual(
+      expect.arrayContaining([
+        'design.md Architecture Candidates Candidate comparison must contain exactly 2 semicolon-separated candidate entries.',
+      ]),
     );
   });
 
@@ -495,6 +674,89 @@ describe('Design-Contract: 5 quality validation', () => {
       expect.arrayContaining([
         'requirement_model.md SSD-001 SSD must declare the primary business actor first so it appears on the left.',
         'requirement_model.md SSD-001 SSD must declare the product second with the stable alias System.',
+      ]),
+    );
+  });
+
+  it('requires a concrete version in LANG Language and version (prompt must declare it)', () => {
+    const noVersion = implementationModelMarkdown.replace(
+      '- Language and version: TypeScript 5.9 from apps/desktop/package.json and the configured compiler',
+      '- Language and version: TypeScript from the existing project toolchain',
+    );
+    expect(validatePackage({ implementationModelMarkdown: noVersion }).errors).toEqual(
+      expect.arrayContaining([
+        'implementation_model.md LANG-001 must cite an observed language/toolchain version.',
+      ]),
+    );
+  });
+
+  it('requires DES Domain mapping to reference DOM-* or none - <reason> (prompt must declare it)', () => {
+    const badMapping = designModelMarkdown.replace(
+      '- Domain mapping: DOM-001',
+      '- Domain mapping: the task concept',
+    );
+    expect(validatePackage({ designModelMarkdown: badMapping }).errors).toEqual(
+      expect.arrayContaining([
+        'design_model.md DES-001 Domain mapping must reference DOM-* or use none - <auxiliary reason>.',
+      ]),
+    );
+  });
+
+  it('requires DOM Related use cases to reference RM-* (prompt must declare it)', () => {
+    const noRm = domainModelMarkdown.replace(
+      '- Related use cases: RM-001',
+      '- Related use cases: none',
+    );
+    expect(validatePackage({ domainModelMarkdown: noRm }).errors).toEqual(
+      expect.arrayContaining([
+        'domain_model.md DOM-001 must reference at least one RM-* Related use case.',
+      ]),
+    );
+  });
+
+  it('requires IMP Project files and symbols to be concrete (prompt must declare it)', () => {
+    const abstractFiles = implementationModelMarkdown.replace(
+      /^- Project files and symbols:.*$/m,
+      '- Project files and symbols: the task service and execution modules',
+    );
+    expect(validatePackage({ implementationModelMarkdown: abstractFiles }).errors).toEqual(
+      expect.arrayContaining([
+        'implementation_model.md IMP-001 must map to concrete project files and symbols.',
+      ]),
+    );
+  });
+
+  it('requires IMP Design mapping to reference SYS-*, DES-*, and FLOW-*/CONTRACT-* (prompt must declare it)', () => {
+    const missingRefs = implementationModelMarkdown.replace(
+      '- Design mapping: SYS-001, DES-001, STATE-001, FLOW-001',
+      '- Design mapping: DES-001',
+    );
+    expect(validatePackage({ implementationModelMarkdown: missingRefs }).errors).toEqual(
+      expect.arrayContaining([
+        'implementation_model.md IMP-001 Design mapping must reference SYS-*, DES-*, and FLOW-*/CONTRACT-* IDs.',
+      ]),
+    );
+  });
+
+  it('requires IMP Class realization to reference a DES-* (prompt must declare it)', () => {
+    const noDesRef = implementationModelMarkdown.replace(
+      '- Class realization: DES-001 -> apps/desktop/src/main/task-execution.ts#TaskExecution',
+      '- Class realization: the task execution class in apps/desktop/src/main/task-execution.ts',
+    );
+    expect(validatePackage({ implementationModelMarkdown: noDesRef }).errors).toEqual(
+      expect.arrayContaining([
+        'implementation_model.md IMP-001 Class realization must reference at least one DES-*.',
+      ]),
+    );
+  });
+
+  it('requires direction LR in the domain class diagram (prompt must declare it)', () => {
+    // Regression: the validator enforces `direction LR` but the prompt previously
+    // never mentioned it, so generated domain_model.md failed the layout check.
+    const noDirection = domainModelMarkdown.replace('    direction LR\n', '');
+    expect(validatePackage({ domainModelMarkdown: noDirection }).errors).toEqual(
+      expect.arrayContaining([
+        'domain_model.md Domain Class Diagram must use direction LR for a readable relationship layout.',
       ]),
     );
   });
@@ -684,6 +946,9 @@ describe('Design-Contract: 5 quality validation', () => {
     expect(retryPrompt).not.toContain('Design-Contract: 3');
     expect(retryPrompt).not.toContain('Design-Contract: 4');
     expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).toContain('Design-Contract: 5');
+    expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).toContain(
+      'RM through FUN, SSD, DOM, ADR, SYS, DES',
+    );
     expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).not.toContain('Design-Contract: 4');
   });
 
@@ -691,5 +956,226 @@ describe('Design-Contract: 5 quality validation', () => {
     expect(getAutocodeDesignPackageFingerprint(buildV5Package())).toHaveLength(64);
     expect(getAutocodeDesignPackageFingerprint(buildV5Package()))
       .toBe(getAutocodeDesignPackageFingerprint({ ...buildV5Package() }));
+  });
+});
+
+describe('design review human-input gate detection', () => {
+  const reviseWithUnresolved = [
+    'Status: REVISE',
+    '',
+    '## 阻塞发现',
+    '',
+    '### BR-002 Q1/Q2 仍是实现硬门',
+    '- Impacted design IDs: DES-004, DES-006',
+    '- Evidence: unresolved - requirements.md Q1 尚未批准七种方块的精确布局；observed - IMP-005 不能形成旋转期望；inferred - 终点未闭合。',
+    '- Simplest project-consistent correction: 先按 Q1/Q2 的人工确认路径批准一套规则。',
+    '',
+    '### BR-006 SevenBag 组合点矛盾',
+    '- Evidence: observed - ADR-002 与 DES-011 冲突；unresolved - requirements.md Q2 尚未批准下落间隔初值与逐级函数。',
+  ].join('\n');
+
+  it('flags a REVISE review blocked on unresolved open questions', () => {
+    const gate = detectAutocodeDesignReviewHumanInputGate(reviseWithUnresolved);
+    expect(gate.blocked).toBe(true);
+    expect(gate.questions).toHaveLength(2);
+    expect(gate.questions[0]).toContain('requirements.md Q1');
+    expect(gate.questions[1]).toContain('requirements.md Q2');
+    expect(gate.message).toContain('require a human decision');
+    expect(gate.message).toContain('re-run planning');
+  });
+
+  it('does not flag a PASSED review', () => {
+    const passed = 'Status: PASSED\n\nThe package is coherent.\n- Evidence: unresolved - stale example';
+    expect(detectAutocodeDesignReviewHumanInputGate(passed).blocked).toBe(false);
+  });
+
+  it('does not flag a REVISE review whose findings are all fixable defects', () => {
+    const fixableOnly = [
+      'Status: REVISE',
+      '### BR-006 SevenBag 矛盾',
+      '- Evidence: observed - ADR-002 与 DES-011 冲突；inferred - 对象图不一致。',
+    ].join('\n');
+    expect(detectAutocodeDesignReviewHumanInputGate(fixableOnly).blocked).toBe(false);
+  });
+
+  it('ignores unresolved - none placeholders and deduplicates questions', () => {
+    const withNone = [
+      'Status: REVISE',
+      '- Evidence: unresolved - none',
+      '- Evidence: unresolved - requirements.md Q1 布局待批准',
+      '- Evidence: unresolved - requirements.md Q1 布局待批准',
+    ].join('\n');
+    const gate = detectAutocodeDesignReviewHumanInputGate(withNone);
+    expect(gate.blocked).toBe(true);
+    expect(gate.questions).toEqual(['requirements.md Q1 布局待批准']);
+  });
+
+  it('handles missing input safely', () => {
+    expect(detectAutocodeDesignReviewHumanInputGate(undefined).blocked).toBe(false);
+    expect(detectAutocodeDesignReviewHumanInputGate('').blocked).toBe(false);
+  });
+});
+
+describe('machine contract prompt stays aligned with the validator', () => {
+  const prompt = AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT;
+
+  it('instructs the DES field labels the validator actually requires', () => {
+    // Regression: the prompt previously told the model to emit "- DES Element:" and
+    // "- DES Role stereotype:", but getMachineReadableField only matches "- Element:"
+    // and "- Role stereotype:", so every generated design_model.md failed validation.
+    expect(prompt).toContain('- Element: ');
+    expect(prompt).toContain('- Role stereotype: ');
+    expect(prompt).not.toContain('- DES Element:');
+    expect(prompt).not.toContain('- DES Role stereotype:');
+  });
+
+  it('tells the model each model file uses its own title, not # Design:', () => {
+    // Regression: the model reused "# Design:" for design_model.md, but the model-file
+    // identity check requires "# Design Model:" (contract.title).
+    expect(prompt).toContain('# Requirement Model: ');
+    expect(prompt).toContain('# Domain Model: ');
+    expect(prompt).toContain('# Design Model: ');
+    expect(prompt).toContain('# Implementation Model: ');
+  });
+
+  it('requires ASCII-semicolon separated SOLID assignments', () => {
+    // Regression: the model used full-width separators, so validateDimensionAssignments
+    // (which splits on ASCII ";") could not find the OCP/LSP/ISP/DIP assignments.
+    expect(prompt).toContain('SRP=...; OCP=...; LSP=...; ISP=...; DIP=...');
+  });
+
+  it('requires ASCII separators for Scenario and 5W1H dimensions', () => {
+    // Regression: Scenario (Who/Where/When) and 5W1H (Who/What/Why/When/Where/How)
+    // are validated with validateDimensionAssignments, which splits on ASCII ";".
+    expect(prompt).toContain(
+      'Scenario and 5W1H analysis must separate dimensions with ASCII semicolons',
+    );
+  });
+
+  it('lists design.md and implementation_model.md headings like the other model files', () => {
+    // The validator enforces required headings for every artifact; the prompt must
+    // declare them for design.md and implementation_model.md too (previously only
+    // requirement_model/domain_model/design_model headings were listed).
+    expect(prompt).toContain('- design.md headings: Scope And Evidence;');
+    expect(prompt).toContain(
+      '- implementation_model.md headings: Language And Coding Constraints; Implementation Model.',
+    );
+  });
+
+  it('requires ASCII separators for architecture candidate comparison', () => {
+    // Regression: Candidate comparison is split on ASCII ";" (candidates) and "|" (values).
+    expect(prompt).toContain(
+      'separate candidates with ASCII semicolons and the five values within each candidate with ASCII pipes',
+    );
+  });
+
+  it('declares the combination constraints for analysis direction and local budget', () => {
+    // Regression: the validator enforces direction/source pairings and local-depth budget.
+    expect(prompt).toContain('forward-design uses requirement or mixed (never source alone)');
+    expect(prompt).toContain('mixed analysis must use mixed');
+    expect(prompt).toContain('At local depth, keep New dependencies allowed: 0 and New architectural patterns: none');
+  });
+
+  it('declares the domain class diagram direction LR requirement', () => {
+    // Regression: the validator enforces `direction LR` for the domain classDiagram.
+    expect(prompt).toContain('Start the classDiagram body with direction LR');
+  });
+
+  it('requires localized prose to read naturally and idiomatically', () => {
+    // Quality: prevents machine-translated / word-for-word localized descriptions.
+    expect(prompt).toContain('natural, fluent, idiomatic technical writing');
+    expect(prompt).toContain('not word-for-word translation');
+  });
+
+  it('embeds copyable SSD and domain classDiagram skeletons in the initial contract', () => {
+    // Quality: give the model the exact diagram shapes up front so requirement_model
+    // and domain_model pass on the first attempt instead of failing then repairing.
+    expect(prompt).toContain('User->>+System:');
+    expect(prompt).toContain('System-->>-User:');
+    expect(prompt).toContain('class DOM_001["<localized label>"]');
+    expect(prompt).toContain('[*] --> <InitialState>');
+  });
+
+  it('declares the stateless State Transition Diagrams none-reason rule', () => {
+    // Regression: the validator requires a stateless design to record `none - <reason>`
+    // under State Transition Diagrams; the prompt must declare that.
+    expect(prompt).toContain('write "none - <reason>" under the State Transition Diagrams heading');
+  });
+
+  it('declares that IMP Class realization references DES-* and LANG cites a version', () => {
+    // Regression: the validator requires Class realization to reference DES-* and
+    // Language and version to include a concrete version number.
+    expect(prompt).toContain('Class realization=DES-*');
+    expect(prompt).toContain('Language and version=<observed language and a concrete version number>');
+  });
+
+  it('declares that IMP Design mapping references SYS-*, DES-*, and FLOW-*/CONTRACT-*', () => {
+    // Regression: the validator requires Design mapping to reference SYS-*, DES-*,
+    // and FLOW-*/CONTRACT-* IDs.
+    expect(prompt).toContain('Design mapping=SYS-*, DES-*, FLOW-*/CONTRACT-*');
+  });
+
+  it('declares the reference requirements for DES/DOM/IMP fields', () => {
+    // Regression: these fields must reference specific ID kinds / concrete files.
+    expect(prompt).toContain('Domain mapping=DOM-* or none - <auxiliary reason>');
+    expect(prompt).toContain('Method derivation=RM-*/FUN-*/SSD-* verbs');
+    expect(prompt).toContain('Related use cases=RM-*');
+    expect(prompt).toContain('Project files and symbols=<path/to/file#symbol>');
+  });
+
+  it('produces a design_model.md that passes validation when the contract is followed', () => {
+    // designModelMarkdown mirrors the machine contract labels; it must validate cleanly.
+    const stageErrors = validateAutocodeStandardDesignStageArtifacts(
+      { requirementModelMarkdown, domainModelMarkdown, designMarkdown, designModelMarkdown },
+      'design_model',
+    ).errors;
+
+    expect(stageErrors).toEqual([]);
+    expect(designModelMarkdown.startsWith('# Design Model:')).toBe(true);
+    expect(designModelMarkdown).toContain('\n- Element: class - TaskExecution');
+    expect(designModelMarkdown).toContain('\n- Role stereotype: entity');
+  });
+});
+
+describe('design quality retry prompt targeted repair guidance', () => {
+  it('injects a Mermaid SSD skeleton when SSD checks fail', () => {
+    const prompt = buildAutocodeDesignQualityRetryPrompt([
+      'requirement_model.md SSD-001 SSD must enable Mermaid autonumber so business messages are displayed in order.',
+    ]);
+    expect(prompt).toContain('Copy these Mermaid shapes exactly');
+    expect(prompt).toContain('User->>+System:');
+    expect(prompt).toContain('System-->>-User:');
+  });
+
+  it('injects a domain classDiagram skeleton when class diagram checks fail', () => {
+    const prompt = buildAutocodeDesignQualityRetryPrompt([
+      'domain_model.md Domain Class Diagram must use direction LR for a readable relationship layout.',
+    ]);
+    expect(prompt).toContain('Copy these Mermaid shapes exactly');
+    expect(prompt).toContain('DOM_001["<localized label>"]');
+  });
+
+  it('injects a STATE stateDiagram-v2 skeleton when state checks fail', () => {
+    const prompt = buildAutocodeDesignQualityRetryPrompt([
+      'design_model.md STATE-001 must contain a Mermaid stateDiagram-v2.',
+    ]);
+    expect(prompt).toContain('Copy these Mermaid shapes exactly');
+    expect(prompt).toContain('[*] --> <InitialState>');
+  });
+
+  it('injects ASCII separator examples when dimension/comparison checks fail', () => {
+    const prompt = buildAutocodeDesignQualityRetryPrompt([
+      'requirement_model.md RM-001 Scenario must define exactly one Where=... assignment.',
+    ]);
+    expect(prompt).toContain('never use full-width');
+    expect(prompt).toContain('SOLID rationale: SRP=...; OCP=...; LSP=...; ISP=...; DIP=...');
+  });
+
+  it('omits diagram and separator guidance for unrelated errors', () => {
+    const prompt = buildAutocodeDesignQualityRetryPrompt([
+      'design.md must declare Design-Contract: 5.',
+    ]);
+    expect(prompt).not.toContain('Copy these Mermaid shapes exactly');
+    expect(prompt).not.toContain('never use full-width');
   });
 });

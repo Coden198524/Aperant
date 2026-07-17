@@ -88,6 +88,7 @@ export function TaskHeader({
                   {task.reviewReason === 'completed' ? 'Completed' :
                    task.reviewReason === 'errors' ? 'Has Errors' :
                    task.reviewReason === 'plan_review' ? 'Approve Plan' :
+                   task.reviewReason === 'needs_input' ? 'Needs Your Input' :
                    task.reviewReason === 'stopped' ? 'Stopped' : 'QA Issues'}
                 </Badge>
               )}

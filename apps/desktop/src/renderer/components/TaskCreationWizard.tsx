@@ -26,6 +26,7 @@ import { createTask, saveDraft, loadDraft, clearDraft, isDraftEmpty } from '../s
 import { useProjectStore } from '../stores/project-store';
 import { buildBranchOptions } from '../lib/branch-utils';
 import { cn } from '../lib/utils';
+import { resolveTaskDevelopmentMode, workflowModeForDevelopmentMode } from '../../shared/utils/task-mode';
 import type { TaskCategory, TaskPriority, TaskComplexity, TaskImpact, TaskMetadata, ImageAttachment, TaskDraft, ModelType, ThinkingLevel, ReferencedFile, GitBranchDetail, TaskWorkflowMode, TaskDevelopmentMode } from '../../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../shared/types/settings';
 import {
@@ -46,15 +47,8 @@ interface TaskCreationWizardProps {
 // Special value for "use project default" branch
 const PROJECT_DEFAULT_BRANCH = AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER;
 
-function workflowModeForDevelopmentMode(mode: TaskDevelopmentMode): TaskWorkflowMode {
-  return mode === 'direct' ? 'off' : 'balanced';
-}
-
 function resolveDraftDevelopmentMode(draft: TaskDraft): TaskDevelopmentMode {
-  if (draft.developmentMode === 'direct' || draft.developmentMode === 'standard') {
-    return draft.developmentMode;
-  }
-  return draft.workflowMode === 'off' ? 'direct' : 'standard';
+  return resolveTaskDevelopmentMode(draft);
 }
 
 export function TaskCreationWizard({

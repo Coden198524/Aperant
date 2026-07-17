@@ -39,7 +39,8 @@
     "hasErrors": "Contient des erreurs",
     "qaIssues": "Problèmes QA",
     "approvePlan": "Approuver le plan",
-    "stopped": "Arrêté"
+    "stopped": "Arrêté",
+    "needsInput": "Vos informations requises"
   },
   "tooltips": {
     "archiveTask": "Archiver la tâche",

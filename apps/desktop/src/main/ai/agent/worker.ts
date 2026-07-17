@@ -2150,6 +2150,14 @@ async function runBuildOrchestrator(
   } else if (outcome.success) {
     postTaskEvent('QA_PASSED');
     postTaskEvent('BUILD_COMPLETE');
+  } else if (!outcome.success && outcome.needsInput) {
+    // Planning stopped because the independent design review is blocked on
+    // unresolved open questions only the user can resolve. Surface it as a
+    // needs-input pause (XState awaiting_input) instead of a generic failure.
+    postTaskEvent('PLANNING_NEEDS_INPUT', {
+      questions: outcome.needsInput.questions,
+      message: outcome.needsInput.message,
+    });
   } else if (outcome.codingCompleted) {
     // Coding succeeded but QA failed: emit QA-specific event so XState
     // transitions to 'error' with reviewReason='errors' instead of the

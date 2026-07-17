@@ -739,6 +739,7 @@ function buildTaskRunLanguageInstruction(language: AutocodeAgentLanguage): strin
   if (isTaskRunChineseLanguage(language)) {
     return [
       '\u9664\u4ee3\u7801\u3001\u8def\u5f84\u3001\u547d\u4ee4\u3001API \u540d\u79f0\u3001\u5305\u540d\u3001\u6e90\u6587\u672c\u548c\u5fc5\u8981\u82f1\u6587\u4e13\u6709\u540d\u8bcd\u5916\uff0c\u6240\u6709\u8bf4\u660e\u3001\u8ba1\u5212\u3001\u89c4\u683c\u3001\u603b\u7ed3\u548c\u8bc4\u5ba1\u5907\u6ce8\u90fd\u5fc5\u987b\u4f7f\u7528\u7b80\u4f53\u4e2d\u6587\u3002',
+      '中文说明要自然、流畅、地道，写成完整通顺的句子，不要逐字直译英文或产生机翻腔。',
       '\u6700\u7ec8\u7b54\u590d\u5fc5\u987b\u662f\u7b80\u6d01\u7684\u4e2d\u6587 Markdown \u8868\u683c\uff0c\u5305\u542b\u201c\u53d8\u66f4\u201d\u201c\u9a8c\u8bc1\u201d\u201c\u8bc4\u5ba1\u5907\u6ce8\u201d\u3002',
     ].join(' ');
   }
@@ -746,6 +747,7 @@ function buildTaskRunLanguageInstruction(language: AutocodeAgentLanguage): strin
   if (language === 'fr') {
     return [
       'Write all non-code prose in French, including plans, specs, summaries, and review notes.',
+      'Write natural, fluent, idiomatic French in complete sentences; avoid word-for-word translation and machine-translation phrasing.',
       'Keep code identifiers, commands, paths, API names, package names, and source text unchanged unless translation is requested.',
       'Final answer: concise French markdown table with rows for changes, verification, and review notes.',
     ].join(' ');
@@ -758,6 +760,8 @@ function buildStandardPlanningStageLanguageInstruction(language: AutocodeAgentLa
   if (isTaskRunChineseLanguage(language)) {
     return [
       '除机器可读字段名、必需状态标记、代码、路径、命令、API 名称和技术标识符外，所有设计、评审发现、理由、计划和总结都必须使用简体中文。',
+      '中文描述必须自然、流畅、专业，符合中文技术文档的表达习惯；避免逐字直译英文字段名或机翻腔，确保每个句子完整通顺、含义清晰。',
+      '字段标签保持英文，其后的中文值要写成完整、地道的句子，不要把英文字段名直译后堆砌名词短语。例如应写“不缓存任何棋盘状态或判定结果”，而不是“无缓存棋盘判定”；应写“负责判定方块是否越界或与已有方块重叠”，而不是“统一边界、重叠判定”。',
       'design_review.md 的首行仍必须精确使用 Status: PASSED 或 Status: REVISE，但后续评审正文必须使用简体中文。',
       '保留规则要求的英文机器字段名、枚举 token 和证据前缀；不得翻译、加反引号或在枚举 token 后追加说明。只本地化自由文本字段，以及 requirement -、observed -、inferred -、unresolved - 之后的描述。',
     ].join(' ');
@@ -765,6 +769,7 @@ function buildStandardPlanningStageLanguageInstruction(language: AutocodeAgentLa
   if (language === 'fr') {
     return [
       'Write all design, review findings, rationale, planning text, and summaries in French except required machine fields, status tokens, code, paths, commands, API names, and technical identifiers.',
+      'Write natural, fluent, idiomatic French that reads like native technical documentation; avoid word-for-word translation of the English field names and ensure complete, well-formed sentences.',
       'Keep the first line of design_review.md exactly Status: PASSED or Status: REVISE, but write the review body in French.',
       'Keep contract enum tokens and evidence prefixes in English, unquoted, and exact; localize only descriptive prose.',
     ].join(' ');
@@ -876,7 +881,7 @@ function buildNodeRunnerScript(input: {
   return `const { spawn, spawnSync } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
 const { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } = require('node:fs');
-const { tmpdir } = require('node:os');
+const { tmpdir, homedir } = require('node:os');
 const { basename, dirname, isAbsolute, join, relative, resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { TextDecoder } = require('node:util');
@@ -999,6 +1004,7 @@ const standardPlanningValidatedDesignStages = new Set();
 let standardPlanningStage = resolveInitialStandardPlanningStage();
 let standardPlanningStageRetryCount = 0;
 let standardPlanningDesignRevisionCount = 0;
+let standardPlanningUpstreamRepairCount = 0;
 const directSessionStateVersion = ${JSON.stringify(AUTOCODE_DIRECT_SESSION_STATE_VERSION)};
 const taskEventPrefix = ${JSON.stringify(AUTOCODE_TASK_EVENT_PREFIX)};
 const fileWriteLockScope = inferFileWriteLockScope();
@@ -1043,6 +1049,7 @@ const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
 const STANDARD_PLANNING_STAGE_RETRY_MAX_CHARS = 16000;
 const STANDARD_PLANNING_STAGE_DEFAULT_MAX_RETRIES = 2;
 const STANDARD_DESIGN_STAGE_MAX_RETRIES = 3;
+const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = 2;
 const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
 let schedulingMetadataRetryCount = 0;
@@ -1053,6 +1060,9 @@ let currentAttemptStartedAt = Date.now();
 let currentAttemptDurationRecorded = false;
 let directActiveDurationMs = 0;
 let activeCliJsonSessionId = '';
+let resumeInvocationIssued = false;
+let lastFilesystemSessionCaptureAt = 0;
+const persistedResumeSessionId = readPersistedPhaseSessionId();
 let memoryContextBlock = '';
 const pendingMemoryWrites = [];
 const runStartedAt = Date.now();
@@ -2003,11 +2013,39 @@ function buildAttemptInvocation(currentAttemptId) {
   if (directRetryInvocation) {
     return directRetryInvocation;
   }
+  const phaseResumeInvocation = buildPhaseResumeInvocation(currentAttemptId);
+  if (phaseResumeInvocation) {
+    return phaseResumeInvocation;
+  }
   const retryContinuationError = getDirectCliRetryContinuationBlocker(currentAttemptId);
   if (retryContinuationError) {
     return { command, args, resumeSessionId: '', resumeKind: '', retryContinuationError };
   }
   return { command, args, resumeSessionId: '', resumeKind: '' };
+}
+
+// On the first attempt of a resumed planning/coding run, continue the provider
+// session captured before the previous pause/stop instead of starting fresh.
+// Guarded so it fires only once and never after a live session already exists
+// (e.g. across planning stage transitions within the same process).
+function buildPhaseResumeInvocation(currentAttemptId) {
+  if (
+    phase === 'direct' ||
+    currentAttemptId > 1 ||
+    resumeInvocationIssued ||
+    activeCliJsonSessionId ||
+    !persistedResumeSessionId
+  ) {
+    return null;
+  }
+  for (const strategy of getDirectCliContinuationStrategies()) {
+    const invocation = buildDirectCliContinuationInvocation(strategy);
+    if (invocation) {
+      resumeInvocationIssued = true;
+      return invocation;
+    }
+  }
+  return null;
 }
 
 function buildDirectRetryInvocation(currentAttemptId) {
@@ -2043,10 +2081,10 @@ function getDirectCliContinuationStrategies() {
 
 function resolveDirectCliContinuationSessionId(strategy) {
   if (strategy.sessionIdSource === 'json-event-session') {
-    return activeCliJsonSessionId;
+    return activeCliJsonSessionId || persistedResumeSessionId;
   }
   if (strategy.sessionIdSource === 'latest') {
-    return 'latest';
+    return persistedResumeSessionId || 'latest';
   }
   return '';
 }
@@ -2161,6 +2199,15 @@ function buildDirectCliFlagContinuationArgs(strategy) {
     : [strategy.continuationFlag];
   if (existingFlags.some((arg) => args.includes(arg))) {
     return args;
+  }
+  // When a concrete session id is known, resume that exact conversation with
+  // --resume <id>; otherwise fall back to --continue (latest in this cwd).
+  const resumeSessionId = typeof strategy.resumeSessionId === 'string' ? strategy.resumeSessionId.trim() : '';
+  if (resumeSessionId && resumeSessionId !== 'latest') {
+    const resumeFlag = typeof strategy.resumeFlag === 'string' && strategy.resumeFlag.trim()
+      ? strategy.resumeFlag.trim()
+      : '--resume';
+    return [resumeFlag, resumeSessionId, ...args];
   }
   return [strategy.continuationFlag, ...args];
 }
@@ -2284,6 +2331,9 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
   if (finalized || currentAttemptId !== attemptId) return;
   flushCliJsonOutput(defaultAttemptState);
   flushModelOutput(defaultAttemptState);
+  // Save the just-finished attempt's filesystem session id (Claude) before a
+  // possible stage advance starts a new conversation.
+  maybeCaptureFilesystemSessionId(true);
 
   if (exitCode === 0 && !explicitError && await advanceStandardPlanningStage()) {
     return;
@@ -2337,15 +2387,15 @@ function recordDirectAttemptActiveDuration() {
   currentAttemptDurationRecorded = true;
   directActiveDurationMs += Math.max(0, Date.now() - currentAttemptStartedAt);
 }
-async function finishRun(exitCode, signal, explicitError, validationError) {
+async function finishRun(exitCode, signal, explicitError, validationError, needsInputMessage) {
   if (finalized) return;
   if (phase === 'coding') {
     failActiveCodingAttempts('Coding run ended before all active workers completed.');
     reconcileCodingWorkItemLogStatuses();
   }
-  let failed = exitCode !== 0 || Boolean(explicitError) || Boolean(validationError);
+  let failed = exitCode !== 0 || Boolean(explicitError) || Boolean(validationError) || Boolean(needsInputMessage);
   const failureMessage = failed
-    ? explicitError || validationError || summarizeCliFailureReason(defaultAttemptState, exitCode, signal)
+    ? explicitError || validationError || needsInputMessage || summarizeCliFailureReason(defaultAttemptState, exitCode, signal)
     : undefined;
   if (failed) {
     const hasValidatedPlanningStage = standardPlanningRequirementsValidated ||
@@ -2378,11 +2428,13 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     }
     updateStandardPlanningTransaction('committed', 'completed');
   }
-  const rateLimited = failed && isCliRateLimitFailure(defaultAttemptState, explicitError, validationError, failureMessage);
+  const rateLimited = !needsInputMessage && failed && isCliRateLimitFailure(defaultAttemptState, explicitError, validationError, failureMessage);
   const resultMessage = failed
-    ? rateLimited
-      ? summarizeCliRateLimitReason(defaultAttemptState, explicitError, validationError, failureMessage)
-      : failureMessage
+    ? needsInputMessage
+      ? needsInputMessage
+      : rateLimited
+        ? summarizeCliRateLimitReason(defaultAttemptState, explicitError, validationError, failureMessage)
+        : failureMessage
     : localizeMessage('completed', 'Autocode CLI run completed.');
   const now = new Date().toISOString();
   const result = {
@@ -2391,7 +2443,7 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     args,
     exitCode,
     signal,
-    status: rateLimited ? 'rate_limited' : failed ? 'error' : 'success',
+    status: needsInputMessage ? 'needs_input' : rateLimited ? 'rate_limited' : failed ? 'error' : 'success',
     message: resultMessage,
     updatedAt: now,
   };
@@ -2547,6 +2599,11 @@ async function finishRun(exitCode, signal, explicitError, validationError) {
     });
   }
   updateTaskLogs(logPhase, failed ? 'failed' : 'completed', result.message);
+  if (!failed && phase !== 'direct') {
+    // Phase finished cleanly; drop its saved session so the next phase or a
+    // fresh re-run does not resume a completed conversation.
+    clearPhaseSessionId();
+  }
   await flushCliMemoryWrites();
   emitPhase(failed ? 'failed' : phase === 'coding' || phase === 'direct' ? 'complete' : executionPhase, result.message, failed ? 0 : 100);
   process.exit(failed ? 1 : 0);
@@ -4605,6 +4662,10 @@ function handleChildOutput(stream, data, state = defaultAttemptState) {
   const text = decodeCliOutputChunk(data);
   if (!text) return;
   refreshAttemptActivity(state);
+  // Kill-safe write-through for filesystem-session providers (Claude): the
+  // session file exists soon after output begins, so a mid-run pause still
+  // leaves a resumable id on disk. Throttled and a no-op for JSON providers.
+  maybeCaptureFilesystemSessionId(false);
   captureCliFailureSignals(text, state);
   if (cliJsonMode && stream === 'stdout') {
     processCliJsonOutput(text, state);
@@ -5093,8 +5154,175 @@ function processCliJsonLine(line, state = defaultAttemptState) {
 
 function rememberCliJsonSessionId(sessionId) {
   const normalized = typeof sessionId === 'string' ? sessionId.trim() : '';
-  if (phase === 'direct' && cliJsonMode && normalized) {
-    activeCliJsonSessionId = normalized;
+  if (!cliJsonMode || !normalized) {
+    return;
+  }
+  activeCliJsonSessionId = normalized;
+  if (phase !== 'direct') {
+    // Write-through so an abrupt pause/stop (process kill) still leaves the
+    // latest provider session id on disk for the next resume.
+    persistPhaseSessionId(normalized);
+  }
+}
+
+function getPhaseSessionStatePath() {
+  return join(specDir, artifacts.sessionState);
+}
+
+function loadPhaseSessionStore() {
+  const data = readJsonFile(getPhaseSessionStatePath());
+  if (data && data.sessions && typeof data.sessions === 'object' && !Array.isArray(data.sessions)) {
+    return data.sessions;
+  }
+  return {};
+}
+
+// Reads the persisted provider session id for the current phase so a resumed
+// run can continue the same model conversation instead of starting fresh.
+// Only entries whose cli matches the current run are honored, so a provider
+// with no resume support simply finds nothing.
+function readPersistedPhaseSessionId() {
+  if (phase === 'direct') {
+    return '';
+  }
+  const sessions = loadPhaseSessionStore();
+  const entry = sessions[phase];
+  if (entry && typeof entry.sessionId === 'string' && entry.sessionId.trim() && entry.cli === cli) {
+    return entry.sessionId.trim();
+  }
+  return '';
+}
+
+function persistPhaseSessionId(sessionId) {
+  if (phase === 'direct') {
+    return;
+  }
+  const normalized = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!normalized) {
+    return;
+  }
+  try {
+    const sessions = loadPhaseSessionStore();
+    const existing = sessions[phase];
+    if (existing && existing.sessionId === normalized && existing.cli === cli) {
+      return;
+    }
+    sessions[phase] = {
+      sessionId: normalized,
+      cli,
+      provider: getDirectCliProviderName(),
+      updatedAt: new Date().toISOString(),
+    };
+    writeJson(getPhaseSessionStatePath(), { version: 1, sessions });
+  } catch {
+    // Session persistence is best-effort; never break the run on write failure.
+  }
+}
+
+// Clears the persisted session for the current phase once it completes
+// successfully, so a later re-run or the next phase starts a fresh session.
+function clearPhaseSessionId() {
+  if (phase === 'direct') {
+    return;
+  }
+  try {
+    const statePath = getPhaseSessionStatePath();
+    const data = readJsonFile(statePath);
+    if (!data || !data.sessions || typeof data.sessions !== 'object' || !(phase in data.sessions)) {
+      return;
+    }
+    delete data.sessions[phase];
+    writeJson(statePath, { version: 1, sessions: data.sessions });
+  } catch {
+    // Best-effort cleanup; ignore write failures.
+  }
+}
+
+// Providers that are not run in JSON mode (e.g. Claude Code) do not stream a
+// session id, so it is resolved from the newest session file on disk instead.
+function getFilesystemSessionCaptureStrategy() {
+  const strategy = directCliContinuationStrategy;
+  if (!strategy || typeof strategy !== 'object') {
+    return null;
+  }
+  if (strategy.type !== 'append-continuation-flag' || strategy.sessionIdSource !== 'latest') {
+    return null;
+  }
+  if (!isCliCommandOneOf(command, strategy.commandNames)) {
+    return null;
+  }
+  return strategy;
+}
+
+function getRunnerHomeDir() {
+  if (process.env.HOME && process.env.HOME.trim()) {
+    return process.env.HOME.trim();
+  }
+  if (process.env.USERPROFILE && process.env.USERPROFILE.trim()) {
+    return process.env.USERPROFILE.trim();
+  }
+  return homedir();
+}
+
+function cwdToRunnerClaudeProjectPath(value) {
+  const backslash = String.fromCharCode(92);
+  const normalized = String(value || '').split(backslash).join('/');
+  return normalized.replace(/^[a-zA-Z]:/, '').split('/').join('-');
+}
+
+// Resolves the most recently written Claude session id for the current cwd,
+// mirroring Claude Code's own "continue the latest conversation" resolution.
+function resolveLatestClaudeSessionId() {
+  try {
+    const configDir = process.env.CLAUDE_CONFIG_DIR && process.env.CLAUDE_CONFIG_DIR.trim()
+      ? process.env.CLAUDE_CONFIG_DIR.trim()
+      : join(getRunnerHomeDir(), '.claude');
+    const projectDir = join(configDir, 'projects', cwdToRunnerClaudeProjectPath(cwd));
+    if (!existsSync(projectDir)) {
+      return '';
+    }
+    const suffix = '.jsonl';
+    let newestId = '';
+    let newestMtime = -1;
+    for (const name of readdirSync(projectDir)) {
+      if (!name.endsWith(suffix)) {
+        continue;
+      }
+      let mtime;
+      try {
+        mtime = statSync(join(projectDir, name)).mtimeMs;
+      } catch {
+        continue;
+      }
+      if (mtime > newestMtime) {
+        newestMtime = mtime;
+        newestId = name.slice(0, name.length - suffix.length);
+      }
+    }
+    return newestId;
+  } catch {
+    return '';
+  }
+}
+
+// Write-through capture for filesystem-session providers (Claude). Throttled so
+// streaming output does not scan the session directory on every chunk, and
+// forced at attempt finalize so the completed stage's session id is saved.
+function maybeCaptureFilesystemSessionId(force) {
+  if (phase === 'direct' || cliJsonMode) {
+    return;
+  }
+  if (!getFilesystemSessionCaptureStrategy()) {
+    return;
+  }
+  const now = Date.now();
+  if (!force && now - lastFilesystemSessionCaptureAt < 2000) {
+    return;
+  }
+  lastFilesystemSessionCaptureAt = now;
+  const sessionId = resolveLatestClaudeSessionId();
+  if (sessionId) {
+    persistPhaseSessionId(sessionId);
   }
 }
 
@@ -7186,6 +7414,25 @@ async function validateStandardDesignOwnerStage(stage) {
   }
 }
 
+async function detectStandardDesignReviewHumanInputGate() {
+  if (!designQualityModulePath) {
+    return '';
+  }
+  try {
+    const moduleUrl = pathToFileURL(designQualityModulePath).href;
+    const designQuality = await import(moduleUrl);
+    const detect = designQuality.detectAutocodeDesignReviewHumanInputGate;
+    if (typeof detect !== 'function') {
+      return '';
+    }
+    const reviewMarkdown = readOptionalArtifact(artifacts.designReview || 'design_review.md');
+    const gate = detect(reviewMarkdown);
+    return gate && gate.blocked ? gate : null;
+  } catch {
+    return null;
+  }
+}
+
 async function validateStandardPlanningOwnerStage(stage) {
   if (stage === 'requirements') {
     return validateStandardPlanningRequirementsStage();
@@ -7242,13 +7489,53 @@ function resetStandardPlanningValidationFrom(stage) {
   standardPlanningTasksValidated = false;
 }
 
+function selectStandardDesignErrorOwnerStage(errorText) {
+  const text = String(errorText || '');
+  const artifactOwners = [
+    [/\\brequirement_model\\.md\\b/i, 'requirement_model'],
+    [/\\bdomain_model\\.md\\b/i, 'domain_model'],
+    [/\\bdesign\\.md\\b/i, 'design'],
+    [/\\bdesign_model\\.md\\b/i, 'design_model'],
+    [/\\bimplementation_model\\.md\\b/i, 'implementation_model'],
+  ];
+  const firstArtifactOwner = artifactOwners
+    .map(([pattern, stage]) => ({ index: text.search(pattern), stage }))
+    .filter(({ index }) => index >= 0)
+    .sort((left, right) => left.index - right.index)[0];
+  if (firstArtifactOwner) return firstArtifactOwner.stage;
+  if (/\\b(?:RM|FUN|SSD)-[0-9]+\\b/i.test(text)) return 'requirement_model';
+  if (/\\bDOM-[0-9]+\\b/i.test(text)) return 'domain_model';
+  if (/\\b(?:SYS|DES|STATE|FLOW|CONTRACT|PAT|REV)-[0-9]+\\b/i.test(text)) return 'design_model';
+  if (/\\b(?:LANG|IMP)-[0-9]+\\b/i.test(text)) return 'implementation_model';
+  return 'design';
+}
+
 function selectStandardDesignRevisionStartStage(validationError) {
   const text = String(validationError || '');
-  if (/\\b(?:RM|FUN|SSD)-[0-9]+\\b|requirement_model\\.md/i.test(text)) return 'requirement_model';
-  if (/\\bDOM-[0-9]+\\b|domain_model\\.md/i.test(text)) return 'domain_model';
-  if (/\\b(?:SYS|DES|STATE|FLOW|CONTRACT|PAT|REV)-[0-9]+\\b|design_model\\.md/i.test(text)) return 'design_model';
-  if (/\\b(?:LANG|IMP)-[0-9]+\\b|implementation_model\\.md/i.test(text)) return 'implementation_model';
-  return 'design';
+  const errorBlockBeginMarker = 'BEGIN STANDARD DESIGN VALIDATION ERRORS';
+  const errorBlockEndMarker = 'END STANDARD DESIGN VALIDATION ERRORS';
+  const errorBlockStart = text.indexOf(errorBlockBeginMarker);
+  const errorBlockEnd = text.indexOf(errorBlockEndMarker);
+  const ownerText = errorBlockStart >= 0 && errorBlockEnd > errorBlockStart
+    ? text.slice(
+        errorBlockStart + errorBlockBeginMarker.length,
+        errorBlockEnd,
+      )
+    : text;
+  const stageOrder = [
+    'requirement_model',
+    'domain_model',
+    'design',
+    'design_model',
+    'implementation_model',
+  ];
+  const ownerStages = ownerText
+    .split(String.fromCharCode(10))
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map(selectStandardDesignErrorOwnerStage);
+  return stageOrder.find((stage) => ownerStages.includes(stage)) ||
+    selectStandardDesignErrorOwnerStage(ownerText);
 }
 
 async function reconcileStandardPlanningResumeStage() {
@@ -7281,7 +7568,68 @@ async function advanceStandardPlanningStage() {
   const validationError = await validateStandardPlanningOwnerStage(completedStage);
 
   if (validationError) {
+    const repairStage = selectStandardDesignRevisionStartStage(validationError);
+    const completedStageIndex = standardPlanningOwnerStageOrder.indexOf(completedStage);
+    const repairStageIndex = standardPlanningOwnerStageOrder.indexOf(repairStage);
+    if (
+      completedStage !== 'design_review' &&
+      repairStageIndex >= 0 &&
+      repairStageIndex < completedStageIndex
+    ) {
+      standardPlanningUpstreamRepairCount += 1;
+      if (
+        standardPlanningUpstreamRepairCount <=
+        STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS
+      ) {
+        includeStandardPlanningStagesFrom(repairStage);
+        standardPlanningStage = repairStage;
+        resetStandardPlanningValidationFrom(repairStage);
+        standardPlanningStageRetryCount = 0;
+        appendTaskLogEntry(
+          logPhase,
+          'info',
+          'Standard planning stage ' + completedStage +
+            ' found an upstream owner error; repair ' +
+            standardPlanningUpstreamRepairCount + '/' +
+            STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS +
+            ' resumes from ' + repairStage + ': ' +
+            compactRunnerDirectValidationReason(validationError),
+        );
+        startAttempt(buildPromptWithMemoryContext(
+          buildStandardPlanningStagePrompt(repairStage, validationError),
+        ));
+        return true;
+      }
+      await finishRun(
+        1,
+        undefined,
+        'Standard planning upstream repair failed after ' +
+          STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS +
+          ' revisions: ' + validationError,
+        validationError,
+      );
+      return true;
+    }
     if (completedStage === 'design_review') {
+      const humanInputGate = await detectStandardDesignReviewHumanInputGate();
+      if (humanInputGate) {
+        const humanInputMessage = humanInputGate.message;
+        const humanInputQuestions = Array.isArray(humanInputGate.questions)
+          ? humanInputGate.questions
+          : [];
+        appendTaskLogEntry(
+          logPhase,
+          'info',
+          'Standard planning paused: independent design review needs user input; stopping instead of consuming revision rounds. ' +
+            humanInputMessage,
+        );
+        emitTaskEvent('PLANNING_NEEDS_INPUT', {
+          questions: humanInputQuestions,
+          message: humanInputMessage,
+        });
+        await finishRun(1, undefined, undefined, undefined, humanInputMessage);
+        return true;
+      }
       standardPlanningDesignRevisionCount += 1;
       if (standardPlanningDesignRevisionCount <= 2) {
         const revisionStage = selectStandardDesignRevisionStartStage(validationError);

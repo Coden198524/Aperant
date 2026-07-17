@@ -43,6 +43,8 @@ Design-Depth: local|standard|complex
 Design-Revision: <non-negative integer>
 
 ## Scope And Evidence
+Keep every field below inside this section as an exact `- Field: value` bullet. Do not place a field before
+the heading or rewrite it as an unlabeled paragraph.
 - Analysis direction: forward-design|reverse-engineering|mixed
 - Primary source of truth: requirement|source|mixed
 - Requirement evidence: requirement - <source and claim> | none - <reason>
@@ -127,7 +129,7 @@ Design-Revision: <non-negative integer>
 <residual risks, validation, rollback, and evidence-based evolution triggers>
 
 ## Traceability
-- RM-... -> FUN-... -> DOM-... -> ADR-... -> SYS-... -> DES-... -> STATE/FLOW/CONTRACT-... -> LANG-... -> IMP-...
+- RM-... -> FUN-... -> SSD-... -> DOM-... -> ADR-... -> SYS-... -> DES-... -> STATE/FLOW/CONTRACT-... -> LANG-... -> IMP-...
 ```
 
 ## Quality Gate

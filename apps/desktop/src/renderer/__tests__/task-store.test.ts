@@ -588,6 +588,25 @@ describe('Task Store', () => {
       expect(task.executionProgress?.phase).toBe('planning');
       expect(task.subtasks.map(subtask => subtask.status)).toEqual(['pending']);
     });
+    it('recovers a needs_input task from the persisted plan', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1', status: 'in_progress' })]
+      });
+
+      const plan = createTestPlan({
+        status: 'human_review',
+        reviewReason: 'needs_input',
+        xstateState: 'awaiting_input',
+        executionPhase: 'planning',
+      } as Partial<ImplementationPlan> & { executionPhase: string });
+
+      useTaskStore.getState().updateTaskFromPlan('task-1', plan);
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.status).toBe('human_review');
+      expect(task.reviewReason).toBe('needs_input');
+      expect(task.executionProgress?.phase).toBe('planning');
+    });
     it('should NOT modify status from non-terminal plan (XState is source of truth)', () => {
       useTaskStore.setState({
         tasks: [createTestTask({ id: 'task-1', status: 'ai_review' })]

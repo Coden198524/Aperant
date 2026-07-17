@@ -33,6 +33,7 @@ export type TaskEvent =
       quality?: Record<string, unknown>;
     }
   | { type: 'PLANNING_FAILED'; error: string; recoverable: boolean }
+  | { type: 'PLANNING_NEEDS_INPUT'; questions?: string[]; message?: string }
   | { type: 'CODING_FAILED'; subtaskId: string; error: string; attemptCount: number }
   | { type: 'QA_MAX_ITERATIONS'; iteration: number; maxIterations: number }
   | { type: 'QA_AGENT_ERROR'; iteration: number; consecutiveErrors: number }
@@ -82,12 +83,25 @@ export const taskMachine = createMachine(
           QA_PASSED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           DIRECT_COMPLETED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           PLANNING_FAILED: { target: 'error', actions: ['setReviewReasonErrors', 'setError'] },
+          // Planning is blocked on information only the user can supply (e.g. unapproved
+          // open questions). Pause in a dedicated waiting state instead of failing.
+          PLANNING_NEEDS_INPUT: { target: 'awaiting_input', actions: 'setReviewReasonNeedsInput' },
           // Older workers may still emit CODING_FAILED for pre-coding failures.
           CODING_FAILED: { target: 'error', actions: ['setReviewReasonErrors', 'setError'] },
           USER_STOPPED: [
             { target: 'backlog', guard: 'noPlanYet', actions: 'clearReviewReason' },
             { target: 'human_review', actions: 'setReviewReasonStopped' }
           ],
+          PROCESS_EXITED: { target: 'error', guard: 'unexpectedExit', actions: 'setReviewReasonErrors' }
+        }
+      },
+      awaiting_input: {
+        on: {
+          // The user supplied the missing information and re-ran planning.
+          PLANNING_STARTED: { target: 'planning', actions: 'clearReviewReason' },
+          PLANNING_NEEDS_INPUT: { actions: 'setReviewReasonNeedsInput' },
+          DIRECT_COMPLETED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
+          USER_STOPPED: { target: 'backlog', actions: 'clearReviewReason' },
           PROCESS_EXITED: { target: 'error', guard: 'unexpectedExit', actions: 'setReviewReasonErrors' }
         }
       },
@@ -190,6 +204,7 @@ export const taskMachine = createMachine(
     },
     actions: {
       setReviewReasonPlan: assign({ reviewReason: () => 'plan_review' }),
+      setReviewReasonNeedsInput: assign({ reviewReason: () => 'needs_input' }),
       setReviewReasonCompleted: assign({ reviewReason: () => 'completed' }),
       setReviewReasonStopped: assign({ reviewReason: () => 'stopped' }),
       setReviewReasonQaRejected: assign({ reviewReason: () => 'qa_rejected' }),

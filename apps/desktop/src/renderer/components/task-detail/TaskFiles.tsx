@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext, Fragment, type MouseEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -38,6 +38,7 @@ const FAILED_ARTIFACT_PATTERN = /^(.*\.(?:md|json|jsonl))\.failed-([^.]+)$/i;
 const INTERNAL_TASK_FILES = new Set([
   'autocode-run-prompt.md',
   'autocode-run-result.json',
+  'session_state.json',
 ]);
 const FILE_PRIORITY: Record<string, number> = {
   'HUMAN_INPUT.md': 0,
@@ -242,6 +243,162 @@ function SourceContent({ content }: { content: string }) {
       {content}
     </pre>
   );
+}
+
+// Machine-contract artifacts (design.md, *_model.md, ...) are dominated by
+// "- Label: value" bullets. Rendered as a plain bullet list they blur together
+// and are hard to scan. When a list is made up entirely of such field bullets
+// we render it as an aligned two-column definition grid (a "table" look); the
+// key column lines up so the eye can scan labels vertically. This is a
+// display-only transform driven by the parsed markdown - the source file is
+// never modified.
+const FIELD_LABEL_PATTERN = /^(\s*)([A-Za-z0-9][A-Za-z0-9 /()-]{0,60}?):(\s+)([\s\S]*)$/;
+
+// Signals to the `li` renderer that its parent list is being displayed as a
+// definition grid, so it should emit two grid cells (label + value).
+const FieldGridContext = createContext(false);
+
+// Stable design IDs (DES-001, RM-002, DOM-013, ...) are the backbone of the
+// traceability web in these artifacts. Highlighting them as subtle monospace
+// tokens lets the eye follow references without changing the source text.
+const DESIGN_ID_TOKEN =
+  /\b(?:ADR|RM|FUN|SSD|DOM|SYS|DES|STATE|FLOW|CONTRACT|PAT|REV|LANG|IMP)-\d{2,}\b/g;
+
+function splitStringWithIds(text: string): ReactNode {
+  if (!text || !DESIGN_ID_TOKEN.test(text)) return text;
+
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  let tokenKey = 0;
+  DESIGN_ID_TOKEN.lastIndex = 0;
+  let match: RegExpExecArray | null = DESIGN_ID_TOKEN.exec(text);
+  while (match !== null) {
+    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
+    parts.push(
+      <span
+        key={`id-${tokenKey++}`}
+        className="rounded-sm bg-primary/10 px-1 font-mono text-[0.85em] font-medium text-primary"
+      >
+        {match[0]}
+      </span>,
+    );
+    lastIndex = match.index + match[0].length;
+    match = DESIGN_ID_TOKEN.exec(text);
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
+}
+
+// Highlights IDs in the plain-text portions of markdown children while leaving
+// already-rendered inline elements (code, links, emphasis) untouched.
+function highlightIds(children: ReactNode): ReactNode {
+  if (typeof children === 'string') return splitStringWithIds(children);
+  if (Array.isArray(children)) {
+    return children.map((child, index) =>
+      typeof child === 'string' ? (
+        // biome-ignore lint/suspicious/noArrayIndexKey: parsed markdown children have a fixed order
+        <Fragment key={`seg-${index}`}>{splitStringWithIds(child)}</Fragment>
+      ) : (
+        child
+      ),
+    );
+  }
+  return children;
+}
+
+interface HastNodeLike {
+  type: string;
+  tagName?: string;
+  value?: string;
+  children?: HastNodeLike[];
+}
+
+function getHastText(node: HastNodeLike): string {
+  if (node.type === 'text') return node.value ?? '';
+  if (!node.children) return '';
+  return node.children.map(getHastText).join('');
+}
+
+function nodeContainsNestedList(node: HastNodeLike): boolean {
+  if (!node.children) return false;
+  return node.children.some(
+    (child) =>
+      (child.type === 'element' && (child.tagName === 'ul' || child.tagName === 'ol')) ||
+      nodeContainsNestedList(child),
+  );
+}
+
+// A list qualifies as a field grid when it has at least two items, every item
+// is a "Label: value" field, and no item nests another list (nested lists need
+// normal indentation, not a flat grid).
+function isFieldList(node: HastNodeLike | undefined): boolean {
+  if (!node?.children) return false;
+  const items = node.children.filter(
+    (child) => child.type === 'element' && child.tagName === 'li',
+  );
+  if (items.length < 2) return false;
+  return items.every(
+    (item) => !nodeContainsNestedList(item) && FIELD_LABEL_PATTERN.test(getHastText(item).trim()),
+  );
+}
+
+function parseFieldListItem(children: ReactNode): { label: string; value: ReactNode } | null {
+  const childArray = Array.isArray(children) ? children : [children];
+  const firstChild = childArray[0];
+  if (typeof firstChild !== 'string') return null;
+
+  const match = FIELD_LABEL_PATTERN.exec(firstChild);
+  if (!match) return null;
+
+  const [, , label, , rest] = match;
+  return {
+    label,
+    value: (
+      <>
+        {highlightIds(rest)}
+        {childArray.slice(1)}
+      </>
+    ),
+  };
+}
+
+function FieldListItem({ children }: { children: ReactNode }) {
+  const inFieldGrid = useContext(FieldGridContext);
+  const field = parseFieldListItem(children);
+
+  if (inFieldGrid) {
+    // Parent `li` is display:contents, so these spans become the two grid
+    // columns. A left border on the value column acts as the table divider.
+    if (!field) {
+      return (
+        <li>
+          <span className="[grid-column:1/-1] text-foreground/90">{highlightIds(children)}</span>
+        </li>
+      );
+    }
+    return (
+      <li>
+        <span className="pr-3 font-semibold text-foreground [overflow-wrap:anywhere]">
+          {field.label}
+        </span>
+        <span className="border-l border-border/50 pl-3 text-foreground/90 [overflow-wrap:anywhere]">
+          {field.value}
+        </span>
+      </li>
+    );
+  }
+
+  if (field) {
+    return (
+      <li>
+        <span className="font-semibold text-foreground">{field.label}</span>
+        <span className="text-muted-foreground">:&nbsp;</span>
+        {field.value}
+      </li>
+    );
+  }
+
+  return <li>{highlightIds(children)}</li>;
 }
 
 export function TaskFiles({ task }: TaskFilesProps) {
@@ -469,6 +626,27 @@ export function TaskFiles({ task }: TaskFilesProps) {
         {children}
       </blockquote>
     ),
+    ul: ({ children, node }) => {
+      if (isFieldList(node as unknown as HastNodeLike)) {
+        return (
+          <FieldGridContext.Provider value={true}>
+            <ul className="not-prose my-3 grid grid-cols-[max-content_1fr] gap-y-1.5 rounded-md border border-border/60 bg-muted/20 px-3 py-2 [&>li]:contents">
+              {children}
+            </ul>
+          </FieldGridContext.Provider>
+        );
+      }
+      return <ul>{children}</ul>;
+    },
+    li: ({ children }) => <FieldListItem>{children}</FieldListItem>,
+    p: ({ children }) => <p>{highlightIds(children)}</p>,
+    h3: ({ children }) => <h3>{highlightIds(children)}</h3>,
+    h4: ({ children }) => <h4>{highlightIds(children)}</h4>,
+    td: ({ children }) => (
+      <td className="border border-border px-2 py-1 align-top">
+        {highlightIds(children)}
+      </td>
+    ),
     code: ({ children, className }) => {
       if (isMermaidCodeBlock(className)) {
         return <MermaidDiagram chart={getMermaidChartSource(children)} />;
@@ -499,11 +677,6 @@ export function TaskFiles({ task }: TaskFilesProps) {
       <th className="border border-border bg-muted/60 px-2 py-1 text-left font-medium">
         {children}
       </th>
-    ),
-    td: ({ children }) => (
-      <td className="border border-border px-2 py-1 align-top">
-        {children}
-      </td>
     )
   }), []);
 
@@ -593,7 +766,7 @@ export function TaskFiles({ task }: TaskFilesProps) {
     // Render markdown files in reading mode.
     if (selectedFileKind === 'markdown') {
       return (
-        <div className="prose prose-sm dark:prose-invert max-w-none p-4 prose-p:text-foreground/90 prose-headings:text-foreground prose-strong:text-foreground prose-li:text-foreground/90 prose-pre:overflow-x-auto prose-a:break-all prose-blockquote:not-italic prose-blockquote:text-foreground/90">
+        <div className="prose prose-sm dark:prose-invert max-w-none p-4 prose-p:text-foreground/90 prose-headings:text-foreground prose-strong:text-foreground prose-li:text-foreground/90 prose-li:my-1 prose-li:marker:text-muted-foreground/60 prose-ul:my-3 prose-ol:my-3 prose-pre:overflow-x-auto prose-a:break-all prose-blockquote:not-italic prose-blockquote:text-foreground/90">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
             {fileContent}
           </ReactMarkdown>

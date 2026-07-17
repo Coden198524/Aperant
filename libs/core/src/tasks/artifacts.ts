@@ -19,6 +19,7 @@ export const AUTOCODE_TASK_ARTIFACTS = {
   taskLogs: 'task_logs.jsonl',
   directSummary: 'direct_summary.md',
   directSession: 'direct_session.json',
+  sessionState: 'session_state.json',
   critiqueReport: 'critique_report.md',
   qaReport: 'qa_report.md',
   runResult: 'autocode-run-result.json',

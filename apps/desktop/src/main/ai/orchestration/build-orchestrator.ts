@@ -53,6 +53,7 @@ import {
   getAutocodeQaReportStatus,
   getAutocodeDesignPackageFingerprint,
   getAutocodeDesignReviewStatus,
+  detectAutocodeDesignReviewHumanInputGate,
   selectAutocodeDesignRevisionStages,
   validateAutocodeStandardDesignStageArtifacts,
   RequirementsOutputSchema,
@@ -610,6 +611,12 @@ export interface BuildOutcome {
   error?: string;
   /** Whether the coding phase completed before failure (indicates QA-phase failure) */
   codingCompleted: boolean;
+  /**
+   * Present when planning stopped because the independent design review is blocked
+   * on unresolved open questions only the user can resolve. The worker maps this to
+   * a PLANNING_NEEDS_INPUT task event instead of a generic failure.
+   */
+  needsInput?: { questions: string[]; message: string };
 }
 
 // =============================================================================
@@ -859,7 +866,7 @@ export class BuildOrchestrator extends EventEmitter {
         // Planning phase
         const planResult = await this.runPlanningPhase();
         if (!planResult.success) {
-          return this.buildOutcome(false, Date.now() - startTime, planResult.error);
+          return this.buildOutcome(false, Date.now() - startTime, planResult.error, planResult.needsInput);
         }
 
         // Reset subtask statuses to "pending" after first-run planning: the spec
@@ -1740,6 +1747,18 @@ export class BuildOrchestrator extends EventEmitter {
             errors,
           };
         }
+        const repairStage = selectAutocodeDesignRevisionStages(errors)[0];
+        if (
+          repairStage &&
+          STANDARD_DESIGN_OWNER_STAGES.indexOf(repairStage) <
+            STANDARD_DESIGN_OWNER_STAGES.indexOf(stage)
+        ) {
+          return {
+            success: false,
+            error: `${stage} owner found validation errors owned by ${repairStage}.`,
+            errors,
+          };
+        }
         retryContext = buildAutocodeDesignQualityRetryPrompt(errors);
         this.emitTyped(
           'log',
@@ -1765,7 +1784,7 @@ export class BuildOrchestrator extends EventEmitter {
   private async ensureStandardDesignForPlanning(
     planningTransaction: StandardPlanningTransactionState,
     requestedOwnerStages: readonly AutocodeStandardPlanningOwnerStage[] = STANDARD_DESIGN_OWNER_STAGES,
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; needsInput?: { questions: string[]; message: string } }> {
     const existingPackage = await this.readStandardDesignPackageArtifacts();
     const existingQuality = validateAutocodeStandardDesignArtifacts({
       ...existingPackage,
@@ -1802,6 +1821,7 @@ export class BuildOrchestrator extends EventEmitter {
     );
 
     for (let revision = 0; revision <= 2; revision++) {
+      let restartFromUpstreamOwner = false;
       for (const stage of generationStages) {
         const stageResult = await this.runStandardDesignOwnerStage(
           stage,
@@ -1812,12 +1832,37 @@ export class BuildOrchestrator extends EventEmitter {
           },
         );
         if (!stageResult.success) {
+          const repairStages = stageResult.errors
+            ? selectAutocodeDesignRevisionStages(stageResult.errors)
+                .filter((candidate) => candidate !== 'design_review')
+            : [];
+          const repairStage = repairStages[0];
+          if (
+            repairStage &&
+            STANDARD_DESIGN_OWNER_STAGES.indexOf(repairStage) <
+              STANDARD_DESIGN_OWNER_STAGES.indexOf(stage) &&
+            revision < 2
+          ) {
+            generationStages = repairStages;
+            retryContext = buildAutocodeDesignQualityRetryPrompt(
+              stageResult.errors ?? [],
+            );
+            restartFromUpstreamOwner = true;
+            this.emitTyped(
+              'log',
+              `${stage} validation found an upstream owner error; revision ${revision + 1}/2 resumes from ${repairStage}.`,
+            );
+            break;
+          }
           return {
             success: false,
             error: stageResult.error ?? `${stage} owner failed.`,
           };
         }
         retryContext = undefined;
+      }
+      if (restartFromUpstreamOwner) {
+        continue;
       }
 
       const reviewResult = await this.runStandardDesignOwnerStage(
@@ -1833,6 +1878,29 @@ export class BuildOrchestrator extends EventEmitter {
       }
       if (reviewResult.error === 'Build cancelled') {
         return { success: false, error: reviewResult.error };
+      }
+
+      // If the review is blocked on unresolved open questions only the user can
+      // resolve (e.g. unapproved Q1/Q2), stop promptly instead of consuming the
+      // remaining revision budget, and surface a needs-input signal for the UI.
+      const reviewMarkdown = await this.readOptionalPlanArtifact(
+        AUTOCODE_TASK_ARTIFACTS.designReview,
+      );
+      const humanInputGate = detectAutocodeDesignReviewHumanInputGate(reviewMarkdown);
+      if (humanInputGate.blocked) {
+        this.emitTyped(
+          'log',
+          'Standard planning paused: independent design review needs user input; ' +
+            'stopping instead of consuming revision rounds. ' + humanInputGate.message,
+        );
+        return {
+          success: false,
+          error: humanInputGate.message,
+          needsInput: {
+            questions: humanInputGate.questions,
+            message: humanInputGate.message,
+          },
+        };
       }
 
       const reviewErrors = reviewResult.errors ?? [reviewResult.error ?? 'Design review failed'];
@@ -1855,7 +1923,7 @@ export class BuildOrchestrator extends EventEmitter {
    * Run the planning phase: invoke planner agent to create upstream tasks.md,
    * then derive implementation_plan.md runtime work packages.
    */
-  private async runPlanningPhase(): Promise<{ success: boolean; error?: string }> {
+  private async runPlanningPhase(): Promise<{ success: boolean; error?: string; needsInput?: { questions: string[]; message: string } }> {
     this.transitionPhase('planning', translatePhaseMessage('planning', 'Creating implementation plan', this.config.language));
     const agentType = this.getAgentForPhase('planning');
     let planningRetryContext: string | undefined;
@@ -1950,7 +2018,10 @@ export class BuildOrchestrator extends EventEmitter {
         requestedDesignOwnerStages,
       );
       if (!designResult.success) {
-        return failPlanning(designResult.error ?? 'Standard design failed.');
+        const designFailure = await failPlanning(designResult.error ?? 'Standard design failed.');
+        return designResult.needsInput
+          ? { ...designFailure, needsInput: designResult.needsInput }
+          : designFailure;
       }
       validatedDesign = true;
     } else {
@@ -2836,7 +2907,12 @@ export class BuildOrchestrator extends EventEmitter {
     }
   }
 
-  private buildOutcome(success: boolean, durationMs: number, error?: string): BuildOutcome {
+  private buildOutcome(
+    success: boolean,
+    durationMs: number,
+    error?: string,
+    needsInput?: { questions: string[]; message: string },
+  ): BuildOutcome {
     const outcome: BuildOutcome = {
       success,
       finalPhase: this.currentPhase,
@@ -2844,6 +2920,7 @@ export class BuildOrchestrator extends EventEmitter {
       durationMs,
       error,
       codingCompleted: this.completedPhases.includes('coding'),
+      ...(needsInput ? { needsInput } : {}),
     };
 
     if (!success && !isTerminalPhase(this.currentPhase)) {

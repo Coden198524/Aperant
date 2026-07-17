@@ -35,7 +35,8 @@ import { TaskFormFields } from './task-form/TaskFormFields';
 import { type FileReferenceData } from './task-form/useImageUpload';
 import { persistUpdateTask } from '../stores/task-store';
 import { useProjectStore } from '../stores/project-store';
-import type { Task, ImageAttachment, TaskCategory, TaskPriority, TaskComplexity, TaskImpact, ModelType, ThinkingLevel, TaskDevelopmentMode, TaskMetadata, TaskWorkflowMode } from '../../shared/types';
+import { resolveTaskDevelopmentMode, workflowModeForDevelopmentMode } from '../../shared/utils/task-mode';
+import type { Task, ImageAttachment, TaskCategory, TaskPriority, TaskComplexity, TaskImpact, ModelType, ThinkingLevel, TaskDevelopmentMode } from '../../shared/types';
 import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_PHASE_MODELS,
@@ -58,20 +59,6 @@ interface TaskEditDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Optional callback when task is successfully saved */
   onSaved?: () => void;
-}
-
-function workflowModeForDevelopmentMode(mode: TaskDevelopmentMode): TaskWorkflowMode {
-  return mode === 'direct' ? 'off' : 'balanced';
-}
-
-function resolveTaskDevelopmentMode(metadata: TaskMetadata | undefined): TaskDevelopmentMode {
-  if (metadata?.developmentMode === 'direct' || metadata?.developmentMode === 'standard') {
-    return metadata.developmentMode;
-  }
-  if (metadata?.workflowMode === 'off') {
-    return 'direct';
-  }
-  return 'standard';
 }
 
 export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDialogProps) {

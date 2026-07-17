@@ -1570,6 +1570,8 @@ export {
   getAutocodeDesignPackageFingerprint,
   getAutocodeDesignReferenceFingerprint,
   getAutocodeDesignReviewStatus,
+  detectAutocodeDesignReviewHumanInputGate,
+  type AutocodeDesignReviewHumanInputGate,
   parseAutocodeDesignSections,
   selectAutocodeDesignRevisionStages,
   validateAutocodeDesignPackageIdentity,

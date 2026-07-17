@@ -473,6 +473,8 @@ export const TaskCard = memo(function TaskCard({
         return { label: t('reviewReason.qaIssues'), variant: 'warning' };
       case 'plan_review':
         return { label: t('reviewReason.approvePlan'), variant: 'warning' };
+      case 'needs_input':
+        return { label: t('reviewReason.needsInput'), variant: 'warning' };
       case 'stopped':
         return { label: t('reviewReason.stopped'), variant: 'warning' };
       default:

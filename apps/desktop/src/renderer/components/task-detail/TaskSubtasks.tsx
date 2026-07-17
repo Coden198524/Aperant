@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn, calculateProgress } from '../../lib/utils';
 import { resolveActiveSubtaskIndex } from '../../lib/subtask-progress';
 import { deleteSubtask } from '../../stores/task-store';
+import { isDirectDevelopmentTask } from '../../../shared/utils/task-mode';
 import type {
   Task,
   TaskLogs as TaskLogsData,
@@ -770,7 +771,7 @@ function getExecutionGraphRouteKey(point: ExecutionGraphPoint, direction: 'h' | 
 }
 
 function isDirectModeTask(task: Task): boolean {
-  return task.metadata?.developmentMode === 'direct' || task.metadata?.workflowMode === 'off';
+  return isDirectDevelopmentTask(task);
 }
 
 function getExecutionGraphPointKey(point: ExecutionGraphPoint): string {

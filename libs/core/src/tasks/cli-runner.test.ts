@@ -449,7 +449,7 @@ describe('Autocode CLI runner prompt', () => {
     });
     const runner = readFileSync(plan.runnerFilePath, 'utf8');
 
-    expect(runner).toContain("const { tmpdir } = require('node:os');");
+    expect(runner).toContain("const { tmpdir, homedir } = require('node:os');");
     expect(runner).toContain('function maybeFallbackFileWriteLockAttempt');
     expect(runner).toContain("join(tmpdir(), 'autocode-runtime-file-write-locks'");
     expect(runner).toContain("['EACCES', 'ENAMETOOLONG', 'ENOENT', 'ENOTDIR', 'EPERM', 'EROFS']");
@@ -870,10 +870,20 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('validationRetryCount >= maxValidationRetries');
     expect(runner).toContain('const STANDARD_PLANNING_STAGE_RETRY_MAX_CHARS = 16000;');
     expect(runner).toContain('const STANDARD_DESIGN_STAGE_MAX_RETRIES = 3;');
+    expect(runner).toContain('const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = 2;');
+    expect(runner).toContain('found an upstream owner error; repair');
+    // Planning must stop promptly when the independent review needs user input,
+    // instead of consuming its revision rounds and rolling back.
+    expect(runner).toContain('detectStandardDesignReviewHumanInputGate');
+    expect(runner).toContain('detectAutocodeDesignReviewHumanInputGate');
+    expect(runner).toContain('Standard planning paused: independent design review needs user input');
+    expect(runner).toContain('repairStageIndex < completedStageIndex');
+    expect(runner).toContain('[/\\brequirement_model\\.md\\b/i');
+    expect(runner).toContain('[/\\bdesign\\.md\\b/i');
     expect(runner).toContain('buildAutocodeDesignQualityRetryPrompt(errors)');
     expect(runner).toContain('standardDesignMachineContractPrompt');
     expect(runner).toContain('- DOM Concept kind: entity|value-object|aggregate|domain-service|policy|event|role|resource|technical|other');
-    expect(runner).toContain('- DES Element: module|class|component|function|store|process|data-structure|other - <localized concrete element or symbol>');
+    expect(runner).toContain('- Element: module|class|component|function|store|process|data-structure|other - <localized concrete element or symbol>');
     expect(runner).toContain('Declare Design-Contract: 5');
     expect(runner).toContain('await validateRunnerRuntimeDesignContract()');
     expect(runner).toContain('validateAutocodeDesignPackageIdentity');
@@ -908,6 +918,7 @@ describe('Autocode CLI runner prompt', () => {
 
     expect(runner).toContain('design_review.md 的首行仍必须精确使用 Status: PASSED 或 Status: REVISE');
     expect(runner).toContain('后续评审正文必须使用简体中文');
+    expect(runner).toContain('不要把英文字段名直译后堆砌名词短语');
     expect(runner).toContain('## OUTPUT LANGUAGE REQUIREMENT');
     expect(runner).toContain('do not write _Depends on_: or _Design_:');
     expect(runner).toContain('do not use a free-form _File intent_: sentence');

@@ -5,6 +5,7 @@ export const TASK_STATE_NAMES = [
   'backlog',
   'planning',
   'plan_review',
+  'awaiting_input',
   'coding',
   'qa_review',
   'qa_fixing',
@@ -19,6 +20,7 @@ export type TaskStateName = (typeof TASK_STATE_NAMES)[number];
 
 export const XSTATE_SETTLED_STATES: ReadonlySet<string> = new Set<TaskStateName>([
   'plan_review',
+  'awaiting_input',
   'human_review',
   'error',
   'creating_pr',
@@ -37,6 +39,7 @@ export const XSTATE_TO_PHASE: Record<TaskStateName, ExecutionPhase> & Record<str
   backlog: 'idle',
   planning: 'planning',
   plan_review: 'planning',
+  awaiting_input: 'planning',
   coding: 'coding',
   qa_review: 'qa_review',
   qa_fixing: 'qa_fixing',
@@ -59,6 +62,8 @@ export function mapStateToLegacy(
       return { status: 'in_progress' };
     case 'plan_review':
       return { status: 'human_review', reviewReason: 'plan_review' };
+    case 'awaiting_input':
+      return { status: 'human_review', reviewReason: 'needs_input' };
     case 'qa_review':
     case 'qa_fixing':
       return { status: 'ai_review' };

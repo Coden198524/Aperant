@@ -812,6 +812,72 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(mockUnlink).toHaveBeenCalledWith(expect.stringContaining('design_review.md'));
   });
 
+  it('routes a downstream traceability failure back to the design owner', async () => {
+    const malformedDesign = STANDARD_DESIGN_MD.replace(
+      ' -> LANG-001 -> IMP-001',
+      '',
+    );
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', malformedDesign],
+    ]);
+    installPlanningArtifactMap(files);
+
+    let designRuns = 0;
+    const runSession = vi.fn(async (config: {
+      agentType: string;
+      specPhase?: string;
+    }): Promise<SessionResult> => {
+      if (config.specPhase === 'design') {
+        designRuns++;
+        if (designRuns === 2) {
+          files.set('/spec/design.md', STANDARD_DESIGN_MD);
+        }
+      }
+      if (config.agentType === 'design_critic') {
+        files.set('/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD);
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession) as unknown as {
+      ensureStandardDesignForPlanning: (
+        transaction: Record<string, unknown>,
+      ) => Promise<{ success: boolean; error?: string }>;
+    };
+    const logMessages: string[] = [];
+    (orchestrator as unknown as BuildOrchestrator).on('log', (message: string) => {
+      logMessages.push(message);
+    });
+
+    const result = await orchestrator.ensureStandardDesignForPlanning({
+      version: 1,
+      id: 'upstream-owner-repair',
+      phase: 'planning',
+      status: 'active',
+      stage: 'started',
+      createdAt: '2026-07-16T00:00:00.000Z',
+      updatedAt: '2026-07-16T00:00:00.000Z',
+      baselineArtifactHashes: {},
+      artifactHashes: {},
+    });
+
+    expect(result.success, result.error).toBe(true);
+    expect(runSession.mock.calls
+      .filter(([config]) => config.agentType === 'software_designer')
+      .map(([config]) => config.specPhase), logMessages.join('\n'))
+      .toEqual([
+        'requirement_model',
+        'domain_model',
+        'design',
+        'design_model',
+        'implementation_model',
+        'design',
+        'design_model',
+        'implementation_model',
+      ]);
+  });
+
   it('compacts long pre-QA failure details before returning to coding', () => {
     const issues = Array.from({ length: 12 }, (_, index) => (
       `quality-check-${index + 1}: ${'very long command output with repeated diagnostics '.repeat(20)}`

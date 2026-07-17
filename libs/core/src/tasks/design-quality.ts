@@ -26,20 +26,45 @@ export const AUTOCODE_DESIGN_GENERATION_STAGE_ORDER = [
   'implementation_model',
 ] as const satisfies readonly AutocodeDesignPackageStage[];
 
+function selectAutocodeDesignErrorOwnerStage(
+  error: string,
+): AutocodeDesignPackageStage {
+  const artifactOwners = [
+    [/\brequirement_model\.md\b/i, 'requirement_model'],
+    [/\bdomain_model\.md\b/i, 'domain_model'],
+    [/\bdesign\.md\b/i, 'design'],
+    [/\bdesign_model\.md\b/i, 'design_model'],
+    [/\bimplementation_model\.md\b/i, 'implementation_model'],
+  ] as const satisfies readonly (readonly [RegExp, AutocodeDesignPackageStage])[];
+  const firstArtifactOwner = artifactOwners
+    .map(([pattern, stage]) => ({ index: error.search(pattern), stage }))
+    .filter(({ index }) => index >= 0)
+    .sort((left, right) => left.index - right.index)[0]?.stage;
+  if (firstArtifactOwner) {
+    return firstArtifactOwner;
+  }
+  if (/\b(?:RM|FUN|SSD)-[0-9]+\b/i.test(error)) {
+    return 'requirement_model';
+  }
+  if (/\bDOM-[0-9]+\b/i.test(error)) {
+    return 'domain_model';
+  }
+  if (/\b(?:SYS|DES|STATE|FLOW|CONTRACT|PAT|REV)-[0-9]+\b/i.test(error)) {
+    return 'design_model';
+  }
+  if (/\b(?:LANG|IMP)-[0-9]+\b/i.test(error)) {
+    return 'implementation_model';
+  }
+  return 'design';
+}
+
 export function selectAutocodeDesignRevisionStages(
   errors: readonly string[],
 ): AutocodeDesignPackageStage[] {
-  const text = errors.join(' ');
-  const firstStage: AutocodeDesignPackageStage =
-    /\b(?:RM|FUN|SSD)-[0-9]+\b|requirement_model\.md/i.test(text)
-      ? 'requirement_model'
-      : /\bDOM-[0-9]+\b|domain_model\.md/i.test(text)
-        ? 'domain_model'
-        : /\b(?:SYS|DES|STATE|FLOW|CONTRACT|PAT|REV)-[0-9]+\b|design_model\.md/i.test(text)
-          ? 'design_model'
-          : /\b(?:LANG|IMP)-[0-9]+\b|implementation_model\.md/i.test(text)
-            ? 'implementation_model'
-            : 'design';
+  const ownerStages = errors.map(selectAutocodeDesignErrorOwnerStage);
+  const firstStage = AUTOCODE_DESIGN_GENERATION_STAGE_ORDER.find((stage) =>
+    ownerStages.includes(stage)
+  ) ?? 'design';
   const startIndex = AUTOCODE_DESIGN_GENERATION_STAGE_ORDER.indexOf(
     firstStage as (typeof AUTOCODE_DESIGN_GENERATION_STAGE_ORDER)[number],
   );
@@ -447,8 +472,36 @@ const MODEL_SECTION_FIELDS: Partial<Record<AutocodeDesignSection['kind'], readon
   ],
 };
 
+const AUTOCODE_SSD_MERMAID_SKELETON = [
+  'sequenceDiagram',
+  '    autonumber',
+  '    actor User as <localized actor>',
+  '    participant System as <localized product>',
+  '    User->>+System: <request>',
+  '    System->>System: <coarse internal processing>',
+  '    System-->>-User: <observable response>',
+].join('\n');
+
+const AUTOCODE_DOMAIN_CLASS_DIAGRAM_SKELETON = [
+  'classDiagram',
+  '    direction LR',
+  '    class DOM_001["<localized label>"] {',
+  '        <<concept-kind>>',
+  '        attributeName',
+  '    }',
+  '    DOM_001 "1" --> "*" DOM_002 : <relationship>',
+].join('\n');
+
+const AUTOCODE_STATE_DIAGRAM_SKELETON = [
+  'stateDiagram-v2',
+  '    [*] --> <InitialState>',
+  '    <InitialState> --> <NextState>: <transition trigger>',
+  '    <NextState> --> [*]',
+].join('\n');
+
 export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   'Deterministic machine contract. Keep every field label, list marker, ASCII colon, enum token, ID, and provenance prefix in English exactly as shown. Localize only descriptive prose.',
+  'Write localized prose as natural, fluent, idiomatic technical writing in the target language: use complete, well-formed sentences and native terminology, not word-for-word translation of the English field names.',
   'Design package identity:',
   '- First line: # Design: <localized task title>',
   '- Design-Contract: 5',
@@ -456,12 +509,14 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   '- Design-Revision: <non-negative integer>',
   '- design.md defines ADR-* only and references requirement_model.md, domain_model.md, design_model.md, and implementation_model.md.',
   '- Every model file declares Design-Contract: 5, the same Design-Revision, Design-Root: design.md, and its exact Model-Kind.',
+  '- Each model file first line uses its own title, not # Design:. requirement_model.md starts with # Requirement Model: <localized title>; domain_model.md with # Domain Model: <localized title>; design_model.md with # Design Model: <localized title>; implementation_model.md with # Implementation Model: <localized title>.',
   '- requirement_model.md owns RM/FUN/SSD; domain_model.md owns DOM; design_model.md owns SYS/DES/STATE/FLOW/CONTRACT/PAT/REV; implementation_model.md owns LANG/IMP.',
   '- Stable IDs use at least three digits: ADR-001, RM-001, FUN-001, SSD-001, DOM-001, SYS-001, DES-001, optional STATE-001, FLOW-001 or CONTRACT-001, optional PAT-001/REV-001, LANG-001, and IMP-001.',
+  '- design.md headings: Scope And Evidence; Complexity Assessment; Existing Architecture Fit; Engineering Adaptation; Design Budget; Architecture Candidates; Architecture Decision; Model Package; Change And Pattern Analysis; Applicable Design Principles; Rejected Complexity; Risks And Evolution; Traceability.',
   'Architecture candidate fields in design.md:',
   '- Architecture baseline: <observed current architecture or smallest viable baseline>',
   '- Candidate count: <integer; local=1, standard<=2, complex<=3>',
-  '- Candidate comparison: <candidate | fit | benefits | costs | risks; repeat compactly>',
+  '- Candidate comparison: separate candidates with ASCII semicolons and the five values within each candidate with ASCII pipes, even when the prose is localized. Provide exactly Candidate count entries: <candidate | fit | benefits | costs | risks>; repeat compactly.',
   '- Selected architecture: <candidate name>',
   '- Selection rationale: <evidence-backed trade-off>',
   '- Rejected alternatives: <candidate and concrete rejection reason>',
@@ -472,8 +527,10 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   '- Design model: design_model.md',
   '- Implementation model: implementation_model.md',
   'Scope and engineering enum-only values:',
+  '- Put every Scope And Evidence field directly below the ## Scope And Evidence heading as an exact - Field: value bullet. Do not place fields before the heading or rewrite them as prose.',
   '- Analysis direction: forward-design|reverse-engineering|mixed',
   '- Primary source of truth: requirement|source|mixed',
+  '- Pair them consistently: forward-design uses requirement or mixed (never source alone); reverse-engineering uses source or mixed (never requirement alone); mixed analysis must use mixed.',
   '- Delivery context: greenfield|existing-system|new-subsystem|migration',
   '- System shape: local-utility|stateful-domain|interactive-simulation|data-flow|integration|mixed|other',
   '- Project paradigm: object-oriented|functional|data-oriented|procedural|mixed|other',
@@ -486,40 +543,46 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   '- Every Evidence basis value uses one or more requirement - ..., observed - ..., inferred - ..., or unresolved - ... entries.',
   'Design Budget uses these exact bullet fields. Keep the English field names, list markers, and ASCII colons; do not use headings for these fields:',
   ...DESIGN_BUDGET_FORMAT_LINES,
+  'At local depth, keep New dependencies allowed: 0 and New architectural patterns: none; escalate Design-Depth with complexity evidence before adding either.',
   'Exact model fields and value formats:',
   '- ADR: Decision; Status=proposed|accepted|superseded|rejected; Decision drivers; Alternatives considered; Trade-offs; Evidence basis.',
   '- Requirement Analysis: Input requirements; Industry assumptions=inferred - ...|none - ...; Open requirement questions=unresolved - ...|none.',
   '- RM use case: Use case name; Scenario; 5W1H analysis; Trigger and preconditions; Use case description; Steps and outputs; Use case value; Alternate and exception flows; Postconditions; 8C constraints; Evidence basis.',
-  '- Scenario: Who=...; Where=...; When=.... 5W1H analysis: Who=...; What=...; Why=...; When=...; Where=...; How=....',
+  '- Scenario and 5W1H analysis must separate dimensions with ASCII semicolons and ASCII equals signs even when the prose is localized. Scenario: Who=...; Where=...; When=.... 5W1H analysis: Who=...; What=...; Why=...; When=...; Where=...; How=....',
+  '- Steps and outputs: numbered actions starting at 1. and separated by ASCII semicolons, each with an ASCII => or -> output marker, e.g. 1. <action> => <output>; 2. <action> => <output>.',
   '- 8C constraints must contain exactly these dimensions with ASCII equals signs and semicolons: Performance, Cost, Time, Reliability, Security, Compliance, Technology, Compatibility. Use n/a - <reason> as a dimension value only when justified.',
   '- FUN: Function description; Involved use cases=RM-*; Merge decision=merged|distinct - <reason>; Evidence basis. Merge equivalent capabilities across use cases into one FUN-*.',
   '- SSD: Use case=one RM-*; Participants; Main and exception messages; Evidence basis; one Mermaid sequenceDiagram with autonumber. Declare actor first, System second, and verified externals after; show a request, System activation and self-processing, and a dashed response. Expose no product internals.',
+  'Exact SSD sequenceDiagram shape (keep the ASCII arrows and +/- activation markers; localize only prose):\n```mermaid\n' + AUTOCODE_SSD_MERMAID_SKELETON + '\n```',
   '- requirement_model.md headings: Requirement Analysis; Use Case List; Functional List; System Sequence Diagrams.',
   '- Noun Analysis: Candidate nouns; Excluded nouns; Synonym merges.',
   '- DOM Concept kind: ' + DOMAIN_CONCEPT_KIND_TOKENS.join('|'),
-  '- DOM: Noun sources; Business meaning; Attributes; Identity; Rules and invariants; Lifecycle states; Relationships; Related use cases; Evidence basis. Domain classes define no software methods or file mapping.',
-  '- domain_model.md headings: Noun Analysis; Domain Model; Domain Class Diagram. Use Mermaid classDiagram with labeled DOM_* boxes, <<Concept kind>>, attributes, and no methods. Association, aggregation, and composition show quoted multiplicity at both ends; generalization may omit it.',
+  '- DOM: Noun sources; Business meaning; Attributes; Identity; Rules and invariants; Lifecycle states; Relationships; Related use cases=RM-*; Evidence basis. Domain classes define no software methods or file mapping.',
+  '- domain_model.md headings: Noun Analysis; Domain Model; Domain Class Diagram. Use Mermaid classDiagram with labeled DOM_* boxes, <<Concept kind>>, attributes, and no methods. Start the classDiagram body with direction LR, and connect every DOM_* box to at least one other concept with a relationship. Association, aggregation, and composition show quoted multiplicity at both ends; generalization may omit it.',
+  'Exact Domain Class Diagram shape (localize only prose; keep direction LR and quoted multiplicities):\n```mermaid\n' + AUTOCODE_DOMAIN_CLASS_DIAGRAM_SKELETON + '\n```',
   '- SYS: Subsystem or boundary; Allocated requirements=RM-*; Allocated functions=FUN-*; Owns; Provides; Requires; Data and control boundary; Failure ownership; Evidence basis.',
-  '- DES Element: ' + DESIGN_ELEMENT_TOKENS.join('|') + ' - <localized concrete element or symbol>',
-  '- DES Role stereotype: ' + DESIGN_ROLE_STEREOTYPE_TOKENS.join('|'),
+  '- Element: ' + DESIGN_ELEMENT_TOKENS.join('|') + ' - <localized concrete element or symbol>',
+  '- Role stereotype: ' + DESIGN_ROLE_STEREOTYPE_TOKENS.join('|'),
   '- Domain To Software Mapping: Mapped concepts; Unmapped concepts; Auxiliary elements.',
-  '- DES: System allocation; Domain mapping; Name mapping; Attribute mapping; Method derivation; Framework role; Owned state; Public operations; Responsibilities; Collaborators; Dependencies; Encapsulation boundary; Does not own; SOLID rationale; Pattern participation; Evidence basis.',
-  '- DES SOLID rationale covers SRP, OCP, LSP, ISP, and DIP with concrete decisions or n/a - reasons.',
-  '- STATE: State owner=DES-*; States; Initial state; Transitions; Invalid transitions; Exception recovery; Evidence basis; one Mermaid stateDiagram-v2 block.',
+  '- DES: System allocation=SYS-*; Domain mapping=DOM-* or none - <auxiliary reason>; Name mapping; Attribute mapping; Method derivation=RM-*/FUN-*/SSD-* verbs; Framework role; Owned state; Public operations; Responsibilities; Collaborators; Dependencies; Encapsulation boundary; Does not own; SOLID rationale; Pattern participation; Evidence basis.',
+  '- DES SOLID rationale must contain exactly these dimensions with ASCII equals signs and semicolons: SRP=...; OCP=...; LSP=...; ISP=...; DIP=.... Use n/a - <reason> as a dimension value when justified. Use ASCII semicolons to separate the dimensions even when the prose is localized.',
+  '- STATE: State owner=DES-*; States; Initial state; Transitions; Invalid transitions; Exception recovery; Evidence basis; one Mermaid stateDiagram-v2 block. If no DES owns mutable state, define no STATE-* and instead write "none - <reason>" under the State Transition Diagrams heading.',
+  'Exact STATE stateDiagram-v2 shape (localize only prose; begin and end at [*]):\n```mermaid\n' + AUTOCODE_STATE_DIAGRAM_SKELETON + '\n```',
   '- FLOW: Trigger; Participants; Steps; State changes; Failure paths; Evidence basis; one Mermaid sequenceDiagram block. Steps name every DES participant in explicit order.',
   '- design_model.md headings: System Responsibility Allocation; Domain To Software Mapping; Design Model; Class Diagram; State Transition Diagrams; Sequence Diagrams.',
   '- CONTRACT: Inputs and outputs; Compatibility; Errors; Lifecycle; Evidence basis.',
   '- Change analysis: Verified variation points; Variation inventory; Candidate patterns evaluated; Simplest change mechanism; Selected patterns.',
   '- REV when applicable: External capability; Domain concepts; Responsibility path; Runtime path; Source symbols; Contradiction checks=checked|conflict|unresolved - <evidence>; Confidence=high|medium|low - <rationale>.',
-  '- LANG: Scope; Language and version; Naming and formatting; Type and interface rules; Class and visibility rules; Error handling; Resource and lifecycle management; Concurrency and state management; Framework integration; Testing and documentation; Evidence basis.',
-  '- IMP: Project files and symbols; Design mapping; Coding constraints=LANG-*; Class realization; Integration constraints; Verification; Evidence basis.',
+  '- LANG: Scope; Language and version=<observed language and a concrete version number>; Naming and formatting; Type and interface rules; Class and visibility rules; Error handling; Resource and lifecycle management; Concurrency and state management; Framework integration; Testing and documentation; Evidence basis.',
+  '- IMP: Project files and symbols=<path/to/file#symbol>; Design mapping=SYS-*, DES-*, FLOW-*/CONTRACT-* (add STATE-* when the DES owns state); Coding constraints=LANG-*; Class realization=DES-* -> <file#symbol>; Integration constraints; Verification; Evidence basis.',
+  '- implementation_model.md headings: Language And Coding Constraints; Implementation Model.',
   '- Applicable Design Principles: Single-responsibility decision; Open-closed decision; Liskov-substitution decision; Interface-segregation decision; Dependency-inversion decision; Cohesion and encapsulation decision; Framework adaptation decision; Underdesign checks.',
   'Allocation and traceability invariants:',
   '- Every RM has at least one FUN and one SSD. Every SSD follows actor-left/System-right numbered black-box presentation with activation, System self-processing, and an observable response. Every FUN names all involved RM use cases and equivalent functions are merged.',
   '- Every RM and FUN is allocated by SYS. Every SYS has at least one DES implementation responsibility.',
   '- Every DOM is mapped to DES or explicitly documented as domain-only. Every DES maps to SYS and participates in FLOW or CONTRACT at Standard/Complex depth.',
   '- Every stateful DES has a STATE diagram. Every FLOW has a sequence diagram. Every IMP maps SYS, DES, STATE when applicable, and FLOW or CONTRACT, and references LANG.',
-  '- Traceability includes every ADR and a directed path from RM through FUN, DOM, ADR, SYS, DES, STATE/FLOW/CONTRACT, LANG, and IMP.',
+  '- Traceability includes every ADR and a directed path from RM through FUN, SSD, DOM, ADR, SYS, DES, STATE/FLOW/CONTRACT, LANG, and IMP.',
 ].join('\n');
 
 export const AUTOCODE_STANDARD_DESIGN_METHOD_PROMPT = `
@@ -1500,6 +1563,61 @@ function validateV5DesignPackage(
   return errors;
 }
 
+function validateV5DesignRootQuality(
+  input: ValidateAutocodeStandardDesignArtifactsInput,
+  combinedMarkdown: string,
+  sections: readonly AutocodeDesignSection[],
+  depth: AutocodeDesignDepth | undefined,
+  requirePatternDefinitions: boolean,
+): string[] {
+  return [
+    ...validateV5DesignRoot(input.designMarkdown),
+    ...validateDesignBudget(
+      combinedMarkdown,
+      depth,
+      sections,
+      requirePatternDefinitions,
+    ),
+    ...validateStructuredDesignMethod(combinedMarkdown, sections, depth),
+    ...validateDesignEvidence(combinedMarkdown),
+    ...validateRejectedComplexity(combinedMarkdown),
+    ...validateLocalDesignComplexity(combinedMarkdown, depth),
+  ];
+}
+
+function validateV5DesignModelStage(
+  input: ValidateAutocodeStandardDesignArtifactsInput,
+  combinedMarkdown: string,
+  sections: readonly AutocodeDesignSection[],
+  depth: AutocodeDesignDepth | undefined,
+  analysisDirection: AutocodeDesignAnalysisDirection | undefined,
+): string[] {
+  const errors = validateV5DesignRootQuality(
+    input,
+    combinedMarkdown,
+    sections,
+    depth,
+    true,
+  );
+  for (const kind of REQUIRED_DESIGN_ID_KINDS.filter(
+    (candidate) => candidate !== 'LANG' && candidate !== 'IMP',
+  )) {
+    if (!sections.some((section) => section.kind === kind)) {
+      errors.push('Design-Contract: 5 package must define at least one ' + kind + '-* section.');
+    }
+  }
+  for (const duplicateId of findDuplicateAutocodeDesignIds(combinedMarkdown)) {
+    errors.push('Design package defines ' + duplicateId + ' more than once.');
+  }
+  errors.push(...validateSystemResponsibilityAllocation(sections));
+  errors.push(...validateV5CrossArtifactMappings(combinedMarkdown, sections, false));
+  errors.push(...validateObjectModelDepth(combinedMarkdown, sections, depth));
+  errors.push(...validateStaticDynamicConsistency(sections, depth));
+  errors.push(...validateSourceReconstruction(combinedMarkdown, sections, analysisDirection));
+  errors.push(...validateDesignTraceability(combinedMarkdown, sections, false));
+  return errors;
+}
+
 export function validateAutocodeStandardDesignStageArtifacts(
   input: ValidateAutocodeStandardDesignArtifactsInput,
   stage: AutocodeDesignPackageStage,
@@ -1514,31 +1632,72 @@ export function validateAutocodeStandardDesignStageArtifacts(
   const errors: string[] = [];
   const documents = getModelDocuments(input);
   const validateDocument = validateV5ModelDocument;
-  errors.push(...validateDocument(documents[0].markdown, documents[0].contract));
+  const revisionLine = (input.designMarkdown ?? '')
+    .split(String.fromCharCode(10))
+    .map((line) => line.trim())
+    .find((line) => line.startsWith('Design-Revision:'));
+  const revision = revisionLine?.slice('Design-Revision:'.length).trim();
+  const expectedRevision = stage === 'design' || stage === 'design_model'
+    ? revision
+    : undefined;
+  errors.push(...validateDocument(
+    documents[0].markdown,
+    documents[0].contract,
+    expectedRevision,
+  ));
   if (stage !== 'requirement_model') {
-    errors.push(...validateDocument(documents[1].markdown, documents[1].contract));
-  }
-  if (stage === 'design' || stage === 'design_model') {
-    errors.push(...validateV5DesignRoot(input.designMarkdown));
+    errors.push(...validateDocument(
+      documents[1].markdown,
+      documents[1].contract,
+      expectedRevision,
+    ));
   }
   if (stage === 'design_model') {
-    const revisionLine = (input.designMarkdown ?? '')
-      .split(String.fromCharCode(10))
-      .map((line) => line.trim())
-      .find((line) => line.startsWith('Design-Revision:'));
-    const revision = revisionLine?.slice('Design-Revision:'.length).trim();
     errors.push(...validateDocument(documents[2].markdown, documents[2].contract, revision));
   }
-  const packageMarkdown = buildAutocodeDesignPackageMarkdown(input);
+  const availableInput: ValidateAutocodeStandardDesignArtifactsInput = {
+    requirementModelMarkdown: input.requirementModelMarkdown,
+    domainModelMarkdown: stage === 'requirement_model'
+      ? undefined
+      : input.domainModelMarkdown,
+    designMarkdown: stage === 'design' || stage === 'design_model'
+      ? input.designMarkdown
+      : undefined,
+    designModelMarkdown: stage === 'design_model'
+      ? input.designModelMarkdown
+      : undefined,
+  };
+  const packageMarkdown = buildAutocodeDesignPackageMarkdown(availableInput);
+  const sections = parseAutocodeDesignSections(packageMarkdown);
+  const depth = getAutocodeDesignDepth(input.designMarkdown ?? '');
+  const analysisDirection = getAutocodeDesignAnalysisDirection(input.designMarkdown ?? '');
+  if (stage === 'design') {
+    errors.push(...validateV5DesignRootQuality(
+      input,
+      packageMarkdown,
+      sections,
+      depth,
+      false,
+    ));
+  } else if (stage === 'design_model') {
+    errors.push(...validateV5DesignModelStage(
+      input,
+      packageMarkdown,
+      sections,
+      depth,
+      analysisDirection,
+    ));
+  }
+  const uniqueErrors = [...new Set(errors)];
   return {
-    valid: errors.length === 0,
-    errors,
+    valid: uniqueErrors.length === 0,
+    errors: uniqueErrors,
     warnings: [],
-    depth: getAutocodeDesignDepth(input.designMarkdown ?? ''),
-    analysisDirection: getAutocodeDesignAnalysisDirection(input.designMarkdown ?? ''),
+    depth,
+    analysisDirection,
     reviewStatus: getAutocodeDesignReviewStatus(input.designReviewMarkdown ?? ''),
     contractVersion: 5,
-    sections: parseAutocodeDesignSections(packageMarkdown),
+    sections,
   };
 }
 
@@ -1590,9 +1749,10 @@ export function validateAutocodeStandardDesignArtifacts(
     errors.push(...validateAutocodeTaskDesignReferences(input.tasksMarkdown, packageMarkdown));
   }
 
+  const uniqueErrors = [...new Set(errors)];
   return {
-    valid: errors.length === 0,
-    errors,
+    valid: uniqueErrors.length === 0,
+    errors: uniqueErrors,
     warnings,
     depth,
     analysisDirection,
@@ -1825,6 +1985,58 @@ export function getAutocodeDesignReviewStatus(markdown: string): AutocodeDesignR
   return statuses.length === 1 ? statuses[0] : undefined;
 }
 
+export interface AutocodeDesignReviewHumanInputGate {
+  /** True when the REVISE review is blocked on open questions only a human can resolve. */
+  blocked: boolean;
+  /** The distinct unresolved open questions extracted from the review findings. */
+  questions: string[];
+  /** A ready-to-surface message describing what the user must provide. */
+  message: string;
+}
+
+/**
+ * Detects whether an independent design review returned Status: REVISE because it is
+ * blocked on unresolved open questions that require a human decision (evidence tagged
+ * `unresolved - ...`). Automated revision rounds can never clear these, so the planning
+ * loop should stop promptly and ask the user instead of exhausting its retry budget.
+ */
+export function detectAutocodeDesignReviewHumanInputGate(
+  designReviewMarkdown: string | undefined | null,
+): AutocodeDesignReviewHumanInputGate {
+  const empty: AutocodeDesignReviewHumanInputGate = { blocked: false, questions: [], message: '' };
+  if (!designReviewMarkdown) {
+    return empty;
+  }
+  if (getAutocodeDesignReviewStatus(designReviewMarkdown) !== 'REVISE') {
+    return empty;
+  }
+  const questions: string[] = [];
+  const seen = new Set<string>();
+  // Evidence clauses are separated by ASCII or full-width semicolons; capture just the
+  // `unresolved - <open question>` fragment without trailing observed/inferred clauses.
+  const pattern = /unresolved\s*-\s*([^\r\n;\uFF1B]+)/giu;
+  for (const match of designReviewMarkdown.matchAll(pattern)) {
+    const text = (match[1] ?? '').trim();
+    if (!text || /^(?:none|n\/a)\b/i.test(text)) {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    questions.push(text);
+  }
+  if (questions.length === 0) {
+    return empty;
+  }
+  const message =
+    'Independent design review is blocked on unresolved open questions that require a human decision. ' +
+    'Resolve these in requirements.md/spec.md, then re-run planning: ' +
+    questions.map((question, index) => `(${index + 1}) ${question}`).join(' ');
+  return { blocked: true, questions, message };
+}
+
 export function buildAutocodeDesignQualityRetryPrompt(errors: readonly string[]): string {
   const identityFormatGuidance = errors.some((error) =>
     error.includes('# Design:') ||
@@ -1873,12 +2085,56 @@ export function buildAutocodeDesignQualityRetryPrompt(errors: readonly string[])
         'For reverse or mixed work, reconstruct external capability to exact source symbols and record contradiction checks.',
       ].join('\n')
     : '';
+  const diagramGuidance = errors.some((error) =>
+    error.includes('SSD must') ||
+    error.includes('Class Diagram') ||
+    error.includes('stateDiagram-v2') ||
+    error.includes('State Transition Diagrams')
+  )
+    ? [
+        'Copy these Mermaid shapes exactly; keep the ASCII arrows, autonumber, activation markers, and direction:',
+        'SSD sequenceDiagram (requirement_model.md): declare the actor first and System second, and keep the +/- activation markers.',
+        '```mermaid',
+        AUTOCODE_SSD_MERMAID_SKELETON,
+        '```',
+        'Domain classDiagram (domain_model.md): start with direction LR, label every DOM_* box, and connect each box with quoted multiplicity.',
+        '```mermaid',
+        AUTOCODE_DOMAIN_CLASS_DIAGRAM_SKELETON,
+        '```',
+        'STATE stateDiagram-v2 (design_model.md): begin at [*], name each transition, and end at [*]. If no DES owns state, write "none - <reason>" under State Transition Diagrams instead.',
+        '```mermaid',
+        AUTOCODE_STATE_DIAGRAM_SKELETON,
+        '```',
+      ].join('\n')
+    : '';
+  const separatorGuidance = errors.some((error) =>
+    error.includes('must define exactly one') ||
+    error.includes('semicolon-separated') ||
+    error.includes('ordered actions and explicit output markers')
+  )
+    ? [
+        'Dimension and comparison fields are parsed on ASCII ";" and "=". Use ASCII separators even in localized prose; never use full-width "；" or "，". Examples:',
+        '- Scenario: Who=...; Where=...; When=...',
+        '- 5W1H analysis: Who=...; What=...; Why=...; When=...; Where=...; How=...',
+        '- 8C constraints: Performance=...; Cost=...; Time=...; Reliability=...; Security=...; Compliance=...; Technology=...; Compatibility=...',
+        '- SOLID rationale: SRP=...; OCP=...; LSP=...; ISP=...; DIP=...',
+        '- Candidate comparison: <candidate | fit | benefits | costs | risks>; <second candidate | ... | ...>',
+        '- Steps and outputs: 1. <action> => <output>; 2. <action> => <output>',
+      ].join('\n')
+    : '';
+  const validationErrorBlock = [
+    'BEGIN STANDARD DESIGN VALIDATION ERRORS',
+    ...formatAutocodeRetryErrorLines(errors, { maxErrors: 80, maxCharsPerError: 400 }),
+    'END STANDARD DESIGN VALIDATION ERRORS',
+  ].join('\n');
   return [
     'The Standard design artifacts failed deterministic validation.',
     'Revise only the invalid design package artifacts. Keep valid evidence and stable IDs unchanged.',
-    ...formatAutocodeRetryErrorLines(errors, { maxErrors: 80, maxCharsPerError: 400 }),
+    validationErrorBlock,
     identityFormatGuidance,
     contractGuidance,
+    separatorGuidance,
+    diagramGuidance,
     machineContractGuidance,
     depthGuidance,
   ].filter(Boolean).join('\n\n');
@@ -1908,6 +2164,7 @@ function validateDesignBudget(
   markdown: string,
   depth: AutocodeDesignDepth | undefined,
   sections: readonly AutocodeDesignSection[],
+  requirePatternDefinitions = true,
 ): string[] {
   const errors: string[] = [];
   const budget = extractMarkdownSection(markdown, 'Design Budget');
@@ -1932,11 +2189,16 @@ function validateDesignBudget(
     if (dependencies && Number(dependencies[1]) > 0) {
       errors.push(`${AUTOCODE_TASK_ARTIFACTS.design} local design may not add a dependency without escalating its depth and evidence.`);
     }
-    if (patterns && !/^(?:none|0|n\/a)$/i.test(patterns[1].trim())) {
+    if (patterns && !isNoneValue(patterns[1])) {
       errors.push(`${AUTOCODE_TASK_ARTIFACTS.design} local design must use no new architectural pattern unless complexity evidence justifies a deeper design.`);
     }
   }
-  errors.push(...validatePatternBudget(markdown, depth, sections));
+  errors.push(...validatePatternBudget(
+    markdown,
+    depth,
+    sections,
+    requirePatternDefinitions,
+  ));
   return errors;
 }
 
@@ -2085,7 +2347,13 @@ function getPatternIdsFromField(markdown: string, field: string): string[] {
 }
 
 function isNoneValue(value: string): boolean {
-  return /^(?:none|0|n\/a)$/i.test(value.trim());
+  return /^(?:0|(?:none|n\/a)(?:\s+-\s+\S.*)?)$/i.test(value.trim());
+}
+
+function hasConcreteProjectFileReference(value: string): boolean {
+  return /[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/.test(value) ||
+    /\b(?:[A-Za-z0-9_()-]+\.)+[A-Za-z][A-Za-z0-9-]*\b/.test(value) ||
+    /\b(?:Dockerfile|Makefile|Rakefile|Gemfile|Procfile)\b/.test(value);
 }
 
 function haveSameIds(left: readonly string[], right: readonly string[]): boolean {
@@ -2096,6 +2364,7 @@ function validatePatternBudget(
   markdown: string,
   depth: AutocodeDesignDepth | undefined,
   sections: readonly AutocodeDesignSection[],
+  requirePatternDefinitions = true,
 ): string[] {
   const errors: string[] = [];
   const budget = extractMarkdownSection(markdown, 'Design Budget');
@@ -2112,7 +2381,10 @@ function validatePatternBudget(
   if (selectedValue && !isNoneValue(selectedValue) && selectedIds.length === 0) {
     errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' Selected patterns must be none or list PAT-* IDs.');
   }
-  if (!haveSameIds(budgetIds, selectedIds) || !haveSameIds(selectedIds, definedIds)) {
+  if (
+    !haveSameIds(budgetIds, selectedIds) ||
+    (requirePatternDefinitions && !haveSameIds(selectedIds, definedIds))
+  ) {
     errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' pattern IDs must match across Design Budget, Selected patterns, and PAT-* sections.');
   }
 
@@ -2122,6 +2394,30 @@ function validatePatternBudget(
   }
 
   return errors;
+}
+
+function getDesignSectionArtifact(kind: AutocodeDesignSection['kind']): string {
+  if (kind === 'ADR') {
+    return AUTOCODE_TASK_ARTIFACTS.design;
+  }
+  if (kind === 'RM' || kind === 'FUN' || kind === 'SSD') {
+    return AUTOCODE_TASK_ARTIFACTS.requirementModel;
+  }
+  if (kind === 'DOM') {
+    return AUTOCODE_TASK_ARTIFACTS.domainModel;
+  }
+  if (
+    kind === 'SYS' ||
+    kind === 'DES' ||
+    kind === 'STATE' ||
+    kind === 'FLOW' ||
+    kind === 'CONTRACT' ||
+    kind === 'PAT' ||
+    kind === 'REV'
+  ) {
+    return AUTOCODE_TASK_ARTIFACTS.designModel;
+  }
+  return AUTOCODE_TASK_ARTIFACTS.implementationModel;
 }
 
 function validateStructuredDesignMethod(
@@ -2163,15 +2459,16 @@ function validateStructuredDesignMethod(
   ));
 
   for (const section of sections) {
+    const location = getDesignSectionArtifact(section.kind) + ' ' + section.id;
     const body = section.markdown.replace(/^#{3,6}\s+[^\n]+\s*/i, '').trim();
     if (body.length < 20 || /^(?:none|n\/a|not applicable|todo|tbd)\.?$/i.test(body)) {
-      errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id + ' must contain a substantive design decision or model entry.');
+      errors.push(location + ' must contain a substantive design decision or model entry.');
     }
     const fields = MODEL_SECTION_FIELDS[section.kind];
     if (fields) {
       errors.push(...validateMachineReadableFields(
         section.markdown,
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id,
+        location,
         fields,
       ));
     }
@@ -2179,7 +2476,7 @@ function validateStructuredDesignMethod(
     if (evidenceBasis) {
       errors.push(...validateEvidenceBasis(
         evidenceBasis,
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id + ' Evidence basis',
+        location + ' Evidence basis',
       ));
     }
   }
@@ -2248,16 +2545,17 @@ function validateStructuredDesignMethod(
     );
   }
 
-  if (!/[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/.test(engineering)) {
+  if (!hasConcreteProjectFileReference(engineering)) {
     errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' Engineering Adaptation must cite concrete project files or modules.');
   }
 
   for (const section of sections) {
+    const location = getDesignSectionArtifact(section.kind) + ' ' + section.id;
     if (section.kind === 'ADR') {
       const status = getMachineReadableField(section.markdown, 'Status');
       if (status && !/^(?:proposed|accepted|superseded|rejected)$/i.test(status)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+          location +
           ' Status must be proposed, accepted, superseded, or rejected.',
         );
       }
@@ -2266,7 +2564,7 @@ function validateStructuredDesignMethod(
       const conceptKind = getMachineReadableField(section.markdown, 'Concept kind');
       if (conceptKind && !isExactMachineToken(conceptKind, DOMAIN_CONCEPT_KIND_TOKENS)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+          location +
           ' Concept kind must be exactly one English token with no trailing prose: ' +
           DOMAIN_CONCEPT_KIND_TOKENS.join(', ') + '.',
         );
@@ -2276,14 +2574,14 @@ function validateStructuredDesignMethod(
       const element = getMachineReadableField(section.markdown, 'Element');
       if (element && !hasMachineTokenDescription(element, DESIGN_ELEMENT_TOKENS)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+          location +
           ' Element must use <' + DESIGN_ELEMENT_TOKENS.join('|') + '> - <concrete element or symbol>.',
         );
       }
       const role = getMachineReadableField(section.markdown, 'Role stereotype');
       if (role && !isExactMachineToken(role, DESIGN_ROLE_STEREOTYPE_TOKENS)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+          location +
           ' Role stereotype must be exactly one English token with no trailing prose: ' +
           DESIGN_ROLE_STEREOTYPE_TOKENS.join(', ') + '.',
         );
@@ -2291,8 +2589,8 @@ function validateStructuredDesignMethod(
     }
     if (section.kind === 'IMP') {
       const files = getMachineReadableField(section.markdown, 'Project files and symbols') ?? '';
-      if (!/[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/.test(files)) {
-        errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id + ' must map to concrete project files and symbols.');
+      if (!hasConcreteProjectFileReference(files)) {
+        errors.push(location + ' must map to concrete project files and symbols.');
       }
       const mappings = extractAutocodeDesignIds(
         getMachineReadableField(section.markdown, 'Design mapping') ?? '',
@@ -2301,7 +2599,7 @@ function validateStructuredDesignMethod(
           !mappings.some((id) => id.startsWith('DES-')) ||
           !mappings.some((id) => id.startsWith('FLOW-') || id.startsWith('CONTRACT-'))) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+          location +
           ' Design mapping must reference SYS-*, DES-*, and FLOW-*/CONTRACT-* IDs.',
         );
       }
@@ -2314,6 +2612,7 @@ function validateStructuredDesignMethod(
 function validateV5CrossArtifactMappings(
   markdown: string,
   sections: readonly AutocodeDesignSection[],
+  requireImplementationCoverage = true,
 ): string[] {
   const errors: string[] = [];
   const knownIds = new Set(sections.map((section) => section.id));
@@ -2429,6 +2728,10 @@ function validateV5CrossArtifactMappings(
     }
   }
 
+  if (!requireImplementationCoverage) {
+    return errors;
+  }
+
   const implementationCoverage = new Set<string>();
   const languageCoverage = new Set<string>();
   for (const implementation of sections.filter((section) => section.kind === 'IMP')) {
@@ -2506,14 +2809,14 @@ function validateSystemResponsibilityAllocation(
     ).filter((id) => id.startsWith('RM-'));
     if (allocations.length === 0) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + section.id +
         ' must allocate at least one RM-* requirement.',
       );
     }
     for (const requirementId of allocations) {
       if (!requirementIds.has(requirementId)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+          AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + section.id +
           ' allocates unknown requirement ' + requirementId + '.',
         );
       } else {
@@ -2525,14 +2828,14 @@ function validateSystemResponsibilityAllocation(
     ).filter((id) => id.startsWith('FUN-'));
     if (functionAllocations.length === 0) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + section.id +
         ' must allocate at least one FUN-* function.',
       );
     }
     for (const functionId of functionAllocations) {
       if (!functionIds.has(functionId)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+          AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + section.id +
           ' allocates unknown function ' + functionId + '.',
         );
       } else {
@@ -2547,14 +2850,14 @@ function validateSystemResponsibilityAllocation(
     ).filter((id) => id.startsWith('SYS-'));
     if (allocations.length === 0) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + section.id +
         ' must map to at least one SYS-* System allocation.',
       );
     }
     for (const systemId of allocations) {
       if (!systemIds.has(systemId)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id +
+          AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + section.id +
           ' maps to unknown system boundary ' + systemId + '.',
         );
       } else {
@@ -2566,7 +2869,7 @@ function validateSystemResponsibilityAllocation(
   for (const requirementId of requirementIds) {
     if (!allocatedRequirements.has(requirementId)) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' requirement ' + requirementId +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' requirement ' + requirementId +
         ' is not allocated to any SYS-* boundary.',
       );
     }
@@ -2574,7 +2877,7 @@ function validateSystemResponsibilityAllocation(
   for (const functionId of functionIds) {
     if (!allocatedFunctions.has(functionId)) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' function ' + functionId +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' function ' + functionId +
         ' is not allocated to any SYS-* boundary.',
       );
     }
@@ -2582,7 +2885,7 @@ function validateSystemResponsibilityAllocation(
   for (const systemId of systemIds) {
     if (!allocatedSystems.has(systemId)) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' system boundary ' + systemId +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' system boundary ' + systemId +
         ' has no allocated DES-* implementation responsibility.',
       );
     }
@@ -2612,7 +2915,7 @@ function validateStaticDynamicConsistency(
       runtimeCoveredDesignIds.add(participant);
       if (!new RegExp('\\b' + escapeRegExp(participant) + '\\b', 'i').test(steps)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + flow.id +
+          AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + flow.id +
           ' Steps must show the runtime action of participant ' + participant + '.',
         );
       }
@@ -2623,7 +2926,7 @@ function validateStaticDynamicConsistency(
       !/(?:->|=>|\b1[.)].*\b2[.)])/i.test(steps)
     ) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + flow.id +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + flow.id +
         ' Steps must express an explicit order with arrows or numbered steps.',
       );
     }
@@ -2639,7 +2942,7 @@ function validateStaticDynamicConsistency(
     for (const designId of designIds) {
       if (!runtimeCoveredDesignIds.has(designId)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + designId +
+          AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + designId +
           ' must participate in a FLOW-* or CONTRACT-* entry, or be removed from the detailed design.',
         );
       }
@@ -2652,14 +2955,14 @@ function validateStaticDynamicConsistency(
     ).filter((id) => id.startsWith('SYS-') || id.startsWith('DES-'));
     if (participants.length === 0) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + pattern.id +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + pattern.id +
         ' Participants and roles must reference concrete SYS-* or DES-* IDs.',
       );
     }
     for (const participant of participants) {
       if (!systemIds.has(participant) && !designIds.has(participant)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + pattern.id +
+          AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + pattern.id +
           ' references unknown participant ' + participant + '.',
         );
       }
@@ -2678,7 +2981,7 @@ function validateSourceReconstruction(
   if (direction === 'forward-design') {
     if (reconstructions.length > 0) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design +
+        AUTOCODE_TASK_ARTIFACTS.designModel +
         ' forward-design must omit REV-* entries; use mixed only when reconstruction is required.',
       );
     }
@@ -2692,7 +2995,7 @@ function validateSourceReconstruction(
   }
   if (reconstructions.length === 0) {
     errors.push(
-      AUTOCODE_TASK_ARTIFACTS.design + ' ' + direction +
+      AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + direction +
       ' must define at least one REV-* source reconstruction.',
     );
     return errors;
@@ -2713,30 +3016,30 @@ function validateSourceReconstruction(
       getMachineReadableField(reconstruction.markdown, 'Runtime path') ?? '',
     );
     if (!external.some((id) => id.startsWith('RM-'))) {
-      errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' ' + reconstruction.id + ' External capability must reference RM-*.');
+      errors.push(AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + reconstruction.id + ' External capability must reference RM-*.');
     }
     if (!domain.some((id) => id.startsWith('DOM-'))) {
-      errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' ' + reconstruction.id + ' Domain concepts must reference DOM-*.');
+      errors.push(AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + reconstruction.id + ' Domain concepts must reference DOM-*.');
     }
     if (
       !responsibility.some((id) => id.startsWith('SYS-')) ||
       !responsibility.some((id) => id.startsWith('DES-'))
     ) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + reconstruction.id +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + reconstruction.id +
         ' Responsibility path must reference SYS-* and DES-*.',
       );
     }
     if (!runtime.some((id) => id.startsWith('FLOW-') || id.startsWith('CONTRACT-'))) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + reconstruction.id +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + reconstruction.id +
         ' Runtime path must reference FLOW-* or CONTRACT-*.',
       );
     }
     for (const id of [...external, ...domain, ...responsibility, ...runtime]) {
       if (!knownIds.has(id)) {
         errors.push(
-          AUTOCODE_TASK_ARTIFACTS.design + ' ' + reconstruction.id +
+          AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + reconstruction.id +
           ' references unknown design ID ' + id + '.',
         );
       }
@@ -2745,21 +3048,21 @@ function validateSourceReconstruction(
     const sourceSymbols = getMachineReadableField(reconstruction.markdown, 'Source symbols') ?? '';
     if (!/[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()\[\]-]+(?:#|::)[A-Za-z_$][A-Za-z0-9_$.]*/.test(sourceSymbols)) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + reconstruction.id +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + reconstruction.id +
         ' Source symbols must cite an exact project path and symbol using path#symbol or path::symbol.',
       );
     }
     const contradictionChecks = getMachineReadableField(reconstruction.markdown, 'Contradiction checks') ?? '';
     if (!/^(?:checked|conflict|unresolved)\s+-\s+\S/i.test(contradictionChecks)) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + reconstruction.id +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + reconstruction.id +
         ' Contradiction checks must start with checked, conflict, or unresolved plus evidence.',
       );
     }
     const confidence = getMachineReadableField(reconstruction.markdown, 'Confidence') ?? '';
     if (!/^(?:high|medium|low)\s+-\s+\S/i.test(confidence)) {
       errors.push(
-        AUTOCODE_TASK_ARTIFACTS.design + ' ' + reconstruction.id +
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + reconstruction.id +
         ' Confidence must be high, medium, or low with a rationale.',
       );
     }
@@ -2864,13 +3167,13 @@ function validateFlowParticipants(
     ).filter((id) => id.startsWith('DES-'));
     for (const participant of participants) {
       if (!knownDesignIds.has(participant)) {
-        errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' ' + flow.id + ' references unknown participant ' + participant + '.');
+        errors.push(AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + flow.id + ' references unknown participant ' + participant + '.');
       }
     }
     if (participants.length === 0) {
-      errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' ' + flow.id + ' must name at least one DES-* participant.');
+      errors.push(AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + flow.id + ' must name at least one DES-* participant.');
     } else if (requireCollaboration && participants.length < 2) {
-      errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' ' + flow.id + ' must show at least two collaborating DES-* participants.');
+      errors.push(AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + flow.id + ' must show at least two collaborating DES-* participants.');
     }
   }
   return errors;
@@ -2901,7 +3204,7 @@ function validateGodObjectResponsibilities(
     const responsibilities = getMachineReadableField(section.markdown, 'Responsibilities') ?? '';
     const concernCount = concernPatterns.filter((pattern) => pattern.test(responsibilities)).length;
     if (concernCount >= 4) {
-      errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' ' + section.id + ' appears to be a God coordinator spanning ' + concernCount + ' unrelated concern groups; redistribute behavior to cohesive owners.');
+      errors.push(AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + section.id + ' appears to be a God coordinator spanning ' + concernCount + ' unrelated concern groups; redistribute behavior to cohesive owners.');
     }
   }
   return errors;
@@ -2910,6 +3213,7 @@ function validateGodObjectResponsibilities(
 function validateDesignTraceability(
   markdown: string,
   sections: readonly AutocodeDesignSection[],
+  requireImplementationCoverage = true,
 ): string[] {
   const traceability = extractMarkdownSection(markdown, 'Traceability');
   const tracedIds = new Set(extractAutocodeDesignIds(traceability));
@@ -2918,7 +3222,13 @@ function validateDesignTraceability(
     .filter((section) => !tracedIds.has(section.id))
     .map((section) => AUTOCODE_TASK_ARTIFACTS.design + ' Traceability must include ' + section.id + '.');
   for (const tracedId of tracedIds) {
-    if (!knownIds.has(tracedId)) {
+    if (
+      !knownIds.has(tracedId) &&
+      (
+        requireImplementationCoverage ||
+        !/^(?:LANG|IMP)-/.test(tracedId)
+      )
+    ) {
       errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' Traceability references unknown design ID ' + tracedId + '.');
     }
   }
@@ -2938,22 +3248,30 @@ function validateDesignTraceability(
       );
       const languageIndex = ids.findIndex((id) => id.startsWith('LANG-'));
       const implementationIndex = ids.findIndex((id) => id.startsWith('IMP-'));
-      return requirementIndex >= 0 &&
+      const designPathIsConnected = requirementIndex >= 0 &&
         requirementIndex < functionIndex &&
         functionIndex < sequenceIndex &&
         sequenceIndex < domainIndex &&
         domainIndex < decisionIndex &&
         decisionIndex < systemIndex &&
         systemIndex < designIndex &&
-        designIndex < dynamicIndex &&
+        designIndex < dynamicIndex;
+      const implementationPathIsConnected = !requireImplementationCoverage || (
         dynamicIndex < languageIndex &&
-        languageIndex < implementationIndex &&
+        languageIndex < implementationIndex
+      );
+      return designPathIsConnected &&
+        implementationPathIsConnected &&
         /(?:->|=>|\u2192)/u.test(line);
     });
     if (!hasConnectedPath) {
       errors.push(
         AUTOCODE_TASK_ARTIFACTS.design + ' Traceability must connect ' + requirement.id +
-        ' through FUN-*, SSD-*, DOM-*, ADR-*, SYS-*, DES-*, STATE/FLOW/CONTRACT, LANG-*, and IMP-* in that order.',
+        (
+          requireImplementationCoverage
+            ? ' through FUN-*, SSD-*, DOM-*, ADR-*, SYS-*, DES-*, STATE/FLOW/CONTRACT, LANG-*, and IMP-* in that order.'
+            : ' through FUN-*, SSD-*, DOM-*, ADR-*, SYS-*, DES-*, and STATE/FLOW/CONTRACT in that order.'
+        ),
       );
     }
   }
@@ -2980,8 +3298,8 @@ function validateDesignEvidence(markdown: string): string[] {
   }
   if (
     !/^observed\s+-\s+\S/i.test(projectEvidence) ||
-    !/(?:[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()\[\]-]+|https?:\/\/|project docs?|repository)/i
-      .test(projectEvidence)
+    !hasConcreteProjectFileReference(projectEvidence) &&
+    !/(?:https?:\/\/|project docs?|repository)/i.test(projectEvidence)
   ) {
     errors.push(
       AUTOCODE_TASK_ARTIFACTS.design +
@@ -2994,7 +3312,7 @@ function validateDesignEvidence(markdown: string): string[] {
       ' Design inferences must start with the exact English prefix "inferred -" or "none -" and include a rationale.',
     );
   }
-  if (!/^(?:unresolved\s+-\s+\S|none)$/i.test(unresolvedEvidence)) {
+  if (!/^(?:unresolved\s+-\s+\S.*|none)$/i.test(unresolvedEvidence)) {
     errors.push(
       AUTOCODE_TASK_ARTIFACTS.design +
       ' Unresolved evidence must be exactly "none" or start with the exact English prefix "unresolved -" and include the open question.',

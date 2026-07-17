@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '../../ui/button';
 import { persistTaskStatus, startTaskOrQueue } from '../../../stores/task-store';
+import { isDirectDevelopmentTask } from '../../../../shared/utils/task-mode';
 import type { Task } from '../../../../shared/types';
 
 interface LoadingMessageProps {
@@ -44,11 +45,14 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
   const [isProceeding, setIsProceeding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const isDirectModeTask = task?.metadata?.workflowMode === 'off';
+  const isDirectModeTask = isDirectDevelopmentTask(task);
 
   const isPlanReview =
     task?.status === 'human_review' &&
     task.reviewReason === 'plan_review';
+  const isNeedsInput =
+    task?.status === 'human_review' &&
+    task.reviewReason === 'needs_input';
   const isErrorRecovery =
     !!task &&
     (
@@ -60,6 +64,7 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
     !!task &&
     (
       isPlanReview ||
+      isNeedsInput ||
       isErrorRecovery
     );
 
@@ -105,7 +110,11 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
     <div className="rounded-xl border border-border bg-secondary/30 p-4">
       <h3 className="font-medium text-sm text-foreground mb-2 flex items-center gap-2">
         <AlertCircle className="h-4 w-4 text-muted-foreground" />
-        {isPlanReview
+        {isNeedsInput
+          ? t('workspaceMessages.needsInputTitle', {
+              defaultValue: 'Your Input Needed'
+            })
+          : isPlanReview
           ? t('workspaceMessages.planReviewTitle', {
               defaultValue: 'Human Review Required'
             })
@@ -118,7 +127,12 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
             })}
       </h3>
       <p className="text-sm text-muted-foreground mb-3">
-        {isPlanReview
+        {isNeedsInput
+          ? t('workspaceMessages.needsInputDescription', {
+              defaultValue:
+                'Planning is paused because the independent design review is blocked on open questions only you can resolve. Review the open questions in the task log / design_review, update requirements.md or spec.md, then re-run planning.'
+            })
+          : isPlanReview
           ? t('workspaceMessages.planReviewDescription', {
               defaultValue:
                 'Human review required prior to coding. Review your spec.md for any necessary changes.'
@@ -153,7 +167,11 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
           ) : (
             <>
               <Play className="h-4 w-4 mr-2" />
-              {isPlanReview
+              {isNeedsInput
+                ? t('workspaceMessages.rerunPlanning', {
+                    defaultValue: 'Re-run Planning'
+                  })
+                : isPlanReview
                 ? t('workspaceMessages.proceedToCoding', {
                     defaultValue: 'Proceed to Coding'
                   })

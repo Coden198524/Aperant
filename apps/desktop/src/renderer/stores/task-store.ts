@@ -414,13 +414,16 @@ function getPlanReviewStateFromPlan(plan: ImplementationPlan): {
   reviewReason: ReviewReason;
   executionProgress: ExecutionProgress;
 } | undefined {
-  if (plan.status !== 'human_review' || plan.reviewReason !== 'plan_review') {
+  if (
+    plan.status !== 'human_review' ||
+    (plan.reviewReason !== 'plan_review' && plan.reviewReason !== 'needs_input')
+  ) {
     return undefined;
   }
 
   return {
     status: 'human_review',
-    reviewReason: 'plan_review',
+    reviewReason: plan.reviewReason,
     executionProgress: {
       phase: 'planning',
       phaseProgress: 100,

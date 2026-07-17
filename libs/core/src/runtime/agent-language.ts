@@ -5,9 +5,9 @@ export type AutocodeOutputLanguage = 'zh-CN' | 'fr' | string | undefined;
 export function getAutocodeLanguageRequirement(language: AutocodeOutputLanguage): string | null {
   switch (language) {
     case 'zh-CN':
-      return 'Use Simplified Chinese for all user-facing prose. Keep code, paths, commands, logs, schema keys, and technical identifiers in their required form.';
+      return 'Use Simplified Chinese for all user-facing prose. Write natural, fluent, idiomatic Chinese with complete sentences and native terminology, not word-for-word translation. Keep code, paths, commands, logs, schema keys, and technical identifiers in their required form.';
     case 'fr':
-      return 'Use French for all user-facing prose. Keep code, paths, commands, logs, schema keys, and technical identifiers in their required form.';
+      return 'Use French for all user-facing prose. Write natural, fluent, idiomatic French with complete sentences, not word-for-word translation. Keep code, paths, commands, logs, schema keys, and technical identifiers in their required form.';
     default:
       return null;
   }
@@ -18,9 +18,9 @@ export function getAutocodeImplementationPlanLanguageRequirement(
 ): string | null {
   switch (language) {
     case 'zh-CN':
-      return 'Write all user-facing planning text in Simplified Chinese. Keep paths, commands, APIs, class names, and code identifiers unchanged.';
+      return 'Write all user-facing planning text in Simplified Chinese. Use natural, fluent, idiomatic Chinese with complete sentences, not word-for-word translation. Keep paths, commands, APIs, class names, and code identifiers unchanged.';
     case 'fr':
-      return 'Write all user-facing planning text in French. Keep paths, commands, APIs, class names, and code identifiers unchanged.';
+      return 'Write all user-facing planning text in French. Use natural, fluent, idiomatic French with complete sentences, not word-for-word translation. Keep paths, commands, APIs, class names, and code identifiers unchanged.';
     default:
       return null;
   }
@@ -31,12 +31,14 @@ export function getAutocodeStrictLanguageRequirement(language: AutocodeOutputLan
     case 'zh-CN':
       return [
         'Use Simplified Chinese for all user-facing prose: progress updates, summaries, plans, QA reports, markdown, and errors.',
+        'Write natural, fluent, idiomatic Chinese with complete sentences and native technical terminology; do not translate the English field names or template phrases word-for-word.',
         'Keep source code, paths, commands, compiler output, schema keys, API names, class/function names, and required status tokens unchanged.',
         'If the user explicitly requests another language, follow the user.',
       ].join('\n');
     case 'fr':
       return [
         'Use French for all user-facing prose: progress updates, summaries, plans, QA reports, markdown, and errors.',
+        'Write natural, fluent, idiomatic French with complete sentences; do not translate the English field names or template phrases word-for-word.',
         'Keep source code, paths, commands, compiler output, schema keys, API names, class/function names, and required status tokens unchanged.',
         'If the user explicitly requests another language, follow the user.',
       ].join('\n');
