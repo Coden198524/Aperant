@@ -1066,8 +1066,12 @@ export interface ElectronAPI {
   // Workflow Optimization API
   getWorkflowMetrics: () => Promise<import('./workflow-optimization').WorkflowMetrics | null>;
   clearWorkflowMetrics: () => Promise<void>;
-  getRecentRecords: (limit?: number) => Promise<any[]>;
-  compareOptimizationLevels: () => Promise<any>;
+  getRecentRecords: (
+    limit?: number,
+  ) => Promise<import('@autocode/core/runtime/workflow-metrics').AutocodeTaskExecutionRecord[]>;
+  compareOptimizationLevels: () => Promise<
+    import('@autocode/core/runtime/workflow-metrics').AutocodeOptimizationMetricsComparison | null
+  >;
 }
 
 /** Platform information exposed via contextBridge for platform-specific behavior */

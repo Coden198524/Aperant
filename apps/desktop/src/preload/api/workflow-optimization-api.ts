@@ -1,4 +1,8 @@
 import { ipcRenderer } from 'electron';
+import type {
+  AutocodeOptimizationMetricsComparison,
+  AutocodeTaskExecutionRecord,
+} from '@autocode/core/runtime/workflow-metrics';
 import type { WorkflowMetrics } from '../../shared/types/workflow-optimization';
 
 export interface WorkflowOptimizationAPI {
@@ -9,10 +13,10 @@ export interface WorkflowOptimizationAPI {
   clearWorkflowMetrics: () => Promise<void>;
 
   /** Get recent task records for detailed analysis */
-  getRecentRecords: (limit?: number) => Promise<any[]>;
+  getRecentRecords: (limit?: number) => Promise<AutocodeTaskExecutionRecord[]>;
 
   /** Compare optimization levels */
-  compareOptimizationLevels: () => Promise<any>;
+  compareOptimizationLevels: () => Promise<AutocodeOptimizationMetricsComparison | null>;
 }
 
 export const createWorkflowOptimizationAPI = (): WorkflowOptimizationAPI => ({
