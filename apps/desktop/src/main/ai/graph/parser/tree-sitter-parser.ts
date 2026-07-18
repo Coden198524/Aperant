@@ -319,7 +319,7 @@ function extractFunctions(
 	filePath: string,
 	language: string,
 	tree: any,
-	content: string,
+	_content: string,
 ): CodeGraphNode[] {
 	const nodes: CodeGraphNode[] = [];
 
@@ -379,10 +379,10 @@ function extractFunctions(
  */
 function extractImports(
 	projectId: string,
-	filePath: string,
+	_filePath: string,
 	fileNodeId: string,
 	tree: any,
-	content: string,
+	_content: string,
 ): CodeGraphEdge[] {
 	const edges: CodeGraphEdge[] = [];
 

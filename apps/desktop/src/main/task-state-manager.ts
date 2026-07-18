@@ -591,8 +591,8 @@ export class TaskStateManager {
   private resolveExecutionPhaseForTransition(
     xstateState: string,
     reviewReason: ReviewReason | undefined,
-    previousState: string | undefined,
-    task: Task
+    _previousState: string | undefined,
+    _task: Task
   ): ExecutionPhase {
     if (xstateState === 'human_review' && reviewReason === 'stopped') {
       return 'stopped';

@@ -221,7 +221,7 @@ function detectMainBranch(projectPath: string): string | null {
  * Register all project-related IPC handlers
  */
 export function registerProjectHandlers(
-  getMainWindow: () => BrowserWindow | null
+  _getMainWindow: () => BrowserWindow | null
 ): void {
   // ============================================
   // Project Operations

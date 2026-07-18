@@ -130,7 +130,7 @@ vi.mock('../../../ai/runners/github/batch-processor', () => {
     groupIssues(...args: unknown[]) {
       return mockBatchProcessorGroupIssues(...args);
     }
-    analyzeBatch(...args: unknown[]) {
+    analyzeBatch(..._args: unknown[]) {
       return Promise.resolve([]);
     }
   }

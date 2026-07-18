@@ -50,7 +50,7 @@ interface WorkflowOptimizationState {
 
 export const useWorkflowOptimizationStore = create<WorkflowOptimizationState>()(
   persist(
-    (set, get) => ({
+    (set, _get) => ({
       settings: DEFAULT_WORKFLOW_OPTIMIZATION_SETTINGS,
       metrics: null,
       metricsLoading: false,

@@ -174,7 +174,7 @@ const SMOKE_CHECKS: SmokeCheck[] = [
  */
 export async function runPreQASmokeTests(
   projectDir: string,
-  specDir: string,
+  _specDir: string,
 ): Promise<SmokeTestResult> {
   const startTime = Date.now();
   const checkResults: CheckResult[] = [];

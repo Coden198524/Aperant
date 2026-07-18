@@ -121,7 +121,7 @@ describe('QALoop', () => {
 
     // No QA_FIX_REQUEST.md either
     mockLoadAutocodeImplementationPlan.mockResolvedValue(plan);
-    mockReadFile.mockImplementation((path: string) => {
+    mockReadFile.mockImplementation((_path: string) => {
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -141,7 +141,7 @@ describe('QALoop', () => {
     const plan = completedPlan('approved');
 
     mockLoadAutocodeImplementationPlan.mockResolvedValue(plan);
-    mockReadFile.mockImplementation((path: string) => {
+    mockReadFile.mockImplementation((_path: string) => {
       // QA_FIX_REQUEST.md does not exist
       return Promise.reject(new Error('ENOENT'));
     });

@@ -387,7 +387,7 @@ export class FileTimelineTracker {
   onTaskStart(
     taskId: string,
     filesToModify: string[],
-    filesToCreate?: string[],
+    _filesToCreate?: string[],
     branchPointCommit?: string,
     taskIntent = '',
     taskTitle = '',

@@ -673,7 +673,7 @@ export class ParallelFollowupReviewer {
   }
 
   private buildVerdictReasoning(
-    verdict: MergeVerdict,
+    _verdict: MergeVerdict,
     resolvedIds: string[],
     unresolvedIds: string[],
     newFindingIds: string[],

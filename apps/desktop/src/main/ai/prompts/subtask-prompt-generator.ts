@@ -122,7 +122,7 @@ export async function generateSubtaskPrompt(config: SubtaskPromptConfig): Promis
  * @returns Loaded context dict
  */
 export async function loadSubtaskContext(
-  specDir: string,
+  _specDir: string,
   projectDir: string,
   subtask: SubtaskPromptInfo,
   maxFileLines = 200,

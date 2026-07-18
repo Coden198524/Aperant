@@ -1051,7 +1051,7 @@ export class AgentProcessManager {
   async spawnWorkerProcess(
     taskId: string,
     executorConfig: AgentExecutorConfig,
-    extraEnv: Record<string, string> = {},
+    _extraEnv: Record<string, string> = {},
     processType: ProcessType = 'task-execution',
     projectId?: string
   ): Promise<void> {

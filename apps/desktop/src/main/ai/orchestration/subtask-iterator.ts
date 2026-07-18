@@ -1414,7 +1414,7 @@ const MAX_RATE_LIMIT_WAIT_MS_DEFAULT = 7_200_000;
  * Returns null on any error so the caller can safely ignore failures.
  */
 async function extractInsightsAfterSession(
-  config: SubtaskIteratorConfig,
+  _config: SubtaskIteratorConfig,
   subtask: PlanSubtask,
   result: SessionResult,
   changedFiles: string[] = [],

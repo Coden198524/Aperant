@@ -477,7 +477,7 @@ The JSON must contain at minimum: project_name, target_audience, product_vision,
  * Mirrors Python's `FeaturesPhase.execute()`.
  */
 async function runFeaturesPhase(
-  projectDir: string,
+  _projectDir: string,
   outputDir: string,
   projectDocsIndexFile: string,
   refresh: boolean,
