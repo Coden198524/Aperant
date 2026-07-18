@@ -14,7 +14,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execSync, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { AUTOCODE_COMMON_BASE_BRANCHES, AUTOCODE_DEFAULT_BASE_BRANCH } from '@autocode/core';
 import { getAutocodeProjectDataDir } from '@autocode/core/project/data-paths';
 

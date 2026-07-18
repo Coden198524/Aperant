@@ -35,7 +35,6 @@ import { PRLogs } from './PRLogs';
 
 import type { PRData, PRReviewResult, PRReviewProgress } from '../hooks/useGitHubPRs';
 import type { NewCommitsCheck, MergeReadiness, PRLogs as PRLogsType, WorkflowsAwaitingApprovalResult } from '../../../../preload/api/modules/github-api';
-import { usePRReviewStore } from '../../../stores/github';
 
 interface PRDetailProps {
   pr: PRData;
@@ -1154,7 +1153,7 @@ ${t('prReview.blockedStatusMessageFooter')}`;
         />
 
         {/* Action Bar (Legacy Actions that fit under the tree context) */}
-        {reviewResult && reviewResult.success && !isReviewing && (
+        {reviewResult?.success && !isReviewing && (
           <div className="flex flex-wrap items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
              {selectedCount > 0 && (
                 <Button onClick={handlePostReview} variant="secondary" disabled={isPostingFindings} className="flex-1 sm:flex-none">
@@ -1363,7 +1362,7 @@ ${t('prReview.blockedStatusMessageFooter')}`;
         )}
 
         {/* Review Result / Findings */}
-        {reviewResult && reviewResult.success && (
+        {reviewResult?.success && (
           <CollapsibleCard
             title={reviewResult.isFollowupReview ? t('prReview.followupReviewDetails') : t('prReview.aiAnalysisResults')}
             icon={reviewResult.isFollowupReview ? (

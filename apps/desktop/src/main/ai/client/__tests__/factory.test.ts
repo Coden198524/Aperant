@@ -59,7 +59,6 @@ import { buildToolRegistry } from '../../tools/build-registry';
 import { createSimpleClient, createAgentClient } from '../factory';
 import type { LanguageModel, Tool } from 'ai';
 import type { ToolContext } from '../../tools/types';
-import type { AgentClientConfig } from '../types';
 import type { ProviderAccount } from '../../../../shared/types/provider-account';
 import type { McpClientResult } from '../../mcp/types';
 import type { ToolRegistry } from '../../tools/registry';

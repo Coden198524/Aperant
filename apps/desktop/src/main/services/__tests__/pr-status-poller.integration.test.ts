@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { PRStatusPoller, getPRStatusPoller } from '../pr-status-poller';
+import { PRStatusPoller, } from '../pr-status-poller';
 import { POLLING_INTERVALS, RATE_LIMIT_THRESHOLDS } from '../../../shared/types/pr-status';
 import type { PRStatusUpdate, PollingMetadata, PRStatus } from '../../../shared/types/pr-status';
 

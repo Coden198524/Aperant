@@ -1,7 +1,6 @@
 ﻿import { describe, it, expect, beforeEach } from 'vitest';
 
 import { ProgressTracker } from '../progress-tracker';
-import type { StreamEvent } from '../types';
 
 describe('ProgressTracker', () => {
   let tracker: ProgressTracker;

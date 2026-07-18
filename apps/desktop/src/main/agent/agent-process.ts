@@ -2,7 +2,6 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync } from 'fs';
-import { app } from 'electron';
 import {
   AUTOCODE_PROJECT_ENV_FILE_NAME,
   autocodeRuntimeWorkspaceClaims,

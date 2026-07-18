@@ -18,7 +18,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import type { CodeGraphNode, CodeGraphEdge, GraphNodeType, GraphEdgeType } from '../types';
+import type { CodeGraphNode, CodeGraphEdge, GraphEdgeType } from '../types';
 import {
 	getLanguageConfig,
 	getLanguageName,

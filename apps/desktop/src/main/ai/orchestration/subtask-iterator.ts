@@ -843,7 +843,7 @@ async function ensureSubtaskMarkedCompleted(
             subtask.notes = [
               `Completion blocked by runtime-readiness gate: ${runtimeReadinessIssues.slice(0, 3).join('; ')}`,
               subtask.notes,
-            ].filter((value): value is string => Boolean(value && value.trim())).join('\n\n');
+            ].filter((value): value is string => Boolean(value?.trim())).join('\n\n');
             subtask.updated_at = now;
             updated = true;
             continue;
@@ -914,7 +914,7 @@ function summarizeFailureResult(result: SessionResult, fallback: string): string
     .trim();
   const error = result.error?.message;
   return [error, finalAssistantText, fallback]
-    .filter((value): value is string => Boolean(value && value.trim()))
+    .filter((value): value is string => Boolean(value?.trim()))
     .join(' | ')
     .slice(0, 3000);
 }
@@ -1005,7 +1005,7 @@ async function markSubtaskNeedsRetry(
         delete subtask.completed_at;
         delete subtask.completion_summary;
         subtask.notes = [reason, subtask.notes]
-          .filter((value): value is string => Boolean(value && value.trim()))
+          .filter((value): value is string => Boolean(value?.trim()))
           .join('\n\n');
         subtask.updated_at = now;
         updated = true;
@@ -1054,7 +1054,7 @@ async function markSubtaskFailed(
         }
         if (!subtask.notes || !subtask.notes.includes(reason)) {
           subtask.notes = [summary, subtask.notes]
-            .filter((value): value is string => Boolean(value && value.trim()))
+            .filter((value): value is string => Boolean(value?.trim()))
             .join('\n\n');
           updated = true;
         }

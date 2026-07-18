@@ -1,11 +1,11 @@
 import { ipcMain, shell, app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { IPC_CHANNELS, DEFAULT_APP_SETTINGS, DEFAULT_FEATURE_MODELS, DEFAULT_FEATURE_THINKING, MODEL_ID_MAP, THINKING_BUDGET_MAP } from '../../../shared/constants';
-import type { IPCResult, WorktreeStatus, WorktreeDiff, WorktreeDiffFile, WorkPackageFileDiff, WorktreeMergeResult, WorktreeDiscardResult, WorktreeListResult, WorktreeListItem, WorktreeCreatePROptions, WorktreeCreatePRResult, SupportedIDE, SupportedTerminal, SupportedCLI, AppSettings } from '../../../shared/types';
+import type { IPCResult, WorktreeStatus, WorktreeDiff, WorktreeDiffFile, WorkPackageFileDiff, WorktreeMergeResult, WorktreeDiscardResult, WorktreeListResult, WorktreeListItem, WorktreeCreatePROptions, WorktreeCreatePRResult, SupportedIDE, SupportedTerminal, AppSettings } from '../../../shared/types';
 import path from 'path';
 import { minimatch } from 'minimatch';
 import { existsSync, readdirSync, statSync, readFileSync, promises as fsPromises } from 'fs';
-import { execFileSync, spawn, spawnSync, exec, execFile } from 'child_process';
+import { execFileSync, spawn, exec, execFile } from 'child_process';
 import { homedir } from 'os';
 import { projectStore } from '../../project-store';
 
@@ -46,8 +46,6 @@ import {
 import { persistPlanStatus, updateTaskMetadataReviewRequest } from './plan-file-utils';
 import { getIsolatedGitEnv, refreshGitIndex } from '../../utils/git-isolation';
 import { cleanupWorktree } from '../../utils/worktree-cleanup';
-import { killProcessGracefully } from '../../platform';
-import { stripAnsiCodes } from '../../../shared/utils/ansi-sanitizer';
 import { taskStateManager } from '../../task-state-manager';
 import { parseEnvFile } from '../utils';
 

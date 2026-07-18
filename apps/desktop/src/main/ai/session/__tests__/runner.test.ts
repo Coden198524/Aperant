@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import type { SessionConfig, SessionResult, StreamEvent } from '../types';
+import type { SessionConfig, StreamEvent } from '../types';
 
 // =============================================================================
 // Mock AI SDK

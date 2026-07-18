@@ -213,7 +213,7 @@ function extractTaskSuggestion(text: string): TaskSuggestion | null {
   const jsonStr = lineEnd === -1 ? afterPrefix.trim() : afterPrefix.substring(0, lineEnd).trim();
 
   const validated = parseLLMJson(jsonStr, TaskSuggestionSchema);
-  if (validated && validated.title && validated.description) {
+  if (validated?.title && validated.description) {
     return validated as TaskSuggestion;
   }
 

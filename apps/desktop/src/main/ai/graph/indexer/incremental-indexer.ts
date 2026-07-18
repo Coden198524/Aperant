@@ -19,8 +19,8 @@ import { promisify } from 'node:util';
 import { exec } from 'node:child_process';
 import { AUTOCODE_COMMON_IGNORED_DIR_NAMES } from '@autocode/core/workspace/ignore-rules';
 import type { GraphDatabase } from '../database';
-import { parseFile, type ParseResult } from '../parser/tree-sitter-parser';
-import { isLanguageSupported, getSupportedExtensions } from '../parser/language-registry';
+import { parseFile, } from '../parser/tree-sitter-parser';
+import { getSupportedExtensions } from '../parser/language-registry';
 import type { IndexOptions } from '../types';
 
 const execAsync = promisify(exec);

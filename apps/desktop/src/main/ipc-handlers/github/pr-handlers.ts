@@ -26,9 +26,7 @@ import { createContextLogger } from "./utils/logger";
 import { withProjectOrNull } from "./utils/project-middleware";
 import { createIPCCommunicators } from "./utils/ipc-communicator";
 import {
-  runMultiPassReview,
   type PRContext,
-  type PRReviewEngineConfig,
   type ChangedFile,
   type AIBotComment,
 } from "../../ai/runners/github/pr-review-engine";
@@ -48,7 +46,6 @@ import {
 } from "@autocode/core/project/data-paths";
 import { getPRStatusPoller } from "../../services/pr-status-poller";
 import { safeBreadcrumb, safeCaptureException } from "../../sentry";
-import { sanitizeForSentry } from "../../../shared/utils/sentry-privacy";
 import { PRReviewStateManager } from "../../pr-review-state-manager";
 import type { PRReviewResult as PreloadPRReviewResult } from "../../../preload/api/modules/github-api";
 import type {

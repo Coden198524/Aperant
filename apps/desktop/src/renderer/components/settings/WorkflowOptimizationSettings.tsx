@@ -5,7 +5,7 @@
  * UI for configuring workflow optimization settings.
  */
 
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useWorkflowOptimizationStore } from '@/stores/workflow-optimization-store';
 import {

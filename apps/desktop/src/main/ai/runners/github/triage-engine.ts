@@ -19,7 +19,6 @@ import {
   buildTriageContext,
   type GitHubTriageIssue as GitHubIssue,
   type TriageProgressCallback,
-  type TriageProgressUpdate,
   type TriageResult,
 } from '@autocode/core/integrations/github';
 import { parseLLMJson } from '../../schema/structured-output';

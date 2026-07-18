@@ -851,7 +851,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                     active={state.activeTab === 'logs'}
                     label={t('tasks:detail.loadingLogs', { defaultValue: 'Loading logs...' })}
                   >
-                    <>
+                    
                       <div
                         className="shrink-0 px-5 pt-3 pb-2 border-b border-border flex items-center justify-end"
                         data-testid="task-logs-actions"
@@ -888,7 +888,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                           onTogglePhase={state.togglePhase}
                         />
                       </div>
-                    </>
+                    
                   </DeferredTabMount>
                 </TabsContent>
 

@@ -55,7 +55,6 @@ import type {
   SessionOutcome,
   SessionError,
   SessionEventCallback,
-  StreamEvent,
   TokenUsage,
   SessionMessage,
 } from './types';

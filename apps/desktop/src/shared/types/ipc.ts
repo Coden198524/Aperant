@@ -21,7 +21,6 @@ import type {
   ProjectEnvConfig,
   InfrastructureStatus,
   MemoryValidationResult,
-  MemoryConnectionTestResult,
   GitStatus,
   CustomMcpServer,
   McpHealthCheckResult,

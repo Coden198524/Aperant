@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { ASTExtractor } from '../../graph/ast-extractor';
-import type { Node, Tree } from 'web-tree-sitter';
+import type { Tree } from 'web-tree-sitter';
 
 // ============================================================
 // Mock tree-sitter node factory

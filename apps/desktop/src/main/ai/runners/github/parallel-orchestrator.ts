@@ -47,7 +47,7 @@ import { getAgentConfig, type AgentType } from '../../config/agent-configs';
 import type { ToolContext } from '../../tools/types';
 import type { ToolRegistry } from '../../tools/registry';
 import type { SecurityProfile } from '../../security/bash-validator';
-import { optimizePRContext, isGraphAvailable, buildGraphAnalysisSummary } from '../../graph/integration/pr-review-hook';
+import { optimizePRContext, isGraphAvailable, } from '../../graph/integration/pr-review-hook';
 import { GraphDatabase } from '../../graph/database';
 import { getMemoryClient } from '../../memory/db';
 

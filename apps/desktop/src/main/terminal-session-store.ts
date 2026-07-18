@@ -503,7 +503,7 @@ export class TerminalSessionStore {
         // Exclude today since we already checked it
         if (date === today) return false;
         const sessions = this.data.sessionsByDate[date][projectPath];
-        return sessions && sessions.some(session =>
+        return sessions?.some(session =>
           !cli || session.activeCLI === cli || (cli === 'claude-code' && session.activeCLI === undefined)
         );
       })
@@ -599,7 +599,7 @@ export class TerminalSessionStore {
         // If projectPath specified, only include dates with sessions for that project
         if (projectPath) {
           const sessions = this.data.sessionsByDate[date][projectPath];
-          return sessions && sessions.some(session =>
+          return sessions?.some(session =>
             !cli || session.activeCLI === cli || (cli === 'claude-code' && session.activeCLI === undefined)
           );
         }

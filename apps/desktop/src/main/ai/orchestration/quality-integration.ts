@@ -35,10 +35,9 @@ import { runPreQASmokeTests, formatSmokeTestResults } from './pre-qa-smoke-tests
 import { runIncrementalValidation, formatValidationResults } from './incremental-validation';
 import { enhanceCoderPrompt, shouldInjectPatterns, formatInjectionSummary } from './pattern-injection';
 import { generatePreImplementationChecklist, formatCompactChecklistForPrompt, formatChecklistSummary } from './pre-implementation-checklist';
-import { runSelfCritique, formatCritiqueSummary } from './self-critique';
 import { analyzeFailureAndRecover, formatFailureAnalysis, formatRecoverySummary, type FailureRecord } from './context-aware-recovery';
 import { extractAndStoreKnowledge, formatKnowledgeSummary } from './active-memory-learning';
-import { determineQualityTier, formatTierClassification, formatTierSummary, getQAChecksForTier } from './tiered-quality-standards';
+import { determineQualityTier, formatTierClassification, formatTierSummary, } from './tiered-quality-standards';
 
 // =============================================================================
 // Types

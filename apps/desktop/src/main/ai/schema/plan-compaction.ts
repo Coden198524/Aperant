@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises';
 
 import {
   compactImplementationPlan,
-  PLAN_COMPACTION_LIMITS,
   type PlanCompactionOptions,
   type PlanCompactionResult,
 } from '@autocode/core/schema/plan-compaction';

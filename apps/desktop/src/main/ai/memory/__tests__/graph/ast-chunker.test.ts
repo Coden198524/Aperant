@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { chunkFileByAST } from '../../graph/ast-chunker';
-import type { Parser, Node, Tree } from 'web-tree-sitter';
+import type { Parser, Tree } from 'web-tree-sitter';
 
 // ============================================================
 // Mock tree-sitter Node factory
