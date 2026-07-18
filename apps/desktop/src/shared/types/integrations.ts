@@ -256,6 +256,18 @@ export interface GitHubIssue {
 }
 
 /**
+ * A GitHub issue comment as returned by the issue-comments IPC channel.
+ * Field names mirror the raw GitHub REST payload consumed by the renderer.
+ */
+export interface GitHubIssueComment {
+  id: number;
+  body: string;
+  user: { login: string; avatar_url?: string };
+  created_at: string;
+  updated_at: string;
+}
+
+/**
  * Result type for paginated issue fetching
  */
 export interface PaginatedIssuesResult {

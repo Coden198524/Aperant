@@ -1,4 +1,4 @@
-import { ipcRenderer } from 'electron';
+import { ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type {
   Project,
@@ -20,6 +20,15 @@ export interface TabState {
   openProjectIds: string[];
   activeProjectId: string | null;
   tabOrder: string[];
+}
+
+/** Progress payload emitted while an Ollama model is downloading. */
+export interface OllamaDownloadProgress {
+  modelName: string;
+  status: string;
+  completed: number;
+  total: number;
+  percentage: number;
 }
 
 export interface ProjectAPI {
@@ -278,14 +287,8 @@ export const createProjectAPI = (): ProjectAPI => ({
   downloadOllamaModel: (baseUrl: string, modelName: string): Promise<IPCResult<{ message: string }>> =>
     ipcRenderer.invoke('download-ollama-model', baseUrl, modelName),
 
-  onDownloadProgress: (callback: (data: {
-    modelName: string;
-    status: string;
-    completed: number;
-    total: number;
-    percentage: number;
-  }) => void) => {
-    const listener = (_: any, data: any) => callback(data);
+  onDownloadProgress: (callback: (data: OllamaDownloadProgress) => void) => {
+    const listener = (_: IpcRendererEvent, data: OllamaDownloadProgress) => callback(data);
     ipcRenderer.on(IPC_CHANNELS.OLLAMA_PULL_PROGRESS, listener);
     return () => ipcRenderer.off(IPC_CHANNELS.OLLAMA_PULL_PROGRESS, listener);
   },

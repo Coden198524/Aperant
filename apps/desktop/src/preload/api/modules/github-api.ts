@@ -2,6 +2,7 @@ import { IPC_CHANNELS } from '../../../shared/constants';
 import type {
   GitHubRepository,
   GitHubIssue,
+  GitHubIssueComment,
   GitHubSyncStatus,
   GitHubImportResult,
   GitHubInvestigationStatus,
@@ -164,7 +165,7 @@ export interface GitHubAPI {
     fetchAll?: boolean
   ) => Promise<IPCResult<PaginatedIssuesResult>>;
   getGitHubIssue: (projectId: string, issueNumber: number) => Promise<IPCResult<GitHubIssue>>;
-  getIssueComments: (projectId: string, issueNumber: number) => Promise<IPCResult<any[]>>;
+  getIssueComments: (projectId: string, issueNumber: number) => Promise<IPCResult<GitHubIssueComment[]>>;
   checkGitHubConnection: (projectId: string) => Promise<IPCResult<GitHubSyncStatus>>;
   investigateGitHubIssue: (projectId: string, issueNumber: number, selectedCommentIds?: number[]) => void;
   importGitHubIssues: (projectId: string, issueNumbers: number[]) => Promise<IPCResult<GitHubImportResult>>;
@@ -548,7 +549,7 @@ export const createGitHubAPI = (): GitHubAPI => ({
   getGitHubIssue: (projectId: string, issueNumber: number): Promise<IPCResult<GitHubIssue>> =>
     invokeIpc(IPC_CHANNELS.GITHUB_GET_ISSUE, projectId, issueNumber),
 
-  getIssueComments: (projectId: string, issueNumber: number): Promise<IPCResult<any[]>> =>
+  getIssueComments: (projectId: string, issueNumber: number): Promise<IPCResult<GitHubIssueComment[]>> =>
     invokeIpc(IPC_CHANNELS.GITHUB_GET_ISSUE_COMMENTS, projectId, issueNumber),
 
   checkGitHubConnection: (projectId: string): Promise<IPCResult<GitHubSyncStatus>> =>

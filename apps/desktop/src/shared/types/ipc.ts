@@ -137,6 +137,7 @@ import type {
   YunxiaoSyncStatus,
   GitHubRepository,
   GitHubIssue,
+  GitHubIssueComment,
   GitHubSyncStatus,
   GitHubImportResult,
   GitHubInvestigationResult,
@@ -621,7 +622,7 @@ export interface ElectronAPI {
   getGitHubIssue: (projectId: string, issueNumber: number) => Promise<IPCResult<GitHubIssue>>;
   checkGitHubConnection: (projectId: string) => Promise<IPCResult<GitHubSyncStatus>>;
   investigateGitHubIssue: (projectId: string, issueNumber: number, selectedCommentIds?: number[]) => void;
-  getIssueComments: (projectId: string, issueNumber: number) => Promise<IPCResult<Array<{ id: number; body: string; user: { login: string; avatar_url?: string }; created_at: string; updated_at: string }>>>;
+  getIssueComments: (projectId: string, issueNumber: number) => Promise<IPCResult<GitHubIssueComment[]>>;
   importGitHubIssues: (projectId: string, issueNumbers: number[]) => Promise<IPCResult<GitHubImportResult>>;
   createGitHubRelease: (
     projectId: string,
