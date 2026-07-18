@@ -7,6 +7,13 @@ import type {
   ProviderAccount
 } from '../../shared/types';
 
+/** Connection parameters accepted by the provider connection test handler. */
+export interface ProviderConnectionTestConfig {
+  apiKey?: string;
+  baseUrl?: string;
+  region?: string;
+}
+
 export interface SettingsAPI {
   // App Settings
   getSettings: () => Promise<IPCResult<AppSettings>>;
@@ -32,13 +39,21 @@ export interface SettingsAPI {
 
   // Provider Account management (unified multi-provider)
   getProviderAccounts: () => Promise<IPCResult<{ accounts: ProviderAccount[] }>>;
-  saveProviderAccount: (account: any) => Promise<IPCResult<any>>;
-  updateProviderAccount: (id: string, updates: any) => Promise<IPCResult<any>>;
+  saveProviderAccount: (
+    account: Omit<ProviderAccount, 'id' | 'createdAt' | 'updatedAt'>,
+  ) => Promise<IPCResult<ProviderAccount>>;
+  updateProviderAccount: (
+    id: string,
+    updates: Partial<ProviderAccount>,
+  ) => Promise<IPCResult<ProviderAccount>>;
   deleteProviderAccount: (id: string) => Promise<IPCResult>;
   setProviderAccountQueueOrder: (order: string[]) => Promise<IPCResult>;
   setCrossProviderQueueOrder: (order: string[]) => Promise<IPCResult>;
   saveModelOverrides: (overrides: Record<string, unknown>) => Promise<IPCResult>;
-  testProviderConnection: (provider: string, config: any) => Promise<IPCResult<{ success: boolean; error?: string }>>;
+  testProviderConnection: (
+    provider: string,
+    config: ProviderConnectionTestConfig,
+  ) => Promise<IPCResult<{ success: boolean; error?: string }>>;
   checkEnvCredentials: () => Promise<IPCResult<Record<string, boolean>>>;
 
   // Codex CLI status
@@ -83,9 +98,14 @@ export const createSettingsAPI = (): SettingsAPI => ({
   // Provider Account management (unified multi-provider)
   getProviderAccounts: (): Promise<IPCResult<{ accounts: ProviderAccount[] }>> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROVIDER_ACCOUNTS_GET),
-  saveProviderAccount: (account: any): Promise<IPCResult<any>> =>
+  saveProviderAccount: (
+    account: Omit<ProviderAccount, 'id' | 'createdAt' | 'updatedAt'>,
+  ): Promise<IPCResult<ProviderAccount>> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROVIDER_ACCOUNTS_SAVE, account),
-  updateProviderAccount: (id: string, updates: any): Promise<IPCResult<any>> =>
+  updateProviderAccount: (
+    id: string,
+    updates: Partial<ProviderAccount>,
+  ): Promise<IPCResult<ProviderAccount>> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROVIDER_ACCOUNTS_UPDATE, id, updates),
   deleteProviderAccount: (id: string): Promise<IPCResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROVIDER_ACCOUNTS_DELETE, id),
@@ -95,7 +115,10 @@ export const createSettingsAPI = (): SettingsAPI => ({
     ipcRenderer.invoke(IPC_CHANNELS.PROVIDER_ACCOUNTS_SET_CROSS_PROVIDER_QUEUE_ORDER, order),
   saveModelOverrides: (overrides: Record<string, unknown>): Promise<IPCResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.MODEL_OVERRIDES_SAVE, overrides),
-  testProviderConnection: (provider: string, config: any): Promise<IPCResult<{ success: boolean; error?: string }>> =>
+  testProviderConnection: (
+    provider: string,
+    config: ProviderConnectionTestConfig,
+  ): Promise<IPCResult<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROVIDER_ACCOUNTS_TEST_CONNECTION, provider, config),
   checkEnvCredentials: (): Promise<IPCResult<Record<string, boolean>>> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROVIDER_ACCOUNTS_CHECK_ENV),
