@@ -571,7 +571,9 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   '- FLOW: Trigger; Participants; Steps; State changes; Failure paths; Evidence basis; one Mermaid sequenceDiagram block. Steps name every DES participant in explicit order.',
   '- design_model.md headings: System Responsibility Allocation; Domain To Software Mapping; Design Model; Class Diagram; State Transition Diagrams; Sequence Diagrams.',
   '- CONTRACT: Inputs and outputs; Compatibility; Errors; Lifecycle; Evidence basis.',
-  '- Change analysis: Verified variation points; Variation inventory; Candidate patterns evaluated; Simplest change mechanism; Selected patterns.',
+  '- Change analysis: Verified variation points; Variation inventory; Candidate patterns evaluated (for each verified variation, name the applicable GoF or architectural pattern and compare it against the direct mechanism); Simplest change mechanism; Selected patterns=PAT-* IDs or none.',
+  '- Pattern application balances NOP: when a variation is real and evidenced, apply the fitting pattern instead of a growing switch/if-else over types or states; when no variation is verified, keep the direct mechanism and record none.',
+  '- PAT (define one per Selected pattern; Design Budget New architectural patterns must list the same PAT-* IDs): Verified variation; Evidence; Expected horizon; Stable boundary; Encapsulated variation; Participants and roles; Application scope; Simpler alternative; Benefit; Cost and failure modes.',
   '- REV when applicable: External capability; Domain concepts; Responsibility path; Runtime path; Source symbols; Contradiction checks=checked|conflict|unresolved - <evidence>; Confidence=high|medium|low - <rationale>.',
   '- LANG: Scope; Language and version=<observed language and a concrete version number>; Naming and formatting; Type and interface rules; Class and visibility rules; Error handling; Resource and lifecycle management; Concurrency and state management; Framework integration; Testing and documentation; Evidence basis.',
   '- IMP: Project files and symbols=<path/to/file#symbol>; Design mapping=SYS-*, DES-*, FLOW-*/CONTRACT-* (add STATE-* when the DES owns state); Coding constraints=LANG-*; Class realization=DES-* -> <file#symbol>; Integration constraints; Verification; Evidence basis.',
@@ -582,7 +584,7 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   '- Every RM and FUN is allocated by SYS. Every SYS has at least one DES implementation responsibility.',
   '- Every DOM is mapped to DES or explicitly documented as domain-only. Every DES maps to SYS and participates in FLOW or CONTRACT at Standard/Complex depth.',
   '- Every stateful DES has a STATE diagram. Every FLOW has a sequence diagram. Every IMP maps SYS, DES, STATE when applicable, and FLOW or CONTRACT, and references LANG.',
-  '- Traceability includes every ADR and a directed path from RM through FUN, SSD, DOM, ADR, SYS, DES, STATE/FLOW/CONTRACT, LANG, and IMP.',
+  '- Traceability includes every ADR-*, and for each RM-* one single line connecting it with -> arrows in this exact left-to-right order: RM-* -> FUN-* -> SSD-* -> DOM-* -> ADR-* -> SYS-* -> DES-* -> STATE-*/FLOW-*/CONTRACT-* -> LANG-* -> IMP-*.',
 ].join('\n');
 
 export const AUTOCODE_STANDARD_DESIGN_METHOD_PROMPT = `

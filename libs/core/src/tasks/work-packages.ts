@@ -1165,7 +1165,9 @@ function normalizeAutocodeRuntimeTaskDependencies(input: {
     }
 
     if (dependencyId === input.task.id) {
-      normalized.push(dependencyId);
+      // Drop self-dependencies: a task cannot depend on itself. This matches the
+      // phase-terminal expansion below, which also filters out the task's own id,
+      // and avoids a self-cycle that would deadlock scheduling.
       continue;
     }
 

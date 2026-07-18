@@ -752,6 +752,43 @@ describe('runtime work package balancing', () => {
     })).not.toThrow();
   });
 
+  it('drops self-dependencies instead of discarding the whole dependency list', () => {
+    // Candidate 3 regression: normalization used to `return` on a self-dependency,
+    // silently dropping every remaining valid dependency for that task. It must only
+    // skip the self reference and keep the real upstream edge.
+    const markdown = [
+      '# Tasks',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Create page shell',
+      '    - Add the static page shell.',
+      '    - _Files to modify: index.html_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1_',
+      '    - _Evidence: spec.md R1; requirements.md Evidence Sources_',
+      '    - _Verification: inspect index.html_',
+      '',
+      '  - [ ] 1.2 Add page styling',
+      '    - Add the visual layout after the shell exists.',
+      '    - _Files to modify: styles.css_',
+      '    - _Depends on: 1.1, 1.2_',
+      '    - _Requirements: R2, AC2_',
+      '    - _Evidence: spec.md R2; requirements.md Evidence Sources_',
+      '    - _Verification: inspect styles.css_',
+      '',
+    ].join('\n');
+    const parsed = parseAutocodeImplementationPlanMarkdown(markdown);
+
+    const tasks = completeAutocodeRuntimeTaskDependencyGraph(
+      flattenAutocodeRuntimeTasks(parsed.phases as Array<Record<string, unknown>>),
+    );
+    const dependsOnById = new Map(tasks.map((task) => [task.id, task.dependsOn]));
+
+    expect(dependsOnById.get('1.2')).toEqual(['1.1']);
+    expect(dependsOnById.get('1.2')).not.toContain('1.2');
+  });
+
   it('still rejects truly missing dependency references', () => {
     expect(() => buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
       '# Tasks',

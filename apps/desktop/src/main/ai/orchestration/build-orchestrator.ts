@@ -1820,49 +1820,62 @@ export class BuildOrchestrator extends EventEmitter {
       existingQuality.errors,
     );
 
+    let upstreamRepairs = 0;
+    const maxUpstreamRepairs = 2;
+
     for (let revision = 0; revision <= 2; revision++) {
-      let restartFromUpstreamOwner = false;
-      for (const stage of generationStages) {
-        const stageResult = await this.runStandardDesignOwnerStage(
-          stage,
-          planningTransaction,
-          {
-            forceRun: revision > 0,
-            retryContext,
-          },
-        );
-        if (!stageResult.success) {
-          const repairStages = stageResult.errors
-            ? selectAutocodeDesignRevisionStages(stageResult.errors)
-                .filter((candidate) => candidate !== 'design_review')
-            : [];
-          const repairStage = repairStages[0];
-          if (
-            repairStage &&
-            STANDARD_DESIGN_OWNER_STAGES.indexOf(repairStage) <
-              STANDARD_DESIGN_OWNER_STAGES.indexOf(stage) &&
-            revision < 2
-          ) {
-            generationStages = repairStages;
-            retryContext = buildAutocodeDesignQualityRetryPrompt(
-              stageResult.errors ?? [],
-            );
-            restartFromUpstreamOwner = true;
-            this.emitTyped(
-              'log',
-              `${stage} validation found an upstream owner error; revision ${revision + 1}/2 resumes from ${repairStage}.`,
-            );
+      // Generation owners use a separate upstream-repair budget: an upstream-owner
+      // error re-runs the affected owners WITHOUT consuming a design-review revision,
+      // matching the CLI runner which tracks upstream repairs and review revisions
+      // as independent budgets.
+      let generationFailure: { success: false; error?: string } | undefined;
+      let regenerate = true;
+      while (regenerate) {
+        regenerate = false;
+        for (const stage of generationStages) {
+          const stageResult = await this.runStandardDesignOwnerStage(
+            stage,
+            planningTransaction,
+            {
+              forceRun: revision > 0 || upstreamRepairs > 0,
+              retryContext,
+            },
+          );
+          if (!stageResult.success) {
+            const repairStages = stageResult.errors
+              ? selectAutocodeDesignRevisionStages(stageResult.errors)
+                  .filter((candidate) => candidate !== 'design_review')
+              : [];
+            const repairStage = repairStages[0];
+            if (
+              repairStage &&
+              STANDARD_DESIGN_OWNER_STAGES.indexOf(repairStage) <
+                STANDARD_DESIGN_OWNER_STAGES.indexOf(stage) &&
+              upstreamRepairs < maxUpstreamRepairs
+            ) {
+              upstreamRepairs += 1;
+              generationStages = repairStages;
+              retryContext = buildAutocodeDesignQualityRetryPrompt(
+                stageResult.errors ?? [],
+              );
+              regenerate = true;
+              this.emitTyped(
+                'log',
+                `${stage} validation found an upstream owner error; repair ${upstreamRepairs}/${maxUpstreamRepairs} resumes from ${repairStage}.`,
+              );
+              break;
+            }
+            generationFailure = {
+              success: false,
+              error: stageResult.error ?? `${stage} owner failed.`,
+            };
             break;
           }
-          return {
-            success: false,
-            error: stageResult.error ?? `${stage} owner failed.`,
-          };
+          retryContext = undefined;
         }
-        retryContext = undefined;
       }
-      if (restartFromUpstreamOwner) {
-        continue;
+      if (generationFailure) {
+        return generationFailure;
       }
 
       const reviewResult = await this.runStandardDesignOwnerStage(

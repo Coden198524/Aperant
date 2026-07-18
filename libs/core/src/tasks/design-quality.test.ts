@@ -726,6 +726,23 @@ describe('Design-Contract: 5 quality validation', () => {
     );
   });
 
+  it('requires FUN-* to be covered by a task (prompt must list FUN/STATE/LANG as referenceable)', () => {
+    // Regression: the validator requires every FUN/STATE/LANG to be covered by a task
+    // and every implementation task to cite FUN-*/LANG-*, but the tasks prompt used to
+    // omit FUN/STATE/LANG from the referenceable-ID list.
+    const tasksWithoutFun = tasksMarkdown.replace('FUN-001, ', '');
+    const result = validateAutocodeStandardDesignArtifacts({
+      ...buildV5Package(),
+      designReviewMarkdown: reviewMarkdown,
+      tasksMarkdown: tasksWithoutFun,
+    });
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('function FUN-001 is not covered by any executable task'),
+      ]),
+    );
+  });
+
   it('requires IMP Design mapping to reference SYS-*, DES-*, and FLOW-*/CONTRACT-* (prompt must declare it)', () => {
     const missingRefs = implementationModelMarkdown.replace(
       '- Design mapping: SYS-001, DES-001, STATE-001, FLOW-001',
@@ -946,8 +963,11 @@ describe('Design-Contract: 5 quality validation', () => {
     expect(retryPrompt).not.toContain('Design-Contract: 3');
     expect(retryPrompt).not.toContain('Design-Contract: 4');
     expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).toContain('Design-Contract: 5');
+    // Candidate 5: the Traceability contract must declare a single ordered line with
+    // -> arrows in the exact left-to-right order the validator enforces, otherwise
+    // generators emit unordered or multi-line chains that fail deterministic parsing.
     expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).toContain(
-      'RM through FUN, SSD, DOM, ADR, SYS, DES',
+      'RM-* -> FUN-* -> SSD-* -> DOM-* -> ADR-* -> SYS-* -> DES-* -> STATE-*/FLOW-*/CONTRACT-* -> LANG-* -> IMP-*',
     );
     expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).not.toContain('Design-Contract: 4');
   });
@@ -1074,6 +1094,16 @@ describe('machine contract prompt stays aligned with the validator', () => {
     expect(prompt).toContain('forward-design uses requirement or mixed (never source alone)');
     expect(prompt).toContain('mixed analysis must use mixed');
     expect(prompt).toContain('At local depth, keep New dependencies allowed: 0 and New architectural patterns: none');
+  });
+
+  it('declares PAT machine fields and balanced pattern-application guidance', () => {
+    // Quality: PAT fields were never declared in the contract, so selected patterns
+    // had no field template; also give positive guidance to apply a fitting pattern
+    // for real variations while keeping NOP for none.
+    expect(prompt).toContain('name the applicable GoF or architectural pattern');
+    expect(prompt).toContain('Pattern application balances NOP');
+    expect(prompt).toContain('- PAT (define one per Selected pattern');
+    expect(prompt).toContain('Cost and failure modes');
   });
 
   it('declares the domain class diagram direction LR requirement', () => {

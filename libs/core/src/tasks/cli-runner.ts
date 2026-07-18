@@ -7307,7 +7307,7 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
     'Every executable task must include _Depends on_, _Requirements_, _Design_, _Evidence_, _Done when_, and _Verification_ metadata plus concrete file intent.',
     'Use canonical metadata bullets with the colon inside the emphasis, for example _Depends on: none_ and _Design: ADR-001, IMP-001_; do not write _Depends on_: or _Design_:.',
     'Express file intent as exact path lists in _Files to create: ..._ and/or _Files to modify: ..._; do not use a free-form _File intent_: sentence.',
-    '_Design_ must reference existing stable IDs from their owning files: ADR in design.md, DOM in domain_model.md, SYS/DES/FLOW-or-CONTRACT/selected-PAT/applicable-REV in design_model.md, and IMP in implementation_model.md. Every implementation task includes SYS-*; cover every SYS-*, required IMP-*, selected PAT-*, and REV-* unit.',
+    '_Design_ must reference existing stable IDs from their owning files: ADR in design.md; FUN in requirement_model.md; DOM in domain_model.md; SYS/DES/STATE/FLOW-or-CONTRACT/selected-PAT/applicable-REV in design_model.md; LANG/IMP in implementation_model.md. Every implementation task references its SYS-*, FUN-*, and LANG-*; across all tasks cover every SYS-*, FUN-*, STATE-*, LANG-*, required IMP-*, selected PAT-*, and REV-* unit.',
     'Do not invent architecture or design IDs in tasks.md. Do not edit implementation_plan.md; the runner derives work packages.',
     'Reference R*/AC*/SCN*/E* and design IDs without copying their source prose.',
     'Keep each task independently reviewable and avoid artificial dependencies for shared files.',

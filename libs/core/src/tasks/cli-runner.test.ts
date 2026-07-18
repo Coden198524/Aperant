@@ -750,6 +750,15 @@ describe('Autocode CLI runner prompt', () => {
     const capturedPrompt = readFileSync(capturedPromptPath, 'utf8');
     expect(capturedPrompt).toContain('# Standard Task Planning Stage');
     expect(capturedPrompt).not.toContain('## STANDARD REQUIREMENTS STAGE ONLY');
+    // Candidate 1: validateAutocodeTaskDesignReferences requires every FUN/STATE/LANG
+    // to be covered by a task and every implementation task to cite SYS/FUN/LANG, so
+    // the tasks planning prompt must list them as referenceable and require coverage.
+    expect(capturedPrompt).toContain(
+      'FUN in requirement_model.md',
+    );
+    expect(capturedPrompt).toContain(
+      'across all tasks cover every SYS-*, FUN-*, STATE-*, LANG-*, required IMP-*, selected PAT-*, and REV-* unit.',
+    );
     const transaction = JSON.parse(
       readFileSync(join(specDir, 'planning-transaction.json'), 'utf8'),
     ) as {
