@@ -934,6 +934,39 @@ describe('Design-Contract: 5 quality validation', () => {
     ]));
   });
 
+  it('does not let a parent task borrow a nested child task _Design_ metadata', () => {
+    // Regression: the block scan collected nested child-task lines, so a parent
+    // task without its own _Design:_ silently borrowed a child's references and
+    // escaped the missing-metadata check. The parent must report its own gap while
+    // the child still contributes its references for coverage.
+    const nestedTasks = [
+      '# Tasks',
+      '',
+      '- [ ] 1. Task submission',
+      '  - [ ] 1.1 Group without its own design',
+      '    - _Requirements: R-001, AC-001_',
+      '    - [ ] 1.1.1 Leaf with design',
+      '      - _Design: ADR-001, RM-001, FUN-001, SSD-001, DOM-001, SYS-001, DES-001, STATE-001, FLOW-001, LANG-001, IMP-001_',
+      '      - _Requirements: R-001, AC-001_',
+      '      - _Evidence: requirements.md R-001 and apps/desktop/src/main/task-service.ts_',
+      '      - _Done when: valid tasks submit and rejected tasks preserve draft state_',
+      '      - _Verification: focused unit tests, service tests, typecheck, and desktop build_',
+      '',
+    ].join('\n');
+    const errors = validateAutocodeTaskDesignReferences(
+      nestedTasks,
+      buildAutocodeDesignPackageMarkdown(buildV5Package()),
+    );
+
+    expect(errors).toEqual(
+      expect.arrayContaining(['tasks.md task 1.1 missing _Design: ..._ metadata.']),
+    );
+    // The child's references still satisfy coverage, so no "not covered" errors fire.
+    expect(errors).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('is not covered by any executable task')]),
+    );
+  });
+
   it('requires Chinese review prose for a Chinese task', () => {
     expect(validateAutocodeStandardDesignArtifacts({
       ...buildV5Package(),

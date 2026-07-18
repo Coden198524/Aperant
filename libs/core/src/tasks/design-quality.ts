@@ -1798,7 +1798,13 @@ export function validateAutocodeTaskDesignReferences(
     const block: string[] = [];
     for (let cursor = index + 1; cursor < lines.length; cursor++) {
       const nextItem = TASK_ITEM_PATTERN.exec(lines[cursor]);
-      if (nextItem && nextItem[1].length <= item[1].length) {
+      if (nextItem) {
+        // Stop at the next task item of any depth. A task's own metadata bullets
+        // (_Design:_, _Requirements:_, ...) are not task items and always precede
+        // its first child task, so restricting the block to the task body prevents
+        // a parent task from borrowing a nested child task's _Design:_ references
+        // and masking a missing-metadata error. Child tasks contribute their own
+        // references through their own iteration, so coverage is unaffected.
         break;
       }
       block.push(lines[cursor]);

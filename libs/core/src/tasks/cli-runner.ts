@@ -3581,12 +3581,12 @@ function conflictsWithActiveCodingWork(candidate) {
 }
 
 function getActiveCodingWorkConflict(candidate) {
-  const candidateFiles = getWorkItemFiles(candidate);
+  const candidateFiles = getWorkItemWriteFiles(candidate);
 
   const activeItems = readPlanItems()
     .filter((item) => item.isSubtask && activeCodingSubtaskIds.has(item.id));
   for (const active of activeItems) {
-    const activeFiles = getWorkItemFiles(active);
+    const activeFiles = getWorkItemWriteFiles(active);
     if (candidateFiles.length === 0 || activeFiles.length === 0) {
       continue;
     }
@@ -3845,6 +3845,16 @@ function getWorkItemFiles(item) {
     ...(item.filesToModify || []),
     ...(item.filesToCreate || []),
     ...(item.patternFiles || []),
+  ].map(normalizeWorkItemFileIntent).filter(Boolean))];
+}
+
+function getWorkItemWriteFiles(item) {
+  // Conflict detection must only consider write intent (create/modify). Pattern
+  // files are read-only references; two work packages that share a pattern file
+  // are a read-read overlap and must not be serialized against each other.
+  return [...new Set([
+    ...(item.filesToModify || []),
+    ...(item.filesToCreate || []),
   ].map(normalizeWorkItemFileIntent).filter(Boolean))];
 }
 
