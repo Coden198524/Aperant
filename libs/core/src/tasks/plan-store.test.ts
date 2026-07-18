@@ -459,4 +459,57 @@ describe('implementation plan markdown', () => {
     expect((subtask.completion_summary?.match(/PLAN STORE REPEAT/g) ?? [])).toHaveLength(1);
     expect(subtask.notes).toBe(subtask.completion_summary);
   });
+
+  it('clears stale completion markers when reopening a completed subtask', () => {
+    // Regression: a completed subtask reopened to in_progress/pending kept its
+    // completed_at and completion_summary, so completion-evidence checks treated the
+    // still-pending work as done and could report the build complete prematurely.
+    const plan = {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Implementation',
+          subtasks: [
+            {
+              id: '1.1',
+              title: 'Reopen me',
+              status: 'completed',
+              completed_at: '2026-01-01T00:06:00.000Z',
+              completion_summary: 'Prior completion result',
+              notes: 'Prior completion result',
+            },
+          ],
+        },
+      ],
+    };
+    const subtask = plan.phases[0].subtasks[0] as {
+      status?: string;
+      completed_at?: string;
+      completion_summary?: string;
+    };
+
+    expect(updateAutocodePlanSubtask(plan, '1.1', {
+      status: 'in_progress',
+      now: '2026-01-02T00:00:00.000Z',
+    })).toBe(true);
+    expect(subtask.status).toBe('in_progress');
+    expect(subtask.completed_at).toBeUndefined();
+    expect(subtask.completion_summary).toBeUndefined();
+
+    // Re-complete then reopen to pending to cover the non-in_progress branch too.
+    updateAutocodePlanSubtask(plan, '1.1', {
+      status: 'completed',
+      now: '2026-01-02T00:01:00.000Z',
+      completionSummary: '| Item | Details |\n| --- | --- |\n| What changed | Done. |\n| Verification | Checked. |\n| Review notes | Ready. |',
+    });
+    expect(subtask.completion_summary).toBeDefined();
+
+    expect(updateAutocodePlanSubtask(plan, '1.1', {
+      status: 'pending',
+      now: '2026-01-02T00:02:00.000Z',
+    })).toBe(true);
+    expect(subtask.status).toBe('pending');
+    expect(subtask.completed_at).toBeUndefined();
+    expect(subtask.completion_summary).toBeUndefined();
+  });
 });

@@ -512,9 +512,16 @@ export function updateAutocodePlanSubtask(
       if (subtask.status === 'in_progress') {
         subtask.started_at = subtask.started_at || now;
         subtask.active_started_at = subtask.active_started_at || now;
-        subtask.completed_at = undefined;
       } else if (subtask.active_started_at !== undefined) {
         subtask.active_started_at = undefined;
+      }
+      if (subtask.status !== 'completed') {
+        // Reopening or re-queuing a subtask (completed -> in_progress/pending/failed/
+        // blocked) must clear stale completion markers. Downstream completion-evidence
+        // checks treat a lingering completed_at or completion_summary as "done", so
+        // leaving them would let a build report complete while work is still pending.
+        subtask.completed_at = undefined;
+        subtask.completion_summary = undefined;
       }
       if (input.notes) {
         subtask.notes = compactStoredPlanNoteField(input.notes);

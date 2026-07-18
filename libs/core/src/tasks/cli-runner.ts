@@ -8165,14 +8165,14 @@ function buildArtifactValidationRetryPrompt(validationError) {
           ? 'requirement_model'
           : shouldRepairDomainModelArtifact
             ? 'domain_model'
-            : shouldRepairDesignModelArtifact
-              ? 'design_model'
-              : shouldRepairImplementationModelArtifact
-                ? 'implementation_model'
-                : shouldRepairDesignReviewArtifact
-                  ? 'design_review'
-                  : shouldRepairDesignArtifact
-                    ? 'design'
+            : shouldRepairDesignArtifact
+              ? 'design'
+              : shouldRepairDesignModelArtifact
+                ? 'design_model'
+                : shouldRepairImplementationModelArtifact
+                  ? 'implementation_model'
+                  : shouldRepairDesignReviewArtifact
+                    ? 'design_review'
                     : 'tasks';
     if (ownerStage !== 'tasks') {
       includeStandardPlanningStagesFrom(ownerStage);
