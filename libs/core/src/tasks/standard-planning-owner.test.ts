@@ -148,4 +148,36 @@ describe('Standard planning owner plan', () => {
       flowDocuments: ['implementation_model.md', 'design_review.md', 'tasks.md'],
     }))?.stages).toEqual(['implementation_model', 'design_review', 'tasks']);
   });
+
+  it('does not force a design_model change back to the architecture owner', () => {
+    // Regression: production sets impacts=['design'] for every design-package change
+    // (design_model/implementation_model included) while encoding the real owner via
+    // the earliest design document in flowDocuments. The generic 'design' impact used
+    // to short-circuit the design.md branch, forcing a design_model change to
+    // regenerate design.md and rerun the full downstream package.
+    expect(parseAutocodeStandardPlanningOwnerPlan(changeRequest({
+      id: 'CR-DESIGN-MODEL',
+      flowDocuments: ['design_model.md', 'implementation_model.md', 'design_review.md', 'tasks.md'],
+      impacts: ['design'],
+    }))?.stages).toEqual([
+      'design_model',
+      'implementation_model',
+      'design_review',
+      'tasks',
+    ]);
+  });
+
+  it('falls back to the architecture owner when a design impact names no design document', () => {
+    expect(parseAutocodeStandardPlanningOwnerPlan(changeRequest({
+      id: 'CR-DESIGN-GENERIC',
+      flowDocuments: ['HUMAN_INPUT.md', 'change_requests.jsonl'],
+      impacts: ['design'],
+    }))?.stages).toEqual([
+      'design',
+      'design_model',
+      'implementation_model',
+      'design_review',
+      'tasks',
+    ]);
+  });
 });

@@ -76,10 +76,7 @@ export function parseAutocodeStandardPlanningOwnerPlan(
       addStagesFrom(stages, 'requirement_model');
     } else if (hasDocument(AUTOCODE_TASK_ARTIFACTS.domainModel)) {
       addStagesFrom(stages, 'domain_model');
-    } else if (
-      hasDocument(AUTOCODE_TASK_ARTIFACTS.design) ||
-      hasImpact('design')
-    ) {
+    } else if (hasDocument(AUTOCODE_TASK_ARTIFACTS.design)) {
       addStagesFrom(stages, 'design');
     } else if (hasDocument(AUTOCODE_TASK_ARTIFACTS.designModel)) {
       addStagesFrom(stages, 'design_model');
@@ -87,6 +84,14 @@ export function parseAutocodeStandardPlanningOwnerPlan(
       addStagesFrom(stages, 'implementation_model');
     } else if (hasDocument(AUTOCODE_TASK_ARTIFACTS.designReview)) {
       addStagesFrom(stages, 'design_review');
+    } else if (hasImpact('design')) {
+      // Generic design impact fallback. The 'design' impact is set for every
+      // design-package change (design_model/implementation_model included), while the
+      // specific owner is encoded by the earliest design document in flowDocuments and
+      // matched above. Only fall back to the architecture owner when no design-package
+      // document is named, so a design_model/implementation_model change is not forced
+      // to regenerate design.md and rerun the full downstream package.
+      addStagesFrom(stages, 'design');
     } else if (hasDocument(AUTOCODE_TASK_ARTIFACTS.tasks) || hasImpact('tasks')) {
       stages.add('tasks');
     }
