@@ -97,6 +97,14 @@ vi.mock("electron", () => {
   const mockIpcMain = new (class extends EventEmitter {
     private handlers: Map<string, Function> = new Map();
 
+    constructor() {
+      super();
+      // setupIpcHandlers runs once per test case in this file, so every `.on(channel)`
+      // registration accumulates on this shared mock emitter. Disable the listener cap;
+      // it is a test-harness artifact, not a production leak.
+      this.setMaxListeners(0);
+    }
+
     handle(channel: string, handler: Function): void {
       this.handlers.set(channel, handler);
     }

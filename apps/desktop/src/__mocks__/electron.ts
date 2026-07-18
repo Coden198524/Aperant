@@ -25,6 +25,15 @@ export const app = {
 class MockIpcMain extends EventEmitter {
   private handlers: Map<string, Function> = new Map();
 
+  constructor() {
+    super();
+    // This mock is a shared singleton reused across every test file that registers IPC
+    // handlers, so many `.on(channel, ...)` registrations accumulate on one emitter and
+    // trip Node's >10 listener warning. Disable the cap: it is a test-harness artifact,
+    // not a production leak (the real Electron ipcMain registers each channel once).
+    this.setMaxListeners(0);
+  }
+
   handle(channel: string, handler: Function): void {
     this.handlers.set(channel, handler);
   }
