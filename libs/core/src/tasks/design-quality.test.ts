@@ -1005,6 +1005,26 @@ describe('Design-Contract: 5 quality validation', () => {
     expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).not.toContain('Design-Contract: 4');
   });
 
+  it('declares code-quality precision guidance in the machine contract', () => {
+    // These contract refinements shape generation toward code the coder can implement
+    // with fewer guesses: typed attributes/signatures, per-element testability and
+    // failure semantics, quality-attribute realization, and end-to-end error coverage.
+    const contract = AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT;
+    // 1 + 6: typed attributes and precise public-operation signatures.
+    expect(contract).toContain('Attributes (list each as name: type; constraint');
+    expect(contract).toContain('Attribute mapping (map each as domainAttr -> visibility name: type; constraint');
+    expect(contract).toContain('write each as name(param: type, ...): returnType with a one-line precondition and postcondition');
+    // 1: typed contract inputs/outputs.
+    expect(contract).toContain('Inputs and outputs (typed signatures with nullability and value constraints)');
+    // 2 + 3 + 5: observable outcomes, owned invariants/errors, and NFR realization on DES.
+    expect(contract).toContain('the observable outcome a test can assert');
+    expect(contract).toContain('state the invariants this element always upholds, the errors or edge cases it owns');
+    // 2 + 5: verification asserts invariants, exception flows, and quality attributes.
+    expect(contract).toContain('name focused tests that assert each owned invariant, every RM alternate and exception flow');
+    // 4: end-to-end error/edge coverage invariant (no happy-path-only designs).
+    expect(contract).toContain('Every RM Alternate and exception flow is realized by a FLOW Failure paths entry or a CONTRACT Errors entry');
+  });
+
   it('fingerprints the full five-artifact package deterministically', () => {
     expect(getAutocodeDesignPackageFingerprint(buildV5Package())).toHaveLength(64);
     expect(getAutocodeDesignPackageFingerprint(buildV5Package()))
