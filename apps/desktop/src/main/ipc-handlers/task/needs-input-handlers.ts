@@ -9,7 +9,7 @@
  */
 import { ipcMain } from 'electron';
 import path from 'path';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { detectAutocodeDesignReviewHumanInputGate, AUTOCODE_TASK_ARTIFACTS } from '@autocode/core';
 import { IPC_CHANNELS, getSpecsDir } from '../../../shared/constants';
 import type {
@@ -56,6 +56,53 @@ function readFirstExisting(specDirs: string[], fileName: string): string | undef
     }
   }
   return undefined;
+}
+
+/**
+ * Reads the active design review, falling back to the most recent
+ * `design_review.md.failed-*` snapshot. When planning pauses on the human gate the runner
+ * rolls the unvalidated review back to a `.failed-<timestamp>` file, so the plain
+ * design_review.md is usually absent at needs_input time and the failed snapshot holds the
+ * open questions the user must resolve.
+ */
+function readLatestDesignReviewMarkdown(specDirs: string[]): string | undefined {
+  const active = readFirstExisting(specDirs, DESIGN_REVIEW_FILE);
+  if (active) {
+    return active;
+  }
+  const failedPrefix = `${DESIGN_REVIEW_FILE}.failed-`;
+  let newest: { path: string; mtimeMs: number } | undefined;
+  for (const dir of specDirs) {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.startsWith(failedPrefix)) {
+        continue;
+      }
+      const filePath = path.join(dir, entry);
+      try {
+        const mtimeMs = statSync(filePath).mtimeMs;
+        if (!newest || mtimeMs > newest.mtimeMs) {
+          newest = { path: filePath, mtimeMs };
+        }
+      } catch {
+        // Ignore unreadable entries.
+      }
+    }
+  }
+  if (!newest) {
+    return undefined;
+  }
+  try {
+    return readFileSync(newest.path, 'utf-8');
+  } catch (error) {
+    console.warn(`[needs-input] Failed to read ${newest.path}:`, error);
+    return undefined;
+  }
 }
 
 /** Extracts a `Q<n>` open-question id from arbitrary review/question text, if present. */
@@ -164,7 +211,7 @@ export function registerNeedsInputHandlers(): void {
         return { success: false, error: 'Task or project not found' };
       }
       const specDirs = resolveTaskSpecDirs(task, project);
-      const reviewMarkdown = readFirstExisting(specDirs, DESIGN_REVIEW_FILE);
+      const reviewMarkdown = readLatestDesignReviewMarkdown(specDirs);
       const gate = detectAutocodeDesignReviewHumanInputGate(reviewMarkdown);
       return {
         success: true,
