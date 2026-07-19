@@ -67,6 +67,7 @@ export class AgentEvents {
     phase: ExecutionProgressData['phase'];
     message?: string;
     currentSubtask?: string;
+    progress?: number;
     resetTimestamp?: number;
     profileId?: string;
   } | null {

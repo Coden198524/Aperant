@@ -229,5 +229,19 @@
     "uncommittedChangesHint": "在暂存前请先在终端中提交或暂存这些更改，以避免冲突。",
     "checkingConflicts": "正在检查冲突...",
     "checkForConflicts": "检查冲突"
+  },
+  "needsInputDialog": {
+    "title": "解决开放问题",
+    "description": "设计评审在一些只有你能拍板的决策上暂停了。请为每个问题选择一个选项（已默认选中推荐项），然后重新运行规划。",
+    "loading": "正在加载开放问题...",
+    "loadError": "无法加载开放问题。",
+    "saveError": "无法保存你的决策。",
+    "incomplete": "请为每个问题选择或填写一个答案。",
+    "empty": "未找到结构化的开放问题。请查看 design_review.md 并手动修改 requirements.md。",
+    "recommended": "推荐",
+    "customOption": "自己填写答案",
+    "customPlaceholder": "描述要采用的决策……",
+    "applying": "正在应用...",
+    "applyAndReplan": "应用并重新规划"
   }
 }

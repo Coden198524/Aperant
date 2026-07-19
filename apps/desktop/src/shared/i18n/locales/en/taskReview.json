@@ -186,5 +186,19 @@
     "uncommittedChangesHint": "Commit or stash them in your terminal before staging to avoid conflicts.",
     "checkingConflicts": "Checking for conflicts...",
     "checkForConflicts": "Check for Conflicts"
+  },
+  "needsInputDialog": {
+    "title": "Resolve Open Questions",
+    "description": "The design review paused on decisions only you can make. Pick an option per question (the recommended one is preselected), then re-run planning.",
+    "loading": "Loading open questions...",
+    "loadError": "Could not load the open questions.",
+    "saveError": "Could not save your decisions.",
+    "incomplete": "Please choose or enter an answer for every question.",
+    "empty": "No structured open questions were found. Review design_review.md and edit requirements.md manually.",
+    "recommended": "Recommended",
+    "customOption": "Write my own answer",
+    "customPlaceholder": "Describe the decision to apply...",
+    "applying": "Applying...",
+    "applyAndReplan": "Apply & Re-run Planning"
   }
 }

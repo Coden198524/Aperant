@@ -1994,13 +1994,95 @@ export function getAutocodeDesignReviewStatus(markdown: string): AutocodeDesignR
   return statuses.length === 1 ? statuses[0] : undefined;
 }
 
+export interface AutocodeDesignReviewDecisionOption {
+  /** Stable option letter within a question, e.g. `A`, `B`, `C`. */
+  id: string;
+  /** The concrete decision text presented to the user. */
+  label: string;
+  /** True for the single option the review recommends as the default choice. */
+  recommended: boolean;
+}
+
+export interface AutocodeDesignReviewOpenQuestion {
+  /** Stable question id, e.g. `HQ-001`. */
+  id: string;
+  /** The short open-question prompt the user must decide. */
+  question: string;
+  /** Selectable decision options; exactly one is normally flagged recommended. */
+  options: AutocodeDesignReviewDecisionOption[];
+}
+
 export interface AutocodeDesignReviewHumanInputGate {
   /** True when the REVISE review is blocked on open questions only a human can resolve. */
   blocked: boolean;
   /** The distinct unresolved open questions extracted from the review findings. */
   questions: string[];
+  /**
+   * Structured decision prompts parsed from the review's optional
+   * `## Human Decision Options` section. Empty when the review did not emit options
+   * (older reviews), in which case callers fall back to the plain `questions` list.
+   */
+  decisions: AutocodeDesignReviewOpenQuestion[];
   /** A ready-to-surface message describing what the user must provide. */
   message: string;
+}
+
+const AUTOCODE_DESIGN_REVIEW_DECISION_OPTIONS_HEADING = 'Human Decision Options';
+
+/**
+ * Parses the optional `## Human Decision Options` section an independent design review
+ * appends when it stops on unresolved open questions. Each `### HQ-<n> <question>` block
+ * carries `- Option <id> (recommended)?: <label>` bullets that the desktop UI renders as a
+ * single-choice prompt. Returns an empty list when the section is absent or malformed.
+ */
+function parseAutocodeDesignReviewDecisionOptions(
+  markdown: string,
+): AutocodeDesignReviewOpenQuestion[] {
+  const section = extractMarkdownSection(markdown, AUTOCODE_DESIGN_REVIEW_DECISION_OPTIONS_HEADING);
+  if (!section) {
+    return [];
+  }
+  const decisions: AutocodeDesignReviewOpenQuestion[] = [];
+  const questionPattern = /^###\s+(HQ-\d{1,4})\s+(.+?)\s*$/gim;
+  const matches = [...section.matchAll(questionPattern)];
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    const id = match[1].toUpperCase();
+    const question = (match[2] ?? '').trim();
+    const blockStart = (match.index ?? 0) + match[0].length;
+    const blockEnd = index + 1 < matches.length ? (matches[index + 1].index ?? section.length) : section.length;
+    const block = section.slice(blockStart, blockEnd);
+    const options: AutocodeDesignReviewDecisionOption[] = [];
+    const seen = new Set<string>();
+    const optionPattern = /^\s*-\s*Option\s+([A-Za-z0-9]+)\s*(\(recommended\))?\s*[:：]\s*(.+?)\s*$/gim;
+    for (const optionMatch of block.matchAll(optionPattern)) {
+      const optionId = optionMatch[1].toUpperCase();
+      const label = (optionMatch[3] ?? '').trim();
+      if (!label || seen.has(optionId)) {
+        continue;
+      }
+      seen.add(optionId);
+      options.push({ id: optionId, label, recommended: Boolean(optionMatch[2]) });
+    }
+    if (!question || options.length === 0) {
+      continue;
+    }
+    // Guarantee a single default: honour the review's flag, else recommend the first option.
+    if (!options.some((option) => option.recommended)) {
+      options[0].recommended = true;
+    } else {
+      let seenRecommended = false;
+      for (const option of options) {
+        if (option.recommended && seenRecommended) {
+          option.recommended = false;
+        } else if (option.recommended) {
+          seenRecommended = true;
+        }
+      }
+    }
+    decisions.push({ id, question, options });
+  }
+  return decisions;
 }
 
 /**
@@ -2012,7 +2094,12 @@ export interface AutocodeDesignReviewHumanInputGate {
 export function detectAutocodeDesignReviewHumanInputGate(
   designReviewMarkdown: string | undefined | null,
 ): AutocodeDesignReviewHumanInputGate {
-  const empty: AutocodeDesignReviewHumanInputGate = { blocked: false, questions: [], message: '' };
+  const empty: AutocodeDesignReviewHumanInputGate = {
+    blocked: false,
+    questions: [],
+    decisions: [],
+    message: '',
+  };
   if (!designReviewMarkdown) {
     return empty;
   }
@@ -2039,11 +2126,12 @@ export function detectAutocodeDesignReviewHumanInputGate(
   if (questions.length === 0) {
     return empty;
   }
+  const decisions = parseAutocodeDesignReviewDecisionOptions(designReviewMarkdown);
   const message =
     'Independent design review is blocked on unresolved open questions that require a human decision. ' +
     'Resolve these in requirements.md/spec.md, then re-run planning: ' +
     questions.map((question, index) => `(${index + 1}) ${question}`).join(' ');
-  return { blocked: true, questions, message };
+  return { blocked: true, questions, decisions, message };
 }
 
 export function buildAutocodeDesignQualityRetryPrompt(errors: readonly string[]): string {

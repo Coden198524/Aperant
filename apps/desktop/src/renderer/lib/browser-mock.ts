@@ -395,6 +395,16 @@ const browserMockAPI: ElectronAPI = {
     data: { path: cliPath }
   }),
 
+  // Needs-input decision gate
+  getNeedsInputDecisions: async () => ({
+    success: true,
+    data: { blocked: false, message: '', questions: [], decisions: [] }
+  }),
+  resolveNeedsInputDecisions: async () => ({
+    success: true,
+    data: { written: 0 }
+  }),
+
   // Worktree Change Detection
   checkWorktreeChanges: async () => ({
     success: true,

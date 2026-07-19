@@ -158,5 +158,19 @@
     "alreadyExisted": "existait déjà",
     "noWorktree": "Aucun worktree trouvé pour cette tâche",
     "resultsDescriptionWithSkipped": "{{success}} réussies, {{skipped}} ignorées, {{failed}} échouées"
+  },
+  "needsInputDialog": {
+    "title": "Résoudre les questions ouvertes",
+    "description": "La revue de conception s'est arrêtée sur des décisions que vous seul pouvez prendre. Choisissez une option par question (l'option recommandée est présélectionnée), puis relancez la planification.",
+    "loading": "Chargement des questions ouvertes...",
+    "loadError": "Impossible de charger les questions ouvertes.",
+    "saveError": "Impossible d'enregistrer vos décisions.",
+    "incomplete": "Veuillez choisir ou saisir une réponse pour chaque question.",
+    "empty": "Aucune question ouverte structurée n'a été trouvée. Consultez design_review.md et modifiez requirements.md manuellement.",
+    "recommended": "Recommandé",
+    "customOption": "Écrire ma propre réponse",
+    "customPlaceholder": "Décrivez la décision à appliquer...",
+    "applying": "Application...",
+    "applyAndReplan": "Appliquer et relancer la planification"
   }
 }

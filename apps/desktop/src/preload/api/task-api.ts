@@ -90,6 +90,8 @@ export interface TaskAPI {
   discardWorktree: (taskId: string, skipStatusChange?: boolean, projectId?: string) => Promise<IPCResult<import('../../shared/types').WorktreeDiscardResult>>;
   discardOrphanedWorktree: (projectId: string, specName: string) => Promise<IPCResult<import('../../shared/types').WorktreeDiscardResult>>;
   clearStagedState: (taskId: string, projectId?: string) => Promise<IPCResult<{ cleared: boolean }>>;
+  getNeedsInputDecisions: (taskId: string, projectId?: string) => Promise<IPCResult<import('../../shared/types').TaskNeedsInputDecisions>>;
+  resolveNeedsInputDecisions: (taskId: string, answers: import('../../shared/types').TaskDecisionAnswer[], projectId?: string) => Promise<IPCResult<{ written: number }>>;
   listWorktrees: (projectId: string, options?: { includeStats?: boolean }) => Promise<IPCResult<import('../../shared/types').WorktreeListResult>>;
   worktreeOpenInIDE: (worktreePath: string, ide: SupportedIDE, customPath?: string) => Promise<IPCResult<{ opened: boolean }>>;
   worktreeOpenInTerminal: (worktreePath: string, terminal: SupportedTerminal, customPath?: string) => Promise<IPCResult<{ opened: boolean }>>;
@@ -243,6 +245,19 @@ export const createTaskAPI = (): TaskAPI => ({
 
   clearStagedState: (taskId: string, projectId?: string): Promise<IPCResult<{ cleared: boolean }>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_CLEAR_STAGED_STATE, taskId, projectId),
+
+  getNeedsInputDecisions: (
+    taskId: string,
+    projectId?: string
+  ): Promise<IPCResult<import('../../shared/types').TaskNeedsInputDecisions>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_GET_NEEDS_INPUT_DECISIONS, taskId, projectId),
+
+  resolveNeedsInputDecisions: (
+    taskId: string,
+    answers: import('../../shared/types').TaskDecisionAnswer[],
+    projectId?: string
+  ): Promise<IPCResult<{ written: number }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_RESOLVE_NEEDS_INPUT_DECISIONS, taskId, answers, projectId),
 
   listWorktrees: (projectId: string, options?: { includeStats?: boolean }): Promise<IPCResult<import('../../shared/types').WorktreeListResult>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_LIST_WORKTREES, projectId, options),

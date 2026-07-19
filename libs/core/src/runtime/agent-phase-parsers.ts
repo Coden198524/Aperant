@@ -150,6 +150,9 @@ export class AutocodeExecutionPhaseParser extends AutocodeBasePhaseParser<Execut
         currentSubtask: structuredEvent.subtask,
       };
 
+      if (structuredEvent.progress !== undefined) {
+        result.progress = structuredEvent.progress;
+      }
       if (structuredEvent.reset_timestamp !== undefined) {
         result.resetTimestamp = structuredEvent.reset_timestamp;
       }

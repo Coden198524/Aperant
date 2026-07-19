@@ -51,7 +51,9 @@ import type {
   ReviewReason,
   MergeProgress,
   TokenUsage,
-  WorkPackageFileDiff
+  WorkPackageFileDiff,
+  TaskNeedsInputDecisions,
+  TaskDecisionAnswer
 } from './task';
 import type {
   TerminalCreateOptions,
@@ -282,6 +284,8 @@ export interface ElectronAPI {
   discardWorktree: (taskId: string, skipStatusChange?: boolean, projectId?: string) => Promise<IPCResult<WorktreeDiscardResult>>;
   discardOrphanedWorktree: (projectId: string, specName: string) => Promise<IPCResult<WorktreeDiscardResult>>;
   clearStagedState: (taskId: string, projectId?: string) => Promise<IPCResult<{ cleared: boolean }>>;
+  getNeedsInputDecisions: (taskId: string, projectId?: string) => Promise<IPCResult<TaskNeedsInputDecisions>>;
+  resolveNeedsInputDecisions: (taskId: string, answers: TaskDecisionAnswer[], projectId?: string) => Promise<IPCResult<{ written: number }>>;
   listWorktrees: (projectId: string, options?: { includeStats?: boolean }) => Promise<IPCResult<WorktreeListResult>>;
   worktreeOpenInIDE: (worktreePath: string, ide: SupportedIDE, customPath?: string) => Promise<IPCResult<{ opened: boolean }>>;
   worktreeOpenInTerminal: (worktreePath: string, terminal: SupportedTerminal, customPath?: string) => Promise<IPCResult<{ opened: boolean }>>;

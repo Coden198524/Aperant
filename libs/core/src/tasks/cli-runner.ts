@@ -7127,7 +7127,22 @@ function resolveInitialStandardPlanningStage() {
   return standardPlanningRunStages[0] || 'requirements';
 }
 
+function emitStandardPlanningStageProgress(stage) {
+  const stageIndex = standardPlanningOwnerStageOrder.indexOf(stage);
+  if (stageIndex < 0 || executionPhase !== 'planning') {
+    return;
+  }
+  // Map the current owner stage to a monotonically increasing planning percentage so the
+  // UI advances through requirements -> spec -> models -> design_review -> tasks instead of
+  // freezing at a single value. Reserve headroom so it never reads 100% before completion.
+  const totalStages = standardPlanningOwnerStageOrder.length;
+  const percent = Math.min(95, Math.round(((stageIndex + 1) / (totalStages + 1)) * 100));
+  const stageMessage = localizeMessage('planningStage', 'Standard planning: ' + stage, { stage });
+  emitPhase('planning', stageMessage, percent);
+}
+
 function buildStandardPlanningStagePrompt(stage, validationError) {
+  emitStandardPlanningStageProgress(stage);
   const retry = validationError
     ? '\\n\\n## Previous stage validation\\n\\n' + limitStandardPlanningStageRetryGuidance(validationError)
     : '';
@@ -7296,6 +7311,9 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'For reverse/mixed work, require outside-in REV paths, exact source symbols, contradiction checks, and justified confidence. Do not approve inferred claims as observed facts.',
       'Apply the same design-depth rules across languages; require explicit state, mutation, lifetime, and collaboration ownership in the selected project paradigm.',
       'For REVISE, list only blocking findings, impacted design IDs, evidence, and the simplest project-consistent correction.',
+      'When Status is REVISE and the only blockers are unresolved - open questions that need a human decision (no automatically fixable design defect also blocks approval), append a section titled exactly "## Human Decision Options" after the findings.',
+      'In that section add one "### HQ-001 <short question>" block per distinct open question, numbering HQ-001, HQ-002, ... . Under each block list 2 to 4 concrete, testable choices as "- Option A (recommended): <decision>", "- Option B: <decision>", marking exactly one option per question as (recommended).',
+      'Each option must be a decision a user can approve directly into requirements.md/spec.md (specific values, layouts, or explicit "keep current assumption A#"), not a task or a question. Localize option prose but keep the "## Human Decision Options", "### HQ-###", "Option <letter>", and "(recommended)" tokens exactly in English.',
       'Do not edit any design package file, create tasks, or modify source code.',
       outputLanguage,
       retry,
@@ -7627,6 +7645,9 @@ async function advanceStandardPlanningStage() {
         const humanInputQuestions = Array.isArray(humanInputGate.questions)
           ? humanInputGate.questions
           : [];
+        const humanInputDecisions = Array.isArray(humanInputGate.decisions)
+          ? humanInputGate.decisions
+          : [];
         appendTaskLogEntry(
           logPhase,
           'info',
@@ -7635,6 +7656,7 @@ async function advanceStandardPlanningStage() {
         );
         emitTaskEvent('PLANNING_NEEDS_INPUT', {
           questions: humanInputQuestions,
+          decisions: humanInputDecisions,
           message: humanInputMessage,
         });
         await finishRun(1, undefined, undefined, undefined, humanInputMessage);

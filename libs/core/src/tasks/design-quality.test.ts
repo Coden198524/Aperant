@@ -1087,6 +1087,55 @@ describe('design review human-input gate detection', () => {
     expect(detectAutocodeDesignReviewHumanInputGate(undefined).blocked).toBe(false);
     expect(detectAutocodeDesignReviewHumanInputGate('').blocked).toBe(false);
   });
+
+  it('parses the Human Decision Options section into selectable decisions', () => {
+    const withOptions = [
+      'Status: REVISE',
+      '### BR-002 Q1 待批准',
+      '- Evidence: unresolved - requirements.md Q1 尚未批准七种方块的精确布局。',
+      '- Evidence: unresolved - requirements.md Q2 尚未批准下落间隔初值与逐级函数。',
+      '',
+      '## Human Decision Options',
+      '',
+      '### HQ-001 是否规定精确旋转布局与水平修正偏移？',
+      '- Option A (recommended): 采用标准 SRS 出生布局与 [0,-1,+1,-2,+2] 水平修正顺序。',
+      '- Option B: 保持当前假设 A3，仅尝试相邻一格水平修正。',
+      '',
+      '### HQ-002 初始下落间隔与逐级变化如何取值？',
+      '- Option A: 初始 1000ms，每级乘 0.85，最小 100ms。',
+      '- Option B (recommended): 初始 800ms，每级减 60ms，最小 120ms。',
+    ].join('\n');
+    const gate = detectAutocodeDesignReviewHumanInputGate(withOptions);
+    expect(gate.blocked).toBe(true);
+    expect(gate.decisions).toHaveLength(2);
+    expect(gate.decisions[0].id).toBe('HQ-001');
+    expect(gate.decisions[0].options).toHaveLength(2);
+    expect(gate.decisions[0].options[0].recommended).toBe(true);
+    expect(gate.decisions[0].options[1].recommended).toBe(false);
+    // The recommended flag follows the review even when it is not the first option.
+    expect(gate.decisions[1].options.find((option) => option.recommended)?.id).toBe('B');
+  });
+
+  it('leaves decisions empty when the review omits the options section', () => {
+    const gate = detectAutocodeDesignReviewHumanInputGate(reviseWithUnresolved);
+    expect(gate.blocked).toBe(true);
+    expect(gate.decisions).toEqual([]);
+  });
+
+  it('defaults the first option to recommended when the review marks none', () => {
+    const noRecommended = [
+      'Status: REVISE',
+      '- Evidence: unresolved - requirements.md Q1 待批准。',
+      '',
+      '## Human Decision Options',
+      '### HQ-001 采用哪种布局？',
+      '- Option A: 方案甲。',
+      '- Option B: 方案乙。',
+    ].join('\n');
+    const gate = detectAutocodeDesignReviewHumanInputGate(noRecommended);
+    expect(gate.decisions[0].options[0].recommended).toBe(true);
+    expect(gate.decisions[0].options[1].recommended).toBe(false);
+  });
 });
 
 describe('machine contract prompt stays aligned with the validator', () => {

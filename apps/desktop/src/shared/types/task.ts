@@ -18,6 +18,50 @@ export type TaskOrderState = Record<TaskStatus, string[]>;
 // - 'needs_input': Planning is blocked on information only the user can supply
 export type ReviewReason = 'completed' | 'errors' | 'qa_rejected' | 'plan_review' | 'stopped' | 'needs_input';
 
+/** A single selectable answer for a design-review open question (needs_input gate). */
+export interface TaskDecisionOption {
+  /** Stable option letter within the question, e.g. `A`, `B`. */
+  id: string;
+  /** Human-readable decision text. */
+  label: string;
+  /** True for the option the reviewer recommends as the default choice. */
+  recommended: boolean;
+}
+
+/** An open question the user must resolve, with its selectable decision options. */
+export interface TaskOpenQuestionDecision {
+  /** Stable question id, e.g. `HQ-001`. */
+  id: string;
+  /** The open-question prompt. */
+  question: string;
+  /** Selectable options; normally exactly one is flagged recommended. */
+  options: TaskDecisionOption[];
+}
+
+/** Payload returned when fetching the needs_input decision prompts for a task. */
+export interface TaskNeedsInputDecisions {
+  /** True when planning is paused on unresolved open questions. */
+  blocked: boolean;
+  /** A ready-to-surface message describing what the user must provide. */
+  message: string;
+  /** The distinct unresolved open questions (plain text fallback). */
+  questions: string[];
+  /** Structured decision prompts with recommended defaults (may be empty). */
+  decisions: TaskOpenQuestionDecision[];
+}
+
+/** A user's chosen answer for one open question, sent back before re-planning. */
+export interface TaskDecisionAnswer {
+  /** The question id (HQ-###) or a stable fallback key. */
+  questionId: string;
+  /** The open-question prompt, for the write-back record. */
+  question: string;
+  /** The chosen option id, or `custom` when the user typed their own answer. */
+  optionId: string;
+  /** The chosen decision text written back to requirements.md. */
+  answer: string;
+}
+
 export type SubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
 // Re-exported from constants - single source of truth

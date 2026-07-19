@@ -879,6 +879,10 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('validationRetryCount >= maxValidationRetries');
     expect(runner).toContain('const STANDARD_PLANNING_STAGE_RETRY_MAX_CHARS = 16000;');
     expect(runner).toContain('const STANDARD_DESIGN_STAGE_MAX_RETRIES = 3;');
+    // Planning must report stage-based progress so the UI advances through its owner stages
+    // instead of freezing at a single percentage.
+    expect(runner).toContain('function emitStandardPlanningStageProgress(stage)');
+    expect(runner).toContain('emitStandardPlanningStageProgress(stage);');
     expect(runner).toContain('const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = 2;');
     expect(runner).toContain('found an upstream owner error; repair');
     // Planning must stop promptly when the independent review needs user input,
@@ -887,6 +891,13 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('detectAutocodeDesignReviewHumanInputGate');
     expect(runner).toContain('Standard planning paused: independent design review needs user input');
     expect(runner).toContain('repairStageIndex < completedStageIndex');
+    // The paused-for-input event carries the reviewer's structured decision options so the
+    // desktop UI can present a recommended default choice per open question.
+    expect(runner).toContain('decisions: humanInputDecisions');
+    // The design_review stage prompt must ask the reviewer to emit those options.
+    expect(runner).toContain('## Human Decision Options');
+    expect(runner).toContain('### HQ-001 <short question>');
+    expect(runner).toContain('Option A (recommended):');
     expect(runner).toContain('[/\\brequirement_model\\.md\\b/i');
     expect(runner).toContain('[/\\bdesign\\.md\\b/i');
     expect(runner).toContain('buildAutocodeDesignQualityRetryPrompt(errors)');

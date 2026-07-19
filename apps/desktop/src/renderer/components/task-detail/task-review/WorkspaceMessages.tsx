@@ -5,6 +5,7 @@ import { Button } from '../../ui/button';
 import { persistTaskStatus, startTaskOrQueue } from '../../../stores/task-store';
 import { isDirectDevelopmentTask } from '../../../../shared/utils/task-mode';
 import type { Task } from '../../../../shared/types';
+import { NeedsInputDecisionDialog } from './NeedsInputDecisionDialog';
 
 interface LoadingMessageProps {
   message?: string;
@@ -45,6 +46,7 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
   const [isProceeding, setIsProceeding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showDecisionDialog, setShowDecisionDialog] = useState(false);
   const isDirectModeTask = isDirectDevelopmentTask(task);
 
   const isPlanReview =
@@ -151,7 +153,7 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
       {/* Allow marking as done */}
       {canResumeExecution ? (
         <Button
-          onClick={handleProceedToCoding}
+          onClick={isNeedsInput ? () => setShowDecisionDialog(true) : handleProceedToCoding}
           disabled={isProceeding}
           size="sm"
           variant="default"
@@ -216,6 +218,16 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
       )}
       {notice && (
         <p className="text-xs text-muted-foreground mt-2">{notice}</p>
+      )}
+
+      {isNeedsInput && task && (
+        <NeedsInputDecisionDialog
+          open={showDecisionDialog}
+          onOpenChange={setShowDecisionDialog}
+          taskId={task.id}
+          projectId={task.projectId}
+          onResolved={handleProceedToCoding}
+        />
       )}
     </div>
   );

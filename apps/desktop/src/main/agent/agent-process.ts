@@ -914,7 +914,14 @@ export class AgentProcessManager {
           lastMessage = phaseUpdate.message;
         }
 
-        if (phaseChanged) {
+        if (typeof phaseUpdate.progress === 'number') {
+          // Backend supplied an explicit stage-based percentage (e.g. Standard planning
+          // stages). Trust it, but keep it monotonic within an unchanged phase so the bar
+          // never jumps backwards on retries.
+          phaseProgress = phaseChanged
+            ? phaseUpdate.progress
+            : Math.max(phaseProgress, phaseUpdate.progress);
+        } else if (phaseChanged) {
           phaseProgress = 10;
         } else {
           phaseProgress = Math.min(90, phaseProgress + 5);

@@ -1572,6 +1572,8 @@ export {
   getAutocodeDesignReviewStatus,
   detectAutocodeDesignReviewHumanInputGate,
   type AutocodeDesignReviewHumanInputGate,
+  type AutocodeDesignReviewOpenQuestion,
+  type AutocodeDesignReviewDecisionOption,
   parseAutocodeDesignSections,
   selectAutocodeDesignRevisionStages,
   validateAutocodeDesignPackageIdentity,

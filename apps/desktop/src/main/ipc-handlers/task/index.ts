@@ -15,6 +15,7 @@ import { registerTaskExecutionHandlers } from './execution-handlers';
 import { registerWorktreeHandlers } from './worktree-handlers';
 import { registerTaskLogsHandlers } from './logs-handlers';
 import { registerTaskArchiveHandlers } from './archive-handlers';
+import { registerNeedsInputHandlers } from './needs-input-handlers';
 
 /**
  * Register all task-related IPC handlers
@@ -37,6 +38,9 @@ export function registerTaskHandlers(
 
   // Register archive handlers (archive, unarchive)
   registerTaskArchiveHandlers();
+
+  // Register needs-input handlers (design-review decision options + write-back)
+  registerNeedsInputHandlers();
 }
 
 // Export shared utilities for use by other modules if needed
