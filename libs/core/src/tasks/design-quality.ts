@@ -586,6 +586,10 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   '- Every stateful DES has a STATE diagram. Every FLOW has a sequence diagram. Every IMP maps SYS, DES, STATE when applicable, and FLOW or CONTRACT, and references LANG.',
   '- Every RM Alternate and exception flow is realized by a FLOW Failure paths entry or a CONTRACT Errors entry and asserted by an IMP Verification test, so edge and error behavior is designed and tested, not just the happy path.',
   '- Traceability includes every ADR-*, and for each RM-* one single line connecting it with -> arrows in this exact left-to-right order: RM-* -> FUN-* -> SSD-* -> DOM-* -> ADR-* -> SYS-* -> DES-* -> STATE-*/FLOW-*/CONTRACT-* -> LANG-* -> IMP-*.',
+  'Cross-model consistency and self-check (single source of truth):',
+  '- Each fact has exactly one owner model. Downstream models reference upstream stable IDs and never restate, re-derive, or redefine an upstream fact in conflicting words or values.',
+  '- Never fork a contradictory value: when an upstream fact is missing, ambiguous, or conflicts with another model, record it once as unresolved - <conflicting IDs and the contradiction> instead of silently choosing a divergent value.',
+  '- Before finalizing this stage, self-check that every referenced upstream ID exists and that no two entries assert contradictory values for the same concept, constant, or state; reconcile the entries in place or mark them unresolved.',
 ].join('\n');
 
 export const AUTOCODE_STANDARD_DESIGN_METHOD_PROMPT = `
@@ -2132,6 +2136,66 @@ export function detectAutocodeDesignReviewHumanInputGate(
     'Resolve these in requirements.md/spec.md, then re-run planning: ' +
     questions.map((question, index) => `(${index + 1}) ${question}`).join(' ');
   return { blocked: true, questions, decisions, message };
+}
+
+/** Machine token requirements.md uses to flag an open question that blocks implementation. */
+export const AUTOCODE_REQUIREMENTS_BLOCKING_TOKEN = '[BLOCKS-IMPLEMENTATION]';
+
+export interface AutocodeRequirementsBlockingGate {
+  /** True when requirements.md has open questions tagged as implementation-blocking. */
+  blocked: boolean;
+  /** The distinct blocking open questions (token stripped, Q-id preserved). */
+  questions: string[];
+  /** A ready-to-surface message describing what the user must decide. */
+  message: string;
+}
+
+/**
+ * Detects whether requirements.md still carries open questions the requirements author
+ * tagged as hard implementation/testability gates (with `[BLOCKS-IMPLEMENTATION]`). This
+ * lets standard planning stop for a human decision right after requirements, before it
+ * spends stages building five design models on an unresolvable foundation. A question is
+ * treated as resolved once its token is replaced (e.g. with `[RESOLVED]`) during write-back.
+ */
+export function detectAutocodeRequirementsBlockingGate(
+  requirementsMarkdown: string | undefined | null,
+): AutocodeRequirementsBlockingGate {
+  const empty: AutocodeRequirementsBlockingGate = { blocked: false, questions: [], message: '' };
+  if (!requirementsMarkdown) {
+    return empty;
+  }
+  const questions: string[] = [];
+  const seen = new Set<string>();
+  const tokenPattern = /\[BLOCKS-IMPLEMENTATION\]/g;
+  for (const rawLine of requirementsMarkdown.split(/\r?\n/)) {
+    if (!rawLine.includes(AUTOCODE_REQUIREMENTS_BLOCKING_TOKEN)) {
+      continue;
+    }
+    // Only bullet lines (open-question entries) carry the token; keep the Q-id so the
+    // desktop write-back can locate and resolve the exact line.
+    const match = /^\s*-\s*(.+)$/.exec(rawLine);
+    if (!match) {
+      continue;
+    }
+    const text = match[1].replace(tokenPattern, ' ').replace(/\s+/g, ' ').trim();
+    if (!text) {
+      continue;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    questions.push(text);
+  }
+  if (questions.length === 0) {
+    return empty;
+  }
+  const message =
+    'Planning paused before design modeling: requirements.md has open questions that block ' +
+    'implementation and need a human decision. Resolve these in requirements.md, then re-run planning: ' +
+    questions.map((question, index) => `(${index + 1}) ${question}`).join(' ');
+  return { blocked: true, questions, message };
 }
 
 export function buildAutocodeDesignQualityRetryPrompt(errors: readonly string[]): string {

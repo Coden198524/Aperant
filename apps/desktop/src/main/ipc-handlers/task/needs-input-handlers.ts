@@ -10,7 +10,11 @@
 import { ipcMain } from 'electron';
 import path from 'path';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
-import { detectAutocodeDesignReviewHumanInputGate, AUTOCODE_TASK_ARTIFACTS } from '@autocode/core';
+import {
+  detectAutocodeDesignReviewHumanInputGate,
+  detectAutocodeRequirementsBlockingGate,
+  AUTOCODE_TASK_ARTIFACTS,
+} from '@autocode/core';
 import { IPC_CHANNELS, getSpecsDir } from '../../../shared/constants';
 import type {
   IPCResult,
@@ -176,6 +180,9 @@ function writeRequirementsWriteBack(specDirs: string[], answers: TaskDecisionAns
       const original = readFileSync(requirementsPath, 'utf-8');
       let next = annotateOpenQuestionLines(original, answers, timestamp);
       next = appendApprovedDecisionsSection(next, answers, timestamp);
+      // Retire the implementation-blocking markers the user just resolved so a re-run does
+      // not re-trigger the early requirements gate and loop.
+      next = next.replace(/\[BLOCKS-IMPLEMENTATION\]/g, '[RESOLVED]');
       writeFileSync(requirementsPath, next, 'utf-8');
 
       // Record a planning-iteration note so the re-run is recognised as carrying input.
@@ -213,13 +220,28 @@ export function registerNeedsInputHandlers(): void {
       const specDirs = resolveTaskSpecDirs(task, project);
       const reviewMarkdown = readLatestDesignReviewMarkdown(specDirs);
       const gate = detectAutocodeDesignReviewHumanInputGate(reviewMarkdown);
+      if (gate.blocked) {
+        return {
+          success: true,
+          data: {
+            blocked: true,
+            message: gate.message,
+            questions: gate.questions,
+            decisions: gate.decisions,
+          },
+        };
+      }
+      // Fall back to the early requirements gate: planning may have paused right after
+      // requirements (before any design_review existed) on implementation-blocking questions.
+      const requirementsMarkdown = readFirstExisting(specDirs, REQUIREMENTS_FILE);
+      const requirementsGate = detectAutocodeRequirementsBlockingGate(requirementsMarkdown);
       return {
         success: true,
         data: {
-          blocked: gate.blocked,
-          message: gate.message,
-          questions: gate.questions,
-          decisions: gate.decisions,
+          blocked: requirementsGate.blocked,
+          message: requirementsGate.message,
+          questions: requirementsGate.questions,
+          decisions: [],
         },
       };
     },

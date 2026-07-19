@@ -7164,6 +7164,8 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
         (artifacts.designReview || 'design_review.md') + ', ' +
         (artifacts.tasks || 'tasks.md') + ', or ' + artifacts.implementationPlan + ' in this stage.',
       'Own only what and why: requirements, acceptance criteria, constraints, assumptions, open questions, and evidence registry. Do not define scenarios, architecture, files, tasks, or runtime state.',
+      'Ground quantitative and structural facts with concrete values: for any requirement, acceptance criterion, or assumption that depends on exact numbers, timings, coordinates, layout tables, or formulas, state the actual worked values so downstream models and tests have ground truth instead of placeholders.',
+      'Tag open questions that are hard implementation or testability gates: end each such Q* line with the exact token [BLOCKS-IMPLEMENTATION] when it cannot be resolved by a documented assumption. Leave genuinely deferrable questions untagged.',
       outputLanguage,
       retry,
     ].join('\\n');
@@ -7197,6 +7199,7 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Derive complete RM-* use cases with scenario, ordered actions and outputs, customer value, alternatives/exceptions, postconditions, and R*/AC*/SCN*/E* evidence.',
       'Apply 5W1H exactly as Who, Where, When, What, Why, How and 8C exactly as Performance, Cost, Time, Reliability, Security, Compliance, Technology, Compatibility.',
       'Extract and deduplicate FUN-* capabilities across use cases. Create exactly one Mermaid SSD-* system sequence diagram per RM-* using autonumber, actor-left/System-right declaration order, System activation bars, actor-to-System requests, coarse System self-processing, and dashed observable responses. Keep the product black-box and do not expose internal components as participants. Distinguish requirement facts from industry inference and unresolved questions.',
+      'Where a use case depends on exact values (timings, coordinates, thresholds, or formulas), state the concrete numbers or tables in the steps, outputs, or 8C constraints rather than vague placeholders, consistent with requirements.md.',
       'Declare Design-Contract: 5, the shared Design-Revision, Design-Root: design.md, and Model-Kind: requirement.',
       'Do not choose architecture, classes, modules, files, protocols, patterns, or tasks.',
       'Follow the deterministic package contract below:',
@@ -7461,6 +7464,25 @@ async function detectStandardDesignReviewHumanInputGate() {
   }
 }
 
+async function detectStandardRequirementsBlockingGate() {
+  if (!designQualityModulePath) {
+    return null;
+  }
+  try {
+    const moduleUrl = pathToFileURL(designQualityModulePath).href;
+    const designQuality = await import(moduleUrl);
+    const detect = designQuality.detectAutocodeRequirementsBlockingGate;
+    if (typeof detect !== 'function') {
+      return null;
+    }
+    const requirementsMarkdown = readOptionalArtifact(artifacts.requirements || 'requirements.md');
+    const gate = detect(requirementsMarkdown);
+    return gate && gate.blocked ? gate : null;
+  } catch {
+    return null;
+  }
+}
+
 async function validateStandardPlanningOwnerStage(stage) {
   if (stage === 'requirements') {
     return validateStandardPlanningRequirementsStage();
@@ -7697,6 +7719,30 @@ async function advanceStandardPlanningStage() {
       : standardDesignStageCheckpoint[completedStage];
   if (checkpoint) {
     updateStandardPlanningTransaction(checkpoint, 'active');
+  }
+  if (completedStage === 'requirements') {
+    // Fail fast: if requirements flag open questions as implementation-blocking, stop for a
+    // human decision now instead of building five design models on an unresolvable base.
+    const requirementsGate = await detectStandardRequirementsBlockingGate();
+    if (requirementsGate) {
+      const gateMessage = requirementsGate.message;
+      const gateQuestions = Array.isArray(requirementsGate.questions)
+        ? requirementsGate.questions
+        : [];
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Standard planning paused before design modeling: requirements.md has implementation-blocking open questions; stopping for user input instead of building the design package. ' +
+          gateMessage,
+      );
+      emitTaskEvent('PLANNING_NEEDS_INPUT', {
+        questions: gateQuestions,
+        decisions: [],
+        message: gateMessage,
+      });
+      await finishRun(1, undefined, undefined, undefined, gateMessage);
+      return true;
+    }
   }
   standardPlanningStage = getNextStandardPlanningStage(completedStage);
   appendTaskLogEntry(logPhase, 'info', 'Starting Standard planning stage: ' + standardPlanningStage + '.');

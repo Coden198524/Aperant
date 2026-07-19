@@ -883,6 +883,15 @@ describe('Autocode CLI runner prompt', () => {
     // instead of freezing at a single percentage.
     expect(runner).toContain('function emitStandardPlanningStageProgress(stage)');
     expect(runner).toContain('emitStandardPlanningStageProgress(stage);');
+    // Requirements stage must ground quantitative facts with concrete values and flag hard
+    // implementation/testability gates so downstream models and the human gate can act early.
+    expect(runner).toContain('so downstream models and tests have ground truth instead of placeholders');
+    expect(runner).toContain('[BLOCKS-IMPLEMENTATION]');
+    // Fail fast: planning stops for user input right after requirements when blocking open
+    // questions exist, instead of building the five design models on an unresolvable base.
+    expect(runner).toContain('detectStandardRequirementsBlockingGate');
+    expect(runner).toContain("completedStage === 'requirements'");
+    expect(runner).toContain('has implementation-blocking open questions');
     expect(runner).toContain('const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = 2;');
     expect(runner).toContain('found an upstream owner error; repair');
     // Planning must stop promptly when the independent review needs user input,

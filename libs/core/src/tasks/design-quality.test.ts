@@ -4,6 +4,7 @@ import {
   buildAutocodeDesignPackageMarkdown,
   buildAutocodeDesignQualityRetryPrompt,
   detectAutocodeDesignReviewHumanInputGate,
+  detectAutocodeRequirementsBlockingGate,
   getAutocodeDesignPackageFingerprint,
   getAutocodeDesignContractVersion,
   parseAutocodeDesignSections,
@@ -1138,6 +1139,38 @@ describe('design review human-input gate detection', () => {
   });
 });
 
+describe('detectAutocodeRequirementsBlockingGate', () => {
+  it('flags open questions tagged as implementation-blocking', () => {
+    const requirements = [
+      '## Open Questions',
+      '- Q1: 是否需要规定精确旋转布局与水平修正偏移？ [BLOCKS-IMPLEMENTATION]',
+      '- Q2: 初始下落间隔与逐级函数如何取值？ [BLOCKS-IMPLEMENTATION]',
+      '- Q3: 是否为软降提供额外分数？当前按 A4 处理。',
+    ].join('\n');
+    const gate = detectAutocodeRequirementsBlockingGate(requirements);
+    expect(gate.blocked).toBe(true);
+    expect(gate.questions).toHaveLength(2);
+    // The Q-id is preserved (so write-back can locate the line) and the token is stripped.
+    expect(gate.questions[0]).toContain('Q1');
+    expect(gate.questions[0]).not.toContain('[BLOCKS-IMPLEMENTATION]');
+    expect(gate.message).toContain('block');
+  });
+
+  it('does not flag untagged or resolved open questions', () => {
+    const requirements = [
+      '## Open Questions',
+      '- Q1: 可延后的问题，按假设处理。',
+      '- Q2: 已批准 [RESOLVED] 采用当前假设。',
+    ].join('\n');
+    expect(detectAutocodeRequirementsBlockingGate(requirements).blocked).toBe(false);
+  });
+
+  it('handles missing input safely', () => {
+    expect(detectAutocodeRequirementsBlockingGate(undefined).blocked).toBe(false);
+    expect(detectAutocodeRequirementsBlockingGate('').blocked).toBe(false);
+  });
+});
+
 describe('machine contract prompt stays aligned with the validator', () => {
   const prompt = AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT;
 
@@ -1149,6 +1182,16 @@ describe('machine contract prompt stays aligned with the validator', () => {
     expect(prompt).toContain('- Role stereotype: ');
     expect(prompt).not.toContain('- DES Element:');
     expect(prompt).not.toContain('- DES Role stereotype:');
+  });
+
+  it('requires cross-model consistency binding and a pre-finalize self-check', () => {
+    // Reduce cross-model drift (e.g. RM/DOM/DES contradictions): each fact has one owner,
+    // downstream references IDs instead of restating, conflicts are recorded as unresolved
+    // rather than forked, and each stage self-checks its references before finalizing.
+    expect(prompt).toContain('Cross-model consistency and self-check');
+    expect(prompt).toContain('never restate, re-derive, or redefine an upstream fact');
+    expect(prompt).toContain('Never fork a contradictory value');
+    expect(prompt).toContain('self-check that every referenced upstream ID exists');
   });
 
   it('tells the model each model file uses its own title, not # Design:', () => {
