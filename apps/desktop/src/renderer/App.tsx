@@ -64,6 +64,7 @@ import { useTerminalStore, restoreTerminalSessions } from './stores/terminal-sto
 import { initializeGitHubListeners, cleanupGitHubListeners } from './stores/github';
 import { initDownloadProgressListener } from './stores/download-store';
 import { GlobalDownloadIndicator } from './components/GlobalDownloadIndicator';
+import { GlobalNeedsInputDialog } from './components/GlobalNeedsInputDialog';
 import { useIpcListeners } from './hooks/useIpc';
 import { useGlobalTerminalListeners } from './hooks/useGlobalTerminalListeners';
 import { useTerminalProfileChange } from './hooks/useTerminalProfileChange';
@@ -1436,6 +1437,9 @@ export function App() {
 
         {/* Global Download Indicator - shows Ollama model download progress */}
         <GlobalDownloadIndicator />
+
+        {/* Auto-popup for tasks paused awaiting a human decision (needs_input) */}
+        <GlobalNeedsInputDialog />
 
         {/* Toast notifications */}
         <Toaster />

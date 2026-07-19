@@ -5,6 +5,7 @@ import { useRoadmapStore } from '../stores/roadmap-store';
 import { useRateLimitStore } from '../stores/rate-limit-store';
 import { useAuthFailureStore } from '../stores/auth-failure-store';
 import { useProjectStore } from '../stores/project-store';
+import { useNeedsInputPromptStore } from '../stores/needs-input-prompt-store';
 import { TASK_REFRESH_SENTINEL } from '../../shared/constants';
 import type { ImplementationPlan, TaskStatus, RoadmapGenerationStatus, Roadmap, ExecutionProgress, RateLimitInfo, SDKRateLimitInfo, AuthFailureInfo, TokenUsage } from '../../shared/types';
 
@@ -269,6 +270,15 @@ export function useIpcListeners(): void {
         }
 
         queueUpdate(taskId, projectId, { status, reviewReason });
+
+        // Auto-surface the decision popup when a running task pauses for user input, so the
+        // user doesn't have to open the task detail and click "Re-run Planning" to find it.
+        if (status === 'human_review' && reviewReason === 'needs_input') {
+          useNeedsInputPromptStore.getState().openNeedsInputPrompt(taskId, projectId);
+        } else if (status === 'in_progress') {
+          // The task resumed (e.g. re-planning), so allow a future pause to popup again.
+          useNeedsInputPromptStore.getState().clearShownTaskId(taskId);
+        }
 
         // Sync roadmap feature when task completes
         if (status === 'done' || status === 'pr_created') {
