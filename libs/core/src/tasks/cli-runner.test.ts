@@ -892,6 +892,10 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('detectStandardRequirementsBlockingGate');
     expect(runner).toContain("completedStage === 'requirements'");
     expect(runner).toContain('has implementation-blocking open questions');
+    // The independent review must bias toward PASSED so minor issues don't trigger costly
+    // revision rounds and re-planning popups.
+    expect(runner).toContain('Bias toward Status: PASSED');
+    expect(runner).toContain('Do not REVISE for style, wording, verbosity');
     expect(runner).toContain('const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = 2;');
     expect(runner).toContain('found an upstream owner error; repair');
     // Planning must stop promptly when the independent review needs user input,
