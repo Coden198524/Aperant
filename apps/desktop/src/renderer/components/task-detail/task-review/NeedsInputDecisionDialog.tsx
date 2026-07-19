@@ -30,15 +30,21 @@ interface NeedsInputDecisionDialogProps {
 }
 
 /** Normalizes structured decisions and plain-question fallbacks into a single list. */
-function toRenderableQuestions(data: TaskNeedsInputDecisions | null): TaskOpenQuestionDecision[] {
+function toRenderableQuestions(
+  data: TaskNeedsInputDecisions | null,
+  approveLabel: string,
+): TaskOpenQuestionDecision[] {
   if (!data) return [];
   if (data.decisions.length > 0) return data.decisions;
-  // Fallback: reviews without an options section still expose plain questions; render each
-  // as a custom-answer prompt so the user can type a decision.
+  // Fallback: reviews without a structured options section still expose plain open
+  // questions. Synthesize a recommended "approve the current assumption" choice so the
+  // dialog always offers a selectable list with a default, plus the custom-answer option
+  // rendered by the component. This keeps the UX working even when the reviewer omits
+  // the machine-readable options block.
   return data.questions.map((question, index) => ({
     id: `Q${index + 1}`,
     question,
-    options: [],
+    options: [{ id: 'A', label: approveLabel, recommended: true }],
   }));
 }
 
@@ -61,7 +67,10 @@ export function NeedsInputDecisionDialog({
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [customText, setCustomText] = useState<Record<string, string>>({});
 
-  const questions = useMemo(() => toRenderableQuestions(data), [data]);
+  const approveLabel = t('needsInputDialog.approveAssumptionOption', {
+    defaultValue: 'Approve the current assumptions documented in requirements.md and continue',
+  });
+  const questions = useMemo(() => toRenderableQuestions(data, approveLabel), [data, approveLabel]);
 
   useEffect(() => {
     if (!open) return;
@@ -80,9 +89,10 @@ export function NeedsInputDecisionDialog({
           return;
         }
         setData(result.data);
-        // Pre-select the recommended option for each question.
+        // Pre-select the recommended option for each renderable question (structured
+        // decisions and synthesized fallbacks alike) so a default is always chosen.
         const initial: Record<string, string> = {};
-        for (const decision of result.data.decisions) {
+        for (const decision of toRenderableQuestions(result.data, approveLabel)) {
           const recommended = decision.options.find((option) => option.recommended) ?? decision.options[0];
           if (recommended) {
             initial[decision.id] = recommended.id;

@@ -168,6 +168,7 @@
     "incomplete": "Veuillez choisir ou saisir une réponse pour chaque question.",
     "empty": "Aucune question ouverte structurée n'a été trouvée. Consultez design_review.md et modifiez requirements.md manuellement.",
     "recommended": "Recommandé",
+    "approveAssumptionOption": "Approuver les hypothèses actuelles documentées dans requirements.md et continuer",
     "customOption": "Écrire ma propre réponse",
     "customPlaceholder": "Décrivez la décision à appliquer...",
     "applying": "Application...",

@@ -196,6 +196,7 @@
     "incomplete": "Please choose or enter an answer for every question.",
     "empty": "No structured open questions were found. Review design_review.md and edit requirements.md manually.",
     "recommended": "Recommended",
+    "approveAssumptionOption": "Approve the current assumptions documented in requirements.md and continue",
     "customOption": "Write my own answer",
     "customPlaceholder": "Describe the decision to apply...",
     "applying": "Applying...",

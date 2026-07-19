@@ -239,6 +239,7 @@
     "incomplete": "请为每个问题选择或填写一个答案。",
     "empty": "未找到结构化的开放问题。请查看 design_review.md 并手动修改 requirements.md。",
     "recommended": "推荐",
+    "approveAssumptionOption": "批准 requirements.md 中当前记录的假设并按现状继续",
     "customOption": "自己填写答案",
     "customPlaceholder": "描述要采用的决策……",
     "applying": "正在应用...",
