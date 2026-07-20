@@ -541,6 +541,7 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   '- Design inferences: inferred - <rationale> | none - <reason>',
   '- Unresolved evidence: unresolved - <open question> | none',
   '- Every Evidence basis value uses one or more requirement - ..., observed - ..., inferred - ..., or unresolved - ... entries.',
+  '- observed - must cite durable project sources only (requirements.md, spec.md, source files, project docs, or configs). Never cite design_review.md, planning-transaction.json, or other transient planning or runner artifacts as observed facts; justify a review-driven or lifecycle decision with the underlying requirement or an inferred - rationale instead.',
   'Design Budget uses these exact bullet fields. Keep the English field names, list markers, and ASCII colons; do not use headings for these fields:',
   ...DESIGN_BUDGET_FORMAT_LINES,
   'At local depth, keep New dependencies allowed: 0 and New architectural patterns: none; escalate Design-Depth with complexity evidence before adding either.',

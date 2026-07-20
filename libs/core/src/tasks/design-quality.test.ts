@@ -1184,6 +1184,13 @@ describe('machine contract prompt stays aligned with the validator', () => {
     expect(prompt).not.toContain('- DES Role stereotype:');
   });
 
+  it('forbids citing transient planning artifacts as observed evidence', () => {
+    // Break the self-perpetuating loop where the design cites design_review.md findings or
+    // stale planning-transaction.json state as observed facts, which never validate because
+    // the review is rolled back each run.
+    expect(prompt).toContain('Never cite design_review.md, planning-transaction.json, or other transient planning or runner artifacts as observed facts');
+  });
+
   it('requires cross-model consistency binding and a pre-finalize self-check', () => {
     // Reduce cross-model drift (e.g. RM/DOM/DES contradictions): each fact has one owner,
     // downstream references IDs instead of restating, conflicts are recorded as unresolved
