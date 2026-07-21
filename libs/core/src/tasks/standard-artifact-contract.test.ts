@@ -181,4 +181,44 @@ describe('Standard artifact responsibility contract', () => {
       'spec.md scenarios do not cover requirements.md IDs: R2, AC2.',
     );
   });
+
+  it('recognizes ### SCN-* subsections under a ## Observable Scenarios heading', () => {
+    // Regression: collectScenarioSections required exactly "## SCN-*", but models follow the
+    // package-wide ### stable-ID convention and nest ### SCN-001 under ## Observable
+    // Scenarios, which wrongly failed the spec stage as having no scenarios / no coverage.
+    const result = validateAutocodeStandardArtifactResponsibilities({
+      requirementsMarkdown: [
+        '# Requirements',
+        '',
+        'Requirements-Contract: 1',
+        '## User Requirements',
+        '- R1: The page shell remains visible.',
+        '- R2: Navigation failures are reported.',
+        '## Acceptance Criteria',
+        '- AC1: The shell is visible after navigation.',
+        '- AC2: A failed navigation displays an error.',
+        '## Evidence Sources',
+        '- E1: src/page.ts - current navigation behavior.',
+      ].join('\n'),
+      specMarkdown: [
+        '# Observable Specification',
+        '',
+        'Specification-Contract: 1',
+        '## Observable Scenarios',
+        '### SCN-001 Successful navigation',
+        'Covers: R1, AC1',
+        'Evidence: E1',
+        '- Then: the shell remains visible.',
+        '### SCN-002 Failed navigation',
+        'Covers: R2, AC2',
+        'Evidence: E1',
+        '- Then: an error is displayed.',
+      ].join('\n'),
+    });
+
+    expect(result.errors).not.toContain(
+      'spec.md must define at least one stable SCN-* observable behavior section.',
+    );
+    expect(result.errors.some((error) => error.includes('scenarios do not cover requirements.md IDs'))).toBe(false);
+  });
 });

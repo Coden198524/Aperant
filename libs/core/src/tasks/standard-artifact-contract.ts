@@ -387,7 +387,11 @@ function validateImplementationPlanOwnership(markdown: string, tasksMarkdown: st
 
 function collectScenarioSections(markdown: string): Array<{ id: string; body: string }> {
   const normalized = markdown.replace(/\r\n/g, '\n');
-  const matches = Array.from(normalized.matchAll(/^##\s+(SCN-\d+)\b[^\n]*$/gim));
+  // Accept SCN-* entries at any heading level (## to ####). The stable-ID convention across
+  // the design package uses ### subsections (e.g. ### RM-001), and models naturally place
+  // ### SCN-001 under a ## Observable Scenarios heading; requiring exactly ## rejected valid
+  // specs and forced the spec stage to fail.
+  const matches = Array.from(normalized.matchAll(/^#{2,4}\s+(SCN-\d+)\b[^\n]*$/gim));
   return matches.map((match, index) => ({
     id: match[1].toUpperCase(),
     body: normalized.slice(

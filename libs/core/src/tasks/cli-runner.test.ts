@@ -896,6 +896,10 @@ describe('Autocode CLI runner prompt', () => {
     // revision rounds and re-planning popups.
     expect(runner).toContain('Bias toward Status: PASSED');
     expect(runner).toContain('Do not REVISE for style, wording, verbosity');
+    // A REVISE must feed the reviewer's actual findings into the revision stage so it fixes
+    // the cited defects instead of blindly regenerating the same design.
+    expect(runner).toContain('The independent design review returned Status: REVISE. Resolve every blocking finding below');
+    expect(runner).toContain('selectStandardDesignRevisionStartStage(revisionGuidance)');
     expect(runner).toContain('const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = 2;');
     expect(runner).toContain('found an upstream owner error; repair');
     // Planning must stop promptly when the independent review needs user input,

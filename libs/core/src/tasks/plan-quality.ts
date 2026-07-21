@@ -66,10 +66,13 @@ export const AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS: AutocodePlanQualityLimits = 
   spec: { maxLines: 150, maxChars: 16_000 },
   requirements: { maxLines: 160, maxChars: 14_000 },
   design: { maxLines: 360, maxChars: 32_000 },
-  requirementModel: { maxLines: 500, maxChars: 40_000 },
-  domainModel: { maxLines: 500, maxChars: 40_000 },
-  designModel: { maxLines: 800, maxChars: 64_000 },
-  implementationModel: { maxLines: 600, maxChars: 48_000 },
+  // Size limits for the Design-Contract: 5 model files are intentionally disabled for now:
+  // complete standard designs are legitimately large, and hard size caps were forcing
+  // wasteful compression retries and planning failures.
+  requirementModel: { maxLines: Number.MAX_SAFE_INTEGER, maxChars: Number.MAX_SAFE_INTEGER },
+  domainModel: { maxLines: Number.MAX_SAFE_INTEGER, maxChars: Number.MAX_SAFE_INTEGER },
+  designModel: { maxLines: Number.MAX_SAFE_INTEGER, maxChars: Number.MAX_SAFE_INTEGER },
+  implementationModel: { maxLines: Number.MAX_SAFE_INTEGER, maxChars: Number.MAX_SAFE_INTEGER },
   designReview: { maxLines: 220, maxChars: 18_000 },
   tasks: { maxLines: 900, maxChars: 64_000 },
 };

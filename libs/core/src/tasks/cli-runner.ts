@@ -7179,7 +7179,7 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Task: ' + taskDescription,
       '',
       'Read ' + artifacts.requirements + ' and write only ' + artifacts.specFile + '.',
-      'Declare Specification-Contract: 1. Define observable SCN-* behavior with Covers: R*, AC* and Evidence: E* references.',
+      'Declare Specification-Contract: 1. Write each observable behavior as a "### SCN-001" subsection (three-digit IDs) under a "## Observable Scenarios" heading, each with a Covers: R*, AC* line and an Evidence: E* line. Together the scenarios must cover every R* and AC* id from requirements.md.',
       'Do not copy requirement, acceptance, or evidence bodies. Do not define architecture, files, tasks, or runtime state.',
       'For Request Changes, preserve unaffected SCN-* IDs and revise only affected observable behavior.',
       outputLanguage,
@@ -7688,13 +7688,21 @@ async function advanceStandardPlanningStage() {
       }
       standardPlanningDesignRevisionCount += 1;
       if (standardPlanningDesignRevisionCount <= 2) {
-        const revisionStage = selectStandardDesignRevisionStartStage(validationError);
+        // Feed the reviewer's actual REVISE findings (not just the generic
+        // "review has REVISE findings" summary) into the revision so the stage knows exactly
+        // which IDs and contradictions to reconcile. Without this the revision is blind and
+        // regenerates the same defects until the budget is exhausted.
+        const reviewFindings = readOptionalArtifact(artifacts.designReview || 'design_review.md') || '';
+        const revisionGuidance = reviewFindings.trim()
+          ? 'The independent design review returned Status: REVISE. Resolve every blocking finding below, reconcile the cited IDs into one consistent decision, and keep valid evidence and stable IDs unchanged:\\n\\n' + reviewFindings.trim()
+          : validationError;
+        const revisionStage = selectStandardDesignRevisionStartStage(revisionGuidance);
         includeStandardPlanningStagesFrom(revisionStage);
         standardPlanningStage = revisionStage;
         resetStandardPlanningValidationFrom(revisionStage);
         standardPlanningStageRetryCount = 0;
-        appendTaskLogEntry(logPhase, 'info', 'Independent design review requested revision ' + standardPlanningDesignRevisionCount + '/2; resuming from ' + revisionStage + ': ' + compactRunnerDirectValidationReason(validationError));
-        startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(revisionStage, validationError)));
+        appendTaskLogEntry(logPhase, 'info', 'Independent design review requested revision ' + standardPlanningDesignRevisionCount + '/2; resuming from ' + revisionStage + ': ' + compactRunnerDirectValidationReason(reviewFindings || validationError));
+        startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(revisionStage, revisionGuidance)));
         return true;
       }
     } else {
