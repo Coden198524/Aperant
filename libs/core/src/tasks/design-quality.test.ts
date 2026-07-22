@@ -364,6 +364,37 @@ function removeRange(source: string, start: string, end: string): string {
 }
 
 describe('Design-Contract: 5 quality validation', () => {
+  it('does not require every LANG-* to appear in design.md Traceability', () => {
+    // Regression: secondary cross-cutting LANG constraints (e.g. a test/toolchain language)
+    // are traced through IMP "Coding constraints=LANG-*"; the machine contract only requires
+    // one LANG-* per RM chain, so requiring each LANG-* in the Traceability section
+    // over-constrained valid designs and failed planning after exhausting revisions.
+    const withSecondaryLang = implementationModelMarkdown
+      .replace(
+        '## Implementation Model',
+        [
+          '### LANG-002 Test tooling constraints',
+          '- Scope: focused unit and service tests for task submission',
+          '- Language and version: Vitest 3.2 from apps/desktop/package.json',
+          '- Naming and formatting: describe and it blocks with single quotes and semicolons',
+          '- Type and interface rules: typed fixtures mirror the result unions',
+          '- Class and visibility rules: tests import only public entry points',
+          '- Error handling: assert accepted and rejected submission outcomes',
+          '- Resource and lifecycle management: no shared mutable state across tests',
+          '- Concurrency and state management: tests run serially without shared owners',
+          '- Framework integration: preserve the existing Vitest configuration',
+          '- Testing and documentation: cover each transition and failure path',
+          '- Evidence basis: observed - apps/desktop/package.json',
+          '',
+          '## Implementation Model',
+        ].join('\n'),
+      )
+      .replace('Coding constraints: LANG-001', 'Coding constraints: LANG-001, LANG-002');
+
+    const result = validatePackage({ implementationModelMarkdown: withSecondaryLang });
+    expect(result.errors).not.toContain('design.md Traceability must include LANG-002.');
+  });
+
   it('accepts a complete v5 design package and task traceability', () => {
     const result = validatePackage();
 
@@ -1024,6 +1055,9 @@ describe('Design-Contract: 5 quality validation', () => {
     expect(contract).toContain('name focused tests that assert each owned invariant, every RM alternate and exception flow');
     // 4: end-to-end error/edge coverage invariant (no happy-path-only designs).
     expect(contract).toContain('Every RM Alternate and exception flow is realized by a FLOW Failure paths entry or a CONTRACT Errors entry');
+    // Alignment: the validator requires the RM "Use case value" to start with Why=, so the
+    // contract must show that exact format instead of a plain field name.
+    expect(contract).toContain('Use case value=Why=');
   });
 
   it('fingerprints the full five-artifact package deterministically', () => {

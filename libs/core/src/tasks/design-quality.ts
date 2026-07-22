@@ -162,7 +162,11 @@ const MODEL_FILE_CONTRACTS = [
     title: 'Design Model',
     modelKind: 'design',
     allowedKinds: ['SYS', 'DES', 'STATE', 'FLOW', 'CONTRACT', 'PAT', 'REV'],
-    requiredKinds: ['SYS', 'DES', 'FLOW'],
+    // FLOW is not unconditionally required: the machine contract treats FLOW and CONTRACT as
+    // interchangeable dynamic-behavior models. The dedicated "FLOW-* or CONTRACT-*" check
+    // (validateV5ModelDocument) enforces that at least one exists, so a valid contract-only
+    // design is no longer rejected for lacking FLOW.
+    requiredKinds: ['SYS', 'DES'],
   },
   {
     artifact: AUTOCODE_TASK_ARTIFACTS.implementationModel,
@@ -181,7 +185,8 @@ const REQUIRED_DESIGN_ID_KINDS = [
   'DOM',
   'SYS',
   'DES',
-  'FLOW',
+  // FLOW is intentionally omitted: dynamic behavior may be modeled with FLOW-* or CONTRACT-*.
+  // The "FLOW-* or CONTRACT-*" check in validateV5ModelDocument enforces coverage of either.
   'LANG',
   'IMP',
 ] as const;
@@ -548,7 +553,7 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   'Exact model fields and value formats:',
   '- ADR: Decision; Status=proposed|accepted|superseded|rejected; Decision drivers; Alternatives considered; Trade-offs; Evidence basis.',
   '- Requirement Analysis: Input requirements; Industry assumptions=inferred - ...|none - ...; Open requirement questions=unresolved - ...|none.',
-  '- RM use case: Use case name; Scenario; 5W1H analysis; Trigger and preconditions; Use case description; Steps and outputs; Use case value; Alternate and exception flows; Postconditions; 8C constraints; Evidence basis.',
+  '- RM use case: Use case name; Scenario; 5W1H analysis; Trigger and preconditions; Use case description; Steps and outputs; Use case value=Why=<localized customer value>; Alternate and exception flows; Postconditions; 8C constraints; Evidence basis.',
   '- Scenario and 5W1H analysis must separate dimensions with ASCII semicolons and ASCII equals signs even when the prose is localized. Scenario: Who=...; Where=...; When=.... 5W1H analysis: Who=...; What=...; Why=...; When=...; Where=...; How=....',
   '- Steps and outputs: numbered actions starting at 1. and separated by ASCII semicolons, each with an ASCII => or -> output marker, e.g. 1. <action> => <output>; 2. <action> => <output>.',
   '- 8C constraints must contain exactly these dimensions with ASCII equals signs and semicolons: Performance, Cost, Time, Reliability, Security, Compliance, Technology, Compatibility. Use n/a - <reason> as a dimension value only when justified.',
@@ -3380,8 +3385,15 @@ function validateDesignTraceability(
   const traceability = extractMarkdownSection(markdown, 'Traceability');
   const tracedIds = new Set(extractAutocodeDesignIds(traceability));
   const knownIds = new Set(sections.map((section) => section.id));
+  // The machine contract's Traceability chain is RM-* -> FUN-* -> SSD-* -> DOM-* -> ADR-* ->
+  // SYS-* -> DES-* -> STATE-*/FLOW-*/CONTRACT-* -> LANG-* -> IMP-*. LANG-*, PAT-*, and REV-*
+  // are not positions in that chain: LANG is cross-cutting (traced via IMP Coding
+  // constraints), PAT is traced via DES Pattern participation and the Design Budget, and REV
+  // is traced via its own reconstruction paths. Requiring each of them to also appear in the
+  // Traceability section contradicted the contract and failed valid designs.
+  const traceabilityExemptKinds = new Set(['LANG', 'PAT', 'REV']);
   const errors = sections
-    .filter((section) => !tracedIds.has(section.id))
+    .filter((section) => !tracedIds.has(section.id) && !traceabilityExemptKinds.has(section.kind))
     .map((section) => AUTOCODE_TASK_ARTIFACTS.design + ' Traceability must include ' + section.id + '.');
   for (const tracedId of tracedIds) {
     if (

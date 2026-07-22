@@ -1050,10 +1050,14 @@ const STANDARD_PLANNING_STAGE_RETRY_MAX_CHARS = 16000;
 const STANDARD_PLANNING_STAGE_DEFAULT_MAX_RETRIES = 2;
 const STANDARD_DESIGN_STAGE_MAX_RETRIES = 3;
 const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = 2;
+const STANDARD_TRANSIENT_NETWORK_MAX_RETRIES = 3;
 const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
 let schedulingMetadataRetryCount = 0;
 let directRetryCount = 0;
+let transientNetworkRetryCount = 0;
+let lastMainAttemptPrompt = '';
+let lastMainAttemptSubtaskId;
 const directFailureSignatures = [];
 let attemptId = 0;
 let currentAttemptStartedAt = Date.now();
@@ -1938,6 +1942,10 @@ function quoteWindowsCmdArg(value) {
   return quote + escaped + quote;
 }
 function startAttempt(attemptPrompt, subtaskId) {
+  // Remember the last main-attempt prompt so a transient network/transport failure can be
+  // retried by re-issuing the exact same invocation (coding uses a separate worker path).
+  lastMainAttemptPrompt = attemptPrompt;
+  lastMainAttemptSubtaskId = subtaskId;
   const currentAttemptId = ++attemptId;
   currentAttemptStartedAt = Date.now();
   currentAttemptDurationRecorded = false;
@@ -2373,6 +2381,34 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
           ? buildStandardPlanningStagePrompt('tasks', validationError)
           : buildArtifactValidationRetryPrompt(validationError),
       ));
+      return;
+    }
+  }
+
+  // Transient network/transport failures (provider stream drops) are not planning defects.
+  // Re-issue the same attempt a few times before giving up, so a network blip during spec or
+  // design generation does not hard-fail planning. Direct phase keeps its own richer retry.
+  if (
+    exitCode !== 0 &&
+    phase !== 'direct' &&
+    phase !== 'coding' &&
+    lastMainAttemptPrompt &&
+    transientNetworkRetryCount < STANDARD_TRANSIENT_NETWORK_MAX_RETRIES
+  ) {
+    const transientReason = explicitError ||
+      summarizeCliFailureReason(defaultAttemptState, exitCode, signal);
+    if (isTransientCliNetworkFailure(transientReason)) {
+      transientNetworkRetryCount += 1;
+      const retryMessage = 'Autocode CLI hit a transient network error; retrying attempt ' +
+        transientNetworkRetryCount + '/' + STANDARD_TRANSIENT_NETWORK_MAX_RETRIES + ': ' +
+        compactRunnerDirectValidationReason(transientReason);
+      appendTaskLogEntry(logPhase, 'info', retryMessage);
+      updateTaskLogs(logPhase, 'active', retryMessage);
+      updatePlanRunningState();
+      emitPhase(executionPhase, retryMessage, 0);
+      defaultAttemptState.lastCliMessageText = '';
+      defaultAttemptState.completionSummaryDetected = false;
+      startAttempt(lastMainAttemptPrompt, lastMainAttemptSubtaskId);
       return;
     }
   }
@@ -2815,6 +2851,14 @@ function maybeScheduleAttemptCompletionFromModelText(state, text) {
   scheduleAttemptCompletionGrace(state);
 }
 
+function getCodingWorkItemCompletionSummary(state) {
+  return compactDirectSessionText(
+    state && state.lastCliMessageText,
+    1200,
+    '\\n...[completion summary middle omitted]...\\n',
+  ) || 'Completed by Autocode CLI runner.';
+}
+
 function hasWorkItemCompletionSummaryText(value) {
   const text = String(value || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
   if (!text.trim()) {
@@ -2824,6 +2868,14 @@ function hasWorkItemCompletionSummaryText(value) {
 }
 
 function hasCompletionSummaryHeader(text) {
+  const hasVerticalHeader = /(?:^|\\n)\\s*\\|\\s*(?:Item|\\u9879\\u76ee)\\s*\\|\\s*(?:Details?|Result|Content|\\u7ed3\\u679c|\\u5185\\u5bb9)\\s*\\|/i.test(text);
+  const hasVerticalChange = /(?:^|\\n)\\s*\\|\\s*(?:Change(?:s)?|What changed|\\u53d8\\u66f4|\\u5b8c\\u6210\\u5185\\u5bb9)\\s*\\|/i.test(text);
+  const hasVerticalVerification = /(?:^|\\n)\\s*\\|\\s*(?:Verification|Validation|Tests?|\\u9a8c\\u8bc1|\\u9a8c\\u8bc1\\u7ed3\\u679c)\\s*\\|/i.test(text);
+  const hasVerticalReview = /(?:^|\\n)\\s*\\|\\s*(?:Review notes?|Review|Risks?|\\u8bc4\\u5ba1\\u5907\\u6ce8|\\u5ba1\\u6838\\u8981\\u70b9|\\u98ce\\u9669)\\s*\\|/i.test(text);
+  if (hasVerticalHeader && hasVerticalChange && hasVerticalVerification && hasVerticalReview) {
+    return true;
+  }
+
   return /(?:^|\\n)\\s*\\|\\s*(?:变更|鍙樻洿|Change(?:s)?|What changed)\\s*\\|\\s*(?:验证|楠岃瘉|Verification|Validation|Tests?)\\s*\\|\\s*(?:评审备注|璇勫澶囨敞|Review notes?|Review)\\s*\\|/i.test(text) ||
     /(?:变更|鍙樻洿|Change(?:s)?|What changed)[\\s|]+(?:验证|楠岃瘉|Verification|Validation|Tests?)[\\s|]+(?:评审备注|璇勫澶囨敞|Review notes?|Review)/i.test(text);
 }
@@ -3235,10 +3287,11 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
     recordCliWorkItemMemory(attempt.subtask, 'failure', reason, memoryNotes);
   } else {
     const memoryNotes = extractCliMemoryNotes(attempt.state.lastCliMessageText);
+    const completionSummary = getCodingWorkItemCompletionSummary(attempt.state);
     const statusResult = markPlanSubtaskStatusSafely(
       attempt.subtask.id,
       'completed',
-      'Completed by Autocode CLI runner.',
+      completionSummary,
       attemptDurationMs,
     );
     if (!statusResult.ok) {
@@ -3254,7 +3307,18 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
       );
       recordCliWorkItemMemory(attempt.subtask, 'failure', reason, memoryNotes);
     } else {
+      const changedFilesBeforeCommit = selectCodingWorkItemCommitFiles(attempt).files;
       const commitResult = commitCompletedCodingWorkItem(attempt);
+      const changedFiles = commitResult.status === 'committed'
+        ? commitResult.files
+        : changedFilesBeforeCommit;
+      const runtimeMetadata = {
+        ...(changedFiles.length > 0 ? { changed_files: changedFiles } : {}),
+        ...(commitResult.status === 'committed' ? { git_commit: commitResult.commit } : {}),
+      };
+      if (Object.keys(runtimeMetadata).length > 0) {
+        persistPlanSubtaskRuntimeMetadata(attempt.subtask.id, runtimeMetadata);
+      }
       if (commitResult.status === 'failed') {
         const reason = 'Local git commit failed after work item completion: ' + commitResult.reason;
         failedCodingSubtaskIds.add(attempt.subtask.id);
@@ -3270,14 +3334,12 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
         recordCliWorkItemMemory(attempt.subtask, 'failure', reason, memoryNotes);
       } else {
         completedCodingSubtaskIds.add(attempt.subtask.id);
-        const extra = commitResult.status === 'committed'
-          ? {
-            git_commit: commitResult.commit,
-            changed_files: commitResult.files,
-          }
-          : {
-            git_commit_skipped: commitResult.reason,
-          };
+        const extra = {
+          ...(changedFiles.length > 0 ? { changed_files: changedFiles } : {}),
+          ...(commitResult.status === 'committed'
+            ? { git_commit: commitResult.commit }
+            : { git_commit_skipped: commitResult.reason }),
+        };
         appendTaskLogEntry(
           'coding',
           'success',
@@ -3286,10 +3348,6 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
           buildAttemptLogExtra(attempt.state, extra),
         );
         if (commitResult.status === 'committed') {
-          persistPlanSubtaskRuntimeMetadata(attempt.subtask.id, {
-            git_commit: commitResult.commit,
-            changed_files: commitResult.files,
-          });
           appendTaskLogEntry(
             'coding',
             'info',
@@ -3308,7 +3366,7 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
             buildAttemptLogExtra(attempt.state),
           );
         }
-        recordCliWorkItemMemory(attempt.subtask, 'success', 'Completed by Autocode CLI runner.', memoryNotes);
+        recordCliWorkItemMemory(attempt.subtask, 'success', completionSummary, memoryNotes);
       }
     }
   }
@@ -3358,7 +3416,7 @@ function finishCodingWorkQueue() {
 function restoreKnownCodingStatuses(currentSubtaskId) {
   for (const subtaskId of completedCodingSubtaskIds) {
     if (subtaskId === currentSubtaskId) continue;
-    markPlanSubtaskStatusSafely(subtaskId, 'completed', 'Completed by Autocode CLI runner.');
+    markPlanSubtaskStatusSafely(subtaskId, 'completed');
   }
   for (const subtaskId of failedCodingSubtaskIds) {
     if (subtaskId === currentSubtaskId) continue;
@@ -4233,12 +4291,24 @@ function markPlanSubtaskStatus(subtaskId, status, note, durationMs) {
       typeof existingSubtaskMetadata.started_at === 'string'
       ? existingSubtaskMetadata.started_at
       : null;
+    const existingCompletionValue = existingSubtaskMetadata &&
+      typeof existingSubtaskMetadata === 'object' &&
+      !Array.isArray(existingSubtaskMetadata) &&
+      typeof existingSubtaskMetadata.completion_summary === 'string'
+      ? existingSubtaskMetadata.completion_summary
+      : null;
     const marker = statusToMarker(status);
     const now = new Date().toISOString();
     const lines = content.replace(/\\r\\n/g, '\\n').split('\\n');
     let updated = false;
     let matchedSubtask = false;
-    let completionValue = null;
+    let completionValue = status === 'completed'
+      ? compactDirectSessionText(
+          note,
+          1200,
+          '\\n...[completion summary middle omitted]...\\n',
+        ) || existingCompletionValue
+      : null;
     let noteValue = status !== 'completed' && note ? compactPlanField(note) : null;
     let startedValue = existingStartedValue;
     let completedValue = null;
@@ -4266,7 +4336,10 @@ function markPlanSubtaskStatus(subtaskId, status, note, durationMs) {
         }
         if (/^\\s*-\\s+_Completion:/i.test(lines[insertAt])) {
           hasCompletion = true;
-          completionValue = extractPlanInlineFieldValue(lines[insertAt], 'Completion');
+          const inlineCompletionValue = extractPlanInlineFieldValue(lines[insertAt], 'Completion');
+          if (!completionValue) {
+            completionValue = inlineCompletionValue;
+          }
           if (status !== 'completed') {
             lines.splice(insertAt, 1);
             updated = true;
@@ -4298,8 +4371,11 @@ function markPlanSubtaskStatus(subtaskId, status, note, durationMs) {
         insertAt += 1;
       }
       if (status === 'completed' && note && !hasCompletion) {
-        completionValue = compactPlanField(note);
-        lines.splice(insertAt, 0, detailIndent + '- _Completion: ' + completionValue + '_');
+        const inlineCompletionValue = compactPlanField(note);
+        if (!completionValue) {
+          completionValue = inlineCompletionValue;
+        }
+        lines.splice(insertAt, 0, detailIndent + '- _Completion: ' + inlineCompletionValue + '_');
         insertAt += 1;
         updated = true;
       }
@@ -4806,6 +4882,26 @@ function isDirectCliNonRetryableFailure(message) {
   return /\b(?:auth|authentication|unauthorized|invalid token|token expired|login required|please login)\b/i.test(text) ||
     /\b(?:command not found|not recognized as an internal or external command|enoent|no such file or directory|cannot find module|permission denied)\b/i.test(text) ||
     /\b(?:model not found|invalid model|unknown model|endpoint not supported)\b/i.test(text);
+}
+
+function isTransientCliNetworkFailure(message) {
+  // Focused, unambiguous transient network/transport signals only, so genuine logic or
+  // validation failures are never masked as retryable.
+  const text = String(message || '').toLowerCase();
+  return text.includes('stream disconnected') ||
+    text.includes('tls handshake eof') ||
+    text.includes('error sending request') ||
+    text.includes('error decoding response body') ||
+    text.includes('transport channel closed') ||
+    text.includes('failed to connect to websocket') ||
+    text.includes('reconnecting') ||
+    text.includes('network error') ||
+    text.includes('connection reset') ||
+    text.includes('econnreset') ||
+    text.includes('etimedout') ||
+    text.includes('enotfound') ||
+    text.includes('fetch failed') ||
+    text.includes('temporarily unavailable');
 }
 
 function isDirectCliRetryableFailure(message) {
@@ -5490,7 +5586,7 @@ function matchesCliJsonEventType(normalizedType, eventTypes) {
 
 function normalizeCliJsonEventType(value) {
   const type = valueToNonEmptyString(value);
-  return type ? type.toLowerCase() : '';
+  return type ? type.toLowerCase().replace(/[.\\s-]+/g, '_') : '';
 }
 
 function resolveGenericCliJsonToolSuccess(value, exitCode, status) {
@@ -5526,13 +5622,12 @@ function getGenericCliJsonPayload(envelope) {
 }
 
 function isGenericCliJsonCompletionEvent(payloadType) {
-  const type = valueToNonEmptyString(payloadType);
-  if (!type) {
+  const normalizedType = normalizeCliJsonEventType(payloadType);
+  if (!normalizedType) {
     return false;
   }
   const completionTypes = getActiveCliJsonParserList('completionEventTypes', DEFAULT_CLI_JSON_COMPLETION_EVENT_TYPES);
-  const normalizedType = type.toLowerCase();
-  return completionTypes.some((item) => String(item || '').toLowerCase() === normalizedType);
+  return matchesCliJsonEventType(normalizedType, completionTypes);
 }
 
 function getActiveCliJsonParserList(key, fallback) {

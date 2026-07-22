@@ -900,6 +900,10 @@ describe('Autocode CLI runner prompt', () => {
     // the cited defects instead of blindly regenerating the same design.
     expect(runner).toContain('The independent design review returned Status: REVISE. Resolve every blocking finding below');
     expect(runner).toContain('selectStandardDesignRevisionStartStage(revisionGuidance)');
+    // Transient provider network drops during spec/design must be retried, not hard-failed.
+    expect(runner).toContain('function isTransientCliNetworkFailure(message)');
+    expect(runner).toContain('const STANDARD_TRANSIENT_NETWORK_MAX_RETRIES = 3;');
+    expect(runner).toContain('Autocode CLI hit a transient network error');
     expect(runner).toContain('const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = 2;');
     expect(runner).toContain('found an upstream owner error; repair');
     // Planning must stop promptly when the independent review needs user input,
@@ -3189,6 +3193,11 @@ describe('Autocode CLI runner prompt', () => {
       "process.chdir(require('node:os').tmpdir());",
       "process.stdin.resume();",
       "setTimeout(() => {",
+      "  process.stdout.write('| Item | Result |\\n');",
+      "  process.stdout.write('| --- | --- |\\n');",
+      "  process.stdout.write('| Change | Added Start game control |\\n');",
+      "  process.stdout.write('| Verification | npm run build passed |\\n');",
+      "  process.stdout.write('| Review notes | Ready for review |\\n');",
       "  process.stdout.write('| 变更 | 验证 | 评审备注 |\\n');",
       "  process.stdout.write('| --- | --- | --- |\\n');",
       "  process.stdout.write('| Added Start game control | 通过：npm run build | 未改 implementation_plan.md |\\n');",
@@ -3219,6 +3228,9 @@ describe('Autocode CLI runner prompt', () => {
 
     const rawPlan = readFileSync(join(specDir, 'implementation_plan.md'), 'utf8');
     expect(rawPlan).toContain('- [x] wp-1 Add start control');
+    const implementationPlan = loadAutocodeImplementationPlanSync(specDir);
+    expect(implementationPlan?.phases?.[0]?.subtasks?.[0]?.completion_summary)
+      .toContain('| Item | Result |');
     const logs = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
     expect(logs).toContain('finished model output but the CLI process did not exit; finalizing the work item.');
   });
@@ -3451,6 +3463,12 @@ describe('Autocode CLI runner prompt', () => {
     expect(completedSubtask?.duration_ms).toBeGreaterThan(1_000);
     expect(completedSubtask?.started_at).toBe('2026-01-01T00:00:00.000Z');
     expect(completedSubtask?.active_started_at).toBeUndefined();
+    expect(completedSubtask?.completion_summary).toContain('| Change | Verification | Review |');
+    expect(completedSubtask?.changed_files).toEqual([
+      'src/created.ts',
+      'src/keep.ts',
+      'src/remove-me.ts',
+    ]);
   });
   it('does not log completed coding work when plan completion status cannot be persisted', () => {
     createAutocodeTask({
@@ -5044,7 +5062,7 @@ describe('Autocode CLI runner prompt', () => {
       "  writeFileSync(join(projectRoot, 'future-output.txt'), 'done', 'utf8');",
       "  writeFileSync(join(specDir, 'direct_summary.md'), 'Implemented future JSON CLI completion. Validation: npm test passed.\\n', 'utf8');",
       "  process.stdout.write(JSON.stringify({ kind: 'message', conversation_id: 'future-hang-session', message: 'Implemented future JSON CLI completion. Validation: npm test passed.' }) + '\\n');",
-      "  process.stdout.write(JSON.stringify({ kind: 'done' }) + '\\n');",
+      "  process.stdout.write(JSON.stringify({ kind: 'turn.completed' }) + '\\n');",
       "  setInterval(() => {}, 1000);",
       "});",
     ].join('\n'), 'utf8');
@@ -5065,7 +5083,7 @@ describe('Autocode CLI runner prompt', () => {
         sessionIdFields: ['conversation_id'],
         messageFields: ['message'],
         eventTypeFields: ['kind'],
-        completionEventTypes: ['done'],
+        completionEventTypes: ['turn_completed'],
       },
       phase: 'direct',
     });
