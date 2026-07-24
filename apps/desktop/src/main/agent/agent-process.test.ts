@@ -786,11 +786,11 @@ describe('AgentProcessManager - API Profile Env Injection (Story 2.3)', () => {
       expect(envArg.CLAUDE_CONFIG_DIR).toBeUndefined();
     });
 
-    it('should clear CLAUDE_CODE_OAUTH_TOKEN when CLAUDE_CONFIG_DIR is provided by profile', async () => {
+    it('should clear a direct OAuth token when CLAUDE_CONFIG_DIR is provided', async () => {
       // OAuth mode
       vi.mocked(profileService.getAPIProfileEnv).mockResolvedValue({});
 
-      // Profile provides CLAUDE_CONFIG_DIR - agent should use config dir for auth
+      // The selected config directory owns credential resolution.
       vi.mocked(rateLimitDetector.getBestAvailableProfileEnv).mockReturnValue({
         env: {
           CLAUDE_CONFIG_DIR: '/home/user/.config/claude-profile-3',
@@ -806,10 +806,8 @@ describe('AgentProcessManager - API Profile Env Injection (Story 2.3)', () => {
       expect(spawnCalls).toHaveLength(1);
       const envArg = spawnCalls[0].options.env as Record<string, unknown>;
 
-      // When CLAUDE_CONFIG_DIR is present, CLAUDE_CODE_OAUTH_TOKEN should be cleared
-      // because Claude Code resolves auth from the config dir instead
       expect(envArg.CLAUDE_CONFIG_DIR).toBe('/home/user/.config/claude-profile-3');
-      expect(envArg.CLAUDE_CODE_OAUTH_TOKEN).toBeFalsy();
+      expect(envArg.CLAUDE_CODE_OAUTH_TOKEN).toBe('');
     });
   });
 

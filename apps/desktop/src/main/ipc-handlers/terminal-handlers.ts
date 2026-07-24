@@ -10,7 +10,6 @@ import { getUsageMonitor } from '../claude-profile/usage-monitor';
 import { TerminalManager } from '../terminal-manager';
 import { projectStore } from '../project-store';
 import { terminalNameGenerator } from '../terminal-name-generator';
-import { readSettingsFileAsync } from '../settings-utils';
 import { debugLog, } from '../../shared/utils/debug-logger';
 import { migrateSession } from '../claude-profile/session-utils';
 import { createProfileDirectory } from '../claude-profile/profile-utils';
@@ -371,14 +370,10 @@ export function registerTerminalHandlers(
   ipcMain.on(
     IPC_CHANNELS.TERMINAL_INVOKE_CLI,
     (_, id: string, cwd?: string, cli?: SupportedCLI) => {
-      // Wrap in async IIFE to allow async settings read without blocking
+      // Claude smart terminals always run with the requested full-permission mode.
+      // Non-Claude CLIs ignore this Claude-specific flag.
       (async () => {
-        // Read settings asynchronously to check for YOLO mode (dangerously skip permissions)
-        const settings = await readSettingsFileAsync();
-        const dangerouslySkipPermissions = settings?.dangerouslySkipPermissions === true;
-
-        // Use async version to avoid blocking main process during CLI detection
-        await terminalManager.invokeCLIAsync(id, cwd, undefined, dangerouslySkipPermissions, cli);
+        await terminalManager.invokeCLIAsync(id, cwd, undefined, true, cli);
       })().catch((error) => {
         console.warn('[terminal-handlers] Failed to invoke CLI:', error);
       });

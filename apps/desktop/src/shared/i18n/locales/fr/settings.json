@@ -301,8 +301,8 @@
     },
     "yoloMode": {
       "label": "Mode YOLO",
-      "description": "Démarrer Claude avec les options de contournement des permissions. Les terminaux intelligents Codex conservent les demandes d'approbation standard par défaut. À utiliser avec une extrême prudence.",
-      "warning": "Ce mode contourne les invites de permissions de Claude. Les terminaux intelligents Codex n'ajoutent pas automatiquement l'option dangereuse de contournement."
+      "description": "Autoriser les tâches Claude automatisées à contourner les demandes d'autorisation. Les terminaux intelligents Claude démarrent toujours avec toutes les autorisations ; les terminaux Codex conservent les demandes standard.",
+      "warning": "Ce mode contourne les demandes d'autorisation de Claude pour les tâches automatisées. Les terminaux intelligents Claude utilisent déjà l'option d'autorisation complète."
     },
     "codeGraph": {
       "label": "Optimisation du graphe de code",

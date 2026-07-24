@@ -27,7 +27,11 @@ export function encryptToken(token: string): string {
  */
 export function decryptToken(storedToken: string): string {
   try {
-    if (storedToken.startsWith('enc:') && safeStorage.isEncryptionAvailable()) {
+    if (storedToken.startsWith('enc:')) {
+      if (!safeStorage.isEncryptionAvailable()) {
+        console.error('[TokenEncryption] Cannot decrypt stored token because OS encryption is unavailable');
+        return '';
+      }
       const encryptedData = Buffer.from(storedToken.slice(4), 'base64');
       return safeStorage.decryptString(encryptedData);
     }

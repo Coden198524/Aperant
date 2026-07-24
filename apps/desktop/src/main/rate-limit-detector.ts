@@ -493,16 +493,8 @@ export function isBillingFailureError(output: string): boolean {
 /**
  * Get environment variables for a specific Claude profile.
  *
- * IMPORTANT: Always uses CLAUDE_CONFIG_DIR to let Claude CLI read fresh tokens from Keychain.
- * We do NOT use cached OAuth tokens (CLAUDE_CODE_OAUTH_TOKEN) because:
- * 1. OAuth tokens expire in 8-12 hours
- * 2. Claude CLI's token refresh mechanism works (updates Keychain)
- * 3. Cached tokens don't benefit from Claude CLI's automatic refresh
- *
- * By using CLAUDE_CONFIG_DIR, Claude CLI reads fresh tokens from Keychain each time,
- * which includes any refreshed tokens. This solves the 401 errors after a few hours.
- *
- * See: docs/LONG_LIVED_AUTH_PLAN.md for full context.
+ * Uses CLAUDE_CONFIG_DIR so Claude can read and refresh credentials from its own
+ * platform credential store.
  *
  * @param profileId - Optional profile ID. If not provided, uses active profile.
  * @returns Environment variables for Claude CLI invocation
@@ -697,10 +689,8 @@ export function getBestAvailableProfileEnv(): BestProfileEnvResult {
 /**
  * Ensure the profile environment is clean for subprocess invocation.
  *
- * When CLAUDE_CONFIG_DIR is set, we MUST clear both CLAUDE_CODE_OAUTH_TOKEN and
- * ANTHROPIC_API_KEY to prevent the Claude Agent SDK from using hardcoded/cached
- * tokens or API keys (e.g., from .env file or shell environment) instead of reading
- * fresh credentials from the specified config directory.
+ * When CLAUDE_CONFIG_DIR is set, clear inherited credentials so Claude reads the
+ * selected profile from its own platform credential store.
  *
  * ANTHROPIC_API_KEY is cleared to prevent Claude Code from using API keys present
  * in the shell environment, which would cause it to show "Claude API" instead of
@@ -712,7 +702,7 @@ export function getBestAvailableProfileEnv(): BestProfileEnvResult {
  * Also warns if the profile env is empty, which indicates a misconfigured profile.
  *
  * @param env - Profile environment from getProfileEnv() or getActiveProfileEnv()
- * @returns Environment with CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY cleared if CLAUDE_CONFIG_DIR is set
+ * @returns Environment with direct credential overrides cleared
  */
 export function ensureCleanProfileEnv(env: Record<string, string>): Record<string, string> {
   debugLog('[RateLimitDetector] ensureCleanProfileEnv() input:', {
@@ -729,9 +719,7 @@ export function ensureCleanProfileEnv(env: Record<string, string>): Record<strin
   }
 
   if (env.CLAUDE_CONFIG_DIR) {
-    // Clear CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY to ensure SDK uses credentials from CLAUDE_CONFIG_DIR
-    // ANTHROPIC_API_KEY must also be cleared to prevent Claude Code from using
-    // API keys that may be present in the shell environment instead of the config dir credentials.
+    // Clear direct overrides so Claude resolves the selected config directory.
     const cleanedEnv = {
       ...env,
       CLAUDE_CODE_OAUTH_TOKEN: '',

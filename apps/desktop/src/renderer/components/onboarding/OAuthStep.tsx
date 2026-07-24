@@ -77,7 +77,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
 
   // Derived state: check if at least one profile is authenticated
   const hasAuthenticatedProfile = claudeProfiles.some(
-    (profile) => profile.oauthToken || (profile.isDefault && profile.configDir)
+    (profile) => profile.isAuthenticated === true
   );
 
   // Reusable function to load Claude profiles
@@ -487,7 +487,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                                       {t('oauth.badges.active')}
                                     </span>
                                   )}
-                                  {(profile.oauthToken || (profile.isDefault && profile.configDir)) ? (
+                                  {profile.isAuthenticated ? (
                                     <span className="text-xs bg-success/20 text-success px-1.5 py-0.5 rounded flex items-center gap-1">
                                       <Check className="h-3 w-3" />
                                       {t('oauth.badges.authenticated')}
@@ -508,7 +508,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                         {editingProfileId !== profile.id && (
                           <div className="flex items-center gap-1">
                             {/* Authenticate button - show if not authenticated */}
-                            {!profile.oauthToken && (
+                            {!profile.isAuthenticated && (
                               <Button
                                 variant="outline"
                                 size="sm"

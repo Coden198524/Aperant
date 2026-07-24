@@ -353,7 +353,7 @@ export interface AppSettings {
   autocodeDirectProviderContinuationCapabilities?: AutocodeDirectProviderContinuationCapabilityConfig | AutocodeDirectProviderContinuationCapabilityConfig[];
   /** Optional Direct provider-native fallback extensions. External capabilities are matched before built-ins. */
   autocodeDirectProviderFallbackCapabilities?: AutocodeDirectProviderFallbackCapabilityConfig | AutocodeDirectProviderFallbackCapabilityConfig[];
-  // YOLO mode: invoke Claude with --dangerously-skip-permissions flag
+  // YOLO mode for automated Claude tasks. Smart terminals always use full permissions.
   dangerouslySkipPermissions?: boolean;
   // Legacy setting kept for compatibility. Remote error reporting is disabled.
   sentryEnabled?: boolean;

@@ -1,4 +1,4 @@
-import { writeFileSync } from 'fs';
+import { promises as fsPromises, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -153,6 +153,9 @@ function expectPathPrefix(
  * Helper to get platform-specific expectations for command quoting
  */
 function getQuotedCommand(platform: 'win32' | 'darwin' | 'linux', command: string): string {
+  if (command.includes('claude bin')) {
+    return 'claude --dangerously-skip-permissions';
+  }
   if (platform === 'win32') {
     // Windows: double quotes, use escapeForWindowsDoubleQuote logic
     // Inside double quotes, only " needs escaping (as "")
@@ -187,7 +190,10 @@ function getTempFileExtension(platform: 'win32' | 'darwin' | 'linux'): string {
 /**
  * Helper to get platform-specific token file content
  */
-function getTokenFileContent(platform: 'win32' | 'darwin' | 'linux', token: string): string {
+function getTokenFileContent(
+  platform: 'win32' | 'darwin' | 'linux',
+  token: string,
+): string {
   if (platform === 'win32') {
     return `@echo off\r\nset "CLAUDE_CODE_OAUTH_TOKEN=${token}"\r\n`;
   }
@@ -237,6 +243,19 @@ function getConfigDirCommand(platform: 'win32' | 'darwin' | 'linux', configDir: 
   return `CLAUDE_CONFIG_DIR='${configDir}'`;
 }
 
+function expectInheritedCredentialsCleared(
+  written: string,
+  platform: 'win32' | 'darwin' | 'linux',
+): void {
+  if (platform === 'win32') {
+    expect(written).toContain('set "CLAUDE_CODE_OAUTH_TOKEN="');
+    expect(written).toContain('set "ANTHROPIC_API_KEY="');
+    return;
+  }
+  expect(written).toContain('CLAUDE_CODE_OAUTH_TOKEN=');
+  expect(written).toContain('ANTHROPIC_API_KEY=');
+}
+
 describe('cli-integration-handler', () => {
   beforeEach(() => {
     mockGetClaudeCliInvocation.mockClear();
@@ -246,6 +265,7 @@ describe('cli-integration-handler', () => {
     mockReleaseSessionId.mockClear();
     mockWriteToPty.mockClear();
     vi.mocked(writeFileSync).mockClear();
+    vi.mocked(fsPromises.writeFile).mockClear();
     vi.mocked(readSettingsFileAsync).mockResolvedValue(undefined);
   });
 
@@ -254,7 +274,7 @@ describe('cli-integration-handler', () => {
       mockPlatform(platform);
     });
 
-    it('uses the resolved CLI path and PATH prefix when invoking Claude', async () => {
+    it('uses the direct system Claude command without resolving an app profile', async () => {
       mockGetClaudeCliInvocation.mockReturnValue({
         command: "/opt/claude bin/claude's",
         env: { PATH: '/opt/claude/bin:/usr/bin' },
@@ -278,8 +298,8 @@ describe('cli-integration-handler', () => {
       expect(written).toContain(getQuotedCommand(platform, "/opt/claude bin/claude's"));
       expect(mockReleaseSessionId).toHaveBeenCalledWith('term-1');
       expect(mockPersistSession).toHaveBeenCalledWith(terminal);
-      expect(profileManager.getActiveProfile).toHaveBeenCalled();
-      expect(profileManager.markProfileUsed).toHaveBeenCalledWith('default');
+      expect(mockGetClaudeCliInvocation).not.toHaveBeenCalled();
+      expect(mockGetClaudeProfileManager).not.toHaveBeenCalled();
     });
 
     it('uses the temp token flow when the active profile has an oauth token', async () => {
@@ -331,10 +351,7 @@ describe('cli-integration-handler', () => {
       nowSpy.mockRestore();
     });
 
-    it('prefers the config dir flow when profile has both oauth token and config dir', async () => {
-      // The configDir method is preferred over temp-file because CLAUDE_CONFIG_DIR lets
-      // Claude Code read full Keychain credentials including subscriptionType ("max") and
-      // rateLimitTier. Using CLAUDE_CODE_OAUTH_TOKEN alone lacks tier info.
+    it('prefers the Claude config directory when a legacy token is also present', async () => {
       const command = '/opt/claude/bin/claude';
       const profileManager = {
         getActiveProfile: vi.fn(),
@@ -360,18 +377,16 @@ describe('cli-integration-handler', () => {
       const { invokeClaude } = await import('../cli-integration-handler');
       invokeClaude(terminal, '/tmp/project', 'prof-both', () => null, vi.fn());
 
-      // Should NOT write a temp file - configDir is used instead
-      expect(vi.mocked(writeFileSync)).not.toHaveBeenCalled();
-
       const written = mockWriteToPty.mock.calls[0][1] as string;
       const clearCmd = getClearCommand(platform);
       const histPrefix = getHistoryPrefix(platform);
-      const configDir = getConfigDirCommand(platform, '/tmp/claude-config');
 
       expect(written).toContain(histPrefix);
-      expect(written).toContain(configDir);
       expect(written).toContain(clearCmd);
+      expect(written).toContain(getConfigDirCommand(platform, '/tmp/claude-config'));
       expect(written).toContain(getQuotedCommand(platform, command));
+      expect(written).not.toContain('token-value');
+      expect(writeFileSync).not.toHaveBeenCalled();
       expect(profileManager.getProfile).toHaveBeenCalledWith('prof-both');
       expect(mockPersistSession).toHaveBeenCalledWith(terminal);
       expect(profileManager.markProfileUsed).toHaveBeenCalledWith('prof-both');
@@ -403,14 +418,14 @@ describe('cli-integration-handler', () => {
       expect(profileManager.markProfileUsed).not.toHaveBeenCalled();
     });
 
-    it('uses the config dir flow when the active profile has a config dir', async () => {
+    it('uses the normal CLI environment for an explicitly requested default profile', async () => {
       const command = '/opt/claude/bin/claude';
       const profileManager = {
         getActiveProfile: vi.fn(),
         getProfile: vi.fn(() => ({
-          id: 'prof-2',
-          name: 'Work',
-          isDefault: false,
+          id: 'default',
+          name: 'Default',
+          isDefault: true,
           configDir: '/tmp/claude-config',
         })),
         getProfileToken: vi.fn(() => null),
@@ -423,23 +438,18 @@ describe('cli-integration-handler', () => {
       });
       mockGetClaudeProfileManager.mockReturnValue(profileManager);
 
-      const terminal = createMockTerminal({ id: 'term-4' });
+      const terminal = createMockTerminal({ id: 'term-4', claudeProfileId: 'default' });
 
       const { invokeClaude } = await import('../cli-integration-handler');
-      invokeClaude(terminal, '/tmp/project', 'prof-2', () => null, vi.fn());
+      invokeClaude(terminal, '/tmp/project', 'default', () => null, vi.fn());
 
       const written = mockWriteToPty.mock.calls[0][1] as string;
-      const clearCmd = getClearCommand(platform);
-      const histPrefix = getHistoryPrefix(platform);
-      const configDir = getConfigDirCommand(platform, '/tmp/claude-config');
-
-      expect(written).toContain(histPrefix);
-      expect(written).toContain(configDir);
       expectPathPrefix(written, platform, '/opt/claude/bin:/usr/bin', command);
       expect(written).toContain(getQuotedCommand(platform, command));
-      expect(written).toContain(clearCmd);
-      expect(profileManager.getProfile).toHaveBeenCalledWith('prof-2');
-      expect(profileManager.markProfileUsed).toHaveBeenCalledWith('prof-2');
+      expect(written).toContain('--dangerously-skip-permissions');
+      expect(written).not.toContain('CLAUDE_CONFIG_DIR=');
+      expect(profileManager.getProfile).toHaveBeenCalledWith('default');
+      expect(profileManager.markProfileUsed).toHaveBeenCalledWith('default');
       expect(mockPersistSession).toHaveBeenCalledWith(terminal);
     });
 
@@ -493,8 +503,7 @@ describe('cli-integration-handler', () => {
       resumeClaude(terminal, 'abc123', () => null);
 
       const resumeCall = mockWriteToPty.mock.calls[0][1] as string;
-      expectPathPrefix(resumeCall, platform, '/opt/claude/bin:/usr/bin', '/opt/claude/bin/claude');
-      expect(resumeCall).toContain(getQuotedCommand(platform, '/opt/claude/bin/claude') + ' --continue');
+      expect(resumeCall).toBe('claude --dangerously-skip-permissions --continue\r');
       expect(resumeCall).not.toContain('--resume');
       // sessionId is cleared because --continue doesn't track specific sessions
       expect(terminal.claudeSessionId).toBeUndefined();
@@ -507,15 +516,15 @@ describe('cli-integration-handler', () => {
       terminal.isCLIMode = false;
       resumeClaude(terminal, undefined, () => null);
       const continueCall = mockWriteToPty.mock.calls[0][1] as string;
-      expect(continueCall).toContain(getQuotedCommand(platform, '/opt/claude/bin/claude') + ' --continue');
+      expect(continueCall).toBe('claude --dangerously-skip-permissions --continue\r');
       expect(terminal.isCLIMode).toBe(true);
       expect(terminal.claudeSessionId).toBeUndefined();
       expect(mockPersistSession).not.toHaveBeenCalled();
     });
   });
 
-  it('throws when invokeClaude cannot resolve the CLI invocation', async () => {
-    mockGetClaudeCliInvocation.mockImplementation(() => {
+  it('rolls back direct invocation state when writing the command fails', async () => {
+    mockWriteToPty.mockImplementationOnce(() => {
       throw new Error('boom');
     });
     const profileManager = {
@@ -531,11 +540,12 @@ describe('cli-integration-handler', () => {
     const { invokeClaude } = await import('../cli-integration-handler');
     expect(() => invokeClaude(terminal, '/tmp/project', undefined, () => null, vi.fn())).toThrow('boom');
     expect(mockReleaseSessionId).toHaveBeenCalledWith('term-err');
-    expect(mockWriteToPty).not.toHaveBeenCalled();
+    expect(mockWriteToPty).toHaveBeenCalledOnce();
+    expect(terminal.isCLIMode).toBe(false);
   });
 
-  it('throws when resumeClaude cannot resolve the CLI invocation', async () => {
-    mockGetClaudeCliInvocation.mockImplementation(() => {
+  it('rolls back resume state when writing the direct command fails', async () => {
+    mockWriteToPty.mockImplementationOnce(() => {
       throw new Error('boom');
     });
 
@@ -547,7 +557,8 @@ describe('cli-integration-handler', () => {
 
     const { resumeClaude } = await import('../cli-integration-handler');
     expect(() => resumeClaude(terminal, 'abc123', () => null)).toThrow('boom');
-    expect(mockWriteToPty).not.toHaveBeenCalled();
+    expect(mockWriteToPty).toHaveBeenCalledOnce();
+    expect(terminal.isCLIMode).toBe(false);
   });
 
   it('throws when writing the OAuth token temp file fails', async () => {
@@ -601,7 +612,7 @@ describe('cli-integration-handler', () => {
     expect(terminal.dangerouslySkipPermissions).toBe(true);
   });
 
-  it('does not include YOLO mode flag when dangerouslySkipPermissions is false', async () => {
+  it('still grants full permissions when the legacy setting is false', async () => {
     mockGetClaudeCliInvocation.mockReturnValue({
       command: '/opt/claude/bin/claude',
       env: { PATH: '/opt/claude/bin:/usr/bin' },
@@ -620,8 +631,8 @@ describe('cli-integration-handler', () => {
     invokeClaude(terminal, '/tmp/project', undefined, () => null, vi.fn(), false);
 
     const written = mockWriteToPty.mock.calls[0][1] as string;
-    expect(written).not.toContain('--dangerously-skip-permissions');
-    expect(terminal.dangerouslySkipPermissions).toBe(false);
+    expect(written).toContain('--dangerously-skip-permissions');
+    expect(terminal.dangerouslySkipPermissions).toBe(true);
   });
 
   it('resets terminal state on error', async () => {
@@ -663,6 +674,7 @@ describe('invokeCLIAsync', () => {
     mockReleaseSessionId.mockClear();
     mockWriteToPty.mockClear();
     vi.mocked(writeFileSync).mockClear();
+    vi.mocked(fsPromises.writeFile).mockClear();
   });
 
   describe.each(['win32', 'darwin', 'linux'] as const)('on %s', (platform) => {
@@ -670,7 +682,7 @@ describe('invokeCLIAsync', () => {
       mockPlatform(platform);
     });
 
-    it('should invoke Claude asynchronously with default profile', async () => {
+    it('should invoke the system Claude command directly', async () => {
       mockGetClaudeCliInvocationAsync.mockResolvedValue({
         command: '/opt/claude/bin/claude',
         env: { PATH: '/opt/claude/bin:/usr/bin' },
@@ -689,11 +701,11 @@ describe('invokeCLIAsync', () => {
       await invokeCLIAsync(terminal, '/tmp/project', undefined, () => null, vi.fn());
 
       const written = mockWriteToPty.mock.calls[0][1] as string;
-      expect(written).toContain(buildCdCommand('/tmp/project'));
-      expectPathPrefix(written, platform, '/opt/claude/bin:/usr/bin', '/opt/claude/bin/claude');
+      expect(written).toBe(buildCdCommand('/tmp/project') + 'claude --dangerously-skip-permissions\r');
       expect(mockReleaseSessionId).toHaveBeenCalledWith('term-1');
       expect(mockPersistSession).toHaveBeenCalledWith(terminal);
-      expect(profileManager.markProfileUsed).toHaveBeenCalledWith('default');
+      expect(mockInitializeClaudeProfileManager).not.toHaveBeenCalled();
+      expect(mockGetClaudeCliInvocationAsync).not.toHaveBeenCalled();
     });
 
     it('should handle profile with configDir', async () => {
@@ -729,10 +741,43 @@ describe('invokeCLIAsync', () => {
       expect(written).toContain(histPrefix);
       expect(written).toContain(configDir);
       expect(written).toContain(clearCmd);
+      expectInheritedCredentialsCleared(written, platform);
       expect(profileManager.markProfileUsed).toHaveBeenCalledWith('prof-config');
     });
 
-    it('should timeout after 10 seconds if CLI invocation hangs', async () => {
+    it('should prefer configDir over a legacy token in the async flow', async () => {
+      const command = '/opt/claude/bin/claude';
+      const profileManager = {
+        getActiveProfile: vi.fn(),
+        getProfile: vi.fn(() => ({
+          id: 'prof-manual',
+          name: 'Manual',
+          isDefault: false,
+          oauthToken: 'encrypted-token',
+          configDir: '/tmp/manual-config',
+        })),
+        getProfileToken: vi.fn(() => 'token-value'),
+        markProfileUsed: vi.fn(),
+      };
+
+      mockGetClaudeCliInvocationAsync.mockResolvedValue({
+        command,
+        env: { PATH: '/opt/claude/bin:/usr/bin' },
+      });
+      mockInitializeClaudeProfileManager.mockResolvedValue(profileManager);
+
+      const terminal = createMockTerminal({ claudeProfileId: 'prof-manual' });
+      const { invokeCLIAsync } = await import('../cli-integration-handler');
+      await invokeCLIAsync(terminal, '/tmp/project', 'prof-manual', () => null, vi.fn());
+
+      const written = mockWriteToPty.mock.calls[0][1] as string;
+      expect(written).toContain(getConfigDirCommand(platform, '/tmp/manual-config'));
+      expect(written).not.toContain('token-value');
+      expect(fsPromises.writeFile).not.toHaveBeenCalled();
+      expect(profileManager.markProfileUsed).toHaveBeenCalledWith('prof-manual');
+    });
+
+    it('should timeout after 10 seconds if explicit profile CLI resolution hangs', async () => {
       mockGetClaudeCliInvocationAsync.mockImplementation(() =>
         new Promise(resolve => setTimeout(() => resolve({
           command: '/opt/claude/bin/claude',
@@ -751,7 +796,7 @@ describe('invokeCLIAsync', () => {
 
       const { invokeCLIAsync } = await import('../cli-integration-handler');
 
-      await expect(invokeCLIAsync(terminal, '/tmp/project', undefined, () => null, vi.fn()))
+      await expect(invokeCLIAsync(terminal, '/tmp/project', 'default', () => null, vi.fn()))
         .rejects.toThrow('CLI invocation timeout after 10s');
 
       // Terminal state should be rolled back

@@ -10,6 +10,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { createHash } from 'crypto';
 import { homedir } from 'os';
 import { getClaudeProfileManager } from '../claude-profile-manager';
 import { ClaudeUsageSnapshot, ProfileUsageSummary, AllProfilesUsage } from '../../shared/types/agent';
@@ -31,17 +32,15 @@ const USAGE_MONITOR_INITIAL_CHECK_DELAY_MS = 30000;
 export type { ApiProvider };
 
 /**
- * Create a safe fingerprint of a credential for debug logging.
- * Shows first 8 and last 4 characters, hiding the sensitive middle portion.
+ * Create a non-reversible fingerprint of a credential for debug logging.
  * This is NOT for authentication - only for human-readable debug identification.
  *
  * @param credential - The credential (token or API key) to create a fingerprint for
- * @returns A safe fingerprint like "sk-ant-oa...xyz9" or "null" if no credential
+ * @returns A short SHA-256 fingerprint or "null" if no credential
  */
 function getCredentialFingerprint(credential: string | null | undefined): string {
   if (!credential) return 'null';
-  if (credential.length <= 16) return credential.slice(0, 4) + '...' + credential.slice(-2);
-  return credential.slice(0, 8) + '...' + credential.slice(-4);
+  return createHash('sha256').update(credential).digest('hex').slice(0, 12);
 }
 
 /**
@@ -1805,7 +1804,7 @@ export class UsageMonitor extends EventEmitter {
       profileEmail = keychainCreds.email ?? undefined;
     }
 
-    // Get credential via ensureValidToken
+    // Read credentials through Claude CLI's platform store.
     let credential: string | undefined;
     try {
       const tokenResult = await ensureValidToken(activeOAuthProfile.configDir);

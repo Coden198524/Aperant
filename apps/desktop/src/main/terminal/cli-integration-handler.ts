@@ -330,11 +330,11 @@ export function buildClaudeShellCommand(
         // escapeForWindowsDoubleQuote() because caret is literal inside
         // double quotes in cmd.exe (only double quotes need escaping).
         const escapedConfigDir = escapeForWindowsDoubleQuote(config.configDir);
-        return `cls && ${cwdCommand}set "CLAUDE_CONFIG_DIR=${escapedConfigDir}" && ${pathPrefix}${fullCmd}\r`;
+        return `cls && ${cwdCommand}set "CLAUDE_CODE_OAUTH_TOKEN=" && set "ANTHROPIC_API_KEY=" && set "CLAUDE_CONFIG_DIR=${escapedConfigDir}" && ${pathPrefix}${fullCmd}\r`;
       } else {
-        // Unix/macOS: Use bash with config dir and history-safe prefixes
+        // Unix/macOS: Use a clean OAuth environment for this config directory.
         const escapedConfigDir = escapeShellArg(config.configDir);
-        return `clear && ${cwdCommand}HISTFILE= HISTCONTROL=ignorespace CLAUDE_CONFIG_DIR=${escapedConfigDir} ${pathPrefix}bash -c "exec ${fullCmd}"\r`;
+        return `clear && ${cwdCommand}HISTFILE= HISTCONTROL=ignorespace CLAUDE_CODE_OAUTH_TOKEN= ANTHROPIC_API_KEY= CLAUDE_CONFIG_DIR=${escapedConfigDir} ${pathPrefix}bash -c "exec ${fullCmd}"\r`;
       }
 
     default:
@@ -871,9 +871,7 @@ function executeProfileCommand(options: ExecuteProfileCommandOptions): boolean {
     return false; // Use default method
   }
 
-  // Prefer configDir over token because CLAUDE_CONFIG_DIR lets Claude Code
-  // read full Keychain credentials including subscriptionType ("max") and rateLimitTier.
-  // Using CLAUDE_CODE_OAUTH_TOKEN alone lacks tier info, causing "Claude API" display.
+  // Prefer configDir so Claude CLI reads and refreshes its own platform credentials.
   if (activeProfile.configDir) {
     // Ensure Claude Code skips onboarding for authenticated profiles
     ensureOnboardingComplete(activeProfile.configDir);
@@ -893,7 +891,7 @@ function executeProfileCommand(options: ExecuteProfileCommandOptions): boolean {
     return true;
   }
 
-  // Legacy fallback: use temp-file method if only token is available
+  // Legacy fallback for profiles that only contain a token.
   const token = profileManager.getProfileToken(activeProfile.id);
   debugLog(`${logPrefix} Token retrieval:`, {
     hasToken: !!token
@@ -952,9 +950,7 @@ async function executeProfileCommandAsync(options: ExecuteProfileCommandOptions)
     return false; // Use default method
   }
 
-  // Prefer configDir over token because CLAUDE_CONFIG_DIR lets Claude Code
-  // read full Keychain credentials including subscriptionType ("max") and rateLimitTier.
-  // Using CLAUDE_CODE_OAUTH_TOKEN alone lacks tier info, causing "Claude API" display.
+  // Prefer configDir so Claude CLI reads and refreshes its own platform credentials.
   if (activeProfile.configDir) {
     // Ensure Claude Code skips onboarding for authenticated profiles
     ensureOnboardingComplete(activeProfile.configDir);
@@ -974,7 +970,7 @@ async function executeProfileCommandAsync(options: ExecuteProfileCommandOptions)
     return true;
   }
 
-  // Legacy fallback: use temp-file method if only token is available
+  // Legacy fallback for profiles that only contain a token.
   const token = profileManager.getProfileToken(activeProfile.id);
   debugLog(`${logPrefix} Token retrieval:`, {
     hasToken: !!token
@@ -1025,8 +1021,9 @@ export function invokeClaude(
   debugLog('[ClaudeIntegration:invokeClaude] CWD:', cwd);
   debugLog('[ClaudeIntegration:invokeClaude] Dangerously skip permissions:', dangerouslySkipPermissions);
 
-  // Compute extra flags for YOLO mode
-  const extraFlags = getCLIPermissionBypassFlag('claude-code', dangerouslySkipPermissions) || undefined;
+  // Smart Claude terminals are intentionally launched with all permissions.
+  // Authentication remains owned by the system `claude` command.
+  const extraFlags = getCLIPermissionBypassFlag('claude-code', true) || undefined;
 
   // Track terminal state for cleanup on error
   const wasClaudeMode = terminal.isCLIMode;
@@ -1036,13 +1033,25 @@ export function invokeClaude(
   try {
     terminal.isCLIMode = true;
     terminal.activeCLI = 'claude-code';
-    // Store YOLO mode setting so it persists across profile switches
-    terminal.dangerouslySkipPermissions = dangerouslySkipPermissions;
+    // Persist full-permission mode across resume/profile-switch flows.
+    terminal.dangerouslySkipPermissions = true;
     SessionHandler.releaseSessionId(terminal.id);
     terminal.claudeSessionId = undefined;
 
     const startTime = Date.now();
     const projectPath = cwd || terminal.projectPath || terminal.cwd;
+
+    // The standard smart-terminal path must be exactly the user's system Claude
+    // CLI. Do not resolve an app profile, config directory, or cached OAuth token.
+    if (!profileId) {
+      terminal.claudeProfileId = undefined;
+      const cwdCommand = buildCdCommand(cwd, terminal.shellType);
+      const command = getCLICommand('claude-code', undefined, true);
+      PtyManager.writeToPty(terminal, `${cwdCommand}${command}\r`);
+      finalizeClaudeInvoke(terminal, undefined, projectPath, startTime, getWindow, onSessionCapture);
+      debugLog('[ClaudeIntegration:invokeClaude] ========== INVOKE CLAUDE COMPLETE (direct) ==========');
+      return;
+    }
 
     const profileManager = getClaudeProfileManager();
     const activeProfile = profileId
@@ -1065,7 +1074,10 @@ export function invokeClaude(
     const pathPrefix = isAbsoluteExecutableCommand(claudeCmd)
       ? ''
       : buildPathPrefix(claudeEnv.PATH || '');
-    const needsEnvOverride: boolean = !!(profileId && profileId !== previousProfileId);
+    // Explicit profile invocations must always re-apply credentials. On Unix the
+    // secure token/config environment belongs only to the previous Claude child,
+    // not to the parent shell that remains after Claude exits.
+    const needsEnvOverride: boolean = !!profileId;
 
     debugLog('[ClaudeIntegration:invokeClaude] Environment override check:', {
       profileIdProvided: !!profileId,
@@ -1150,12 +1162,6 @@ export function resumeClaude(
     terminal.isCLIMode = true;
     SessionHandler.releaseSessionId(terminal.id);
 
-    const { command: claudeCmd, env: claudeEnv } = getClaudeCliInvocation();
-    const escapedClaudeCmd = escapeShellCommand(claudeCmd);
-    const pathPrefix = isAbsoluteExecutableCommand(claudeCmd)
-      ? ''
-      : buildPathPrefix(claudeEnv.PATH || '');
-
     // Always use --continue which resumes the most recent session in the current directory.
     // This is more reliable than --resume with session IDs since Autocode already restores
     // terminals to their correct cwd/projectPath.
@@ -1169,10 +1175,8 @@ export function resumeClaude(
       console.warn('[ClaudeIntegration:resumeClaude] sessionId parameter is deprecated and ignored; using claude --continue instead');
     }
 
-    // Preserve YOLO mode flag from terminal's stored state
-    const extraFlags = getCLIPermissionBypassFlag('claude-code', terminal.dangerouslySkipPermissions);
-
-    const command = `${pathPrefix}${escapedClaudeCmd} --continue${extraFlags}`;
+    terminal.dangerouslySkipPermissions = true;
+    const command = `${getCLICommand('claude-code', undefined, true)} --continue`;
 
     // Use PtyManager.writeToPty for safer write with error handling
     PtyManager.writeToPty(terminal, `${command}\r`);
@@ -1234,7 +1238,7 @@ export async function invokeCLIAsync(
     // Dispatch to the appropriate CLI based on preferredCLI setting
     const settings = await readSettingsFileAsync();
     const preferredCLI = cliOverride || (settings?.preferredCLI as SupportedCLI | undefined) || DEFAULT_AUTOCODE_CLI;
-    const shouldBypassPermissions = preferredCLI === 'claude-code' && dangerouslySkipPermissions === true;
+    const shouldBypassPermissions = preferredCLI === 'claude-code';
 
     // Compute extra flags for YOLO mode. Smart-terminal non-Claude CLIs do not opt into
     // provider-specific permission bypass flags by default.
@@ -1263,6 +1267,20 @@ export async function invokeCLIAsync(
       if (terminal.projectPath) {
         SessionHandler.persistSessionAsync(terminal);
       }
+      return;
+    }
+
+    // Standard smart terminals deliberately delegate authentication to the
+    // user's installed Claude CLI. This is equivalent to typing the command in
+    // a normal terminal and avoids all app profile/token environment overrides.
+    if (!profileId) {
+      terminal.claudeProfileId = undefined;
+      const cwdCommand = buildCdCommand(cwd, terminal.shellType);
+      const command = getCLICommand('claude-code', undefined, true);
+      debugLog('[ClaudeIntegration:invokeCLIAsync] Direct system Claude command:', command);
+      PtyManager.writeToPty(terminal, `${cwdCommand}${command}\r`);
+      finalizeClaudeInvoke(terminal, undefined, projectPath, startTime, getWindow, onSessionCapture);
+      debugLog('[ClaudeIntegration:invokeCLIAsync] ========== INVOKE CLAUDE COMPLETE (direct) ==========');
       return;
     }
 
@@ -1300,7 +1318,10 @@ export async function invokeCLIAsync(
     const pathPrefix = isAbsoluteExecutableCommand(claudeCmd)
       ? ''
       : buildPathPrefix(claudeEnv.PATH || '');
-    const needsEnvOverride: boolean = !!(profileId && profileId !== previousProfileId);
+    // Explicit profile invocations must always re-apply credentials. On Unix the
+    // secure token/config environment belongs only to the previous Claude child,
+    // not to the parent shell that remains after Claude exits.
+    const needsEnvOverride: boolean = !!profileId;
 
     debugLog('[ClaudeIntegration:invokeCLIAsync] Environment override check:', {
       profileIdProvided: !!profileId,
@@ -1383,24 +1404,6 @@ export async function resumeClaudeAsync(
     terminal.isCLIMode = true;
     SessionHandler.releaseSessionId(terminal.id);
 
-    // Async CLI invocation - non-blocking
-    // Add timeout protection for CLI detection (10s timeout)
-    const cliInvocationPromise = getClaudeCliInvocationAsync();
-    let timeoutId: NodeJS.Timeout | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error('CLI invocation timeout after 10s')), 10000);
-    });
-
-    const { command: claudeCmd, env: claudeEnv } = await Promise.race([cliInvocationPromise, timeoutPromise])
-      .finally(() => {
-        if (timeoutId) clearTimeout(timeoutId);
-      });
-
-    const escapedClaudeCmd = escapeShellCommand(claudeCmd);
-    const pathPrefix = isAbsoluteExecutableCommand(claudeCmd)
-      ? ''
-      : buildPathPrefix(claudeEnv.PATH || '');
-
     // Always use --continue which resumes the most recent session in the current directory.
     // This is more reliable than --resume with session IDs since Autocode already restores
     // terminals to their correct cwd/projectPath.
@@ -1418,10 +1421,10 @@ export async function resumeClaudeAsync(
       debugLog('[ClaudeIntegration:resumeClaudeAsync] Post-swap resume for terminal:', terminal.id);
     }
 
-    // Preserve YOLO mode flag from terminal's stored state
-    const extraFlags = getCLIPermissionBypassFlag('claude-code', terminal.dangerouslySkipPermissions);
-
-    const command = `${pathPrefix}${escapedClaudeCmd} --continue${extraFlags}`;
+    // Resumed smart terminals use the same direct system CLI and full-permission
+    // mode as newly created smart terminals.
+    terminal.dangerouslySkipPermissions = true;
+    const command = `${getCLICommand('claude-code', undefined, true)} --continue`;
 
     // Use PtyManager.writeToPty for safer write with error handling
     PtyManager.writeToPty(terminal, `${command}\r`);

@@ -343,8 +343,6 @@ export class AgentProcessManager {
       hasApiKey: !!profileEnv.ANTHROPIC_API_KEY,
       hasConfigDir: !!profileEnv.CLAUDE_CONFIG_DIR,
       configDir: profileEnv.CLAUDE_CONFIG_DIR || '(not set)',
-      oauthTokenPrefix: profileEnv.CLAUDE_CODE_OAUTH_TOKEN?.substring(0, 8) || '(not set)',
-      apiKeyPrefix: profileEnv.ANTHROPIC_API_KEY?.substring(0, 8) || '(not set)',
     });
 
     // Warn if profile lacks CLAUDE_CONFIG_DIR - this means the profile has no configDir
@@ -401,13 +399,8 @@ export class AgentProcessManager {
       PYTHONUTF8: '1'
     } as NodeJS.ProcessEnv;
 
-    // When the active profile provides CLAUDE_CONFIG_DIR, clear CLAUDE_CODE_OAUTH_TOKEN
-    // from the spawn environment. CLAUDE_CONFIG_DIR lets Claude Code resolve its own
-    // OAuth tokens from the config directory, making an explicit token unnecessary.
-    // This matches the terminal pattern in cli-integration-handler.ts where
-    // configDir is preferred over direct token injection.
-    // We check profileEnv specifically (not mergedEnv) to avoid clearing the token
-    // when CLAUDE_CONFIG_DIR comes from the shell environment rather than the profile.
+    // Profile-aware agent processes must let Claude resolve the selected
+    // CLAUDE_CONFIG_DIR instead of inheriting a direct token override.
     if (profileEnv.CLAUDE_CONFIG_DIR) {
       mergedEnv.CLAUDE_CODE_OAUTH_TOKEN = '';
       debugLog('[AgentProcess:setupEnv] Profile provides CLAUDE_CONFIG_DIR, cleared CLAUDE_CODE_OAUTH_TOKEN from spawn env');
@@ -418,8 +411,6 @@ export class AgentProcessManager {
       hasApiKey: !!mergedEnv.ANTHROPIC_API_KEY,
       hasConfigDir: !!mergedEnv.CLAUDE_CONFIG_DIR,
       configDir: mergedEnv.CLAUDE_CONFIG_DIR || '(not set)',
-      oauthTokenPrefix: mergedEnv.CLAUDE_CODE_OAUTH_TOKEN?.substring(0, 8) || '(not set)',
-      apiKeyPrefix: mergedEnv.ANTHROPIC_API_KEY?.substring(0, 8) || '(not set)',
     });
 
     return mergedEnv;
@@ -776,7 +767,6 @@ export class AgentProcessManager {
       apiProfileEnv: {
         hasApiKey: !!apiProfileEnv.ANTHROPIC_API_KEY,
         hasBaseUrl: !!apiProfileEnv.ANTHROPIC_BASE_URL,
-        apiKeyPrefix: apiProfileEnv.ANTHROPIC_API_KEY?.substring(0, 8) || '(not set)',
       },
     });
 

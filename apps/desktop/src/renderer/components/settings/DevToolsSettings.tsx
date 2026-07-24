@@ -559,12 +559,12 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
             />
           </div>
           <p className="text-xs text-amber-400/80">
-            {t('devtools.yoloMode.description', 'Start Claude with permission-bypass flags. Codex smart terminals keep standard approval prompts by default. Use with extreme caution.')}
+            {t('devtools.yoloMode.description', 'Allow automated Claude tasks to bypass permission prompts. Claude smart terminals always start with full permissions; Codex terminals keep standard approval prompts.')}
           </p>
           {settings.dangerouslySkipPermissions && (
             <p className="text-xs text-amber-500 font-medium flex items-center gap-1">
               <AlertTriangle className="h-3 w-3" />
-              {t('devtools.yoloMode.warning', 'This mode bypasses Claude permission prompts. Codex smart terminals do not add the dangerous bypass flag automatically.')}
+              {t('devtools.yoloMode.warning', 'This mode bypasses Claude permission prompts for automated tasks. Claude smart terminals already use the full-permission flag.')}
             </p>
           )}
         </div>

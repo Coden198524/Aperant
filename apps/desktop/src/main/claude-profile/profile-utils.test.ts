@@ -2,9 +2,70 @@
  * Tests for profile-utils module
  */
 
-import { describe, it, expect } from 'vitest';
-import { isAPIProfileAuthenticated } from './profile-utils';
-import type { APIProfile } from '../../shared/types';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { afterEach, describe, it, expect } from 'vitest';
+import { isAPIProfileAuthenticated, isProfileAuthenticated } from './profile-utils';
+import type { APIProfile, ClaudeProfile } from '../../shared/types';
+
+const tempDirs: string[] = [];
+
+function createTempProfile(): ClaudeProfile & { configDir: string } {
+  const configDir = mkdtempSync(join(tmpdir(), 'aperant-profile-auth-'));
+  tempDirs.push(configDir);
+  return {
+    id: 'test-profile',
+    name: 'Test Profile',
+    configDir,
+    isDefault: false,
+    createdAt: new Date(),
+  };
+}
+
+afterEach(() => {
+  for (const tempDir of tempDirs.splice(0)) {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+describe('isProfileAuthenticated', () => {
+  it('does not treat settings.json as authentication', () => {
+    const profile = createTempProfile();
+    writeFileSync(join(profile.configDir, 'settings.json'), JSON.stringify({
+      permissions: { allow: ['Read'] },
+    }));
+
+    expect(isProfileAuthenticated(profile)).toBe(false);
+  });
+
+  it('does not treat project history as authentication', () => {
+    const profile = createTempProfile();
+    const projectsDir = join(profile.configDir, 'projects');
+    mkdirSync(projectsDir);
+    writeFileSync(join(projectsDir, 'history.jsonl'), '{"message":"hello"}\n');
+
+    expect(isProfileAuthenticated(profile)).toBe(false);
+  });
+
+  it('does not treat credential metadata without tokens as authentication', () => {
+    const profile = createTempProfile();
+    writeFileSync(join(profile.configDir, '.credentials.json'), JSON.stringify({
+      claudeAiOauth: { email: 'user@example.com' },
+    }));
+
+    expect(isProfileAuthenticated(profile)).toBe(false);
+  });
+
+  it('accepts a credential file containing an OAuth token', () => {
+    const profile = createTempProfile();
+    writeFileSync(join(profile.configDir, '.credentials.json'), JSON.stringify({
+      claudeAiOauth: { accessToken: 'sk-ant-oat01-valid-token' },
+    }));
+
+    expect(isProfileAuthenticated(profile)).toBe(true);
+  });
+});
 
 describe('isAPIProfileAuthenticated', () => {
   it('should return true when both apiKey and baseUrl are present and non-empty', () => {

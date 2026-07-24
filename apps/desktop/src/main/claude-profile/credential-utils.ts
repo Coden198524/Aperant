@@ -23,17 +23,15 @@ import { dirname, join } from 'path';
 import { isMacOS, isWindows, isLinux } from '../platform';
 
 /**
- * Create a safe fingerprint of a token for debug logging.
- * Shows first 8 and last 4 characters, hiding the sensitive middle portion.
+ * Create a non-reversible fingerprint of a token for debug logging.
  * This is NOT for authentication - only for human-readable debug identification.
  *
  * @param token - The token to create a fingerprint for
- * @returns A safe fingerprint like "sk-ant-oa...xyz9" or "null" if no token
+ * @returns A short SHA-256 fingerprint or "null" if no token
  */
 function getTokenFingerprint(token: string | null | undefined): string {
   if (!token) return 'null';
-  if (token.length <= 16) return token.slice(0, 4) + '...' + token.slice(-2);
-  return token.slice(0, 8) + '...' + token.slice(-4);
+  return createHash('sha256').update(token).digest('hex').slice(0, 12);
 }
 
 /**

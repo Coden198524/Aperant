@@ -880,13 +880,17 @@ function checkProfileAuthentication(configDir: string): AuthCheckResult {
       const content = readFileSync(claudeJsonPath, 'utf-8');
       const data = JSON.parse(content);
 
-      // Check for oauthAccount with emailAddress
+      // Metadata alone is not authentication. Confirm that the platform
+      // credential store still contains a usable token.
       if (data.oauthAccount?.emailAddress) {
-        return {
-          authenticated: true,
-          email: data.oauthAccount.emailAddress,
-          oauthAccount: data.oauthAccount
-        };
+        const keychainCreds = getCredentialsFromKeychain(expandedConfigDir);
+        if (keychainCreds.token) {
+          return {
+            authenticated: true,
+            email: data.oauthAccount.emailAddress,
+            oauthAccount: data.oauthAccount
+          };
+        }
       }
     }
 
@@ -897,7 +901,9 @@ function checkProfileAuthentication(configDir: string): AuthCheckResult {
 
       // .credentials.json may have different structure
       // Check for claudeAiOauth or oauthAccount
-      if (data.claudeAiOauth) {
+      if (data.claudeAiOauth?.accessToken ||
+          data.claudeAiOauth?.refreshToken ||
+          data.claudeAiOauth?.token) {
         // Extract email from claudeAiOauth if available
         const email = data.claudeAiOauth.email || data.claudeAiOauth.emailAddress;
         return {
@@ -907,10 +913,12 @@ function checkProfileAuthentication(configDir: string): AuthCheckResult {
         };
       }
 
-      if (data.oauthAccount?.emailAddress) {
+      if (data.oauthAccount?.accessToken ||
+          data.oauthAccount?.refreshToken ||
+          data.oauthAccount?.token) {
         return {
           authenticated: true,
-          email: data.oauthAccount.emailAddress,
+          email: data.oauthAccount.emailAddress || data.oauthAccount.email,
           oauthAccount: data.oauthAccount
         };
       }
@@ -928,20 +936,18 @@ function checkProfileAuthentication(configDir: string): AuthCheckResult {
       }
     }
 
-    // On Windows, also check Windows Credential Manager as a fallback
-    // Credentials may be stored ONLY in Credential Manager (not in files)
-    if (isWindows()) {
-      const keychainCreds = getCredentialsFromKeychain(expandedConfigDir);
-      if (keychainCreds.token) {
-        return {
-          authenticated: true,
-          email: keychainCreds.email || undefined,
-          oauthAccount: {
-            accessToken: keychainCreds.token,
-            emailAddress: keychainCreds.email || undefined
-          }
-        };
-      }
+    // Platform credentials may be stored only in Keychain, Credential Manager,
+    // or Secret Service, depending on the operating system.
+    const keychainCreds = getCredentialsFromKeychain(expandedConfigDir);
+    if (keychainCreds.token) {
+      return {
+        authenticated: true,
+        email: keychainCreds.email || undefined,
+        oauthAccount: {
+          accessToken: keychainCreds.token,
+          emailAddress: keychainCreds.email || undefined
+        }
+      };
     }
 
     return { authenticated: false };

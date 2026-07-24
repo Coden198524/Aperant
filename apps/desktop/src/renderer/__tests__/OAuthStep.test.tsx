@@ -91,27 +91,31 @@ describe('OAuthStep Profile Management Logic', () => {
   });
 
   describe('Authentication State Display', () => {
-    it('should identify profile as authenticated when oauthToken is present', () => {
-      const profile = createTestProfile({ oauthToken: 'sk-ant-oat01-test-token' });
-      const isAuthenticated = !!(profile.oauthToken || (profile.isDefault && profile.configDir));
+    it('should use the server-computed authenticated state', () => {
+      const profile = createTestProfile({ isAuthenticated: true });
+      const isAuthenticated = profile.isAuthenticated === true;
       expect(isAuthenticated).toBe(true);
     });
 
-    it('should identify profile as authenticated when it is default with configDir', () => {
-      const profile = createTestProfile({ isDefault: true, configDir: '~/.claude' });
-      const isAuthenticated = !!(profile.oauthToken || (profile.isDefault && profile.configDir));
-      expect(isAuthenticated).toBe(true);
-    });
-
-    it('should identify profile as needing auth when no token and not default', () => {
-      const profile = createTestProfile({ isDefault: false, oauthToken: undefined });
-      const isAuthenticated = !!(profile.oauthToken || (profile.isDefault && profile.configDir));
+    it('should not infer authentication from a default configDir', () => {
+      const profile = createTestProfile({
+        isDefault: true,
+        configDir: '~/.claude',
+        isAuthenticated: false,
+      });
+      const isAuthenticated = profile.isAuthenticated === true;
       expect(isAuthenticated).toBe(false);
     });
 
-    it('should identify profile as needing auth when default but no configDir', () => {
-      const profile = createTestProfile({ isDefault: true, configDir: undefined });
-      const isAuthenticated = !!(profile.oauthToken || (profile.isDefault && profile.configDir));
+    it('should identify profile as needing auth when the server reports false', () => {
+      const profile = createTestProfile({ isAuthenticated: false });
+      const isAuthenticated = profile.isAuthenticated === true;
+      expect(isAuthenticated).toBe(false);
+    });
+
+    it('should treat a missing server state as unauthenticated', () => {
+      const profile = createTestProfile({ isAuthenticated: undefined });
+      const isAuthenticated = profile.isAuthenticated === true;
       expect(isAuthenticated).toBe(false);
     });
   });
@@ -307,12 +311,12 @@ describe('OAuthStep Profile Management Logic', () => {
   describe('Continue Button State', () => {
     it('should enable Continue when at least one profile is authenticated', () => {
       const profiles: ClaudeProfile[] = [
-        createTestProfile({ id: 'p1', oauthToken: undefined }),
-        createTestProfile({ id: 'p2', oauthToken: 'sk-ant-oat01-token' })
+        createTestProfile({ id: 'p1', isAuthenticated: false }),
+        createTestProfile({ id: 'p2', isAuthenticated: true })
       ];
 
       const hasAuthenticatedProfile = profiles.some(
-        (profile) => profile.oauthToken || (profile.isDefault && profile.configDir)
+        (profile) => profile.isAuthenticated === true
       );
 
       expect(hasAuthenticatedProfile).toBe(true);
@@ -320,12 +324,12 @@ describe('OAuthStep Profile Management Logic', () => {
 
     it('should disable Continue when no profiles are authenticated', () => {
       const profiles: ClaudeProfile[] = [
-        createTestProfile({ id: 'p1', oauthToken: undefined }),
-        createTestProfile({ id: 'p2', oauthToken: undefined })
+        createTestProfile({ id: 'p1', isAuthenticated: false }),
+        createTestProfile({ id: 'p2', isAuthenticated: false })
       ];
 
       const hasAuthenticatedProfile = profiles.some(
-        (profile) => profile.oauthToken || (profile.isDefault && profile.configDir)
+        (profile) => profile.isAuthenticated === true
       );
 
       expect(hasAuthenticatedProfile).toBe(false);
@@ -335,22 +339,27 @@ describe('OAuthStep Profile Management Logic', () => {
       const profiles: ClaudeProfile[] = [];
 
       const hasAuthenticatedProfile = profiles.some(
-        (profile) => profile.oauthToken || (profile.isDefault && profile.configDir)
+        (profile) => profile.isAuthenticated === true
       );
 
       expect(hasAuthenticatedProfile).toBe(false);
     });
 
-    it('should enable Continue with default profile with configDir', () => {
+    it('should not enable Continue from default configDir alone', () => {
       const profiles: ClaudeProfile[] = [
-        createTestProfile({ id: 'default', isDefault: true, configDir: '~/.claude' })
+        createTestProfile({
+          id: 'default',
+          isDefault: true,
+          configDir: '~/.claude',
+          isAuthenticated: false,
+        })
       ];
 
       const hasAuthenticatedProfile = profiles.some(
-        (profile) => profile.oauthToken || (profile.isDefault && profile.configDir)
+        (profile) => profile.isAuthenticated === true
       );
 
-      expect(hasAuthenticatedProfile).toBe(true);
+      expect(hasAuthenticatedProfile).toBe(false);
     });
   });
 
@@ -437,15 +446,15 @@ describe('OAuthStep Profile Management Logic', () => {
       expect(isActive('p2')).toBe(false);
     });
 
-    it('should show "Authenticated" badge when profile has token', () => {
-      const profile = createTestProfile({ oauthToken: 'sk-ant-oat01-token' });
-      const isAuthenticated = !!profile.oauthToken;
+    it('should show "Authenticated" badge from server state', () => {
+      const profile = createTestProfile({ isAuthenticated: true });
+      const isAuthenticated = profile.isAuthenticated === true;
       expect(isAuthenticated).toBe(true);
     });
 
     it('should show "Needs Auth" badge when profile needs authentication', () => {
-      const profile = createTestProfile({ oauthToken: undefined, isDefault: false });
-      const needsAuth = !(profile.oauthToken || (profile.isDefault && profile.configDir));
+      const profile = createTestProfile({ isAuthenticated: false });
+      const needsAuth = profile.isAuthenticated !== true;
       expect(needsAuth).toBe(true);
     });
   });

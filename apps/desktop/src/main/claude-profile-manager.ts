@@ -271,11 +271,15 @@ export class ClaudeProfileManager {
    * Computes isAuthenticated for each profile by checking configDir credentials
    */
   getSettings(): ClaudeProfileSettings {
-    // Compute isAuthenticated for each profile
-    const profilesWithAuth = this.data.profiles.map(profile => ({
-      ...profile,
-      isAuthenticated: this.isProfileAuthenticated(profile) || hasValidToken(profile)
-    }));
+    // Compute authentication server-side and never expose legacy token material
+    // across IPC. Claude CLI owns OAuth credentials in its platform store.
+    const profilesWithAuth = this.data.profiles.map(profile => {
+      const { oauthToken: _oauthToken, ...publicProfile } = profile;
+      return {
+        ...publicProfile,
+        isAuthenticated: this.isProfileAuthenticated(profile)
+      };
+    });
 
     return {
       profiles: profilesWithAuth,
@@ -541,53 +545,45 @@ export class ClaudeProfileManager {
   /**
    * Get environment variables for spawning processes with the active profile.
    *
-   * IMPORTANT: Always uses CLAUDE_CONFIG_DIR to let Claude CLI read fresh tokens from Keychain.
-   * We NEVER use cached OAuth tokens (CLAUDE_CODE_OAUTH_TOKEN) because:
-   * 1. OAuth tokens expire in 8-12 hours
-   * 2. Claude CLI's token refresh mechanism works (updates Keychain)
-   * 3. Cached tokens don't benefit from Claude CLI's automatic refresh
-   * 4. CLAUDE_CODE_OAUTH_TOKEN doesn't include subscription tier info
-   *
-   * By using CLAUDE_CONFIG_DIR, Claude CLI reads fresh tokens from Keychain each time,
-   * which includes any refreshed tokens and full credential metadata.
-   *
-   * See: docs/LONG_LIVED_AUTH_PLAN.md for full context.
+   * Profile-aware background processes use CLAUDE_CONFIG_DIR so Claude CLI can
+   * read and refresh credentials from its own platform credential store.
+   * Smart terminals intentionally do not use this environment.
    */
   getActiveProfileEnv(): Record<string, string> {
     const profile = this.getActiveProfile();
-    const env: Record<string, string> = {};
+    return this.buildProfileEnv(profile);
+  }
 
-    // All profiles now use explicit CLAUDE_CONFIG_DIR for isolation
-    // This prevents interference with external Claude Code CLI usage
-    if (profile?.configDir) {
-      // Expand ~ to home directory for the environment variable
-      const expandedConfigDir = normalizeWindowsPath(
+  /**
+   * Build the isolated environment for one profile-aware background process.
+   * OAuth token persistence remains owned by Claude CLI.
+   */
+  private buildProfileEnv(profile: ClaudeProfile): Record<string, string> {
+    const env: Record<string, string> = {};
+    let expandedConfigDir: string | undefined;
+
+    if (profile.configDir) {
+      expandedConfigDir = normalizeWindowsPath(
         profile.configDir.startsWith('~')
           ? profile.configDir.replace(/^~/, homedir())
           : profile.configDir
       );
-
       env.CLAUDE_CONFIG_DIR = expandedConfigDir;
+
       if (process.env.VERBOSE === 'true') {
         console.warn('[ClaudeProfileManager] Using CLAUDE_CONFIG_DIR for profile:', profile.name, expandedConfigDir);
       }
-    } else if (profile) {
-      // Fallback: retrieve OAuth token directly from Keychain when configDir is missing.
-      // Without configDir, Claude CLI cannot resolve credentials automatically,
-      // so we inject CLAUDE_CODE_OAUTH_TOKEN as a direct override.
-      debugLog(
-        '[ClaudeProfileManager] Profile has no configDir configured:',
-        profile.name,
-        '- falling back to Keychain token lookup. Subscription display may be degraded.'
-      );
+    }
 
+    if (!expandedConfigDir) {
+      // Legacy fallback for profiles without an isolated config directory.
       const credentials = getCredentialsFromKeychain(undefined, true);
       if (credentials.token) {
         env.CLAUDE_CODE_OAUTH_TOKEN = credentials.token;
-        debugLog('[ClaudeProfileManager] Injected CLAUDE_CODE_OAUTH_TOKEN from Keychain for profile:', profile.name);
+        debugLog('[ClaudeProfileManager] Injected OAuth token from platform credentials for profile:', profile.name);
       } else {
         debugLog(
-          '[ClaudeProfileManager] No token found in Keychain for profile without configDir:',
+          '[ClaudeProfileManager] No credentials found for profile without configDir:',
           profile.name,
           credentials.error ? `(error: ${credentials.error})` : ''
         );
@@ -836,80 +832,15 @@ export class ClaudeProfileManager {
   /**
    * Get environment variables for invoking Claude with a specific profile.
    *
-   * IMPORTANT: Always returns CLAUDE_CONFIG_DIR for the profile, even for the default profile.
-   * This ensures that when we switch to a specific profile for rate limit recovery,
-   * we use that profile's exact configDir credentials, not just whatever happens to be
-   * at ~/.claude (which might belong to a different profile).
-   *
-   * The ~ path is expanded to the full home directory path.
+   * Returns the isolated config directory used by profile-aware background
+   * processes. Smart terminals bypass this method and call Claude directly.
    */
   getProfileEnv(profileId: string): Record<string, string> {
     const profile = this.getProfile(profileId);
     if (!profile) {
       return {};
     }
-
-    if (!profile.configDir) {
-      // Fallback: retrieve OAuth token directly from Keychain when configDir is missing.
-      // Without configDir, Claude CLI cannot resolve credentials automatically,
-      // so we inject CLAUDE_CODE_OAUTH_TOKEN as a direct override.
-      // This mirrors the fallback in getActiveProfileEnv().
-      debugLog(
-        '[ClaudeProfileManager] getProfileEnv: profile has no configDir:',
-        profile.name,
-        '- falling back to Keychain token lookup.'
-      );
-
-      const credentials = getCredentialsFromKeychain(undefined, true);
-      if (credentials.token) {
-        debugLog('[ClaudeProfileManager] getProfileEnv: injected CLAUDE_CODE_OAUTH_TOKEN from Keychain for profile:', profile.name);
-        return { CLAUDE_CODE_OAUTH_TOKEN: credentials.token };
-      }
-      debugLog(
-        '[ClaudeProfileManager] getProfileEnv: no token found in Keychain for profile without configDir:',
-        profile.name
-      );
-      return {};
-    }
-
-    // Expand ~ to home directory for the environment variable
-    const expandedConfigDir = normalizeWindowsPath(
-      profile.configDir.startsWith('~')
-        ? profile.configDir.replace(/^~/, homedir())
-        : profile.configDir
-    );
-
-    if (process.env.VERBOSE === 'true') {
-      console.warn('[ClaudeProfileManager] getProfileEnv:', {
-        profileId,
-        profileName: profile.name,
-        isDefault: profile.isDefault,
-        configDir: profile.configDir,
-        expandedConfigDir
-      });
-    }
-
-    // Retrieve OAuth token from Keychain and pass it to subprocess
-    // This ensures the backend Python agent can authenticate even when
-    // there's no .credentials.json file in the profile directory
-    const env: Record<string, string> = {
-      CLAUDE_CONFIG_DIR: expandedConfigDir
-    };
-
-    try {
-      const credentials = getCredentialsFromKeychain(expandedConfigDir);
-      if (credentials.token) {
-        env.CLAUDE_CODE_OAUTH_TOKEN = credentials.token;
-        if (process.env.VERBOSE === 'true') {
-          console.warn('[ClaudeProfileManager] Retrieved OAuth token from Keychain for profile:', profile.name);
-        }
-      }
-    } catch (error) {
-      console.error('[ClaudeProfileManager] Failed to retrieve credentials from Keychain:', error);
-      // Continue without token - backend will fall back to other auth methods
-    }
-
-    return env;
+    return this.buildProfileEnv(profile);
   }
 
   /**

@@ -14,6 +14,7 @@
  * Response: { access_token, refresh_token, expires_in: 28800, token_type: "Bearer" }
  */
 
+import { createHash } from 'crypto';
 import { homedir } from 'os';
 import {
   getFullCredentialsFromKeychain,
@@ -172,10 +173,10 @@ export async function refreshOAuthToken(
   const isDebug = process.env.DEBUG === 'true';
 
   if (isDebug) {
-    // Reduce fingerprint to fewer characters to minimize information exposure
-    // Show only first 4 and last 2 characters for debugging purposes
     console.warn('[TokenRefresh] Starting token refresh', {
-      refreshTokenFingerprint: refreshToken ? `${refreshToken.slice(0, 4)}...${refreshToken.slice(-2)}` : 'null'
+      refreshTokenFingerprint: refreshToken
+        ? createHash('sha256').update(refreshToken).digest('hex').slice(0, 12)
+        : 'null'
     });
   }
 
@@ -270,7 +271,7 @@ export async function refreshOAuthToken(
 
       if (isDebug) {
         console.warn('[TokenRefresh] Token refresh successful', {
-          newTokenFingerprint: `${data.access_token.slice(0, 12)}...${data.access_token.slice(-4)}`,
+          newTokenFingerprint: createHash('sha256').update(data.access_token).digest('hex').slice(0, 12),
           expiresIn: expiresIn,
           expiresAt: new Date(expiresAt).toISOString()
         });

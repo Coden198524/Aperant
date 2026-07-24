@@ -361,9 +361,7 @@ export function App() {
     // Check if either auth method is configured
     // API profiles: if profiles exist, auth is configured (user has gone through setup)
     const hasAPIProfileConfigured = profiles.length > 0;
-    const hasOAuthConfigured = claudeProfiles.some(p =>
-      p.oauthToken || (p.isDefault && p.configDir)
-    );
+    const hasOAuthConfigured = claudeProfiles.some(p => p.isAuthenticated === true);
     const hasAnyAuth = hasAPIProfileConfigured || hasOAuthConfigured;
 
     // Only show wizard if onboarding not completed AND no auth is configured.

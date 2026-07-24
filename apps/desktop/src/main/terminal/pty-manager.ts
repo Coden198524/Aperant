@@ -10,7 +10,6 @@ import type { TerminalProcess, WindowGetter, WindowsShellType } from './types';
 import { isWindows, getWindowsShellPaths } from '../platform';
 import { IPC_CHANNELS } from '../../shared/constants';
 import { safeSendToRenderer } from '../ipc-handlers/utils';
-import { getClaudeProfileManager } from '../claude-profile-manager';
 import { readSettingsFile } from '../settings-utils';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
 import type { SupportedTerminal } from '../../shared/types/settings';
@@ -257,10 +256,8 @@ export function spawnPtyProcess(
 
   // Create a clean environment without DEBUG to prevent Claude Code from
   // enabling debug mode when the Electron app is run in development mode.
-  // Also remove ANTHROPIC_API_KEY to ensure Claude Code uses OAuth tokens
-  // (CLAUDE_CODE_OAUTH_TOKEN from profileEnv) instead of API keys that may
-  // be present in the shell environment. Without this, Claude Code would
-  // show "Claude API" instead of "Claude Max" when ANTHROPIC_API_KEY is set.
+  // Also remove ANTHROPIC_API_KEY so the system Claude CLI uses its normal
+  // OAuth state from the user's config directory and platform credential store.
   // Remove CLAUDECODE to allow launching Claude Code inside agent terminals —
   // without this, inherited CLAUDECODE triggers the nested session guard.
   const { DEBUG: _DEBUG, ANTHROPIC_API_KEY: _ANTHROPIC_API_KEY, CLAUDECODE: _CLAUDECODE, ...cleanEnv } = process.env;
@@ -553,12 +550,4 @@ export function killPty(terminal: TerminalProcess, waitForExit?: boolean): Promi
     return exitPromise;
   }
   terminal.pty.kill();
-}
-
-/**
- * Get the active Claude profile environment variables
- */
-export function getActiveProfileEnv(): Record<string, string> {
-  const profileManager = getClaudeProfileManager();
-  return profileManager.getActiveProfileEnv();
 }

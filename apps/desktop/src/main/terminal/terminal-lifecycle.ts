@@ -73,28 +73,20 @@ export async function createTerminal(
   SessionHandler.clearPendingDelete(id);
 
   try {
-    // For auth terminals, don't inject existing OAuth token - we want a fresh login
-    const profileEnv = skipOAuthToken ? {} : PtyManager.getActiveProfileEnv();
-
     // Read env vars from Claude Code CLI settings files (.claude/settings.json hierarchy)
     const claudeCodeEnv = getClaudeCodeEnv(projectPath);
     if (Object.keys(claudeCodeEnv).length > 0) {
       debugLog('[TerminalLifecycle] Injecting Claude Code settings env vars:', Object.keys(claudeCodeEnv));
     }
 
-    // Merge environment variables (lowest to highest precedence):
-    // 1. Claude Code settings env (from settings.json hierarchy)
-    // 2. Profile env (CLAUDE_CONFIG_DIR, CLAUDE_CODE_OAUTH_TOKEN)
-    // 3. Custom env from TerminalCreateOptions
-    const mergedEnv = { ...claudeCodeEnv, ...profileEnv, ...(customEnv || {}) };
+    // Smart terminals must behave like a normal user shell. Do not inject the
+    // application's active Claude profile or a stored OAuth token: the `claude`
+    // command owns authentication through the user's normal config/keychain.
+    // Explicit custom env is retained for the dedicated profile login terminal.
+    const mergedEnv = { ...claudeCodeEnv, ...(customEnv || {}) };
 
-    if (mergedEnv.CLAUDE_CODE_OAUTH_TOKEN) {
-      debugLog('[TerminalLifecycle] Injecting OAuth token from active profile');
-    } else if (skipOAuthToken) {
-      debugLog('[TerminalLifecycle] Skipping OAuth token injection (auth terminal)');
-    }
-    if (mergedEnv.CLAUDE_CONFIG_DIR) {
-      debugLog('[TerminalLifecycle] Setting CLAUDE_CONFIG_DIR:', mergedEnv.CLAUDE_CONFIG_DIR);
+    if (skipOAuthToken) {
+      debugLog('[TerminalLifecycle] Auth terminal uses only its explicit environment');
     }
 
     // Validate cwd exists - if the directory doesn't exist (e.g., worktree removed),
@@ -248,9 +240,7 @@ export async function restoreTerminal(
   terminal.title = session.title;
   terminal.isCLIMode = storedIsClaudeMode;
   terminal.activeCLI = storedActiveCLI;
-  terminal.dangerouslySkipPermissions = storedActiveCLI === 'claude-code'
-    ? storedSession?.dangerouslySkipPermissions ?? session.dangerouslySkipPermissions
-    : false;
+  terminal.dangerouslySkipPermissions = storedActiveCLI === 'claude-code';
   terminal.deepseekState = storedDeepSeekState;
   // Only restore worktree config if the worktree directory still exists
   // (effectiveCwd matching session.cwd means no fallback was needed)

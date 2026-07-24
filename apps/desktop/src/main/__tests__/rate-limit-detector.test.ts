@@ -1058,7 +1058,7 @@ describe('ensureCleanProfileEnv', () => {
   });
 
   describe('with CLAUDE_CONFIG_DIR set', () => {
-    it('should preserve CLAUDE_CONFIG_DIR while clearing CLAUDE_CODE_OAUTH_TOKEN', async () => {
+    it('should clear direct credentials when CLAUDE_CONFIG_DIR is selected', async () => {
       const { ensureCleanProfileEnv } = await import('../rate-limit-detector');
 
       const env = {
@@ -1143,7 +1143,7 @@ describe('ensureCleanProfileEnv', () => {
       expect(result.CLAUDE_CODE_OAUTH_TOKEN).toBe('token');
     });
 
-    it('should return a new object when clearing (not mutate input)', async () => {
+    it('should return a new object when cleaning without mutating input', async () => {
       const { ensureCleanProfileEnv } = await import('../rate-limit-detector');
 
       const env = {
@@ -1155,6 +1155,7 @@ describe('ensureCleanProfileEnv', () => {
       // Original should not be mutated
       expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('token');
       expect(result.CLAUDE_CODE_OAUTH_TOKEN).toBe('');
+      expect(result.ANTHROPIC_API_KEY).toBe('');
       expect(result).not.toBe(env);
     });
   });

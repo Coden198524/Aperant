@@ -5,7 +5,7 @@
 
 import { homedir } from 'os';
 import { join } from 'path';
-import { existsSync, readFileSync, readdirSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
 import type { ClaudeProfile, APIProfile } from '../../shared/types';
 import { getCredentialsFromKeychain } from './credential-utils';
 
@@ -18,6 +18,51 @@ export const DEFAULT_CLAUDE_CONFIG_DIR = join(homedir(), '.claude');
  * Default profiles directory for additional accounts
  */
 export const CLAUDE_PROFILES_DIR = join(homedir(), '.claude-profiles');
+
+const CREDENTIAL_TOKEN_FIELDS = new Set([
+  'accesstoken',
+  'refreshtoken',
+  'token',
+  'oauthtoken',
+]);
+
+function containsCredentialToken(value: unknown): boolean {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+    if (CREDENTIAL_TOKEN_FIELDS.has(key.toLowerCase()) &&
+        typeof nestedValue === 'string' &&
+        nestedValue.trim().length > 0) {
+      return true;
+    }
+
+    if (containsCredentialToken(nestedValue)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function credentialFileContainsToken(filePath: string): boolean {
+  try {
+    const content = readFileSync(filePath, 'utf-8').trim();
+    if (!content) {
+      return false;
+    }
+
+    // Some legacy stores contain only the raw setup token.
+    if (content.startsWith('sk-ant-')) {
+      return true;
+    }
+
+    return containsCredentialToken(JSON.parse(content));
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Generate a unique ID for a new profile
@@ -55,25 +100,24 @@ export async function createProfileDirectory(profileName: string): Promise<strin
 }
 
 /**
- * Check if a profile has valid authentication
- * (checks for OAuth token or config directory credential files)
+ * Check if a profile config directory has valid authentication credentials.
+ * Encrypted manual tokens are validated by ClaudeProfileManager.
  */
 export function isProfileAuthenticated(profile: ClaudeProfile): boolean {
-  // Check for direct OAuth token first (OAuth-only profiles without configDir)
-  // This enables auto-switch to work with profiles that only have oauthToken set
-  if (hasValidToken(profile)) {
-    return true;
-  }
-
-  // Check for configDir-based credentials (legacy or CLI-authenticated profiles)
+  // Stored OAuth tokens are encrypted and are validated by ClaudeProfileManager,
+  // which owns decryption. This utility only validates configDir credentials.
   const configDir = profile.configDir;
-  if (!configDir || !existsSync(configDir)) {
+  if (!configDir) {
+    return false;
+  }
+  const expandedConfigDir = expandHomePath(configDir);
+  if (!existsSync(expandedConfigDir)) {
     return false;
   }
 
   // Check for .claude.json with OAuth account info (modern Claude Code CLI)
   // This is how Claude Code CLI stores OAuth authentication since v1.0
-  const claudeJsonPath = join(configDir, '.claude.json');
+  const claudeJsonPath = join(expandedConfigDir, '.claude.json');
   if (existsSync(claudeJsonPath)) {
     try {
       const content = readFileSync(claudeJsonPath, 'utf-8');
@@ -85,10 +129,6 @@ export function isProfileAuthenticated(profile: ClaudeProfile): boolean {
         // - Windows: Credential Manager
         // - Linux: Secret Service or .credentials.json file
         // We need to verify that the credential store actually has the tokens
-        // Expand ~ in configDir before checking credentials
-        const expandedConfigDir = configDir.startsWith('~')
-          ? configDir.replace(/^~/, homedir())
-          : configDir;
         const platformCreds = getCredentialsFromKeychain(expandedConfigDir);
         if (!platformCreds.token) {
           // .claude.json exists but credential store is missing tokens - NOT authenticated
@@ -105,70 +145,24 @@ export function isProfileAuthenticated(profile: ClaudeProfile): boolean {
 
   // Check for .credentials.json with OAuth tokens (Linux CLI storage)
   // On Linux, the Claude CLI stores OAuth tokens in this file
-  const credentialsJsonPath = join(configDir, '.credentials.json');
+  const credentialsJsonPath = join(expandedConfigDir, '.credentials.json');
   if (existsSync(credentialsJsonPath)) {
-    try {
-      const content = readFileSync(credentialsJsonPath, 'utf-8');
-      const data = JSON.parse(content);
-      // Validate OAuth data structure
-      // Check for claudeAiOauth (primary Linux structure)
-      if (data && typeof data === 'object' && data.claudeAiOauth) {
-        // Validate that claudeAiOauth contains actual auth data
-        const hasValidAuth = data.claudeAiOauth.accessToken ||
-                             data.claudeAiOauth.refreshToken ||
-                             data.claudeAiOauth.email ||
-                             data.claudeAiOauth.emailAddress;
-        if (hasValidAuth) {
-          return true;
-        }
-      }
-      // Check for oauthAccount (alternative structure)
-      if (data && typeof data === 'object' && data.oauthAccount?.emailAddress) {
-        return true;
-      }
-      // Check for generic token fields (legacy formats)
-      if (data && typeof data === 'object' && (data.accessToken || data.refreshToken || data.token)) {
-        return true;
-      }
-    } catch (error) {
-      // Log parse errors for debugging, but fall through to legacy checks
-      console.warn(`[profile-utils] Failed to read or parse ${credentialsJsonPath}:`, error);
+    if (credentialFileContainsToken(credentialsJsonPath)) {
+      return true;
     }
   }
 
   // Legacy: Claude stores auth in .claude/credentials or similar files
   // Check for common auth indicators
   const possibleAuthFiles = [
-    join(configDir, 'credentials'),
-    join(configDir, 'credentials.json'),
-    join(configDir, '.credentials'),
-    join(configDir, 'settings.json'),  // Often contains auth tokens
+    join(expandedConfigDir, 'credentials'),
+    join(expandedConfigDir, 'credentials.json'),
+    join(expandedConfigDir, '.credentials'),
   ];
 
   for (const authFile of possibleAuthFiles) {
-    if (existsSync(authFile)) {
-      try {
-        const content = readFileSync(authFile, 'utf-8');
-        // Check if file has actual content (not just empty or placeholder)
-        if (content.length > 10) {
-          return true;
-        }
-      } catch {
-        // Ignore read errors
-      }
-    }
-  }
-
-  // Also check if there are any session files (indicates authenticated usage)
-  const projectsDir = join(configDir, 'projects');
-  if (existsSync(projectsDir)) {
-    try {
-      const projects = readdirSync(projectsDir);
-      if (projects.length > 0) {
-        return true;
-      }
-    } catch {
-      // Ignore read errors
+    if (existsSync(authFile) && credentialFileContainsToken(authFile)) {
+      return true;
     }
   }
 
@@ -178,28 +172,14 @@ export function isProfileAuthenticated(profile: ClaudeProfile): boolean {
 /**
  * Check if a profile has a valid OAuth token stored in the profile.
  *
- * DEPRECATED: This function checks for CACHED OAuth tokens which we no longer store.
- * OAuth tokens expire in 8-12 hours, not 1 year. We now use CLAUDE_CONFIG_DIR
- * to let Claude CLI read fresh tokens from Keychain on each invocation.
- *
- * This function is kept for backwards compatibility with existing profiles that
- * have oauthToken stored. For these profiles, we return true (assuming token might
- * still be valid) and let the actual API call determine if re-auth is needed.
- *
- * New profiles will NOT have oauthToken stored (per the auth flow changes).
- * Use isProfileAuthenticated() to check for configDir-based credentials instead.
- *
- * See: docs/LONG_LIVED_AUTH_PLAN.md for full context.
+ * This is a structural presence check only. ClaudeProfileManager additionally
+ * decrypts the value before treating it as usable authentication.
  */
 export function hasValidToken(profile: ClaudeProfile): boolean {
   if (!profile?.oauthToken) {
     return false;
   }
 
-  // For legacy profiles with stored oauthToken, return true.
-  // The actual token validity is determined by the Keychain (via CLAUDE_CONFIG_DIR).
-  // We keep this for backwards compat to avoid breaking existing profiles during migration.
-  console.warn('[hasValidToken] DEPRECATED: Profile has cached oauthToken. Using CLAUDE_CONFIG_DIR for fresh tokens.');
   return true;
 }
 

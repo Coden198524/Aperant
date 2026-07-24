@@ -2,8 +2,8 @@
  * Tests for Long-Lived Auth Fix
  *
  * Verifies that:
- * 1. getProfileEnv() always uses CLAUDE_CONFIG_DIR instead of cached OAuth tokens
- * 2. Profile migration removes cached oauthToken values
+ * 1. Manual setup tokens are passed alongside the isolated config directory
+ * 2. Profile loading preserves encrypted setup tokens
  * 3. UsageMonitor reads fresh tokens from Keychain
  *
  * See: docs/LONG_LIVED_AUTH_PLAN.md
@@ -83,31 +83,28 @@ describe('Long-Lived Auth Fix', () => {
       expect(mockGetActiveProfileToken).not.toHaveBeenCalled();
     });
 
-    it('should NOT return CLAUDE_CODE_OAUTH_TOKEN even when profile has oauthToken', () => {
-      // Since getProfileEnv now delegates to profile manager, mock the manager's method
-      // The profile manager's implementation should never include CLAUDE_CODE_OAUTH_TOKEN
+    it('should return the manual OAuth token alongside CLAUDE_CONFIG_DIR', () => {
       mockGetActiveProfileEnv.mockReturnValue({
         CLAUDE_CONFIG_DIR: '/Users/test/.claude-profiles/personal',
+        CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-manual-token',
       });
 
       const env = getProfileEnv();
 
-      // Key assertion: Should NEVER return CLAUDE_CODE_OAUTH_TOKEN
-      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-manual-token');
       expect(env.CLAUDE_CONFIG_DIR).toBe('/Users/test/.claude-profiles/personal');
     });
 
-    it('should return empty env for profile without configDir (edge case)', () => {
-      // Since getProfileEnv now delegates to profile manager, mock the manager's method
-      // Profile manager returns empty env when no configDir is set
-      mockGetActiveProfileEnv.mockReturnValue({});
+    it('should support a token-only profile without configDir', () => {
+      mockGetActiveProfileEnv.mockReturnValue({
+        CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-token-only',
+      });
 
       const env = getProfileEnv();
 
-      // Without configDir, cannot authenticate via CLAUDE_CONFIG_DIR
-      // Should NOT fall back to oauthToken (that's the bug we're fixing)
-      expect(env).toEqual({});
-      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      expect(env).toEqual({
+        CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-token-only',
+      });
     });
 
     it('should use specific profile when profileId is provided', () => {
@@ -126,8 +123,7 @@ describe('Long-Lived Auth Fix', () => {
   });
 
   describe('Profile Storage Migration', () => {
-    it('should remove oauthToken during profile migration', async () => {
-      // Create a profile store with cached oauthToken
+    it('should remove cached oauthToken during profile loading', async () => {
       const storeWithToken = {
         version: 3,
         activeProfileId: 'work',
@@ -155,7 +151,6 @@ describe('Long-Lived Auth Fix', () => {
       expect(result).not.toBeNull();
       expect(result?.profiles[0]).toBeDefined();
 
-      // Key assertion: oauthToken and tokenCreatedAt should be removed
       expect(result?.profiles[0]).not.toHaveProperty('oauthToken');
       expect(result?.profiles[0]).not.toHaveProperty('tokenCreatedAt');
 
