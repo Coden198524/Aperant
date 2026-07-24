@@ -4,8 +4,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   InsightsChatStatus,
+  InsightsPendingDocumentReference,
+  InsightsSendMessageAcknowledgement,
   InsightsSession,
   InsightsStreamChunk,
+  IPCResult,
 } from '../../../shared/types';
 
 function deferred<T>() {
@@ -113,5 +116,245 @@ describe('insights-store project scoping', () => {
     const state = useInsightsStore.getState();
     expect(state.currentProjectId).toBe('project-b');
     expect(state.session?.projectId).toBe('project-b');
+  });
+
+  it('sends and displays document path references without file contents', async () => {
+    const sendInsightsMessage = vi.fn(async (
+      projectId: string,
+      message: string,
+      _modelConfig: unknown,
+      _images: unknown,
+      _documents: unknown,
+      clientMessageId: string,
+    ) => ({
+      success: true,
+      data: {
+        clientMessageId,
+        messageId: clientMessageId,
+        session: {
+          ...createSession(projectId),
+          messages: [{
+            id: clientMessageId,
+            role: 'user' as const,
+            content: message,
+            timestamp: new Date(),
+            documents: [{
+              id: 'document-1',
+              filename: 'findings.md',
+              size: 32,
+              path: 'E:\\Project\\findings.md',
+            }],
+          }],
+        },
+      },
+    }));
+    Object.defineProperty(window, 'electronAPI', {
+      value: { sendInsightsMessage },
+      configurable: true,
+    });
+
+    const { sendMessage, useInsightsStore } = await import('../insights-store');
+    const document: InsightsPendingDocumentReference = {
+      id: 'document-1',
+      filename: 'findings.md',
+      size: 32,
+      path: 'E:\\Project\\findings.md',
+      authorizationToken: 'opaque-token',
+    };
+    useInsightsStore.getState().setCurrentProjectId('project-docs');
+    useInsightsStore.getState().setSession(createSession('project-docs'));
+    useInsightsStore.getState().setPendingDocuments([document]);
+
+    const accepted = await sendMessage('project-docs', '', undefined, undefined, [document]);
+
+    const state = useInsightsStore.getState();
+    const acceptedDocument = state.session?.messages[0]?.documents?.[0];
+    expect(acceptedDocument).toMatchObject({
+      id: 'document-1',
+      filename: 'findings.md',
+      path: 'E:\\Project\\findings.md',
+    });
+    expect(acceptedDocument).not.toHaveProperty('content');
+    expect(acceptedDocument).not.toHaveProperty('data');
+    expect(acceptedDocument).not.toHaveProperty('authorizationToken');
+    expect(accepted).toBe(true);
+    expect(state.pendingDocuments).toEqual([]);
+    expect(sendInsightsMessage).toHaveBeenCalledWith(
+      'project-docs',
+      '',
+      undefined,
+      undefined,
+      [document],
+      expect.stringMatching(/^msg-/),
+    );
+  });
+
+  it('keeps the draft references and does not add a ghost message when main rejects them', async () => {
+    const sendInsightsMessage = vi.fn(async () => ({
+      success: false,
+      error: 'One or more referenced file paths are invalid or inaccessible.',
+    }));
+    Object.defineProperty(window, 'electronAPI', {
+      value: { sendInsightsMessage },
+      configurable: true,
+    });
+
+    const { sendMessage, useInsightsStore } = await import('../insights-store');
+    const document: InsightsPendingDocumentReference = {
+      id: 'missing-document',
+      filename: 'missing.log',
+      path: 'E:\\Project\\missing.log',
+    };
+    useInsightsStore.getState().setCurrentProjectId('project-rejected');
+    useInsightsStore.getState().setSession(createSession('project-rejected'));
+    useInsightsStore.getState().setPendingMessage('Analyze this file');
+    useInsightsStore.getState().setPendingDocuments([document]);
+
+    const accepted = await sendMessage(
+      'project-rejected',
+      'Analyze this file',
+      undefined,
+      undefined,
+      [document],
+    );
+
+    const state = useInsightsStore.getState();
+    expect(accepted).toBe(false);
+    expect(state.session?.messages).toEqual([]);
+    expect(state.pendingMessage).toBe('Analyze this file');
+    expect(state.pendingDocuments).toEqual([document]);
+    expect(state.status).toEqual({
+      phase: 'error',
+      error: 'One or more referenced file paths are invalid or inaccessible.',
+    });
+  });
+
+  it('adopts the authoritative main session when sending without a local session', async () => {
+    const document: InsightsPendingDocumentReference = {
+      id: 'first-document',
+      filename: 'first.md',
+      path: 'E:\\Project\\first.md',
+    };
+    const sendInsightsMessage = vi.fn(async (
+      projectId: string,
+      message: string,
+      _modelConfig: unknown,
+      _images: unknown,
+      _documents: unknown,
+      clientMessageId: string,
+    ) => {
+      const session = createSession(projectId);
+      session.id = 'main-created-session';
+      session.messages = [{
+        id: clientMessageId,
+        role: 'user',
+        content: message,
+        timestamp: new Date(),
+        documents: [{ id: document.id, filename: document.filename, path: document.path }],
+      }];
+      return {
+        success: true,
+        data: { clientMessageId, messageId: clientMessageId, session },
+      };
+    });
+    Object.defineProperty(window, 'electronAPI', {
+      value: { sendInsightsMessage },
+      configurable: true,
+    });
+
+    const { sendMessage, useInsightsStore } = await import('../insights-store');
+    useInsightsStore.getState().setCurrentProjectId('project-new');
+    useInsightsStore.getState().setSession(null);
+    useInsightsStore.getState().setPendingMessage('First question');
+    useInsightsStore.getState().setPendingDocuments([document]);
+
+    const accepted = await sendMessage(
+      'project-new',
+      'First question',
+      undefined,
+      undefined,
+      [document],
+    );
+
+    const state = useInsightsStore.getState();
+    expect(accepted).toBe(true);
+    expect(state.session?.id).toBe('main-created-session');
+    expect(state.session?.messages).toHaveLength(1);
+    expect(state.pendingMessage).toBe('');
+    expect(state.pendingDocuments).toEqual([]);
+  });
+
+  it('does not apply a late acknowledgement after the chat scope changes', async () => {
+    const acknowledgement = deferred<IPCResult<InsightsSendMessageAcknowledgement>>();
+    Object.defineProperty(window, 'electronAPI', {
+      value: { sendInsightsMessage: vi.fn(() => acknowledgement.promise) },
+      configurable: true,
+    });
+
+    const { sendMessage, useInsightsStore } = await import('../insights-store');
+    useInsightsStore.getState().setCurrentProjectId('project-a');
+    useInsightsStore.getState().setSession(createSession('project-a'));
+    const pendingSend = sendMessage('project-a', 'old question');
+
+    useInsightsStore.getState().setCurrentProjectId('project-b');
+    useInsightsStore.getState().setSession(createSession('project-b'));
+    acknowledgement.resolve({
+      success: true,
+      data: {
+        clientMessageId: 'ignored-by-stale-scope',
+        messageId: 'message-a',
+        session: createSession('project-a'),
+      },
+    });
+
+    expect(await pendingSend).toBe(false);
+    expect(useInsightsStore.getState().currentProjectId).toBe('project-b');
+    expect(useInsightsStore.getState().session?.messages).toEqual([]);
+  });
+
+  it('does not apply a late acknowledgement to a newer no-session epoch', async () => {
+    const acknowledgement = deferred<IPCResult<InsightsSendMessageAcknowledgement>>();
+    const sendInsightsMessage = vi.fn((
+      _projectId: string,
+      _message: string,
+      _modelConfig: unknown,
+      _images: unknown,
+      _documents: unknown,
+      _clientMessageId: string,
+    ) => acknowledgement.promise);
+    Object.defineProperty(window, 'electronAPI', {
+      value: { sendInsightsMessage },
+      configurable: true,
+    });
+
+    const { sendMessage, useInsightsStore } = await import('../insights-store');
+    useInsightsStore.getState().setCurrentProjectId('project-empty');
+    useInsightsStore.getState().setSession(null);
+    const pendingSend = sendMessage('project-empty', 'old empty-chat question');
+    const clientMessageId = sendInsightsMessage.mock.calls[0][5];
+
+    // A clear/new-empty-chat transition can leave both snapshots with null
+    // session IDs. The internal scope generation must still distinguish them.
+    useInsightsStore.getState().clearSession();
+    const mainSession = createSession('project-empty');
+    mainSession.id = 'old-main-session';
+    mainSession.messages = [{
+      id: clientMessageId,
+      role: 'user',
+      content: 'old empty-chat question',
+      timestamp: new Date(),
+    }];
+    acknowledgement.resolve({
+      success: true,
+      data: {
+        clientMessageId,
+        messageId: clientMessageId,
+        session: mainSession,
+      },
+    });
+
+    expect(await pendingSend).toBe(false);
+    expect(useInsightsStore.getState().session).toBeNull();
+    expect(useInsightsStore.getState().pendingMessage).toBe('');
   });
 });

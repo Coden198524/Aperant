@@ -48,8 +48,13 @@ export interface ToolContext extends CoreToolPolicyContext {
   cwd: string;
   /** Root directory of the project being worked on */
   projectDir: string;
-  /** Additional filesystem roots the tool may access alongside projectDir */
+  /** Additional directory roots tools may access alongside projectDir */
   allowedPathRoots?: string[];
+  /**
+   * Canonical absolute paths of existing regular files that Read may access.
+   * These do not grant directory, sibling, descendant, Glob, or Grep access.
+   */
+  allowedExactFilePaths?: string[];
   /** Spec directory for the current task (e.g., .autocode/specs/001-feature/) */
   specDir: string;
   /** Security profile governing command allowlists */

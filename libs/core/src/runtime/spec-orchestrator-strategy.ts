@@ -1,3 +1,5 @@
+import { isAutocodeNonImplementationDirectContext } from './direct-task-summary.js';
+
 export type AutocodeSpecComplexityTier = 'simple' | 'standard' | 'complex';
 
 export type AutocodeSpecPhase =
@@ -67,24 +69,34 @@ export function normalizeAutocodeSpecTaskDescription(taskDescription: string | u
   return (taskDescription ?? '').trim();
 }
 
-export function isAutocodeSourceDocumentationTask(taskDescription: string | undefined): boolean {
-  const text = normalizeAutocodeSpecTaskDescription(taskDescription);
-  if (!text) {
-    return false;
-  }
+export function isAutocodeSourceDocumentationTask(
+  taskDescription: string | undefined,
+  plan?: Record<string, unknown> | null,
+  metadata?: Record<string, unknown> | null,
+): boolean {
+  return isAutocodeNonImplementationDirectContext({
+    description: normalizeAutocodeSpecTaskDescription(taskDescription),
+    plan,
+    metadata,
+  });
+}
 
-  const hasInvestigationIntent =
-    /\b(analy[sz]e|investigate|inspect|review|understand|summari[sz]e|explain|map|audit|document)\b/i.test(text) ||
-    /(\u5206\u6790|\u8c03\u67e5|\u68b3\u7406|\u9605\u8bfb|\u7406\u89e3|\u89e3\u91ca|\u6982\u8ff0|\u5ba1\u8ba1|\u6587\u6863)/.test(text);
-  const hasImplementationIntent =
-    /\b(implement|add|fix|change|modify|refactor|rewrite|migrate|port|delete|remove|replace|build|create|develop)\b/i.test(text) ||
-    /(\u5b9e\u73b0|\u6dfb\u52a0|\u4fee\u590d|\u4fee\u6539|\u6539\u9020|\u91cd\u6784|\u8fc1\u79fb|\u79fb\u690d|\u5220\u9664|\u66ff\u6362|\u6784\u5efa|\u521b\u5efa|\u5f00\u53d1)/.test(text);
-  const hasDocumentationOnlyConstraint =
-    /\b(do not|don't|without)\b.*\b(modify|change|edit)\b/i.test(text) ||
-    /\b(documentation|docs|markdown|report|analysis)\b.*\bonly\b/i.test(text) ||
-    /(\u4e0d\u4fee\u6539|\u7981\u6b62\u4fee\u6539|\u4ec5|\u53ea).*(\u6587\u6863|\u5206\u6790|\u62a5\u544a|\u6e90\u7801|\u4ee3\u7801)/.test(text);
+const AUTOCODE_NON_IMPLEMENTATION_SKIPPED_PHASES = new Set<AutocodeSpecPhase>([
+  'requirement_model',
+  'domain_model',
+  'design',
+  'design_model',
+  'implementation_model',
+  'design_review',
+]);
 
-  return hasInvestigationIntent && (!hasImplementationIntent || hasDocumentationOnlyConstraint);
+function withoutAutocodeImplementationDesignPhases(
+  phases: AutocodeSpecPhase[],
+  designContractExempt: boolean,
+): AutocodeSpecPhase[] {
+  return designContractExempt
+    ? phases.filter((phase) => !AUTOCODE_NON_IMPLEMENTATION_SKIPPED_PHASES.has(phase))
+    : phases;
 }
 
 export function hasAutocodeTaskExternalResearchSignal(text: string): boolean {
@@ -122,9 +134,16 @@ export function selectAutocodeSpecPhases(input: {
   projectDocsReference?: string;
   /** @deprecated Use projectDocsReference. */
   projectIndex?: string;
+  plan?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
   workflowConfig: AutocodeSpecWorkflowConfigLike;
 }): AutocodeSpecPhase[] {
   const phases = [...AUTOCODE_SPEC_COMPLEXITY_PHASES[input.complexity]];
+  const designContractExempt = isAutocodeSourceDocumentationTask(
+    input.taskDescription,
+    input.plan,
+    input.metadata,
+  );
 
   const conservativeSpecFlow = input.workflowConfig.optimizationLevel === 'conservative' ||
     input.workflowConfig.specCreationMode === 'phased';
@@ -135,8 +154,8 @@ export function selectAutocodeSpecPhases(input: {
     }
   }
 
-  if (input.complexity === 'simple' && isAutocodeSourceDocumentationTask(input.taskDescription)) {
-    return ['requirements', 'spec_writing', 'requirement_model', 'domain_model', 'design', 'design_model', 'implementation_model', 'design_review', 'planning', 'validation'];
+  if (input.complexity === 'simple' && designContractExempt) {
+    return withoutAutocodeImplementationDesignPhases(phases, true);
   }
 
   const needsResearch = shouldRunAutocodeSpecResearchPhase(
@@ -147,7 +166,10 @@ export function selectAutocodeSpecPhases(input: {
   const needsSelfCritique = input.assessment?.needs_self_critique === true;
 
   if (input.complexity === 'standard' && !conservativeSpecFlow && !needsResearch && !needsSelfCritique) {
-    return ['requirements', 'spec_writing', 'requirement_model', 'domain_model', 'design', 'design_model', 'implementation_model', 'design_review', 'planning', 'validation'];
+    return withoutAutocodeImplementationDesignPhases(
+      ['requirements', 'spec_writing', 'requirement_model', 'domain_model', 'design', 'design_model', 'implementation_model', 'design_review', 'planning', 'validation'],
+      designContractExempt,
+    );
   }
 
   const researchIndex = phases.indexOf('research');
@@ -172,7 +194,7 @@ export function selectAutocodeSpecPhases(input: {
     }
   }
 
-  return phases;
+  return withoutAutocodeImplementationDesignPhases(phases, designContractExempt);
 }
 
 export function shouldForceSplitAutocodeImplementationPlan(

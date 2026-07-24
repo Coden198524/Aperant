@@ -3,6 +3,12 @@
  */
 
 import { mockInsightsSessions } from './mock-data';
+import type {
+  ImageAttachment,
+  InsightsModelConfig,
+  InsightsPendingDocumentReference,
+  InsightsTaskCreationRequest,
+} from '../../../shared/types';
 
 export const insightsMock = {
   getInsightsSession: async () => ({
@@ -105,20 +111,64 @@ export const insightsMock = {
     return { success: true };
   },
 
-  sendInsightsMessage: () => {
+  sendInsightsMessage: async (
+    projectId: string,
+    message: string,
+    _modelConfig?: InsightsModelConfig,
+    images?: ImageAttachment[],
+    documents?: InsightsPendingDocumentReference[],
+    clientMessageId = `msg-${Date.now()}`,
+  ) => {
     console.warn('[Browser Mock] sendInsightsMessage called');
+    const now = new Date();
+    const summary = mockInsightsSessions.find((item) => item.projectId === projectId);
+    return {
+      success: true,
+      data: {
+        clientMessageId,
+        messageId: clientMessageId,
+        session: {
+          id: summary?.id ?? `session-${Date.now()}`,
+          projectId,
+          title: summary?.title ?? 'New conversation',
+          messages: [{
+            id: clientMessageId,
+            role: 'user' as const,
+            content: message,
+            timestamp: now,
+            images: images?.map((image) => ({ ...image, data: undefined })),
+            documents: documents?.map((document) => ({
+              id: document.id,
+              filename: document.filename,
+              path: document.path,
+              ...(typeof document.size === 'number' ? { size: document.size } : {}),
+            })),
+          }],
+          createdAt: summary?.createdAt ?? now,
+          updatedAt: now,
+        },
+      },
+    };
   },
+
+  authorizeInsightsDocument: async () => ({
+    success: false as const,
+    error: 'Native file selection is available only in the desktop app.',
+  }),
 
   clearInsightsSession: async () => ({ success: true }),
 
-  createTaskFromInsights: async (_projectId: string, title: string, description: string) => ({
+  createTaskFromInsights: async (
+    _projectId: string,
+    request: InsightsTaskCreationRequest,
+  ) => ({
     success: true,
     data: {
       id: `task-${Date.now()}`,
       projectId: _projectId,
       specId: `00${Date.now()}-insights-task`,
-      title,
-      description,
+      title: request.title,
+      description: request.description,
       status: 'backlog' as const,
       subtasks: [],
       logs: [],

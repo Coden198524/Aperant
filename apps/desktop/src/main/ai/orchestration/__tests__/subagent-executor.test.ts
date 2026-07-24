@@ -92,6 +92,34 @@ describe('SubagentExecutorImpl', () => {
     expect(result.stepsExecuted).toBe(0);
   });
 
+  it('blocks subagent types outside an explicit orchestration allowlist', async () => {
+    const { generateText } = await import('ai');
+    (generateText as ReturnType<typeof vi.fn>).mockClear();
+    const loadPrompt = vi.fn().mockResolvedValue('System prompt');
+    const onEvent = vi.fn();
+    const executor = new SubagentExecutorImpl({
+      model: mockModel, // eslint-disable-line @typescript-eslint/no-unsafe-assignment
+      registry: mockRegistry,
+      baseToolContext: mockToolContext,
+      loadPrompt,
+      allowedAgentTypes: ['spec_gatherer', 'spec_writer', 'planner'],
+      onSubagentEvent: onEvent,
+    });
+
+    const result = await executor.spawn({
+      agentType: 'software_designer',
+      task: 'Create the design package',
+      expectStructuredOutput: false,
+    });
+
+    expect(result.error).toContain('Subagent type software_designer is not allowed');
+    expect(result.error).toContain('spec_gatherer, spec_writer, planner');
+    expect(result.stepsExecuted).toBe(0);
+    expect(loadPrompt).not.toHaveBeenCalled();
+    expect(generateText).not.toHaveBeenCalled();
+    expect(onEvent).toHaveBeenCalledWith('software_designer', 'blocked');
+  });
+
   it('should include context in user message when provided', async () => {
     const { generateText } = await import('ai');
     (generateText as ReturnType<typeof vi.fn>).mockResolvedValueOnce({

@@ -5,6 +5,7 @@ import {
   appendAutocodeLanguageRequirement,
   getAutocodeImplementationPlanLanguageRequirement,
 } from './agent-language.js';
+import { isAutocodeNonImplementationDirectContext } from './direct-task-summary.js';
 import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
 
 const PRIOR_PHASE_CONTEXT_TOTAL_MAX_CHARS = 6_000;
@@ -35,6 +36,7 @@ export interface BuildAutocodeSpecKickoffMessageInput {
   projectIndex?: string;
   specPhase?: string;
   language?: AutocodeOutputLanguage;
+  designContractExempt?: boolean;
 }
 
 export interface BuildAutocodeAgentKickoffMessageInput {
@@ -46,6 +48,7 @@ export interface BuildAutocodeAgentKickoffMessageInput {
   specPhase?: string;
   language?: AutocodeOutputLanguage;
   forcePlanning?: boolean;
+  designContractExempt?: boolean;
   focusedCoderKickoff?: string;
 }
 
@@ -97,10 +100,26 @@ export function buildAutocodeSpecKickoffMessage(
   const promptSpecDir = formatAutocodePathForPrompt(input.specDir);
   const promptProjectDir = formatAutocodePathForPrompt(input.projectDir);
   const taskDescription = compactAutocodeKickoffTaskDescription(input.taskDescription);
+  const designContractExempt = input.designContractExempt ??
+    isAutocodeNonImplementationDirectContext({ description: taskDescription });
   let baseMessage: string;
 
   if (input.specPhase === 'complexity_assessment') {
     baseMessage = `Assess task complexity and return the complete complexity_assessment.json object for ${promptSpecDir}/complexity_assessment.json. Task: ${taskDescription}. Project root: ${promptProjectDir}. Classify as SIMPLE, STANDARD, or COMPLEX from task scope and project structure only. This is the first spec phase; spec.md and later spec files do not exist yet.`;
+  } else if (
+    input.agentType === 'mmo_system_designer' &&
+    input.specPhase === 'planning' &&
+    designContractExempt
+  ) {
+    baseMessage = [
+      `Create ${promptSpecDir}/tasks.md for the non-implementation MMO task: ${taskDescription}.`,
+      'Read approved requirements.md, spec.md, context.md/research.md when present, project evidence, and current human feedback.',
+      'Do not read, create, require, or reference the five-file design package, design_review.md, Design-Contract IDs, or _Design_ metadata.',
+      'Write tasks.md only, with Tasks-Contract: 1 and [ ] checkboxes. Do not edit upstream artifacts.',
+      'Cover affected MMO domains with E* evidence, real dependencies, R*/AC*/SCN-* links, file intent, done signals, and focused verification.',
+      `Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it.`,
+      `Project root: ${promptProjectDir}.`,
+    ].join(' ');
   } else {
     switch (input.agentType) {
       case 'spec_discovery':
@@ -116,15 +135,26 @@ export function buildAutocodeSpecKickoffMessage(
         baseMessage = `Write only ${promptSpecDir}/spec.md as the observable behavior contract for: ${taskDescription}. Read ${promptSpecDir}/requirements.md and cite stable R*/AC*/E* IDs. Define SCN-* scope, inputs/actions, visible results, state transitions, failures, boundaries, compatibility, and verification notes. Do not copy requirement/evidence prose or define architecture, files, patterns, or tasks. Project root: ${promptProjectDir}.`;
         break;
       case 'planner':
-        baseMessage = [
-          `Create ${promptSpecDir}/tasks.md for: ${taskDescription}.`,
-          `Read approved requirements.md, spec.md, the complete five-file design package, and require ${AUTOCODE_TASK_ARTIFACTS.designReview} to say Status: PASSED.`,
-          'Write tasks.md only, with Tasks-Contract: 1 and [ ] checkboxes. Do not edit upstream artifacts.',
-          'Output concrete static definitions with E* evidence references, real dependencies, R*/AC*/SCN-* links, and _Design_ references covering rule owners, responsibilities/flows, selected PAT-*, and IMP-* units.',
-          'Keep completed historical definitions unchanged and assign revised work a new task ID.',
-          `Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it.`,
-          `Project root: ${promptProjectDir}.`,
-        ].join(' ');
+        baseMessage = designContractExempt
+          ? [
+              `Create ${promptSpecDir}/tasks.md for the non-implementation task: ${taskDescription}.`,
+              'Read approved requirements.md, spec.md, context.md/research.md when present, project evidence, and current human feedback.',
+              'Do not read, create, require, or reference a Design-Contract package, design review, or design IDs.',
+              'Write tasks.md only, with Tasks-Contract: 1 and [ ] checkboxes. Do not edit upstream artifacts.',
+              'Output reader-first analysis/documentation work with E* evidence, real dependencies, R*/AC*/SCN-* links, file intent, done signals, and focused verification.',
+              'Keep completed historical definitions unchanged and assign revised work a new task ID.',
+              `Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it.`,
+              `Project root: ${promptProjectDir}.`,
+            ].join(' ')
+          : [
+              `Create ${promptSpecDir}/tasks.md for: ${taskDescription}.`,
+              `Read approved requirements.md, spec.md, the complete five-file design package, and require ${AUTOCODE_TASK_ARTIFACTS.designReview} to say Status: PASSED.`,
+              'Write tasks.md only, with Tasks-Contract: 1 and [ ] checkboxes. Do not edit upstream artifacts.',
+              'Output concrete static definitions with E* evidence references, real dependencies, R*/AC*/SCN-* links, and _Design_ references covering rule owners, responsibilities/flows, selected PAT-*, and IMP-* units.',
+              'Keep completed historical definitions unchanged and assign revised work a new task ID.',
+              `Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it.`,
+              `Project root: ${promptProjectDir}.`,
+            ].join(' ');
         break;
       case 'software_designer':
         baseMessage = buildAutocodeDesignStageKickoffMessage({
@@ -144,7 +174,9 @@ export function buildAutocodeSpecKickoffMessage(
         baseMessage = `Gather project context for: ${taskDescription}. Use the Write tool to create ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.context} as concise Markdown. spec.md does not exist yet. Use narrow reads and omit transcripts, copied source, and long analysis. Include an Evidence Sources section with file/project-doc/standard citations.`;
         break;
       case 'spec_validation':
-        baseMessage = `Validate requirements.md, spec.md, the complete five-file design package, design_review.md, tasks.md, and the derived implementation_plan.md in ${promptSpecDir}. Follow each artifact's ownership contract, repair only the smallest owner section, and never edit implementation_plan.md directly.`;
+        baseMessage = designContractExempt
+          ? `Validate requirements.md, spec.md, tasks.md, and the derived implementation_plan.md in ${promptSpecDir}. This non-implementation task has no Design-Contract package; do not require or create one. Repair only the smallest owner section and never edit implementation_plan.md directly.`
+          : `Validate requirements.md, spec.md, the complete five-file design package, design_review.md, tasks.md, and the derived implementation_plan.md in ${promptSpecDir}. Follow each artifact's ownership contract, repair only the smallest owner section, and never edit implementation_plan.md directly.`;
         break;
       default:
         baseMessage = `Complete the Autocode Standard planning task described in your system prompt. Task: ${taskDescription}. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
@@ -153,7 +185,11 @@ export function buildAutocodeSpecKickoffMessage(
 
   const contextSections: string[] = [baseMessage];
   if (shouldAddStandardPlanningEvidenceContract(input.agentType, input.specPhase)) {
-    contextSections.push(buildAutocodeStandardPlanningEvidenceContract(promptProjectDir, promptSpecDir));
+    contextSections.push(buildAutocodeStandardPlanningEvidenceContract(
+      promptProjectDir,
+      promptSpecDir,
+      designContractExempt,
+    ));
   }
   const projectDocsReferenceInput = input.projectDocsReference ?? input.projectIndex;
   if (projectDocsReferenceInput) {
@@ -490,7 +526,23 @@ function shouldAddStandardPlanningEvidenceContract(
 function buildAutocodeStandardPlanningEvidenceContract(
   promptProjectDir: string,
   promptSpecDir: string,
+  designContractExempt = false,
 ): string {
+  if (designContractExempt) {
+    return [
+      '',
+      '',
+      '## NON-IMPLEMENTATION STANDARD PLANNING CONTRACT',
+      '',
+      `- Ground each artifact in request text, ${promptProjectDir} source/docs, existing project documentation, or verified official/industry references.`,
+      '- If evidence is missing, record an assumption/open question or validation task; do not guess.',
+      `- Keep full R*/AC*/C*/A*/Q*/E* prose only in ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.requirements}.`,
+      `- Keep ${promptSpecDir}/spec.md to observable/documented outcomes that cite requirement and evidence IDs without copying their prose.`,
+      '- Do not read, create, require, or reference design.md, the four design model files, design_review.md, Design-Contract IDs, or _Design_ task metadata.',
+      '- Keep tasks.md as static [ ] definitions only. Every executable task needs requirement/scenario coverage, E* evidence, dependencies, file intent, a done signal, and verification.',
+      '- Never edit implementation_plan.md during planning; the runtime derives its status-only ledger from tasks.md.',
+    ].join('\n');
+  }
   return [
     '',
     '',
@@ -600,7 +652,22 @@ export function buildAutocodeAgentKickoffMessage(
   let baseMessage: string;
 
   if (mmoRole) {
-    if (input.agentType === 'mmo_system_designer') {
+    if (
+      input.agentType === 'mmo_system_designer' &&
+      input.specPhase === 'planning' &&
+      input.designContractExempt
+    ) {
+      baseMessage = [
+        mmoRole,
+        '',
+        `Read approved ${promptSpecDir}/requirements.md, spec.md, context.md/research.md when present, project evidence, and current human feedback.`,
+        'This is non-implementation planning: do not read, create, require, or reference the five-file design package, design_review.md, Design-Contract IDs, or _Design_ metadata.',
+        `Create or repair only ${promptSpecDir}/tasks.md as a Tasks-Contract: 1 static definition catalog with [ ] checkboxes.`,
+        'Cover affected MMO domains with E* evidence, real dependencies, R*/AC*/SCN-* links, file intent, done signals, and focused verification.',
+        `Do not write ${promptSpecDir}/implementation_plan.md; the runtime derives it from tasks.md.`,
+        `Project root: ${promptProjectDir}`,
+      ].join('\n');
+    } else if (input.agentType === 'mmo_system_designer') {
       baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md with concrete checklist phases and tasks. Do not write implementation_plan.md; the runtime derives it as work packages. Cover every requirement/scenario/acceptance criterion, include evidence, verification, dependencies, and done signals, and cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks when affected. For runnable/user-facing deliverables, include runtime-readiness verification that starts/opens the artifact, exercises the primary path, and checks startup, console, load, blank-screen, crash/hang, or non-zero-exit failures. Project root: ${promptProjectDir}`;
     } else if (input.agentType === 'mmo_qa_reviewer') {
       baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.md first, map changed behavior to MMO domains, then run one focused project-appropriate verification when available. For runnable/user-facing deliverables, approval requires actual launch/open/use-path smoke verification with no startup, console, resource-load, blank-screen, crash/hang, or non-zero-exit failures; reject static-only verification. Verify server authority, sync/protocol, persistence/data/config, performance, security/anti-cheat, tools/content, liveops/release, and changed contracts when relevant. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line plus Scope Reviewed, MMO Domain Matrix, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
@@ -629,15 +696,25 @@ export function buildAutocodeAgentKickoffMessage(
         baseMessage = `Read ${promptSpecDir}/requirements.md and write only ${promptSpecDir}/spec.md as Specification-Contract: 1 observable SCN-* behavior. Preserve unaffected scenario IDs, cite Covers: R*/AC* and Evidence: E*, and do not copy requirement prose or define design, files, tasks, or runtime state. Project root: ${promptProjectDir}.`;
         break;
       case 'planner':
-        baseMessage = [
-          `Read approved ${promptSpecDir}/requirements.md, spec.md, and the complete five-file design package: ${AUTOCODE_TASK_ARTIFACTS.design}, ${AUTOCODE_TASK_ARTIFACTS.requirementModel}, ${AUTOCODE_TASK_ARTIFACTS.domainModel}, ${AUTOCODE_TASK_ARTIFACTS.designModel}, and ${AUTOCODE_TASK_ARTIFACTS.implementationModel}; require ${AUTOCODE_TASK_ARTIFACTS.designReview} to say Status: PASSED.`,
-          `Create or repair only ${promptSpecDir}/tasks.md as a Tasks-Contract: 1 static definition catalog with [ ] checkboxes.`,
-          'Keep definitions executable, E*-evidence-backed, dependency-aware, and traceable to R*/AC*/SCN-* plus rule owners, responsibilities/flows, selected PAT-*, and IMP-* units.',
-          'Preserve completed historical definitions unchanged; put revised work under a new task ID.',
-          'For runnable/user-facing deliverables, include runtime-readiness verification: start/open, exercise the primary path, and check startup, console, load, blank-screen, crash/hang, or non-zero-exit failures.',
-          `Do not write ${promptSpecDir}/implementation_plan.md; the runtime derives it from tasks.md.`,
-          `Project root: ${promptProjectDir}`,
-        ].join(' ');
+        baseMessage = input.designContractExempt
+          ? [
+              `Read approved ${promptSpecDir}/requirements.md, spec.md, context.md/research.md when present, project evidence, and current human feedback.`,
+              'This is non-implementation planning: do not read, create, require, or reference the five-file design package, design_review.md, Design-Contract IDs, or _Design_ metadata.',
+              `Create or repair only ${promptSpecDir}/tasks.md as a Tasks-Contract: 1 static definition catalog with [ ] checkboxes.`,
+              'Keep definitions executable, E*-evidence-backed, dependency-aware, and traceable to R*/AC*/SCN-* with file intent, done signals, and focused verification.',
+              'Preserve completed historical definitions unchanged; put revised work under a new task ID.',
+              `Do not write ${promptSpecDir}/implementation_plan.md; the runtime derives it from tasks.md.`,
+              `Project root: ${promptProjectDir}`,
+            ].join(' ')
+          : [
+              `Read approved ${promptSpecDir}/requirements.md, spec.md, and the complete five-file design package: ${AUTOCODE_TASK_ARTIFACTS.design}, ${AUTOCODE_TASK_ARTIFACTS.requirementModel}, ${AUTOCODE_TASK_ARTIFACTS.domainModel}, ${AUTOCODE_TASK_ARTIFACTS.designModel}, and ${AUTOCODE_TASK_ARTIFACTS.implementationModel}; require ${AUTOCODE_TASK_ARTIFACTS.designReview} to say Status: PASSED.`,
+              `Create or repair only ${promptSpecDir}/tasks.md as a Tasks-Contract: 1 static definition catalog with [ ] checkboxes.`,
+              'Keep definitions executable, E*-evidence-backed, dependency-aware, and traceable to R*/AC*/SCN-* plus rule owners, responsibilities/flows, selected PAT-*, and IMP-* units.',
+              'Preserve completed historical definitions unchanged; put revised work under a new task ID.',
+              'For runnable/user-facing deliverables, include runtime-readiness verification: start/open, exercise the primary path, and check startup, console, load, blank-screen, crash/hang, or non-zero-exit failures.',
+              `Do not write ${promptSpecDir}/implementation_plan.md; the runtime derives it from tasks.md.`,
+              `Project root: ${promptProjectDir}`,
+            ].join(' ');
         break;
       case 'software_designer':
         baseMessage = input.specPhase
@@ -708,6 +785,21 @@ export function buildAutocodeAgentKickoffMessage(
               `Review the current ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.design} and write only ${AUTOCODE_TASK_ARTIFACTS.designReview}.`,
               'Do not edit requirements.md, spec.md, design.md, tasks.md, or implementation_plan.md.',
             ]
+          : (
+              input.agentType === 'planner' ||
+              (
+                input.agentType === 'mmo_system_designer' &&
+                input.specPhase === 'planning'
+              )
+            ) && input.designContractExempt
+            ? [
+                'Treat approved requirements.md and spec.md plus context.md/research.md when present as the upstream contracts for this stage.',
+                `Revise only affected still-pending definitions in ${promptSpecDir}/tasks.md.`,
+                'Do not read, create, require, or reference a Design-Contract package, design review, design IDs, or _Design_ task metadata.',
+                'Keep completed historical task definitions visible and unchanged; add revised work under a new task ID.',
+                'Keep every tasks.md checkbox [ ]; execution status belongs to implementation_plan.md.',
+                'Every new or revised task must map to affected R*/AC*/SCN-* IDs, evidence, a done signal, and focused verification.',
+              ]
           : [
               'Treat the approved requirements.md, spec.md, design.md, and design_review.md as immutable upstream contracts for this stage.',
               `Revise only affected still-pending definitions in ${promptSpecDir}/tasks.md.`,
@@ -801,6 +893,8 @@ export function buildAutocodeAgenticSpecOrchestratorKickoffMessage(input: {
   taskDescription: string;
   specDir: string;
   projectDir: string;
+  /** Non-implementation work runs only requirements, specification, and task owners. */
+  designContractExempt?: boolean;
   /** Generated project documentation reference text from project-docs/index.md and related docs. */
   projectDocsReference?: string;
   /** @deprecated Use projectDocsReference. */
@@ -817,6 +911,20 @@ export function buildAutocodeAgenticSpecOrchestratorKickoffMessage(input: {
   const projectDocsReferenceInput = input.projectDocsReference ?? input.projectIndexContent;
   if (projectDocsReferenceInput) {
     parts.push(`\n\n${buildProjectDocsReferenceSection(projectDocsReferenceInput)}`);
+  }
+  if (input.designContractExempt) {
+    parts.push([
+      '',
+      '',
+      '## NON-IMPLEMENTATION AGENTIC FLOW',
+      '',
+      '- Run exactly these owner stages: `spec_gatherer -> spec_writer -> planner` (requirements.md -> spec.md -> tasks.md).',
+      '- Do not dispatch requirement_modeler, domain_modeler, software_designer, design_modeler, implementation_modeler, or design_critic.',
+      '- Do not read, create, require, validate, or reference requirement_model.md, domain_model.md, design.md, design_model.md, implementation_model.md, or design_review.md.',
+      '- The planner must derive static tasks directly from approved requirements/specification and evidence, without Design-Contract IDs or `_Design_` metadata.',
+      '- Stop after validating tasks.md; never create implementation_plan.md or modify source code.',
+      '- This flow supersedes any generic instruction that requires Design-Contract: 5.',
+    ].join('\n'));
   }
   return parts.join('');
 }

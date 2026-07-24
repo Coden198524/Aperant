@@ -27,7 +27,7 @@ Use additional tools only to verify specific claims.
 ## Fix Rules
 
 - Use Edit for targeted corrections.
-- Use Write for `spec.md` only if missing or replacing with a compact spec under 60 lines.
+- Use Write for `spec.md` only when it is missing; otherwise use Edit for targeted corrections without imposing a line or character limit.
 - Preserve valid content.
 - Do not add long rationale or copied source.
 

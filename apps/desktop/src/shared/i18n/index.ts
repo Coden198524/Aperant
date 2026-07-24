@@ -46,6 +46,7 @@ import zhCNChangelog from './locales/zh-CN/changelog.json';
 import { zhCNContextWorkspaceOverrides } from './locales/zh-CN/contextWorkspaceOverrides';
 import { zhCNDialogsOverrides } from './locales/zh-CN/dialogsOverrides';
 import { zhCNIdeationRoadmapOverrides } from './locales/zh-CN/ideationRoadmapOverrides';
+import { zhCNInsightsAttachmentOverrides } from './locales/zh-CN/insightsAttachmentOverrides';
 import { zhCNInsightsUiOverrides } from './locales/zh-CN/insightsUiOverrides';
 import { zhCNIssuesOverrides } from './locales/zh-CN/issuesOverrides';
 import { zhCNOnboardingGraphitiOverrides } from './locales/zh-CN/onboardingGraphitiOverrides';
@@ -127,7 +128,10 @@ export const resources = {
           mergeLocale(zhCNCommon, zhCNCommonOverrides),
           zhCNContextWorkspaceOverrides
         ),
-        mergeLocale(zhCNIdeationRoadmapOverrides, zhCNInsightsUiOverrides)
+        mergeLocale(
+          mergeLocale(zhCNIdeationRoadmapOverrides, zhCNInsightsUiOverrides),
+          zhCNInsightsAttachmentOverrides
+        )
       ),
       zhCNIssuesOverrides
     ),

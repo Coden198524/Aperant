@@ -1,13 +1,15 @@
 import { EventEmitter } from 'events';
+import { randomUUID } from 'node:crypto';
 import type {
   InsightsChatMessage,
   InsightsChatStatus,
   InsightsStreamChunk,
   InsightsToolUsage,
   InsightsModelConfig,
+  InsightsDocumentReference,
   ImageAttachment
 } from '../../shared/types';
-import type { TaskCategory, TaskComplexity, TaskMetadata } from '../../shared/types/task';
+import type { TaskCategory, TaskComplexity } from '../../shared/types/task';
 import { InsightsConfig } from './config';
 import { detectRateLimit, createSDKRateLimitInfo } from '../rate-limit-detector';
 import { runInsightsQuery } from '../ai/runners/insights';
@@ -63,7 +65,8 @@ export class InsightsExecutor extends EventEmitter {
     message: string,
     conversationHistory: Array<{ role: string; content: string }>,
     modelConfig?: InsightsModelConfig,
-    _images?: ImageAttachment[]
+    _images?: ImageAttachment[],
+    documents?: InsightsDocumentReference[],
   ): Promise<ProcessorResult> {
     // Cancel any existing session
     this.cancelSession(projectId);
@@ -104,6 +107,7 @@ export class InsightsExecutor extends EventEmitter {
           modelShorthand,
           thinkingLevel,
           abortSignal: controller.signal,
+          documents,
         },
         (event) => {
           switch (event.type) {
@@ -151,7 +155,8 @@ export class InsightsExecutor extends EventEmitter {
 
       // Extract task suggestion from the full result
       if (result.taskSuggestion) {
-        const task: { title: string; description: string; metadata?: TaskMetadata } = {
+        const task: NonNullable<InsightsChatMessage['suggestedTasks']>[number] = {
+          id: `suggestion-${randomUUID()}`,
           title: result.taskSuggestion.title,
           description: result.taskSuggestion.description,
           metadata: {

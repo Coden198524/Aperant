@@ -108,7 +108,8 @@ describe('project prompt profile', () => {
     expect(coderOverride?.content).toContain('TOOL CALL JSON SAFETY');
     expect(coderOverride?.content).toContain('forward slashes');
     expect(coderOverride?.content).toContain('both keys');
-    expect(coderOverride?.content).toContain('20-60 line');
+    expect(coderOverride?.content).toContain('without imposing a line or character limit');
+    expect(coderOverride?.content).not.toContain('20-60 line');
     expect(existsSync(join(projectDir, '.autocode', 'prompts', 'spec_quick.md'))).toBe(false);
 
     const plannerOverride = loadProjectPromptOverride(projectDir, 'planner');

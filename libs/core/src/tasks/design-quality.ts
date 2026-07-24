@@ -29,6 +29,9 @@ export const AUTOCODE_DESIGN_GENERATION_STAGE_ORDER = [
 function selectAutocodeDesignErrorOwnerStage(
   error: string,
 ): AutocodeDesignPackageStage {
+  if (/\bSource Reconstruction\b/i.test(error)) {
+    return 'design_model';
+  }
   const artifactOwners = [
     [/\brequirement_model\.md\b/i, 'requirement_model'],
     [/\bdomain_model\.md\b/i, 'domain_model'],
@@ -576,6 +579,7 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   'Exact STATE stateDiagram-v2 shape (localize only prose; begin and end at [*]):\n```mermaid\n' + AUTOCODE_STATE_DIAGRAM_SKELETON + '\n```',
   '- FLOW: Trigger; Participants; Steps; State changes; Failure paths; Evidence basis; one Mermaid sequenceDiagram block. Steps name every DES participant in explicit order.',
   '- design_model.md headings: System Responsibility Allocation; Domain To Software Mapping; Design Model; Class Diagram; State Transition Diagrams; Sequence Diagrams.',
+  '- For reverse-engineering or mixed analysis, design_model.md must also contain exactly ## Source Reconstruction and at least one REV-* entry beneath it. For forward-design, omit the heading and all REV-* entries.',
   '- CONTRACT: Inputs and outputs (typed signatures with nullability and value constraints); Compatibility; Errors (each error condition and how a caller detects and handles it); Lifecycle; Evidence basis.',
   '- Change analysis: Verified variation points; Variation inventory; Candidate patterns evaluated (for each verified variation, name the applicable GoF or architectural pattern and compare it against the direct mechanism); Simplest change mechanism; Selected patterns=PAT-* IDs or none.',
   '- Pattern application balances NOP: when a variation is real and evidenced, apply the fitting pattern instead of a growing switch/if-else over types or states; when no variation is verified, keep the direct mechanism and record none.',
@@ -1568,7 +1572,11 @@ function validateV5DesignPackage(
   errors.push(...validateV5CrossArtifactMappings(combinedMarkdown, sections));
   errors.push(...validateObjectModelDepth(combinedMarkdown, sections, depth));
   errors.push(...validateStaticDynamicConsistency(sections, depth));
-  errors.push(...validateSourceReconstruction(combinedMarkdown, sections, analysisDirection));
+  errors.push(...validateSourceReconstruction(
+    input.designModelMarkdown ?? '',
+    sections,
+    analysisDirection,
+  ));
   errors.push(...validateDesignTraceability(combinedMarkdown, sections));
   errors.push(...validateDesignEvidence(combinedMarkdown));
   errors.push(...validateRejectedComplexity(combinedMarkdown));
@@ -1626,7 +1634,11 @@ function validateV5DesignModelStage(
   errors.push(...validateV5CrossArtifactMappings(combinedMarkdown, sections, false));
   errors.push(...validateObjectModelDepth(combinedMarkdown, sections, depth));
   errors.push(...validateStaticDynamicConsistency(sections, depth));
-  errors.push(...validateSourceReconstruction(combinedMarkdown, sections, analysisDirection));
+  errors.push(...validateSourceReconstruction(
+    input.designModelMarkdown ?? '',
+    sections,
+    analysisDirection,
+  ));
   errors.push(...validateDesignTraceability(combinedMarkdown, sections, false));
   return errors;
 }
@@ -2025,12 +2037,12 @@ export interface AutocodeDesignReviewOpenQuestion {
 export interface AutocodeDesignReviewHumanInputGate {
   /** True when the REVISE review is blocked on open questions only a human can resolve. */
   blocked: boolean;
-  /** The distinct unresolved open questions extracted from the review findings. */
+  /** The distinct unresolved open questions extracted from review evidence fields. */
   questions: string[];
   /**
    * Structured decision prompts parsed from the review's optional
-   * `## Human Decision Options` section. Empty when the review did not emit options
-   * (older reviews), in which case callers fall back to the plain `questions` list.
+   * `## Human Decision Options` section. Empty for older reviews, in which case callers
+   * can fall back to the plain `questions` list.
    */
   decisions: AutocodeDesignReviewOpenQuestion[];
   /** A ready-to-surface message describing what the user must provide. */
@@ -2095,11 +2107,43 @@ function parseAutocodeDesignReviewDecisionOptions(
   return decisions;
 }
 
+function extractAutocodeDesignReviewUnresolvedQuestions(markdown: string): string[] {
+  const questions: string[] = [];
+  const seen = new Set<string>();
+  for (const line of markdown.split(/\r?\n/)) {
+    const evidenceMatch = line.match(
+      /^\s*-\s*Evidence(?:\s+basis)?\s*[:：]\s*(.*)$/i,
+    );
+    const directMatch = line.match(/^\s*-\s*(unresolved\s*-\s*.*)$/i);
+    const payload = evidenceMatch?.[1] ?? directMatch?.[1];
+    if (payload === undefined) {
+      continue;
+    }
+    // A provenance clause must begin the evidence payload or follow a clause separator.
+    // This excludes negated prose and an `unresolved -` phrase quoted inside an observed
+    // claim, both of which describe the review rather than request a user decision.
+    const pattern = /(?:^|[;\uFF1B])\s*unresolved\s*-\s*([^\r\n;\uFF1B]+)/giu;
+    for (const match of payload.matchAll(pattern)) {
+      const text = (match[1] ?? '').trim();
+      if (!text || /^(?:none|n\/a)\b/i.test(text)) {
+        continue;
+      }
+      const key = text.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      questions.push(text);
+    }
+  }
+  return questions;
+}
+
 /**
  * Detects whether an independent design review returned Status: REVISE because it is
- * blocked on unresolved open questions that require a human decision (evidence tagged
- * `unresolved - ...`). Automated revision rounds can never clear these, so the planning
- * loop should stop promptly and ask the user instead of exhausting its retry budget.
+ * blocked on provenance-level `unresolved - ...` evidence that requires a human decision.
+ * Raw substring matches are deliberately excluded because the token can appear in negated
+ * prose or inside an observed claim about an automatically repairable design ambiguity.
  */
 export function detectAutocodeDesignReviewHumanInputGate(
   designReviewMarkdown: string | undefined | null,
@@ -2116,23 +2160,7 @@ export function detectAutocodeDesignReviewHumanInputGate(
   if (getAutocodeDesignReviewStatus(designReviewMarkdown) !== 'REVISE') {
     return empty;
   }
-  const questions: string[] = [];
-  const seen = new Set<string>();
-  // Evidence clauses are separated by ASCII or full-width semicolons; capture just the
-  // `unresolved - <open question>` fragment without trailing observed/inferred clauses.
-  const pattern = /unresolved\s*-\s*([^\r\n;\uFF1B]+)/giu;
-  for (const match of designReviewMarkdown.matchAll(pattern)) {
-    const text = (match[1] ?? '').trim();
-    if (!text || /^(?:none|n\/a)\b/i.test(text)) {
-      continue;
-    }
-    const key = text.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    questions.push(text);
-  }
+  const questions = extractAutocodeDesignReviewUnresolvedQuestions(designReviewMarkdown);
   if (questions.length === 0) {
     return empty;
   }
@@ -2235,6 +2263,15 @@ export function buildAutocodeDesignQualityRetryPrompt(errors: readonly string[])
   const machineContractGuidance = errors.length > 0
     ? AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT
     : '';
+  const sourceReconstructionGuidance = errors.some((error) =>
+    error.includes('Source Reconstruction')
+  )
+    ? [
+        'Source Reconstruction is owned by design_model.md, never design.md.',
+        'For reverse-engineering or mixed analysis, add exactly ## Source Reconstruction to design_model.md and define the required REV-* entries beneath it.',
+        'For forward-design, omit both the heading and REV-* entries. Preserve design.md ADRs, evidence, and stable IDs.',
+      ].join('\n')
+    : '';
   const depthGuidance = errors.some((error) =>
     error.includes('interactive') ||
     error.includes('high-applicability') ||
@@ -2302,6 +2339,7 @@ export function buildAutocodeDesignQualityRetryPrompt(errors: readonly string[])
     contractGuidance,
     separatorGuidance,
     diagramGuidance,
+    sourceReconstructionGuidance,
     machineContractGuidance,
     depthGuidance,
   ].filter(Boolean).join('\n\n');
@@ -3139,7 +3177,7 @@ function validateStaticDynamicConsistency(
 }
 
 function validateSourceReconstruction(
-  markdown: string,
+  designModelMarkdown: string,
   sections: readonly AutocodeDesignSection[],
   direction: AutocodeDesignAnalysisDirection | undefined,
 ): string[] {
@@ -3157,8 +3195,11 @@ function validateSourceReconstruction(
   if (direction !== 'reverse-engineering' && direction !== 'mixed') {
     return errors;
   }
-  if (!hasMarkdownHeading(markdown, 'Source Reconstruction')) {
-    errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' missing "## Source Reconstruction" section.');
+  if (!hasMarkdownHeading(designModelMarkdown, 'Source Reconstruction')) {
+    errors.push(
+      AUTOCODE_TASK_ARTIFACTS.designModel +
+      ' missing "## Source Reconstruction" section.',
+    );
   }
   if (reconstructions.length === 0) {
     errors.push(

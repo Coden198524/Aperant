@@ -132,6 +132,7 @@ interface RawProjectPlanSubtask {
   files_to_create?: unknown;
   files_to_modify?: unknown;
   pattern_files?: unknown;
+  changed_files?: unknown;
   depends_on?: unknown;
   work_package?: unknown;
   upstream_task_ids?: unknown;
@@ -151,6 +152,8 @@ interface CodingWorkItemLogStatusEvent {
   status: 'completed' | 'failed';
   timestamp?: string;
   content: string;
+  completionSummary?: string;
+  changedFiles?: string[];
 }
 
 interface RecoverableImplementationPlan extends Record<string, unknown> {
@@ -623,6 +626,12 @@ function extractProjectPlanSubtasks(plan: ImplementationPlanFile | null): Autoco
           )
         : '';
       const durationMs = numberFrom(subtask.duration_ms, subtask.durationMs);
+      const changedFiles = toStringArray(subtask.changed_files);
+      const plannedFiles = [
+        ...toStringArray(subtask.files_to_create),
+        ...toStringArray(subtask.files_to_modify),
+        ...toStringArray(subtask.pattern_files),
+      ];
       return {
         id: stringFrom(subtask.id, `subtask-${phaseIndex + 1}-${subtaskIndex + 1}`),
         title,
@@ -634,11 +643,7 @@ function extractProjectPlanSubtasks(plan: ImplementationPlanFile | null): Autoco
         ...(stringFrom(subtask.updated_at) ? { updatedAt: stringFrom(subtask.updated_at) } : {}),
         ...(durationMs !== undefined ? { durationMs } : {}),
         status: normalizeSubtaskStatus(subtask.status),
-        files: [
-          ...toStringArray(subtask.files_to_create),
-          ...toStringArray(subtask.files_to_modify),
-          ...toStringArray(subtask.pattern_files),
-        ],
+        files: changedFiles.length > 0 ? changedFiles : plannedFiles,
         ...(toStringArray(subtask.depends_on).length > 0 ? { dependsOn: toStringArray(subtask.depends_on) } : {}),
         ...(subtask.work_package === true ? { workPackage: true } : {}),
         ...(toStringArray(subtask.upstream_task_ids).length > 0 ? { upstreamTaskIds: toStringArray(subtask.upstream_task_ids) } : {}),
@@ -673,34 +678,63 @@ export function recoverAutocodeCodingWorkItemStatusesFromLogs(input: {
     return items.map((subtask) => {
       const subtaskId = stringFrom(subtask.id);
       const event = events.get(subtaskId);
-      if (!event || normalizeSubtaskStatus(subtask.status) !== 'in_progress') {
+      const currentStatus = normalizeSubtaskStatus(subtask.status);
+      if (!event || (currentStatus !== 'in_progress' && currentStatus !== 'completed')) {
         return subtask;
       }
       if (!isCodingWorkItemStatusEventFreshForSubtask(event, subtask)) {
         return subtask;
       }
 
+      if (currentStatus === 'completed') {
+        if (event.status !== 'completed') {
+          return subtask;
+        }
+        const existingSummary = getRawProjectSubtaskCompletionSummary(subtask);
+        const completionSummary = selectRecoveredCompletionSummary(
+          existingSummary,
+          event.completionSummary,
+        );
+        const existingChangedFiles = toStringArray(subtask.changed_files);
+        const changedFiles = event.changedFiles && event.changedFiles.length > 0
+          ? event.changedFiles
+          : existingChangedFiles;
+        const shouldUpdateSummary = Boolean(completionSummary && completionSummary !== existingSummary);
+        const shouldUpdateChangedFiles = changedFiles.length > 0 &&
+          !areStringArraysEqual(existingChangedFiles, changedFiles);
+        if (!shouldUpdateSummary && !shouldUpdateChangedFiles) {
+          return subtask;
+        }
+
+        recoveredCount += 1;
+        const eventTimestamp = stringFrom(event.timestamp, input.now, new Date().toISOString());
+        latestRecoveredAt = maxIsoTimestamp(latestRecoveredAt, eventTimestamp);
+        return {
+          ...subtask,
+          ...(completionSummary
+            ? { completion_summary: completionSummary, notes: completionSummary }
+            : {}),
+          ...(changedFiles.length > 0 ? { changed_files: changedFiles } : {}),
+        };
+      }
+
       recoveredCount += 1;
       const eventTimestamp = stringFrom(event.timestamp, input.now, new Date().toISOString());
       latestRecoveredAt = maxIsoTimestamp(latestRecoveredAt, eventTimestamp);
       if (event.status === 'completed') {
+        const completionSummary = selectRecoveredCompletionSummary(
+          getRawProjectSubtaskCompletionSummary(subtask),
+          event.completionSummary,
+        ) || 'Recovered completed status from task log.';
         return {
           ...subtask,
           status: 'completed',
           completed_at: stringFrom(subtask.completed_at, eventTimestamp),
-          completion_summary: stringFrom(
-            subtask.completion_summary,
-            subtask.completionSummary,
-            subtask.completed_summary,
-            subtask.notes,
-            'Recovered completed status from task log.',
-          ),
-          notes: stringFrom(
-            subtask.notes,
-            subtask.completion_summary,
-            subtask.completionSummary,
-            'Recovered completed status from task log.',
-          ),
+          completion_summary: completionSummary,
+          notes: completionSummary,
+          ...(event.changedFiles && event.changedFiles.length > 0
+            ? { changed_files: event.changedFiles }
+            : {}),
         };
       }
 
@@ -739,7 +773,16 @@ export function recoverAutocodeCodingWorkItemStatusesFromLogs(input: {
 
 function readCodingWorkItemStatusEvents(logs: AutocodeTaskLogs): Map<string, CodingWorkItemLogStatusEvent> {
   const events = new Map<string, CodingWorkItemLogStatusEvent>();
+  const latestModelSummaryBySubtask = new Map<string, string>();
   for (const entry of logs.phases.coding?.entries ?? []) {
+    const entrySubtaskId = stringFrom(entry.subtask_id);
+    if (entrySubtaskId && entry.type === 'text') {
+      const summary = compactRecoveredCompletionSummary(stringFrom(entry.detail, entry.content));
+      if (summary) {
+        latestModelSummaryBySubtask.set(entrySubtaskId, summary);
+      }
+    }
+
     const text = stringFrom(entry.content);
     const match = /\bWork item\s+([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)\s+(completed|failed|interrupted)\b/i.exec(text);
     if (!match) {
@@ -751,9 +794,50 @@ function readCodingWorkItemStatusEvents(logs: AutocodeTaskLogs): Map<string, Cod
       status,
       timestamp: stringFrom(entry.timestamp),
       content: text,
+      completionSummary: latestModelSummaryBySubtask.get(match[1]),
+      changedFiles: toStringArray(entry.changed_files),
     });
   }
   return events;
+}
+
+function getRawProjectSubtaskCompletionSummary(subtask: RawProjectPlanSubtask): string {
+  return stringFrom(
+    subtask.completion_summary,
+    subtask.completionSummary,
+    subtask.completed_summary,
+    subtask.notes,
+    subtask.actual_output,
+  );
+}
+
+function selectRecoveredCompletionSummary(existing: string, recovered: string | undefined): string {
+  if (!recovered) {
+    return existing;
+  }
+  return !existing || isGenericProjectCompletionSummary(existing) ? recovered : existing;
+}
+
+function isGenericProjectCompletionSummary(value: string): boolean {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return /^Completed by (?:Autocode )?(?:Direct )?CLI (?:runner|run)\.?$/i.test(normalized) ||
+    /^Recovered completed status from task log\.?$/i.test(normalized);
+}
+
+function compactRecoveredCompletionSummary(value: string): string {
+  const normalized = value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+  if (normalized.length <= 1200) {
+    return normalized;
+  }
+  return normalized.slice(0, 1197).trimEnd() + '...';
+}
+
+function areStringArraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function isCodingWorkItemStatusEventFreshForSubtask(
@@ -1444,8 +1528,9 @@ function mergeMissingAutocodeProjectTaskFields(
     merged = { ...merged, tokenUsage: mergedTokenUsage };
   }
 
-  if (shouldRestoreProjectSubtasks(preferred, fallback)) {
-    merged = { ...merged, subtasks: fallback.subtasks };
+  const mergedSubtasks = mergeAutocodeProjectSubtasks(preferred.subtasks, fallback.subtasks);
+  if (mergedSubtasks !== preferred.subtasks) {
+    merged = { ...merged, subtasks: mergedSubtasks };
   }
 
   const worktreeTask = preferred.location === 'worktree'
@@ -1482,17 +1567,96 @@ function mergeProjectTokenUsage(
   };
 }
 
-function shouldRestoreProjectSubtasks(preferred: AutocodeProjectTask, fallback: AutocodeProjectTask): boolean {
-  if (fallback.subtasks.length === 0) {
+function mergeAutocodeProjectSubtasks(
+  preferred: AutocodePlanSubtask[],
+  fallback: AutocodePlanSubtask[],
+): AutocodePlanSubtask[] {
+  if (fallback.length === 0) {
+    return preferred;
+  }
+  if (preferred.length === 0) {
+    return fallback;
+  }
+
+  const fallbackById = new Map(fallback.map((subtask) => [subtask.id, subtask]));
+  const preferredIds = new Set(preferred.map((subtask) => subtask.id));
+  const merged = preferred.map((preferredSubtask) => {
+    const fallbackSubtask = fallbackById.get(preferredSubtask.id);
+    if (!fallbackSubtask) {
+      return preferredSubtask;
+    }
+    const fallbackIsFurtherAlong = getProjectSubtaskProgressScore([fallbackSubtask]) >
+      getProjectSubtaskProgressScore([preferredSubtask]);
+    return fallbackIsFurtherAlong
+      ? mergeAutocodeProjectSubtaskFields(fallbackSubtask, preferredSubtask)
+      : mergeAutocodeProjectSubtaskFields(preferredSubtask, fallbackSubtask);
+  });
+  for (const fallbackSubtask of fallback) {
+    if (!preferredIds.has(fallbackSubtask.id)) {
+      merged.push(fallbackSubtask);
+    }
+  }
+  return merged;
+}
+
+function mergeAutocodeProjectSubtaskFields(
+  preferred: AutocodePlanSubtask,
+  fallback: AutocodePlanSubtask,
+): AutocodePlanSubtask {
+  const title = shouldUseFallbackProjectSubtaskText(preferred.title, fallback.title, preferred.id)
+    ? fallback.title
+    : preferred.title;
+  const description = shouldUseFallbackProjectSubtaskText(
+    preferred.description,
+    fallback.description,
+    preferred.id,
+  )
+    ? fallback.description
+    : preferred.description;
+  const completionSummary = !preferred.completionSummary ||
+    (isGenericProjectCompletionSummary(preferred.completionSummary) &&
+      fallback.completionSummary &&
+      !isGenericProjectCompletionSummary(fallback.completionSummary))
+    ? fallback.completionSummary
+    : preferred.completionSummary;
+  const files = Array.from(new Set([...preferred.files, ...fallback.files]));
+
+  return {
+    ...fallback,
+    ...preferred,
+    title,
+    description,
+    files,
+    ...(completionSummary ? { completionSummary } : {}),
+    ...(preferred.dependsOn?.length || fallback.dependsOn?.length
+      ? { dependsOn: preferred.dependsOn?.length ? preferred.dependsOn : fallback.dependsOn }
+      : {}),
+    ...(preferred.upstreamTaskIds?.length || fallback.upstreamTaskIds?.length
+      ? {
+          upstreamTaskIds: preferred.upstreamTaskIds?.length
+            ? preferred.upstreamTaskIds
+            : fallback.upstreamTaskIds,
+        }
+      : {}),
+    ...(preferred.workPackage || fallback.workPackage ? { workPackage: true } : {}),
+  };
+}
+
+function shouldUseFallbackProjectSubtaskText(
+  preferred: string,
+  fallback: string,
+  subtaskId: string,
+): boolean {
+  if (!fallback.trim()) {
     return false;
   }
-  if (preferred.subtasks.length === 0) {
+  if (!preferred.trim()) {
     return true;
   }
-  if (fallback.subtasks.length !== preferred.subtasks.length) {
-    return fallback.subtasks.length > preferred.subtasks.length;
-  }
-  return getProjectSubtaskProgressScore(fallback.subtasks) > getProjectSubtaskProgressScore(preferred.subtasks);
+  const normalized = preferred.replace(/\s+/g, ' ').trim().toLowerCase();
+  return normalized === 'work package' ||
+    normalized === 'runtime work package' ||
+    normalized === 'subtask ' + subtaskId.toLowerCase();
 }
 
 function getProjectSubtaskProgressScore(subtasks: Array<{ status: string }>): number {

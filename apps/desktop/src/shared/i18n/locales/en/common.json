@@ -537,6 +537,18 @@
       "analysisUnsupported": "Note: Image analysis is not yet supported. Images are stored for reference but cannot be analyzed by the model.",
       "screenshotTooLarge": "Screenshot is too large ({{size}}MB). Maximum size is {{max}}MB. Consider capturing a smaller area.",
       "notAnalyzed": "Images were stored for reference but not analyzed by the model."
+    },
+    "attachments": {
+      "dragOver": "Drop images, or files to reference their local paths",
+      "dropHint": "Drag images here, or files to reference their paths; file contents are read only when needed"
+    },
+    "documents": {
+      "attachButton": "Reference local files",
+      "removeDocument": "Remove file reference",
+      "maxReferencesReached": "Maximum of 20 file references allowed",
+      "pathUnavailable": "Could not resolve the local file path",
+      "directoryUnsupported": "Folders cannot be referenced here",
+      "sharedWithModel": "Only the local file path was shared. The model reads file content on demand."
     }
   },
   "ideation": {

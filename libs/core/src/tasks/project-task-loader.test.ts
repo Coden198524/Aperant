@@ -67,6 +67,128 @@ describe('project task loading', () => {
     expect(task.subtasks).toHaveLength(1);
   });
 
+  it('merges hydrated worktree content and recovers completion details from coding logs', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
+    try {
+      const specId = '001-hydrated-work-package';
+      const mainSpecDir = join(projectRoot, '.autocode', 'specs', specId);
+      const worktreesDir = join(projectRoot, '.autocode', 'worktrees', 'tasks');
+      const worktreeRoot = join(worktreesDir, specId);
+      const worktreeSpecDir = join(worktreeRoot, '.autocode', 'specs', specId);
+      mkdirSync(mainSpecDir, { recursive: true });
+      mkdirSync(worktreeSpecDir, { recursive: true });
+
+      const planMetadata = {
+        planStatus: 'review',
+        xstateState: 'human_review',
+        source_task: {
+          tasks: 'tasks.md',
+          runtime_ledger_schema: 'autocode-runtime-ledger/v1',
+        },
+        subtaskMetadata: {
+          'wp-1': {
+            work_package: true,
+            upstream_task_ids: ['1.1'],
+            upstream_source: 'tasks.md',
+            depends_on: [],
+            started_at: '2026-07-20T00:00:00.000Z',
+            completed_at: '2026-07-20T00:01:00.000Z',
+            completion_summary: 'Completed by Autocode CLI runner.',
+            notes: 'Completed by Autocode CLI runner.',
+          },
+        },
+      };
+      const runtimePlan = [
+        '# Runtime Execution Ledger',
+        '',
+        'Status: human_review',
+        'Review Reason: completed',
+        'Execution Phase: complete',
+        'Updated: 2026-07-20T00:01:00.000Z',
+        '<!-- autocode-plan-meta: ' + JSON.stringify(planMetadata) + ' -->',
+        '',
+        '- [x] wp. Runtime work packages',
+        '  - [x] wp-1 Work package',
+        '    - _Completion: Completed by Autocode CLI runner._',
+        '    - _Started: 2026-07-20T00:00:00.000Z_',
+        '    - _Completed: 2026-07-20T00:01:00.000Z_',
+        '',
+      ].join('\n');
+      writeFileSync(join(mainSpecDir, 'implementation_plan.md'), runtimePlan, 'utf8');
+      writeFileSync(join(worktreeSpecDir, 'implementation_plan.md'), runtimePlan, 'utf8');
+      writeFileSync(join(worktreeSpecDir, 'tasks.md'), [
+        '# Tasks',
+        '',
+        'Tasks-Contract: 1',
+        'Feature: Hydrated runtime bridge',
+        '',
+        '- [ ] 1. Implementation',
+        '  - [ ] 1.1 Implement runtime bridge',
+        '    - Connect the host runtime to Lua and retain the full source task details.',
+        '    - _Files to modify: src/runtime.ts_',
+        '    - _Depends on: none_',
+        '',
+      ].join('\n'), 'utf8');
+      const completionSummary = [
+        '| Item | Details |',
+        '| --- | --- |',
+        '| What changed | Implemented the runtime bridge. |',
+        '| Verification | npm test passed. |',
+        '| Review notes | Ready for review. |',
+      ].join('\n');
+      writeFileSync(join(worktreeSpecDir, 'task_logs.jsonl'), [
+        JSON.stringify({
+          record_type: 'entry',
+          entry: {
+            timestamp: '2026-07-20T00:00:59.000Z',
+            type: 'text',
+            content: completionSummary,
+            phase: 'coding',
+            subtask_id: 'wp-1',
+          },
+        }),
+        JSON.stringify({
+          record_type: 'entry',
+          entry: {
+            timestamp: '2026-07-20T00:01:00.000Z',
+            type: 'success',
+            content: 'Work item wp-1 completed.',
+            phase: 'coding',
+            subtask_id: 'wp-1',
+            changed_files: ['src/runtime.ts', 'src/runtime.test.ts'],
+          },
+        }),
+      ].join('\n') + '\n', 'utf8');
+
+      const [task] = loadAutocodeProjectTasks({
+        projectRoot,
+        dataDirName: '.autocode',
+        worktreesDir,
+      });
+
+      expect(task.location).toBe('worktree');
+      expect(task.specsPath).toBe(worktreeSpecDir);
+      expect(task.subtasks[0]).toMatchObject({
+        id: 'wp-1',
+        title: 'Implement runtime bridge',
+        status: 'completed',
+        files: ['src/runtime.ts', 'src/runtime.test.ts'],
+        completionSummary,
+      });
+      expect(task.subtasks[0]?.description).toContain(
+        'Connect the host runtime to Lua and retain the full source task details.',
+      );
+      const recoveredWorktreePlan = readFileSync(
+        join(worktreeSpecDir, 'implementation_plan.md'),
+        'utf8',
+      );
+      expect(recoveredWorktreePlan).toContain('Implemented the runtime bridge.');
+      expect(recoveredWorktreePlan).toContain('"changed_files":["src/runtime.ts","src/runtime.test.ts"]');
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('moves stale review tasks with incomplete work packages back to coding', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-project-loader-'));
     try {

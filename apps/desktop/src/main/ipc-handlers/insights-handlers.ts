@@ -12,12 +12,17 @@ import type {
   InsightsSession,
   InsightsSessionSummary,
   InsightsModelConfig,
+  InsightsDocumentAuthorization,
+  InsightsDocumentRequest,
+  InsightsSendMessageAcknowledgement,
+  InsightsTaskCreationRequest,
   ImageAttachment,
   Task,
   TaskMetadata,
 } from "../../shared/types";
 import { projectStore } from "../project-store";
 import { insightsService } from "../insights-service";
+import { insightsDocumentCapabilities } from "../insights/document-capabilities";
 import { safeSendToRenderer } from "./utils";
 import { getActiveProviderFeatureSettings } from "./feature-settings-helper";
 import type { ThinkingLevel } from "../../shared/types/settings";
@@ -72,18 +77,48 @@ export function registerInsightsHandlers(getMainWindow: () => BrowserWindow | nu
     }
   );
 
-  ipcMain.on(
-    IPC_CHANNELS.INSIGHTS_SEND_MESSAGE,
-    async (_, projectId: string, message: string, modelConfig?: InsightsModelConfig, images?: ImageAttachment[]) => {
+  ipcMain.handle(
+    IPC_CHANNELS.INSIGHTS_AUTHORIZE_DOCUMENT,
+    async (
+      event,
+      projectId: string,
+      filePath: string,
+    ): Promise<IPCResult<InsightsDocumentAuthorization>> => {
       const project = projectStore.getProject(projectId);
       if (!project) {
-        safeSendToRenderer(
-          getMainWindow,
-          IPC_CHANNELS.INSIGHTS_ERROR,
+        return { success: false, error: "Project not found" };
+      }
+
+      try {
+        const authorization = insightsDocumentCapabilities.issue(
           projectId,
-          "Project not found"
+          event.sender.id,
+          filePath,
         );
-        return;
+        return { success: true, data: authorization };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : "Could not authorize selected file",
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.INSIGHTS_SEND_MESSAGE,
+    async (
+      event,
+      projectId: string,
+      message: string,
+      modelConfig?: InsightsModelConfig,
+      images?: ImageAttachment[],
+      documents?: InsightsDocumentRequest[],
+      clientMessageId?: string,
+    ): Promise<IPCResult<InsightsSendMessageAcknowledgement>> => {
+      const project = projectStore.getProject(projectId);
+      if (!project) {
+        return { success: false, error: "Project not found" };
       }
 
       // Get feature settings from Agent Settings and merge with provided config
@@ -100,16 +135,24 @@ export function registerInsightsHandlers(getMainWindow: () => BrowserWindow | nu
         thinkingLevel: configWithSettings.thinkingLevel,
       });
 
-      // Await the async sendMessage to ensure proper error handling and
-      // that all async operations (like getProcessEnv) complete before
-      // the handler returns. This fixes race conditions on Windows where
-      // environment setup wouldn't complete before process spawn.
+      // Resolve after main-process validation and user-message persistence.
+      // The executor continues in the background and reports through the
+      // existing stream/status/error events after this acceptance boundary.
       try {
-        await insightsService.sendMessage(projectId, project.path, message, configWithSettings, images);
+        return await insightsService.sendMessage(
+          projectId,
+          project.path,
+          message,
+          configWithSettings,
+          images,
+          documents,
+          event.sender.id,
+          clientMessageId,
+        );
       } catch (error) {
-        // Errors during sendMessage (executor errors) are already emitted via
-        // the 'error' event, but we catch here to prevent unhandled rejection
-        // and ensure all error types are reported to the UI
+        // Catch unexpected validation or persistence failures before the
+        // acceptance acknowledgement. Executor failures occur later and use
+        // the service's existing stream/status/error events.
         console.error("[Insights IPC] Error in sendMessage:", error);
         const errorMessage = error instanceof Error ? error.message : String(error);
         safeSendToRenderer(
@@ -118,6 +161,7 @@ export function registerInsightsHandlers(getMainWindow: () => BrowserWindow | nu
           projectId,
           `Failed to send message: ${errorMessage}`
         );
+        return { success: false, error: `Failed to send message: ${errorMessage}` };
       }
     }
   );
@@ -140,9 +184,7 @@ export function registerInsightsHandlers(getMainWindow: () => BrowserWindow | nu
     async (
       _,
       projectId: string,
-      title: string,
-      description: string,
-      metadata?: TaskMetadata
+      request: InsightsTaskCreationRequest
     ): Promise<IPCResult<Task>> => {
       const project = projectStore.getProject(projectId);
       if (!project) {
@@ -154,20 +196,55 @@ export function registerInsightsHandlers(getMainWindow: () => BrowserWindow | nu
       }
 
       try {
+        if (
+          !request ||
+          typeof request.sessionId !== 'string' ||
+          !request.sessionId ||
+          typeof request.messageId !== 'string' ||
+          !request.messageId ||
+          !Number.isInteger(request.taskIndex) ||
+          request.taskIndex < 0 ||
+          (request.suggestionId !== undefined && typeof request.suggestionId !== 'string')
+        ) {
+          return { success: false, error: 'Invalid insights task suggestion reference' };
+        }
+
+        const suggestion = insightsService.resolveTaskSuggestion(
+          projectId,
+          project.path,
+          request
+        );
+        if (!suggestion) {
+          return { success: false, error: 'Insights task suggestion not found' };
+        }
+        if (suggestion.taskId) {
+          return { success: false, error: 'Task has already been created from this suggestion' };
+        }
+
         const taskMetadata: TaskMetadata = {
-          sourceType: "insights",
-          ...metadata,
+          sourceType: 'insights',
+          ...suggestion.metadata,
         };
 
         const coreTask = createAutocodeTask({
           projectRoot: project.path,
           dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
-          title,
-          description,
+          title: suggestion.title,
+          description: suggestion.description,
           metadata: taskMetadata as unknown as AutocodeTaskMetadata,
         });
         const task = toDesktopTask(coreTask, projectId);
         projectStore.invalidateTasksCache(projectId);
+
+        const updatedSession = insightsService.markTaskSuggestionCreated(
+          projectId,
+          project.path,
+          request,
+          task.id
+        );
+        if (!updatedSession) {
+          throw new Error('Task was created, but its insights status could not be saved');
+        }
 
         return { success: true, data: task };
       } catch (error) {

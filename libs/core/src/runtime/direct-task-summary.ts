@@ -165,55 +165,80 @@ export function isAutocodeNonImplementationDirectContext(
 ): boolean {
   const plan = directSummaryRecordValue(input.plan);
   const metadata = directSummaryRecordValue(input.metadata);
+  const currentRequestText = [
+    input.description,
+    directSummaryStringValue(metadata.task_description),
+    directSummaryStringValue(metadata.description),
+    directSummaryStringValue(metadata.title),
+    directSummaryStringValue(metadata.taskTitle),
+    directSummaryStringValue(metadata.task_title),
+  ].filter(Boolean).join('\n');
+  const planRequestText = [
+    directSummaryStringValue(plan.title),
+    directSummaryStringValue(plan.feature),
+  ].filter(Boolean).join('\n');
+  const requestText = [currentRequestText, planRequestText].filter(Boolean).join('\n');
+  if (hasAutocodeDirectImplementationRequestSignal(currentRequestText)) {
+    return false;
+  }
   const workflowType = directSummaryNormalizedString(plan.workflow_type) ||
     directSummaryNormalizedString(metadata.workflow_type) ||
     directSummaryNormalizedString(metadata.workflowType);
-  if (['documentation', 'investigation', 'analysis', 'research'].includes(workflowType)) {
-    return true;
-  }
-
   const metadataCategory = directSummaryNormalizedString(metadata.category);
   const metadataSource = directSummaryNormalizedString(metadata.sourceType) || directSummaryNormalizedString(metadata.source_type);
   const metadataIdeaType = directSummaryNormalizedString(metadata.ideationType) || directSummaryNormalizedString(metadata.ideation_type);
   const metadataTaskType = directSummaryNormalizedString(metadata.taskType) || directSummaryNormalizedString(metadata.task_type) || directSummaryNormalizedString(metadata.type);
-
-  if (metadataCategory === 'documentation' || metadataSource === 'project_docs') {
-    return true;
-  }
-  if (['documentation_gaps', 'documentation', 'analysis', 'investigation', 'research'].includes(metadataIdeaType)) {
-    return true;
-  }
-  if (['documentation', 'analysis', 'investigation', 'research'].includes(metadataTaskType)) {
-    return true;
-  }
-  if (
+  const hasProjectDocumentationMetadata = (
     directSummaryStringValue(metadata.projectDocumentType) ||
     directSummaryStringValue(metadata.project_document_type) ||
     directSummaryStringValue(metadata.projectDocumentOutputDir) ||
     directSummaryStringValue(metadata.project_document_output_dir) ||
     Array.isArray(metadata.projectDocumentOutputs) ||
     Array.isArray(metadata.project_document_outputs)
-  ) {
-    return true;
-  }
-  if (
+  );
+  const hasProjectDocumentationPlan = (
     directSummaryStringValue(plan.documentation_depth) ||
     directSummaryStringValue(plan.documentation_profile) ||
     Array.isArray(plan.documentation_focus) ||
     Object.keys(directSummaryRecordValue(plan.project_documentation)).length > 0
+  );
+  const hasExplicitNonImplementationClassification =
+    ['documentation', 'investigation', 'analysis', 'research'].includes(workflowType) ||
+    metadataCategory === 'documentation' ||
+    metadataSource === 'project_docs' ||
+    ['documentation_gaps', 'documentation', 'analysis', 'investigation', 'research'].includes(metadataIdeaType) ||
+    ['documentation', 'analysis', 'investigation', 'research'].includes(metadataTaskType) ||
+    Boolean(hasProjectDocumentationMetadata) ||
+    Boolean(hasProjectDocumentationPlan);
+  const hasExistingDesignContract = hasAutocodeExistingDesignContract(plan);
+  const currentNonImplementationRequest = isAutocodeNonImplementationDirectRequestText(
+    currentRequestText,
+  );
+  if (
+    currentNonImplementationRequest &&
+    !(hasExistingDesignContract && isAutocodeAmbiguousReviewOnlyRequestText(currentRequestText))
   ) {
     return true;
   }
+  if (hasExplicitNonImplementationClassification && currentRequestText.trim()) {
+    return true;
+  }
+  if (hasAutocodeDirectImplementationRequestSignal(planRequestText)) {
+    return false;
+  }
+  if (hasExplicitNonImplementationClassification) {
+    return true;
+  }
 
-  const requestText = [
-    input.description,
-    directSummaryStringValue(metadata.task_description),
-    directSummaryStringValue(metadata.description),
-    directSummaryStringValue(metadata.title),
-    directSummaryStringValue(plan.title),
-    directSummaryStringValue(plan.feature),
-  ].filter(Boolean).join('\n');
-  return isAutocodeNonImplementationDirectRequestText(requestText);
+  const nonImplementationRequest = isAutocodeNonImplementationDirectRequestText(requestText);
+  if (
+    nonImplementationRequest &&
+    hasExistingDesignContract &&
+    isAutocodeAmbiguousReviewOnlyRequestText(requestText)
+  ) {
+    return false;
+  }
+  return nonImplementationRequest;
 }
 
 function isAutocodeNonImplementationDirectRequestText(text: string): boolean {
@@ -224,15 +249,46 @@ function isAutocodeNonImplementationDirectRequestText(text: string): boolean {
     return false;
   }
 
+  const classificationText = stripAutocodeDirectNegatedRequestClauses(text);
   const englishPattern = /\b(?:analy[sz]e|analysis|investigate|investigation|research|audit|review|explain|summari[sz]e|summary|report|write[-\s]?up|documentation|docs?|document)\b/iu;
   const chinesePattern = /(?:\u5206\u6790|\u8c03\u67e5|\u8c03\u7814|\u7814\u7a76|\u5ba1\u8ba1|\u590d\u6838|\u89e3\u91ca|\u8bf4\u660e|\u603b\u7ed3|\u62a5\u544a|\u6587\u6863|\u68b3\u7406|\u5b9a\u4f4d\u539f\u56e0|\u539f\u56e0\u5206\u6790|\u4e3a\u4ec0\u4e48|\u4e3a\u5565)/u;
-  return englishPattern.test(text) || chinesePattern.test(text);
+  return englishPattern.test(classificationText) || chinesePattern.test(classificationText);
 }
 
 function hasAutocodeDirectImplementationRequestSignal(text: string): boolean {
-  // Failure/validation nouns alone can describe analysis tasks; require an explicit implementation action.
-  return /\b(?:fix(?:e[sd])?|repair|resolve|implement(?:ed|s|ation|ing)?|coding|code|patch(?:ed|es|ing)?|refactor(?:ed|s|ing)?|bugfix)\b/iu.test(text) ||
-    /(?:\u4fee\u590d|\u5b9e\u73b0|\u7f16\u7801|\u91cd\u6784|\u6539\u4ee3\u7801|\u4ee3\u7801\u4fee\u6539)/u.test(text);
+  // Code/implementation nouns are common in analysis and documentation requests. Only an
+  // affirmative implementation action overrides an explicit non-implementation classification.
+  const actionText = stripAutocodeDirectNegatedRequestClauses(text);
+  return /\b(?:fix(?:es|ed|ing)?|repair(?:s|ed|ing)?|resolve(?:s|d|ing)?|implement(?:s|ing)?|patch(?:es|ed|ing)?|refactor(?:s|ed|ing)?|bugfix)\b/iu.test(actionText) ||
+    /\b(?:must|should|needs?\s+to|has\s+to|required\s+to)\s+(?:be\s+)?implemented\b/iu.test(actionText) ||
+    /\b(?:write|change|modify|edit|update)\s+(?:(?:the|this|that|product|application|source|production)\s+){0,3}(?:code|source files?|implementation)\b/iu.test(actionText) ||
+    /\b(?:code|coding)\s+(?:this|that|the|a|an|it|feature|fix|change|solution|implementation|task)\b/iu.test(actionText) ||
+    /\b(?:write|add|create|build|develop|change|modify|edit|update|rewrite|remove|delete|replace|generate)\s+(?:(?:a|an|the|this|that|new)\s+)?(?:[\p{L}\p{N}_-]+\s+){0,2}(?:feature|functionality|dashboard|generator|upload|component|module|class|method|function|endpoint|api|service|handler|workflow|pipeline|integration|command|cli|ipc|route|schema|migration|site|tests?)\b(?=\s*(?:$|[.,!?:;]|\b(?:in|for|using|with|to|from|under|inside|that|which)\b))/iu.test(actionText) ||
+    /\b(?:change|modify|edit|update|rewrite|remove|delete|replace)\s+(?:(?:the|this|that|a|an)\s+)?[\w.-]+\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|c|cc|cpp|cxx|h|hpp|cs|swift|php|rb|vue|svelte)\b/iu.test(actionText) ||
+    /(?:\u4fee\u590d|\u91cd\u6784|\u6539\u4ee3\u7801|\u4ee3\u7801\u4fee\u6539|(?:\u4fee\u6539|\u66f4\u65b0|\u7f16\u8f91|\u6539\u52a8)(?:\u4ea7\u54c1|\u5e94\u7528|\u9879\u76ee)?(?:\u6e90\u4ee3\u7801|\u6e90\u7801|\u4ee3\u7801|\u7a0b\u5e8f|\u6e90\u6587\u4ef6)|\u7f16\u5199\u4ee3\u7801|\u8fdb\u884c\u7f16\u7801|\u5f00\u59cb\u7f16\u7801|\u7ee7\u7eed\u7f16\u7801|\u7f16\u7801\u5b9e\u73b0|(?:\u6dfb\u52a0|\u65b0\u589e|\u521b\u5efa|\u6784\u5efa|\u5f00\u53d1|\u91cd\u5199|\u5220\u9664|\u79fb\u9664|\u66ff\u6362|\u751f\u6210)[\u4e00-\u9fffA-Za-z0-9_-]{0,12}(?:\u529f\u80fd|\u7ec4\u4ef6|\u6a21\u5757|\u7c7b|\u65b9\u6cd5|\u51fd\u6570|\u63a5\u53e3|\u670d\u52a1|\u5904\u7406\u5668|\u5de5\u4f5c\u6d41|\u6d41\u6c34\u7ebf|\u96c6\u6210|\u547d\u4ee4|\u811a\u672c|CLI|IPC|\u8def\u7531|\u6a21\u5f0f|\u6570\u636e\u5e93|\u67b6\u6784|\u8fc1\u79fb|\u7ad9\u70b9|\u7f51\u7ad9|\u9875\u9762|\u754c\u9762|\u6309\u94ae|\u5b57\u6bb5|\u6d4b\u8bd5|\u751f\u6210\u5668|\u63d2\u4ef6)(?=$|[\s\uff0c\u3002\uff01\uff1f\uff1b\uff1a,!?;:]|\u5e76|\u7136\u540e|\u540c\u65f6|\u5e76\u4e14|\u4ee5\u53ca|\u4ee5\u4fbf|\u7528\u4e8e|\u6765|\u5230|\u5728|\u4e3a)|(?:\u8bf7|\u9700\u8981|\u5fc5\u987b|\u5e94\u5f53|\u7136\u540e|\u5e76|\u540c\u65f6|\u5f00\u59cb|\u7ee7\u7eed)\u5b9e\u73b0(?!\u65b9\u6848(?:\u6587\u6863)?|\u7ec6\u8282|\u539f\u7406|\u5206\u6790|\u8bf4\u660e|\u6587\u6863)|(?:^|[\n\u3002\uff01\uff1f\uff1b;])\s*\u5b9e\u73b0(?!\u65b9\u6848(?:\u6587\u6863)?|\u7ec6\u8282|\u539f\u7406|\u5206\u6790|\u8bf4\u660e|\u6587\u6863))/u.test(actionText);
+}
+
+function stripAutocodeDirectNegatedRequestClauses(text: string): string {
+  return text
+    .replace(
+      /\b(?:do not|don't|does not|doesn't|should not|shouldn't|must not|mustn't|need not|not required to|no need to|without)\b[^\n.!?:;,\uff0c]{0,160}/giu,
+      ' ',
+    )
+    .replace(/(?:\u4e0d\u8981|\u65e0\u9700|\u4e0d\u9700\u8981|\u4e0d\u5f97|\u7981\u6b62)[^\n\u3002\uff01\uff1f\uff1a\uff1b:;,\uff0c]{0,160}/gu, ' ');
+}
+
+function hasAutocodeExistingDesignContract(plan: Record<string, unknown>): boolean {
+  const sourceTask = directSummaryRecordValue(plan.source_task);
+  return Object.keys(directSummaryRecordValue(sourceTask.design_contract)).length > 0 ||
+    Object.keys(directSummaryRecordValue(plan.design_contract)).length > 0;
+}
+
+function isAutocodeAmbiguousReviewOnlyRequestText(text: string): boolean {
+  const classificationText = stripAutocodeDirectNegatedRequestClauses(text);
+  const hasReviewSignal = /\breview\b/iu.test(classificationText) || /\u590d\u6838/u.test(classificationText);
+  const hasOtherNonImplementationSignal = /\b(?:analy[sz]e|analysis|investigate|investigation|research|audit|explain|summari[sz]e|summary|report|write[-\s]?up|documentation|docs?|document)\b/iu.test(classificationText) ||
+    /(?:\u5206\u6790|\u8c03\u67e5|\u8c03\u7814|\u7814\u7a76|\u5ba1\u8ba1|\u89e3\u91ca|\u8bf4\u660e|\u603b\u7ed3|\u62a5\u544a|\u6587\u6863|\u68b3\u7406|\u5b9a\u4f4d\u539f\u56e0|\u539f\u56e0\u5206\u6790|\u4e3a\u4ec0\u4e48|\u4e3a\u5565)/u.test(classificationText);
+  return hasReviewSignal && !hasOtherNonImplementationSignal;
 }
 
 function directSummaryRecordValue(value: unknown): Record<string, unknown> {

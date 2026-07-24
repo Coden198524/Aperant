@@ -42,6 +42,8 @@ export interface SubagentExecutorConfig {
   baseToolContext: ToolContext;
   /** Function to load and assemble a system prompt for a given prompt name */
   loadPrompt: (promptName: string) => Promise<string>;
+  /** Optional deterministic allowlist for orchestration flows with restricted owners. */
+  allowedAgentTypes?: readonly string[];
   /** Abort signal from the parent orchestrator */
   abortSignal?: AbortSignal;
   /** Optional callback for subagent stream events */
@@ -64,6 +66,18 @@ export class SubagentExecutorImpl implements SubagentExecutor {
 
   async spawn(params: SubagentSpawnParams): Promise<SubagentResult> {
     const startTime = Date.now();
+    if (
+      this.config.allowedAgentTypes &&
+      !this.config.allowedAgentTypes.includes(params.agentType)
+    ) {
+      const allowed = this.config.allowedAgentTypes.join(', ');
+      this.config.onSubagentEvent?.(params.agentType, 'blocked');
+      return {
+        error: `Subagent type ${params.agentType} is not allowed in this orchestration flow. Allowed types: ${allowed}.`,
+        stepsExecuted: 0,
+        durationMs: Date.now() - startTime,
+      };
+    }
     const agentType = resolveAutocodeSubagentAgentType(params.agentType);
     const promptName = resolveAutocodeSubagentPromptName(params.agentType);
 

@@ -423,6 +423,22 @@ describe('Grep Tool', () => {
     ).rejects.toThrow('outside the project directory');
   });
 
+  it('does not grant search access through exact-file Read authorization', async () => {
+    vi.mocked(assertPathContained).mockImplementation(() => {
+      throw new Error('outside the project directory');
+    });
+
+    await expect(grepTool.config.execute(
+      { pattern: 'secret', path: '/external' },
+      {
+        ...baseContext,
+        allowedExactFilePaths: ['/external/attachment.md'],
+      },
+    )).rejects.toThrow('outside the project directory');
+
+    expect(assertPathContained).toHaveBeenCalledWith('/external', '/test/project');
+  });
+
   it('should use provided path for search instead of cwd', async () => {
     setupRg('/test/project/sub/a.ts\n', '', 0);
 

@@ -265,6 +265,22 @@ describe('Glob Tool', () => {
     expect(assertPathContained).toHaveBeenCalledWith('/test/project', '/test/project');
   });
 
+  it('does not grant search access through exact-file Read authorization', async () => {
+    vi.mocked(assertPathContained).mockImplementation(() => {
+      throw new Error('outside the project directory');
+    });
+
+    await expect(globTool.config.execute(
+      { pattern: '*.md', path: '/external' },
+      {
+        ...baseContext,
+        allowedExactFilePaths: ['/external/attachment.md'],
+      },
+    )).rejects.toThrow('outside the project directory');
+
+    expect(assertPathContained).toHaveBeenCalledWith('/external', '/test/project');
+  });
+
   it('should pass output through truncateToolOutput', async () => {
     setupGlobMatches(['/test/project/a.ts']);
 

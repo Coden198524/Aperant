@@ -891,6 +891,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
               const description = subtask.description;
               const status = (subtask.status as SubtaskStatus) || 'pending';
               const durationMs = subtask.duration_ms ?? subtask.durationMs;
+              const plannedFiles = [
+                ...(subtask.files_to_create ?? []),
+                ...(subtask.files_to_modify ?? []),
+                ...(subtask.pattern_files ?? []),
+              ];
 
               return {
                 id,
@@ -903,11 +908,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                 ...(subtask.updated_at ? { updatedAt: subtask.updated_at } : {}),
                 ...(typeof durationMs === 'number' ? { durationMs } : {}),
                 status,
-                files: [
-                  ...(subtask.files_to_create ?? []),
-                  ...(subtask.files_to_modify ?? []),
-                  ...(subtask.pattern_files ?? []),
-                ],
+                files: subtask.changed_files && subtask.changed_files.length > 0
+                  ? subtask.changed_files
+                  : plannedFiles,
                 ...(subtask.depends_on && subtask.depends_on.length > 0 ? { dependsOn: subtask.depends_on } : {}),
                 ...(subtask.work_package === true ? { workPackage: true } : {}),
                 ...(subtask.upstream_task_ids && subtask.upstream_task_ids.length > 0 ? { upstreamTaskIds: subtask.upstream_task_ids } : {}),

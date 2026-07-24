@@ -270,6 +270,61 @@ describe('direct task summary helpers', () => {
 
   it('still requires validation for implementation Direct tasks', () => {
     expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'analysis' },
+      description: 'Analyze the failure and fix the implementation in worker.ts.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'documentation' },
+      description: '修复文档生成器中的源码错误并更新测试。',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'analysis' },
+      description: 'Review the current implementation, then code the fix.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'analysis', taskTitle: 'Add a report dashboard' },
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { category: 'documentation' },
+      description: 'Create a documentation generator for API modules.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'research' },
+      description: 'Build document upload integration.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'analysis' },
+      description: 'Do not only analyze; fix the bug in worker.ts.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'analysis' },
+      description: 'Do not only analyze, fix the bug in worker.ts.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'analysis' },
+      description: 'Analyze the current behavior. The worker fix must be implemented before release.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'documentation' },
+      description: '不要只写分析；然后修复代码。',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'analysis' },
+      description: '不要只分析，修复代码。',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'analysis' },
+      description: '分析现状，然后修改产品源码。',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'documentation' },
+      description: '创建 API 文档生成器并补充测试。',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'analysis' },
+      description: 'Review the failure, then modify worker.ts and update tests.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
       metadata: { developmentMode: 'direct', workflowMode: 'off' },
       description: 'Fix the Direct retry bug in worker.ts and update tests.',
     })).toBe(true);
@@ -282,6 +337,82 @@ describe('direct task summary helpers', () => {
     })).toBe(true);
     expect(shouldRequireAutocodeDirectValidation({
       plan: { workflow_type: 'direct', title: 'Fix Direct retry state handling' },
+    })).toBe(true);
+  });
+
+  it('does not treat implementation nouns or negated source edits as implementation work', () => {
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { category: 'documentation' },
+      description: 'Document the current code and implementation. Do not modify product source code.',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'analysis' },
+      description: 'Analyze the implementation and explain why code validation failed.',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'documentation' },
+      description: '为后续编码上下文生成文档，不要修改产品源码。',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'documentation' },
+      description: 'Generate API documentation and create class documentation.',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'analysis' },
+      description: 'Analyze the current behavior. The requested change is implemented according to the task description.',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'documentation' },
+      description: '生成实现方案文档并总结实现细节。',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      metadata: { taskType: 'documentation' },
+      description: '生成 API 接口文档和单元测试报告，不要修改源码。',
+    })).toBe(false);
+  });
+
+  it('keeps an ambiguous review on an existing implementation plan bound to its design contract', () => {
+    const existingPlan = {
+      workflow_type: 'feature',
+      source_task: { design_contract: { version: 5, fingerprint: 'existing' } },
+    };
+
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: existingPlan,
+      description: 'Review the completed implementation; no coding remains.',
+    })).toBe(true);
+    expect(shouldRequireAutocodeDirectValidation({
+      description: 'Review the current architecture; no coding is requested.',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: existingPlan,
+      description: 'Analyze the completed implementation and write a findings report.',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: existingPlan,
+      metadata: { taskType: 'analysis' },
+      description: 'Review the completed implementation; no coding remains.',
+    })).toBe(false);
+  });
+
+  it('lets a current non-implementation request supersede stale implementation plan wording', () => {
+    const stalePlan = {
+      feature: 'Implement the legacy dashboard',
+      workflow_type: 'feature',
+      source_task: { design_contract: { version: 5, fingerprint: 'stale' } },
+    };
+
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: stalePlan,
+      metadata: { taskType: 'documentation' },
+      description: 'Generate the current project handbook from repository evidence.',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: stalePlan,
+      description: 'Analyze the current runtime logs and write a findings report.',
+    })).toBe(false);
+    expect(shouldRequireAutocodeDirectValidation({
+      plan: { workflow_type: 'analysis', feature: 'Implement the new dashboard' },
     })).toBe(true);
   });
   it('fails the Direct quality gate for failed validation or self-critique', () => {

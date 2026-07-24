@@ -7,6 +7,7 @@ import {
   AUTOCODE_TASK_ARTIFACTS,
   loadAutocodeImplementationPlan,
   loadAutocodeTaskRequirementsSync,
+  saveAutocodeImplementationPlan,
   saveAutocodeTaskRequirementsSync,
   stringifyAutocodeContextMarkdown,
   stringifyAutocodeTaskDefinitionsMarkdown,
@@ -221,10 +222,11 @@ async function writeValidStandardArtifacts(
 async function writeValidRequirementsArtifact(
   specDir: string,
   taskDescription = 'Refactor local task execution flow',
+  workflowType = 'refactor',
 ): Promise<void> {
   saveAutocodeTaskRequirementsSync(specDir, {
     task_description: taskDescription,
-    workflow_type: 'refactor',
+    workflow_type: workflowType,
     services_involved: [],
     user_requirements: [taskDescription],
     acceptance_criteria: ['Existing behavior remains intact'],
@@ -317,7 +319,8 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/spec.md');
     expect(prompt).not.toContain('Use the Write tool to create E:/Work/Project/.autocode/specs/001-task/tasks.md');
     expect(prompt).toContain('Use the Write tool to create');
-    expect(prompt).toContain('20-60 line');
+    expect(prompt).toContain('without imposing a line or character limit');
+    expect(prompt).not.toContain('20-60 line');
     expect(prompt).not.toContain('\\');
   });
 
@@ -1166,6 +1169,115 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(phases).not.toContain('validation');
       expect(runSession).toHaveBeenCalledTimes(9);
       expect(validationReport).toContain('Status: PASSED');
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('runs analysis and documentation planning without Design-Contract phases or stale design binding', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const phases: SpecPhase[] = [];
+    const designExemptions: Array<boolean | undefined> = [];
+    const taskDescription = 'Analyze task logs and generate a Markdown findings report without modifying source code.';
+    const runSession = vi.fn(async (config: SpecSessionRunConfig) => {
+      phases.push(config.specPhase);
+      designExemptions.push(config.designContractExempt);
+
+      if (config.specPhase === 'requirements') {
+        await writeValidRequirementsArtifact(specDir, taskDescription, 'analysis');
+      } else if (config.specPhase === 'spec_writing') {
+        await writeValidSpecArtifact(specDir);
+      } else if (config.specPhase === 'planning') {
+        await writeFile(
+          join(specDir, AUTOCODE_TASK_ARTIFACTS.tasks),
+          stringifyAutocodeTaskDefinitionsMarkdown({
+            feature: 'Task log findings report',
+            workflow_type: 'analysis',
+            phases: [{
+              id: '1',
+              name: 'Analysis and documentation',
+              subtasks: [{
+                id: '1.1',
+                title: 'Analyze the task logs and write the findings report',
+                description: [
+                  'Analyze the supplied task-log evidence and document the root cause.',
+                  'Done when: findings.md contains the evidence-backed conclusion and verification notes.',
+                ].join('\n'),
+                status: 'pending',
+                requirements: ['R1', 'AC1', 'SCN-1'],
+                evidence: 'E1; requirements.md R1; spec.md SCN-1',
+                files_to_create: ['findings.md'],
+                verification: {
+                  type: 'manual',
+                  scenario: 'Open findings.md and verify that each conclusion cites task-log evidence.',
+                },
+              }],
+            }],
+          }),
+          'utf-8',
+        );
+      }
+
+      return makeCompletedSpecSessionResult();
+    });
+
+    try {
+      // Simulate a reused directory containing an unrelated package from an older implementation plan.
+      await writeValidDesignArtifacts(specDir);
+
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription,
+        complexityOverride: 'standard',
+        workflowConfig: { optimizationLevel: 'balanced' },
+        generatePrompt: vi.fn(async () => 'Run non-implementation Standard planning.'),
+        runSession,
+      });
+
+      const classificationContext = await (orchestrator as unknown as {
+        readDesignContractClassificationContext: () => Promise<{
+          description: string;
+          plan: Record<string, unknown> | null;
+          metadata: Record<string, unknown> | null;
+        }>;
+      }).readDesignContractClassificationContext();
+      expect(classificationContext).toEqual({
+        description: taskDescription,
+        plan: null,
+        metadata: null,
+      });
+
+      const result = await orchestrator.run();
+      expect(result.success, JSON.stringify(result)).toBe(true);
+      const plan = await loadAutocodeImplementationPlan(specDir);
+      const planText = await readFile(join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan), 'utf-8');
+
+      expect(result.phasesExecuted).toEqual([
+        'requirements',
+        'spec_writing',
+        'planning',
+        'validation',
+      ]);
+      expect(phases).toEqual(['requirements', 'spec_writing', 'planning']);
+      expect(designExemptions).toEqual([true, true, true]);
+      expect(phases).not.toContain('design');
+      expect((plan as unknown as Record<string, unknown>).design_contract).toBeUndefined();
+      expect(planText).not.toContain('design_contract');
+      expect(planText).not.toContain('Design-Contract: 5');
+
+      const staleRuntimePlan = JSON.parse(JSON.stringify(plan)) as Record<string, unknown>;
+      staleRuntimePlan.source_task = {
+        ...((staleRuntimePlan.source_task as Record<string, unknown> | undefined) ?? {}),
+        design_contract: { version: 5, fingerprint: 'stale-package' },
+      };
+      await saveAutocodeImplementationPlan(specDir, staleRuntimePlan as never);
+      const checkpointErrors = await (orchestrator as unknown as {
+        validateSavedPhaseCheckpoint: (phase: SpecPhase) => Promise<string[]>;
+      }).validateSavedPhaseCheckpoint('planning');
+      expect(checkpointErrors).toContain(
+        'implementation_plan.md still binds a Design-Contract package for a non-implementation task.',
+      );
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }

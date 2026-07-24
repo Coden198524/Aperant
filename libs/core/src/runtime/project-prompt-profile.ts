@@ -203,7 +203,7 @@ Write rules:
 - If an error shows JSON ending after \`"file_path"\`, the \`"content"\` key was omitted or the tool-call JSON was truncated; retry with shorter content.
 - For larger markdown files, write a focused complete version instead of copying large context blocks.
 - For an existing \`spec.md\`, prefer Edit for targeted corrections instead of rewriting the whole file with Write.
-- For a missing \`spec.md\`, write a compact 20-60 line version first instead of a long document.
+- For a missing \`spec.md\`, write a focused complete version without imposing a line or character limit.
 - For existing files, prefer Edit when only a small section changes.
 `;
 }

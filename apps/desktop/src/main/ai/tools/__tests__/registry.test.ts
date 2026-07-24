@@ -85,6 +85,8 @@ describe('AGENT_CONFIGS (registry)', () => {
     for (const tool of [...BASE_READ_TOOLS, ...BASE_WRITE_TOOLS, ...WEB_TOOLS]) {
       expect(coderConfig.tools).toContain(tool);
     }
+
+    expect(AGENT_CONFIGS.insights.tools).toEqual([...BASE_READ_TOOLS]);
   });
 });
 
@@ -145,6 +147,10 @@ describe('ToolRegistry', () => {
         ...WEB_TOOLS,
       ]),
     );
+
+    // Insights consumes untrusted referenced documents and must stay read-only.
+    const insightsTools = registry.getToolsForAgent('insights', context);
+    expect(Object.keys(insightsTools)).toEqual([...BASE_READ_TOOLS]);
   });
 
   it('should bind tools with the provided context', () => {

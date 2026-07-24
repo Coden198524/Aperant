@@ -294,6 +294,8 @@ export interface SpecPromptContext {
   attemptCount: number;
   /** Schema validation error feedback for retry (built by buildValidationRetryPrompt) */
   schemaRetryContext?: string;
+  /** Non-implementation planning omits the Design-Contract: 5 package. */
+  designContractExempt?: boolean;
 }
 
 /** Configuration passed to runSession callback */
@@ -313,6 +315,8 @@ export interface SpecSessionRunConfig {
   priorPhaseOutputs?: Record<string, string>;
   /** Generated project documentation reference text for kickoff enrichment. */
   projectDocsReference?: string;
+  /** Non-implementation planning omits the Design-Contract: 5 package. */
+  designContractExempt?: boolean;
   /** Optional Zod schema for structured output (uses AI SDK Output.object()) */
   outputSchema?: ZodSchema;
 }
@@ -567,9 +571,9 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
           'Check 5W1H8C use cases, FUN deduplication, SSD coverage, noun/attribute/relation analysis, domain-to-software mapping, SOLID, diagrams, LANG constraints, SYS allocation, exact IMP mapping, engineering fit, NOP, and every PAT-* decision.',
           'For reverse or mixed analysis, verify REV-* paths against exact source symbols and contradiction checks.',
         ]
-      : phase === 'spec_writing' || phase === 'self_critique'
+    : phase === 'spec_writing' || phase === 'self_critique'
     ? [
-        'For spec.md, write a compact 20-60 line version first.',
+        'For spec.md, write a focused complete version without imposing a line or character limit.',
         'Do not copy large context blocks, full source files, long code blocks, or large tables into spec.md.',
       ]
       : phase === 'discovery' || phase === 'context'
@@ -1249,6 +1253,8 @@ function selectSpecPhases(
   taskDescription: string | undefined,
   projectDocsReference: string | undefined,
   workflowConfig: WorkflowConfig,
+  plan?: Record<string, unknown> | null,
+  metadata?: Record<string, unknown> | null,
 ): SpecPhase[] {
   return selectAutocodeSpecPhases({
     complexity,
@@ -1256,6 +1262,8 @@ function selectSpecPhases(
     taskDescription,
     projectDocsReference,
     workflowConfig,
+    plan,
+    metadata,
   }) as SpecPhase[];
 }
 
@@ -1308,6 +1316,7 @@ export class SpecOrchestrator extends EventEmitter {
   private assessment: ComplexityAssessment | null = null;
   private phaseSummaries: Record<string, string> = {};
   private completedPhases: SpecPhase[] = [];
+  private designContractExempt = false;
 
   constructor(config: SpecOrchestratorConfig) {
     super();
@@ -1467,7 +1476,17 @@ export class SpecOrchestrator extends EventEmitter {
             : [`File not found or unreadable: ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}`];
         }
 
+        const planRecord = parsed.data as unknown as Record<string, unknown>;
+        const sourceTask = isRecord(planRecord.source_task) ? planRecord.source_task : null;
+        const staleDesignContract = this.designContractExempt &&
+          sourceTask &&
+          isRecord(sourceTask.design_contract) &&
+          Object.keys(sourceTask.design_contract).length > 0;
+
         return [
+          ...(staleDesignContract
+            ? ['implementation_plan.md still binds a Design-Contract package for a non-implementation task.']
+            : []),
           ...(!hasExecutableSubtasks(parsed.data as MinimalImplementationPlan)
             ? ['Implementation plan has no executable subtasks.']
             : []),
@@ -1634,13 +1653,17 @@ export class SpecOrchestrator extends EventEmitter {
       // ===================================================================
       // Step 2: Determine and run phases based on assessed complexity
       // ===================================================================
+      const classificationContext = await this.readDesignContractClassificationContext();
       const phasesToRun = selectSpecPhases(
         complexity,
         this.assessment,
-        this.config.taskDescription,
+        classificationContext.description,
         this.config.projectDocsReference,
         this.config.workflowConfig!,
+        classificationContext.plan,
+        classificationContext.metadata,
       );
+      this.designContractExempt = !phasesToRun.includes('design');
 
       await this.reconcileCompletedPhases(phasesToRun);
       for (const phase of this.completedPhases) {
@@ -1965,6 +1988,7 @@ export class SpecOrchestrator extends EventEmitter {
         projectDocsReference: this.config.projectDocsReference,
         priorPhaseOutputs: phaseOutputs,
         attemptCount: attempt,
+        designContractExempt: this.designContractExempt,
         // Carry both schema and tool-use retry context (at most one is set at a time)
         schemaRetryContext: schemaRetryContext ?? toolUseRetryContext,
       });
@@ -1996,6 +2020,7 @@ export class SpecOrchestrator extends EventEmitter {
         cliThinking: this.config.cliThinking,
         priorPhaseOutputs: phaseOutputs,
         projectDocsReference: this.config.projectDocsReference,
+        designContractExempt: this.designContractExempt,
         ...(outputSchema ? { outputSchema } : {}),
       });
 
@@ -2148,10 +2173,22 @@ export class SpecOrchestrator extends EventEmitter {
               ? buildAutocodeDesignQualityRetryPrompt(schemaValidation.errors)
               : isPlanningPhase
               ? isQualityFailure
-                ? buildAutocodePlanQualityRetryPrompt(schemaValidation.errors)
+                ? this.designContractExempt
+                  ? buildPlanStructuredOutputValidationRetryPrompt(
+                      phase,
+                      schemaValidation.errors,
+                      schemaHint,
+                    )
+                  : buildAutocodePlanQualityRetryPrompt(schemaValidation.errors)
                 : buildPlanStructuredOutputValidationRetryPrompt(phase, schemaValidation.errors, schemaHint)
               : isQualityFailure
-                ? buildAutocodePlanQualityRetryPrompt(schemaValidation.errors)
+                ? this.designContractExempt
+                  ? buildValidationRetryPrompt(
+                      PHASE_OUTPUTS[phase]?.[0] ?? 'output file',
+                      schemaValidation.errors,
+                      schemaHint,
+                    )
+                  : buildAutocodePlanQualityRetryPrompt(schemaValidation.errors)
                 : buildValidationRetryPrompt(
                   PHASE_OUTPUTS[phase]?.[0] ?? 'output file',
                   schemaValidation.errors,
@@ -2492,13 +2529,13 @@ export class SpecOrchestrator extends EventEmitter {
       implementationPlanMarkdown: phase === 'planning' && includeRuntimeLedger
         ? implementationPlanMarkdown
         : undefined,
-      ...(phase === 'planning' ? designPackage : {}),
+      ...(phase === 'planning' && !this.designContractExempt ? designPackage : {}),
       language: this.config.language,
       requireContextEvidence: validatesContextArtifact,
       requireRequirementsEvidence: phase === 'requirements' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning',
       requireSpecEvidence: phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning',
       requireTaskEvidence: phase === 'planning',
-      requireDesign: phase === 'planning',
+      requireDesign: phase === 'planning' && !this.designContractExempt,
     });
     return result.valid
       ? { valid: true, errors: [] }
@@ -2541,9 +2578,11 @@ export class SpecOrchestrator extends EventEmitter {
 
   private async deriveRuntimePlanFromTasks(forceSingleWorkPackage = false): Promise<void> {
     const tasksMarkdown = await readFile(join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks), 'utf-8');
-    const designPackage = await this.readDesignPackageArtifacts();
-    const { designMarkdown } = designPackage;
-    if (!designMarkdown) {
+    const designPackage = this.designContractExempt
+      ? null
+      : await this.readDesignPackageArtifacts();
+    const designMarkdown = designPackage?.designMarkdown ?? null;
+    if (!designMarkdown && !this.designContractExempt) {
       throw new Error(AUTOCODE_TASK_ARTIFACTS.design + ' is missing.');
     }
     const plan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(tasksMarkdown, {
@@ -2551,12 +2590,16 @@ export class SpecOrchestrator extends EventEmitter {
       language: this.config.language,
       sourcePath: AUTOCODE_TASK_ARTIFACTS.tasks,
       requireTaskEvidence: true,
-      designMarkdown,
-      requirementModelMarkdown: designPackage.requirementModelMarkdown ?? undefined,
-      domainModelMarkdown: designPackage.domainModelMarkdown ?? undefined,
-      designModelMarkdown: designPackage.designModelMarkdown ?? undefined,
-      implementationModelMarkdown: designPackage.implementationModelMarkdown ?? undefined,
-      designPath: AUTOCODE_TASK_ARTIFACTS.design,
+      ...(!this.designContractExempt
+        ? {
+            designMarkdown: designMarkdown ?? undefined,
+            requirementModelMarkdown: designPackage?.requirementModelMarkdown ?? undefined,
+            domainModelMarkdown: designPackage?.domainModelMarkdown ?? undefined,
+            designModelMarkdown: designPackage?.designModelMarkdown ?? undefined,
+            implementationModelMarkdown: designPackage?.implementationModelMarkdown ?? undefined,
+            designPath: AUTOCODE_TASK_ARTIFACTS.design,
+          }
+        : {}),
       forceSingleWorkPackage,
     });
     await saveAutocodeImplementationPlan(this.config.specDir, plan);
@@ -2648,6 +2691,45 @@ export class SpecOrchestrator extends EventEmitter {
   // ===========================================================================
   // Helpers
   // ===========================================================================
+
+  private async readDesignContractClassificationContext(): Promise<{
+    description: string;
+    plan: Record<string, unknown> | null;
+    metadata: Record<string, unknown> | null;
+  }> {
+    const [metadataText, requirementsText, humanInputText, changeRequestsText, loadedPlan] = await Promise.all([
+      this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.taskMetadata),
+      this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.requirements),
+      this.readOptionalArtifact('HUMAN_INPUT.md'),
+      this.readOptionalArtifact('change_requests.jsonl'),
+      loadImplementationPlanFromFiles(this.config.specDir).catch(() => null),
+    ]);
+    let metadata: Record<string, unknown> | null = null;
+    if (metadataText) {
+      try {
+        const parsed = JSON.parse(metadataText) as unknown;
+        metadata = isRecord(parsed) ? parsed : null;
+      } catch {
+        metadata = null;
+      }
+    }
+    const latestChangeRequest = changeRequestsText
+      ?.replace(/\r\n/g, '\n')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1);
+    return {
+      description: [
+        this.config.taskDescription,
+        requirementsText,
+        humanInputText,
+        latestChangeRequest,
+      ].filter((value): value is string => Boolean(value)).join('\n'),
+      plan: isRecord(loadedPlan) ? loadedPlan : null,
+      metadata,
+    };
+  }
 
   private getAgentForPhase(phase: SpecPhase): AgentType {
     const profile = this.config.agentProfile ?? GENERAL_AGENT_PROFILE;

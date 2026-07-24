@@ -41,6 +41,8 @@ interface UseImageUploadOptions {
   images: ImageAttachment[];
   /** Callback when images change */
   onImagesChange: (images: ImageAttachment[]) => void;
+  /** Invalidates pending asynchronous image work when the owning scope changes. */
+  scopeKey?: string;
   /** Whether the form is disabled (e.g., during submission) */
   disabled?: boolean;
   /** Callback to set error message */
@@ -64,6 +66,8 @@ interface UseImageUploadReturn {
   handleDragLeave: (e: DragEvent<HTMLTextAreaElement>) => void;
   /** Handle drop event on textarea */
   handleDrop: (e: DragEvent<HTMLTextAreaElement>) => Promise<void>;
+  /** Process an already-classified list of supported image files. */
+  processFiles: (files: File[]) => Promise<void>;
   /** Remove an image by ID */
   removeImage: (imageId: string) => void;
   /** Whether more images can be added */
@@ -84,6 +88,7 @@ const DEFAULT_ERROR_MESSAGES: Required<ImageUploadErrorMessages> = {
 export function useImageUpload({
   images,
   onImagesChange,
+  scopeKey = '',
   disabled = false,
   onError,
   errorMessages = {},
@@ -92,6 +97,13 @@ export function useImageUpload({
   const [isDragOver, setIsDragOver] = useState(false);
   const [pasteSuccess, setPasteSuccess] = useState(false);
   const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
+  const scopeGenerationRef = useRef(0);
+  const activeScopeRef = useRef(scopeKey);
+  if (activeScopeRef.current !== scopeKey) {
+    activeScopeRef.current = scopeKey;
+    scopeGenerationRef.current += 1;
+  }
 
   // Merge custom error messages with defaults (memoized to prevent useCallback invalidation)
   const errors = useMemo<Required<ImageUploadErrorMessages>>(() => ({
@@ -101,12 +113,25 @@ export function useImageUpload({
 
   // Cleanup timeout on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
+      scopeGenerationRef.current += 1;
       if (successTimeoutRef.current) {
         clearTimeout(successTimeoutRef.current);
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (activeScopeRef.current !== scopeKey) return;
+    setIsDragOver(false);
+    setPasteSuccess(false);
+    if (successTimeoutRef.current) {
+      clearTimeout(successTimeoutRef.current);
+      successTimeoutRef.current = null;
+    }
+  }, [scopeKey]);
 
   const remainingSlots = MAX_IMAGES_PER_TASK - images.length;
   const canAddMore = remainingSlots > 0;
@@ -120,6 +145,7 @@ export function useImageUpload({
       options: { isFromPaste?: boolean } = {}
     ) => {
       if (disabled) return;
+      const scopeGeneration = scopeGenerationRef.current;
 
       if (remainingSlots <= 0) {
         onError?.(errors.maxImagesReached);
@@ -159,7 +185,9 @@ export function useImageUpload({
 
         try {
           const dataUrl = await blobToBase64(file);
+          if (!mountedRef.current || scopeGeneration !== scopeGenerationRef.current) return;
           const thumbnail = await createThumbnail(dataUrl);
+          if (!mountedRef.current || scopeGeneration !== scopeGenerationRef.current) return;
 
           // Generate filename based on source
           let baseFilename: string;
@@ -184,11 +212,13 @@ export function useImageUpload({
             thumbnail
           });
         } catch (error) {
+          if (!mountedRef.current || scopeGeneration !== scopeGenerationRef.current) return;
           console.error('Image processing error:', error);
           onError?.(options.isFromPaste ? errors.processPasteFailed : errors.processDropFailed);
         }
       }
 
+      if (!mountedRef.current || scopeGeneration !== scopeGenerationRef.current) return;
       if (newImages.length > 0) {
         onImagesChange([...images, ...newImages]);
         // Show success feedback (clear any existing timeout first)
@@ -200,6 +230,14 @@ export function useImageUpload({
       }
     },
     [images, onImagesChange, disabled, remainingSlots, onError, errors]
+  );
+
+  const processFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      await processImageItems(files, { isFromPaste: false });
+    },
+    [processImageItems]
   );
 
   /**
@@ -335,9 +373,9 @@ export function useImageUpload({
       e.preventDefault();
       e.stopPropagation();
 
-      await processImageItems(imageFiles, { isFromPaste: false });
+      await processFiles(imageFiles);
     },
-    [disabled, processImageItems, parseFileReferenceData, onFileReferenceDrop]
+    [disabled, processFiles, parseFileReferenceData, onFileReferenceDrop]
   );
 
   /**
@@ -357,6 +395,7 @@ export function useImageUpload({
     handleDragOver,
     handleDragLeave,
     handleDrop,
+    processFiles,
     removeImage,
     canAddMore,
     remainingSlots

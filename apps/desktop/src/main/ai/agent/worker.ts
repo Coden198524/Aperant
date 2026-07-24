@@ -22,6 +22,7 @@ import {
   buildAutocodeProjectDocsReferencePrompt,
   buildAutocodeDirectTaskExecutionMessages,
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  loadAutocodeTaskRequirementsSync,
   resolveAutocodeDirectSessionState,
   resolveAutocodeTaskRuntimeConcurrency,
   saveAutocodeDirectSessionState,
@@ -53,6 +54,7 @@ import {
   extractAutocodeDirectTaskDescription,
   getAutocodeDirectQualityGateFailureReason,
   inferAutocodeDirectValidationEvidence,
+  isAutocodeNonImplementationDirectContext,
   isAutocodeSuccessfulDirectOutcome,
   shouldRequireAutocodeDirectValidation,
   shouldTrackAutocodeDirectModifiedFile,
@@ -130,6 +132,13 @@ import {
 } from './direct-retry';
 import { resolveProjectAgentProfile } from '../config/project-agent-profile';
 import { extractSpecTaskDescriptionFromInitialMessages } from './task-description';
+import {
+  appendWorkerDesignContractExemptExecutionOverride,
+  appendWorkerDesignContractExemptPlannerOverride,
+  resolveWorkerDesignContractExemption,
+  resolveWorkerEffectiveDesignContractExemption,
+} from './worker-design-contract';
+import { appendWorkerDesignContractExemptOrchestrationOverride } from './worker-orchestration-design-contract';
 import { WorkerObserverProxy } from '../memory/ipc/worker-observer-proxy';
 import { isMemoryEligibleForPromptContext } from '../memory/retrieval/context-packer';
 import { createRecordMemoryTool, createSearchMemoryTool } from '../memory/tools';
@@ -849,6 +858,8 @@ function getProjectPromptProfile(session: SerializableSessionConfig): ProjectPro
 async function assemblePrompt(
   promptName: string,
   session: SerializableSessionConfig,
+  designContractExempt?: boolean,
+  phase?: string,
 ): Promise<string> {
   const useCompactAggressiveCoderPrompt = promptName === 'coder' && isAggressiveWorkflow(session);
   const useProviderDirectContinuationPrompt = promptName === 'direct_task' && session.directProviderContinuation === true;
@@ -920,6 +931,17 @@ async function assemblePrompt(
       promptWithLanguage += `\n\n${buildPlanReviewIterationDirective(session)}`;
     }
   }
+  promptWithLanguage = appendWorkerDesignContractExemptPlannerOverride(
+    promptWithLanguage,
+    promptName,
+    designContractExempt,
+  );
+  promptWithLanguage = appendWorkerDesignContractExemptOrchestrationOverride(
+    promptWithLanguage,
+    promptName,
+    designContractExempt,
+    phase,
+  );
   if (promptName === 'coder' && isAggressiveWorkflow(session)) {
     promptWithLanguage += [
       '',
@@ -934,7 +956,11 @@ async function assemblePrompt(
     ].join('\n');
   }
 
-  return appendSearchDiscipline(promptWithLanguage);
+  return appendWorkerDesignContractExemptExecutionOverride(
+    appendSearchDiscipline(promptWithLanguage),
+    promptName,
+    designContractExempt,
+  );
 }
 
 // =============================================================================
@@ -1312,6 +1338,93 @@ function loadDirectContextMetadata(specDir: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function resolveSessionDesignContractExemption(
+  session: SerializableSessionConfig,
+  activeTaskDescription?: string,
+): boolean {
+  const specDirs = Array.from(new Set([
+    session.specDir,
+    session.sourceSpecDir,
+  ].filter((value): value is string => Boolean(value))));
+  const plan = firstNonEmptyRecord(specDirs.map(loadDirectContextPlan));
+  const metadata = firstNonEmptyRecord(specDirs.map(loadDirectContextMetadata));
+  const requirements = specDirs
+    .map((specDir) => loadAutocodeTaskRequirementsSync(specDir))
+    .find((value): value is Record<string, unknown> => Boolean(value)) ?? null;
+  const humanInput = readFirstWorkerSpecText(specDirs, 'HUMAN_INPUT.md');
+  const latestChangeRequest = readLatestWorkerChangeRequest(specDirs);
+
+  if (activeTaskDescription?.trim()) {
+    const requirementsWorkflowType = typeof requirements?.workflow_type === 'string'
+      ? requirements.workflow_type
+      : undefined;
+    const requirementsTaskDescription = typeof requirements?.task_description === 'string'
+      ? requirements.task_description
+      : undefined;
+    const requirementsUserRequirements = Array.isArray(requirements?.user_requirements)
+      ? requirements.user_requirements.filter((value): value is string => typeof value === 'string')
+      : [];
+    return isAutocodeNonImplementationDirectContext({
+      plan: {
+        ...(plan ?? {}),
+        ...(requirementsWorkflowType ? { workflow_type: requirementsWorkflowType } : {}),
+      },
+      metadata,
+      description: [
+        activeTaskDescription,
+        requirementsTaskDescription,
+        ...requirementsUserRequirements,
+        humanInput,
+        latestChangeRequest,
+      ].filter((value): value is string => Boolean(value?.trim())).join('\n'),
+    });
+  }
+
+  return resolveWorkerDesignContractExemption({
+    plan,
+    metadata,
+    requirements,
+    humanInput,
+    latestChangeRequest,
+  });
+}
+
+function firstNonEmptyRecord(
+  values: Record<string, unknown>[],
+): Record<string, unknown> | null {
+  return values.find((value) => Object.keys(value).length > 0) ?? null;
+}
+
+function readFirstWorkerSpecText(
+  specDirs: string[],
+  fileName: string,
+): string | null {
+  for (const specDir of specDirs) {
+    try {
+      const content = readFileSync(join(specDir, fileName), 'utf-8').trim();
+      if (content) {
+        return content;
+      }
+    } catch {
+      // Try the source spec directory when the worktree copy is unavailable.
+    }
+  }
+  return null;
+}
+
+function readLatestWorkerChangeRequest(specDirs: string[]): string | null {
+  const content = readFirstWorkerSpecText(specDirs, 'change_requests.jsonl');
+  if (!content) {
+    return null;
+  }
+  return content
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1) ?? null;
 }
 
 function asDirectContextRecord(value: unknown): Record<string, unknown> {
@@ -1948,6 +2061,7 @@ async function runBuildOrchestrator(
   const workflowConfig = getWorkflowConfigFromMode(session.workflowMode);
   const agentProfile = resolveProjectAgentProfile(session.projectType);
   const qualityConfig = buildSessionQualityConfig(session, workflowConfig);
+  const fallbackDesignContractExempt = resolveSessionDesignContractExemption(session);
 
   const orchestrator = new BuildOrchestrator({
     specDir: session.specDir,
@@ -1968,11 +2082,20 @@ async function runBuildOrchestrator(
     qualityConfig,
     agentProfile,
 
-    generatePrompt: async (agentType, _phase, context) => {
+    generatePrompt: async (agentType, phase, context) => {
       const promptName = context.designStage
         ? specPhaseToPromptName(context.designStage)
         : resolvePromptNameForAgent(agentType);
-      let prompt = await assemblePrompt(promptName, session);
+      const designContractExempt = resolveWorkerEffectiveDesignContractExemption(
+        context.requireDesignContract,
+        fallbackDesignContractExempt,
+      );
+      let prompt = await assemblePrompt(
+        promptName,
+        session,
+        designContractExempt,
+        phase,
+      );
 
       // Inject schema validation error feedback on retry so the planner knows what to fix
       if (context.planningRetryContext) {
@@ -1984,6 +2107,10 @@ async function runBuildOrchestrator(
 
     runSession: async (runConfig) => {
       postLog(`Running ${runConfig.agentType} session (phase=${runConfig.phase}, session=${runConfig.sessionNumber})`);
+      const designContractExempt = resolveWorkerEffectiveDesignContractExemption(
+        runConfig.requireDesignContract,
+        fallbackDesignContractExempt,
+      );
       // Build a kickoff message for the agent so it has a task to act on
       const kickoffMessage = buildKickoffMessage(
         runConfig.agentType,
@@ -1992,7 +2119,8 @@ async function runBuildOrchestrator(
         runConfig.subtaskId,
         session.language,
         session.forcePlanning === true && runConfig.phase === 'planning',
-        runConfig.specPhase,
+        runConfig.specPhase ?? (runConfig.phase === 'planning' ? 'planning' : undefined),
+        designContractExempt,
       );
       return runSingleSession(
         runConfig.agentType,
@@ -2201,6 +2329,7 @@ async function runQALoop(
   registry: ToolRegistry,
 ): Promise<void> {
   postLog('Starting QA validation loop');
+  const designContractExempt = resolveSessionDesignContractExemption(session);
 
   const qaLoop = new QALoop({
     specDir: session.specDir,
@@ -2210,7 +2339,11 @@ async function runQALoop(
     agentProfile: resolveProjectAgentProfile(session.projectType),
 
     generatePrompt: async (agentType, _context) => {
-      return assemblePrompt(resolvePromptNameForAgent(agentType), session);
+      return assemblePrompt(
+        resolvePromptNameForAgent(agentType),
+        session,
+        designContractExempt,
+      );
     },
 
     runSession: async (runConfig) => {
@@ -2221,6 +2354,9 @@ async function runQALoop(
         runConfig.projectDir,
         undefined,
         session.language,
+        undefined,
+        undefined,
+        designContractExempt,
       );
       return runSingleSession(
         runConfig.agentType,
@@ -2329,7 +2465,12 @@ async function runSpecOrchestrator(
       const promptName = session.projectType === 'game-mmo'
         ? resolvePromptNameForAgent(_agentType)
         : specPhaseToPromptName(phase);
-      let prompt = await assemblePrompt(promptName, session);
+      let prompt = await assemblePrompt(
+        promptName,
+        session,
+        context.designContractExempt,
+        phase,
+      );
 
       // Inject schema validation error feedback on retry so the agent knows what to fix
       if (context.schemaRetryContext) {
@@ -2350,6 +2491,7 @@ async function runSpecOrchestrator(
         runConfig.projectDocsReference,
         runConfig.specPhase,
         session.language,
+        runConfig.designContractExempt,
       );
       // Spec agents can only write to the spec directory
       const specToolContext: ToolContext = {
@@ -2459,8 +2601,15 @@ async function runAgenticSpecOrchestrator(
   registry: ToolRegistry,
 ): Promise<void> {
   const taskDescription = extractSpecTaskDescriptionFromInitialMessages(session.initialMessages);
+  const designContractExempt = resolveSessionDesignContractExemption(
+    session,
+    taskDescription,
+  );
 
   postLog('Starting Agentic SpecOrchestrator (AI-driven pipeline via SpawnSubagent)');
+  if (designContractExempt) {
+    postLog('Non-implementation task detected: agentic pipeline limited to requirements, specification, and tasks');
+  }
 
   const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
     projectRoot: session.projectDir,
@@ -2482,7 +2631,14 @@ async function runAgenticSpecOrchestrator(
       ...toolContext,
       allowedWritePaths: getSpecWritePaths(session),
     },
-    loadPrompt: async (promptName: string) => assemblePrompt(promptName, session),
+    loadPrompt: async (promptName: string) => assemblePrompt(
+      promptName,
+      session,
+      designContractExempt,
+    ),
+    allowedAgentTypes: designContractExempt
+      ? ['spec_gatherer', 'spec_writer', 'planner']
+      : undefined,
     abortSignal: abortController.signal,
     onSubagentEvent: (agentType: string, event: string) => {
       postLog(`Subagent ${agentType}: ${event}`);
@@ -2497,7 +2653,11 @@ async function runAgenticSpecOrchestrator(
   };
 
   // Load the agentic orchestrator prompt
-  const systemPrompt = await assemblePrompt('spec_orchestrator_agentic', session);
+  const systemPrompt = await assemblePrompt(
+    'spec_orchestrator_agentic',
+    session,
+    designContractExempt,
+  );
 
   // Build the kickoff message through the shared helper so context budgets stay consistent.
   const kickoffMessage = buildAutocodeAgenticSpecOrchestratorKickoffMessage({
@@ -2505,6 +2665,7 @@ async function runAgenticSpecOrchestrator(
     specDir: session.specDir,
     projectDir: session.projectDir,
     projectDocsReference,
+    designContractExempt,
   });
 
   // Resolve context window and tools
@@ -2605,6 +2766,7 @@ function buildSpecKickoffMessage(
   projectDocsReference?: string,
   specPhase?: string,
   language?: SerializableSessionConfig['language'],
+  designContractExempt?: boolean,
 ): string {
   return buildAutocodeSpecKickoffMessage({
     agentType,
@@ -2615,6 +2777,7 @@ function buildSpecKickoffMessage(
     projectDocsReference,
     specPhase,
     language,
+    designContractExempt,
   });
 }
 
@@ -2630,6 +2793,7 @@ function buildKickoffMessage(
   language?: SerializableSessionConfig['language'],
   forcePlanning?: boolean,
   specPhase?: string,
+  designContractExempt?: boolean,
 ): string {
   const promptSpecDir = formatPathForPrompt(specDir);
   const promptProjectDir = formatPathForPrompt(projectDir);
@@ -2641,6 +2805,7 @@ function buildKickoffMessage(
     specPhase,
     language,
     forcePlanning,
+    designContractExempt,
     focusedCoderKickoff: subtaskId
       ? buildFocusedCoderKickoffMessage(promptSpecDir, promptProjectDir, subtaskId)
       : undefined,

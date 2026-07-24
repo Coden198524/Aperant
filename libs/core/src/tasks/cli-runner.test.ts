@@ -6,6 +6,7 @@ import { delimiter, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DIRECT_CHANGE_REQUEST_LIMIT } from '../runtime/agent-messages.js';
+import { createAutocodeProjectDocumentationTask } from '../project/project-docs.js';
 import {
   AUTOCODE_CLI_TASK_DESCRIPTION_MAX_CHARS,
   createAutocodeTaskRunPlan as createAutocodeTaskRunPlanBase,
@@ -110,6 +111,33 @@ function writeValidStandardDesignArtifacts(specDir: string): void {
   writeFileSync(join(specDir, 'design_model.md'), VALID_STANDARD_DESIGN_MODEL, 'utf8');
   writeFileSync(join(specDir, 'implementation_model.md'), VALID_STANDARD_IMPLEMENTATION_MODEL, 'utf8');
   writeFileSync(join(specDir, 'design_review.md'), VALID_STANDARD_DESIGN_REVIEW, 'utf8');
+}
+
+function writeNonImplementationPlanningCli(input: {
+  cliPath: string;
+  specDir: string;
+  callsPath: string;
+  requirements?: string;
+  spec?: string;
+  tasks: string;
+}): void {
+  writeFileSync(input.cliPath, [
+    "const { appendFileSync, writeFileSync } = require('node:fs');",
+    "const { join } = require('node:path');",
+    `const specDir = ${JSON.stringify(input.specDir)};`,
+    `const callsPath = ${JSON.stringify(input.callsPath)};`,
+    `const output = ${JSON.stringify({ requirements: input.requirements, spec: input.spec, tasks: input.tasks })};`,
+    "let prompt = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+    "process.stdin.on('end', () => {",
+    "  const stage = prompt.includes('## STANDARD REQUIREMENTS STAGE ONLY') ? 'requirements' : prompt.includes('# Standard Observable Specification Stage') ? 'spec' : prompt.includes('# Standard Task Planning Stage') ? 'tasks' : 'unknown';",
+    "  appendFileSync(callsPath, JSON.stringify({ stage, prompt }) + '\\n', 'utf8');",
+    "  const file = stage === 'requirements' ? 'requirements.md' : stage === 'spec' ? 'spec.md' : stage === 'tasks' ? 'tasks.md' : '';",
+    "  if (!file || typeof output[stage] !== 'string') { process.exitCode = 2; return; }",
+    "  writeFileSync(join(specDir, file), output[stage], 'utf8');",
+    '});',
+  ].join('\n'), 'utf8');
 }
 
 function createAutocodeTaskRunPlan(
@@ -598,6 +626,145 @@ describe('Autocode CLI runner prompt', () => {
 
     expect(directPlan.prompt).toContain('direct_summary.md');
   });
+
+  it('allows seeded project documentation plans to enter coding without a design contract', () => {
+    const documentationTask = createAutocodeProjectDocumentationTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-project-docs',
+      documentType: 'full',
+      now: '2026-07-23T05:32:46.174Z',
+    });
+    const fakeCliPath = join(projectRoot, 'project-docs-runner.cjs');
+    writeFileSync(fakeCliPath, [
+      'process.stdin.resume();',
+      'process.stdin.on(\'end\', () => {',
+      '  process.stdout.write(\'Documentation generated. Verification passed.\');',
+      '});',
+    ].join('\n'), 'utf8');
+
+    const runPlan = createAutocodeTaskRunPlanBase({
+      projectRoot,
+      dataDirName,
+      taskId: documentationTask.task.id,
+      cli: 'custom',
+      customCommand: `node ${fakeCliPath.replaceAll(String.fromCharCode(92), '/')}`,
+      phase: 'coding',
+    });
+    const planText = readFileSync(
+      join(documentationTask.task.specsPath, 'implementation_plan.md'),
+      'utf8',
+    );
+    expect(planText).not.toContain('design_contract');
+
+    execFileSync(process.execPath, [runPlan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const logs = readFileSync(
+      join(documentationTask.task.specsPath, 'task_logs.jsonl'),
+      'utf8',
+    );
+    expect(logs).not.toContain('has no Design-Contract: 5 package fingerprint');
+    expect(logs).toContain('Work item 1.1 completed.');
+  });
+
+  it('allows analysis workflows to enter coding without a design contract', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-analysis-task',
+      title: 'Analyze runtime logs',
+      description: 'Analyze runtime logs and generate a findings report.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '001-analysis-task' });
+    writeFileSync(join(specDir, 'implementation_plan.md'), [
+      '# Implementation Plan',
+      'Feature: Analyze runtime logs',
+      'Workflow: investigation',
+      'Status: coding',
+      'Execution Phase: coding',
+      `<!-- autocode-plan-meta: ${JSON.stringify({ source_task: { kind: 'analysis-task' } })} -->`,
+      '',
+      '- [ ] 1. Analysis',
+      '  - [ ] 1.1 Analyze logs and write the findings report',
+      '',
+    ].join('\n'), 'utf8');
+    const fakeCliPath = join(projectRoot, 'analysis-runner.cjs');
+    writeFileSync(fakeCliPath, [
+      'process.stdin.resume();',
+      'process.stdin.on(\'end\', () => {',
+      '  process.stdout.write(\'Analysis completed. Report generated.\');',
+      '});',
+    ].join('\n'), 'utf8');
+
+    const runPlan = createAutocodeTaskRunPlanBase({
+      projectRoot,
+      dataDirName,
+      taskId: '001-analysis-task',
+      cli: 'custom',
+      customCommand: `node ${fakeCliPath.replaceAll(String.fromCharCode(92), '/')}`,
+      phase: 'coding',
+    });
+    execFileSync(process.execPath, [runPlan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+    const logs = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
+    expect(logs).not.toContain('has no Design-Contract: 5 package fingerprint');
+    expect(logs).toContain('Work item 1.1 completed.');
+  });
+
+  it('still blocks analysis-labelled coding plans that request implementation', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-analysis-fix-task',
+      title: 'Analyze and fix runtime logs',
+      description: 'Analyze the failure, then fix worker.ts and update tests.',
+      metadata: { developmentMode: 'standard', taskType: 'analysis' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '001-analysis-fix-task' });
+    writeFileSync(join(specDir, 'implementation_plan.md'), [
+      '# Implementation Plan',
+      'Feature: Analyze and fix runtime logs',
+      'Workflow: analysis',
+      'Status: coding',
+      'Execution Phase: coding',
+      '<!-- autocode-plan-meta: ' + JSON.stringify({ source_task: { kind: 'implementation-task' } }) + ' -->',
+      '',
+      '- [ ] 1. Implementation',
+      '  - [ ] 1.1 Fix worker.ts and update tests',
+      '',
+    ].join('\n'), 'utf8');
+    const fakeCliPath = join(projectRoot, 'analysis-fix-runner.cjs');
+    writeFileSync(fakeCliPath, 'process.stdout.write(\'should not run\');\n', 'utf8');
+
+    const runPlan = createAutocodeTaskRunPlanBase({
+      projectRoot,
+      dataDirName,
+      taskId: '001-analysis-fix-task',
+      cli: 'custom',
+      customCommand: 'node ' + fakeCliPath.replaceAll(String.fromCharCode(92), '/'),
+      phase: 'coding',
+    });
+
+    expect(() => execFileSync(process.execPath, [runPlan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    })).toThrow();
+    const logs = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
+    expect(logs).toContain('has no Design-Contract: 5 package fingerprint');
+  });
+
   it('uses the staged artifact ownership contract for new planning tasks', () => {
     createAutocodeTask({
       projectRoot,
@@ -623,6 +790,381 @@ describe('Autocode CLI runner prompt', () => {
     expect(plan.prompt).toContain('Write only the artifact named by the active owner stage');
     expect(plan.prompt).not.toContain('## Human Input');
     expect(plan.prompt).not.toContain('needs_revision');
+  });
+
+  it('skips Design-Contract 5 owner stages for new analysis planning workflows', () => {
+    const taskId = '001-analysis-planning';
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: taskId,
+      title: 'Analyze runtime failures',
+      description: 'Analyze runtime logs and generate a reader-first findings report.',
+      metadata: { developmentMode: 'standard', taskType: 'analysis' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: taskId });
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      'Requirements-Contract: 1',
+      '',
+      '## Workflow Type',
+      'investigation',
+      '',
+      '## User Requirements',
+      '- R1: Explain the observed runtime failure using traceable evidence.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: The report states the cause, evidence, and limitations.',
+      '',
+      '## Evidence Sources',
+      '- E1: User-provided runtime logs and repository documentation.',
+      '',
+    ].join('\n');
+    const specMarkdown = [
+      '# Specification: Analyze runtime failures',
+      '',
+      'Specification-Contract: 1',
+      '',
+      '### SCN-001 Produce traceable findings',
+      'Covers: R1, AC1',
+      'Evidence: E1',
+      '- Given: runtime logs and repository documentation are available.',
+      '- When: the evidence is analyzed.',
+      '- Then: the report explains the cause, evidence, and limitations.',
+      '',
+    ].join('\n');
+    const tasksMarkdown = [
+      '# Tasks',
+      '',
+      'Tasks-Contract: 1',
+      '',
+      'Feature: Analyze runtime failures',
+      'Workflow: investigation',
+      '',
+      '- [ ] 1. Analysis report',
+      '  - [ ] 1.1 Analyze evidence and write the findings report',
+      '    - Correlate the logs with repository documentation and record supported conclusions.',
+      '    - _Files to create: docs/runtime-findings.md_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1, SCN-001_',
+      '    - _Evidence: E1; requirements.md E1; spec.md SCN-001_',
+      '    - _Done when: docs/runtime-findings.md states the cause, evidence, and limitations_',
+      '    - _Verification: Get-Content docs/runtime-findings.md and inspect its conclusion and evidence_',
+      '',
+    ].join('\n');
+    const callsPath = join(projectRoot, 'analysis-planning-calls.jsonl');
+    const fakeCliPath = join(projectRoot, 'analysis-planner.cjs');
+    writeNonImplementationPlanningCli({
+      cliPath: fakeCliPath,
+      specDir,
+      callsPath,
+      requirements: requirementsMarkdown,
+      spec: specMarkdown,
+      tasks: tasksMarkdown,
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+    });
+    const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+
+    const calls = readFileSync(callsPath, 'utf8').trim().split(/\r?\n/).map((line) => (
+      JSON.parse(line) as { stage: string; prompt: string }
+    ));
+    expect(calls.map((call) => call.stage)).toEqual(['requirements', 'spec', 'tasks']);
+    expect(calls.every((call) => !call.prompt.includes('Design-Contract: 5'))).toBe(true);
+    for (const fileName of [
+      'requirement_model.md',
+      'domain_model.md',
+      'design.md',
+      'design_model.md',
+      'implementation_model.md',
+      'design_review.md',
+    ]) {
+      expect(existsSync(join(specDir, fileName))).toBe(false);
+    }
+    const runtimePlan = loadAutocodeImplementationPlanSync(specDir);
+    expect(runtimePlan?.source_task).not.toHaveProperty('design_contract');
+    expect(runtimePlan?.phases?.[0]?.subtasks?.[0]?.title).toContain('Analyze evidence');
+    expect(stdout).toContain('PLANNING_COMPLETE');
+  });
+
+  it('keeps a new review-and-findings workflow exempt without a prior design contract', () => {
+    const taskId = '001-review-findings-planning';
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: taskId,
+      title: 'Review the current architecture',
+      description: 'Review the current architecture and write findings for maintainers.',
+      metadata: { developmentMode: 'standard' },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'codex',
+      phase: 'planning',
+    });
+
+    expect(plan.prompt).toContain('This is a non-implementation workflow.');
+    expect(readFileSync(plan.runnerFilePath, 'utf8'))
+      .toContain('const requiresStandardDesignContract = false;');
+  });
+
+  it('resumes force planning for documentation at tasks without rewriting stale design files', () => {
+    const taskId = '001-documentation-planning-resume';
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: taskId,
+      title: 'Refresh project handbook',
+      description: 'Refresh the approved project handbook from existing sources.',
+      metadata: { developmentMode: 'standard' },
+      requirements: { workflow_type: 'documentation' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: taskId });
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      'Requirements-Contract: 1',
+      '',
+      '## Workflow Type',
+      'documentation',
+      '',
+      '## User Requirements',
+      '- R1: Produce an evidence-backed project handbook for maintainers.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: The handbook presents the main workflow before supporting detail.',
+      '',
+      '## Evidence Sources',
+      '- E1: Existing repository source and project documentation.',
+      '',
+    ].join('\n');
+    const specMarkdown = [
+      '# Specification: Refresh project handbook',
+      '',
+      'Specification-Contract: 1',
+      '',
+      '### SCN-001 Read the project handbook',
+      'Covers: R1, AC1',
+      'Evidence: E1',
+      '- Given: a maintainer opens the generated handbook.',
+      '- When: the maintainer follows the main workflow.',
+      '- Then: evidence and limitations remain traceable.',
+      '',
+    ].join('\n');
+    const tasksMarkdown = [
+      '# Tasks',
+      '',
+      'Tasks-Contract: 1',
+      '',
+      'Feature: Refresh project handbook',
+      'Workflow: documentation',
+      '',
+      '- [ ] 1. Project handbook',
+      '  - [ ] 1.1 Generate the reader-first project handbook',
+      '    - Summarize the main workflow, supporting evidence, and known limitations.',
+      '    - _Files to create: docs/project-handbook.md_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1, SCN-001_',
+      '    - _Evidence: E1; requirements.md E1; spec.md SCN-001_',
+      '    - _Done when: docs/project-handbook.md leads with the main workflow and cites evidence_',
+      '    - _Verification: Get-Content docs/project-handbook.md and inspect its workflow and evidence headings_',
+      '',
+    ].join('\n');
+    writeFileSync(join(specDir, 'requirements.md'), requirementsMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'spec.md'), specMarkdown, 'utf8');
+    const staleDesignArtifacts = [
+      ['requirement_model.md', '# stale requirement model\ninvalid old model\n'],
+      ['domain_model.md', '# stale domain model\ninvalid old model\n'],
+      ['design.md', '# stale design\nDesign-Contract: 4\n'],
+      ['design_model.md', '# stale design model\ninvalid old model\n'],
+      ['implementation_model.md', '# stale implementation model\ninvalid old model\n'],
+      ['design_review.md', 'Status: REVISE\nstale review\n'],
+    ] as const;
+    for (const [fileName, content] of staleDesignArtifacts) {
+      writeFileSync(join(specDir, fileName), content, 'utf8');
+    }
+    writeFileSync(join(specDir, 'implementation_plan.md'), [
+      '# Implementation Plan',
+      'Feature: Implement the stale application workflow',
+      'Workflow: feature',
+      'Status: pending',
+      'Execution Phase: planning',
+      `<!-- autocode-plan-meta: ${JSON.stringify({
+        source_task: {
+          design_contract: {
+            version: 5,
+            path: 'design.md',
+            paths: [
+              'design.md',
+              'requirement_model.md',
+              'domain_model.md',
+              'design_model.md',
+              'implementation_model.md',
+            ],
+            fingerprint: 'stale-design-package',
+          },
+        },
+      })} -->`,
+      '',
+    ].join('\n'), 'utf8');
+    writeFileSync(join(specDir, 'planning-transaction.json'), JSON.stringify({
+      version: 1,
+      id: 'documentation-resume-transaction',
+      phase: 'planning',
+      status: 'repair_required',
+      stage: 'implementation_model_validated',
+      checkpoint: 'implementation_model_validated',
+      createdAt: '2026-07-22T00:00:00.000Z',
+      updatedAt: '2026-07-22T00:01:00.000Z',
+      baselineArtifactHashes: {},
+      artifactHashes: {},
+    }, null, 2), 'utf8');
+    const callsPath = join(projectRoot, 'documentation-resume-calls.jsonl');
+    const fakeCliPath = join(projectRoot, 'documentation-resume-planner.cjs');
+    writeNonImplementationPlanningCli({
+      cliPath: fakeCliPath,
+      specDir,
+      callsPath,
+      tasks: tasksMarkdown,
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+      forcePlanning: true,
+    });
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 20_000,
+    });
+
+    const calls = readFileSync(callsPath, 'utf8').trim().split(/\r?\n/).map((line) => (
+      JSON.parse(line) as { stage: string; prompt: string }
+    ));
+    expect(calls.map((call) => call.stage)).toEqual(['tasks']);
+    expect(calls[0].prompt).toContain('It does not use a Design-Contract package.');
+    expect(calls[0].prompt).not.toContain('Design-Contract: 5');
+    for (const [fileName, content] of staleDesignArtifacts) {
+      expect(readFileSync(join(specDir, fileName), 'utf8')).toBe(content);
+    }
+    expect(loadAutocodeImplementationPlanSync(specDir)?.source_task)
+      .not.toHaveProperty('design_contract');
+    expect(JSON.parse(readFileSync(join(specDir, 'planning-transaction.json'), 'utf8')))
+      .toMatchObject({
+        id: 'documentation-resume-transaction',
+        ownerStages: ['tasks'],
+        status: 'completed',
+        checkpoint: 'committed',
+      });
+  });
+
+  it('keeps Design-Contract 5 when an analysis-labelled task explicitly requests implementation', () => {
+    const taskId = '001-analysis-implementation-planning';
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: taskId,
+      title: 'Analyze and fix the runtime worker',
+      description: 'Analyze the failure, then fix worker.ts and update its tests.',
+      metadata: { developmentMode: 'standard', taskType: 'analysis' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: taskId });
+    writeFileSync(join(specDir, 'requirements.md'), [
+      '# Requirements',
+      '',
+      'Requirements-Contract: 1',
+      '',
+      '## User Requirements',
+      '- R1: Repair the runtime worker failure.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: Updated tests prove the worker handles the failure.',
+      '',
+      '## Evidence Sources',
+      '- E1: Runtime failure log and src/worker.ts.',
+      '',
+    ].join('\n'), 'utf8');
+    writeFileSync(join(specDir, 'spec.md'), [
+      '# Specification: Repair the runtime worker',
+      '',
+      'Specification-Contract: 1',
+      '',
+      '### SCN-001 Handle the failing worker input',
+      'Covers: R1, AC1',
+      'Evidence: E1',
+      '- Given: the failing worker input is received.',
+      '- When: the worker processes the input.',
+      '- Then: the worker completes without the observed failure.',
+      '',
+    ].join('\n'), 'utf8');
+    const capturedPromptPath = join(projectRoot, 'analysis-implementation-owner-prompt.txt');
+    const fakeCliPath = join(projectRoot, 'capture-analysis-implementation-owner.cjs');
+    writeFileSync(fakeCliPath, [
+      "const { writeFileSync } = require('node:fs');",
+      "let prompt = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+      "process.stdin.on('end', () => {",
+      `  writeFileSync(${JSON.stringify(capturedPromptPath)}, prompt, 'utf8');`,
+      '  process.exitCode = 9;',
+      '});',
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+      forcePlanning: true,
+    });
+    expect(plan.prompt).toContain('requirement_model.md owns RM/FUN/SSD');
+    expect(plan.prompt).not.toContain('This is a non-implementation workflow.');
+    expect(() => execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    })).toThrow();
+
+    const capturedPrompt = readFileSync(capturedPromptPath, 'utf8');
+    expect(capturedPrompt).toContain('# Standard Requirement Model Stage');
+    expect(capturedPrompt).toContain('Design-Contract: 5');
+    expect(JSON.parse(readFileSync(join(specDir, 'planning-transaction.json'), 'utf8')))
+      .toMatchObject({
+        ownerStages: [
+          'requirement_model',
+          'domain_model',
+          'design',
+          'design_model',
+          'implementation_model',
+          'design_review',
+          'tasks',
+        ],
+      });
   });
 
   it('includes review input while retaining the staged artifact ownership contract', () => {
@@ -896,6 +1438,7 @@ describe('Autocode CLI runner prompt', () => {
     // revision rounds and re-planning popups.
     expect(runner).toContain('Bias toward Status: PASSED');
     expect(runner).toContain('Do not REVISE for style, wording, verbosity');
+    expect(runner).toContain('Use unresolved - only as the leading provenance of an Evidence clause');
     // A REVISE must feed the reviewer's actual findings into the revision stage so it fixes
     // the cited defects instead of blindly regenerating the same design.
     expect(runner).toContain('The independent design review returned Status: REVISE. Resolve every blocking finding below');
@@ -921,6 +1464,7 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('Option A (recommended):');
     expect(runner).toContain('[/\\brequirement_model\\.md\\b/i');
     expect(runner).toContain('[/\\bdesign\\.md\\b/i');
+    expect(runner).toContain("if (/Source Reconstruction/i.test(text)) return 'design_model';");
     expect(runner).toContain('buildAutocodeDesignQualityRetryPrompt(errors)');
     expect(runner).toContain('standardDesignMachineContractPrompt');
     expect(runner).toContain('- DOM Concept kind: entity|value-object|aggregate|domain-service|policy|event|role|resource|technical|other');
@@ -1777,6 +2321,8 @@ describe('Autocode CLI runner prompt', () => {
       phase: 'planning',
       forcePlanning: true,
     });
+    expect(plan.prompt).toContain('requirement_model.md owns RM/FUN/SSD');
+    expect(plan.prompt).not.toContain('This is a non-implementation workflow.');
 
     const stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
       cwd: projectRoot,

@@ -13,7 +13,7 @@ Write `spec.md` as the observable behavior contract for the current Standard tas
 
 ## Quality Rules
 
-- Normal specifications are 30-100 lines; complex specifications stay under 150 lines.
+- `spec.md` has no hard line or character limit. Keep scenarios focused and avoid duplication, but preserve every necessary observable behavior, edge case, compatibility rule, and verification path.
 - Own only observable scope, scenarios, inputs/outputs, state changes, errors, edges, compatibility, and verification behavior.
 - Use stable `SCN-*` IDs and preserve unaffected IDs during Request Changes.
 - Every scenario has `Covers: R*, AC*` and `Evidence: E*` references.

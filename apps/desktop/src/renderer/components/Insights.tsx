@@ -47,11 +47,18 @@ import {
   loadInsightsSessions
 } from '../stores/insights-store';
 import { useImageUpload } from './task-form/useImageUpload';
-import { createThumbnail, generateImageId } from './ImageUpload';
+import { createThumbnail, formatFileSize, generateImageId } from './ImageUpload';
+import { useInsightsDocumentReferences } from './insights/useInsightsDocumentReferences';
+import { partitionInsightsDroppedFiles } from './insights/attachment-classification';
 import { loadTasks } from '../stores/task-store';
 import { ChatHistorySidebar } from './ChatHistorySidebar';
 import { InsightsModelSelector } from './InsightsModelSelector';
-import type { InsightsChatMessage, InsightsModelConfig, TaskMetadata, ImageAttachment } from '../../shared/types';
+import type {
+  InsightsChatMessage,
+  InsightsModelConfig,
+  InsightsSuggestedTask,
+  ImageAttachment,
+} from '../../shared/types';
 import {
   TASK_CATEGORY_COLORS,
   TASK_COMPLEXITY_COLORS,
@@ -59,6 +66,7 @@ import {
   MAX_IMAGES_PER_TASK
 } from '../../shared/constants';
 import { getTaskCategoryLabel, getTaskComplexityLabel } from '../lib/i18n-labels';
+import { parseFileReferenceDrop } from '../../shared/utils/shell-escape';
 
 const INSIGHTS_MARKDOWN_CLASS = [
   'prose prose-sm dark:prose-invert max-w-none',
@@ -130,29 +138,36 @@ export function Insights({ projectId }: InsightsProps) {
   const [isUserAtBottom, setIsUserAtBottom] = useState(true);
   const [viewportEl, setViewportEl] = useState<HTMLElement | null>(null);
   const [screenshotOpen, setScreenshotOpen] = useState(false);
-  const [imageError, setImageError] = useState<string | null>(null);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [isAttachmentDragOver, setIsAttachmentDragOver] = useState(false);
 
   const pendingImages = useInsightsStore((state) => state.pendingImages);
   const setPendingImages = useInsightsStore((state) => state.setPendingImages);
+  const pendingDocuments = useInsightsStore((state) => state.pendingDocuments);
+  const setPendingDocuments = useInsightsStore((state) => state.setPendingDocuments);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const documentInputRef = useRef<HTMLInputElement | null>(null);
+  const chatAreaRef = useRef<HTMLDivElement | null>(null);
+  const attachmentScope = `${projectId}\0${session?.id ?? 'no-session'}`;
+  const attachmentScopeRef = useRef(attachmentScope);
+  attachmentScopeRef.current = attachmentScope;
+  const previousAttachmentScopeRef = useRef(attachmentScope);
 
   const isLoading = status.phase === 'thinking' || status.phase === 'streaming';
 
   // Image upload hook
   const {
-    isDragOver,
     handlePaste,
-    handleDragOver,
-    handleDragLeave,
-    handleDrop,
+    processFiles: processImageFiles,
     removeImage,
-    canAddMore
+    canAddMore: canAddMoreImages,
   } = useImageUpload({
     images: pendingImages,
     onImagesChange: setPendingImages,
+    scopeKey: attachmentScope,
     disabled: isLoading,
-    onError: setImageError,
+    onError: setAttachmentError,
     errorMessages: {
       maxImagesReached: t('insights.images.maxImagesReached'),
       invalidImageType: t('insights.images.invalidType'),
@@ -160,6 +175,107 @@ export function Insights({ projectId }: InsightsProps) {
       processDropFailed: t('insights.images.processFailed')
     }
   });
+
+  const {
+    processFiles: processDocumentFiles,
+    addReferences: addDocumentReferences,
+    removeReference: removeDocument,
+    canAddMore: canAddMoreDocuments,
+    isProcessing: isAuthorizingDocuments,
+  } = useInsightsDocumentReferences({
+    projectId,
+    scopeKey: session?.id ?? 'no-session',
+    references: pendingDocuments,
+    onReferencesChange: setPendingDocuments,
+    disabled: isLoading,
+    onError: setAttachmentError,
+    errorMessages: {
+      maxReferencesReached: t('insights.documents.maxReferencesReached'),
+      pathUnavailable: t('insights.documents.pathUnavailable'),
+      directoryUnsupported: t('insights.documents.directoryUnsupported'),
+    },
+  });
+
+  const isInputDisabled = isLoading || isAuthorizingDocuments;
+
+  const handleAttachmentDragOver = useCallback((event: DragEvent) => {
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer) return;
+    const types = Array.from(dataTransfer.types);
+    if (!types.includes('Files') && !types.includes('application/json')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (isInputDisabled) return;
+    dataTransfer.dropEffect = 'copy';
+    setIsAttachmentDragOver(true);
+  }, [isInputDisabled]);
+
+  const handleAttachmentDragLeave = useCallback((event: DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (
+      event.relatedTarget instanceof Node &&
+      event.currentTarget instanceof Node &&
+      event.currentTarget.contains(event.relatedTarget)
+    ) {
+      return;
+    }
+    setIsAttachmentDragOver(false);
+  }, []);
+
+  const handleAttachmentDrop = useCallback(async (event: DragEvent) => {
+    setIsAttachmentDragOver(false);
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer) return;
+    const types = Array.from(dataTransfer.types);
+    if (!types.includes('Files') && !types.includes('application/json')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (isInputDisabled) return;
+
+    const internalReference = parseFileReferenceDrop(dataTransfer);
+    if (internalReference) {
+      addDocumentReferences([{
+        path: internalReference.path,
+        filename: internalReference.name,
+        isDirectory: internalReference.isDirectory,
+      }]);
+      return;
+    }
+
+    const files = Array.from(dataTransfer.files);
+    if (files.length === 0) return;
+
+    const { documentFiles, imageFiles } = partitionInsightsDroppedFiles(files);
+    await Promise.all([
+      processDocumentFiles(documentFiles),
+      processImageFiles(imageFiles),
+    ]);
+  }, [addDocumentReferences, isInputDisabled, processDocumentFiles, processImageFiles]);
+
+  useEffect(() => {
+    const chatArea = chatAreaRef.current;
+    if (!chatArea) return;
+
+    chatArea.addEventListener('dragover', handleAttachmentDragOver);
+    chatArea.addEventListener('dragleave', handleAttachmentDragLeave);
+    chatArea.addEventListener('drop', handleAttachmentDrop);
+    return () => {
+      chatArea.removeEventListener('dragover', handleAttachmentDragOver);
+      chatArea.removeEventListener('dragleave', handleAttachmentDragLeave);
+      chatArea.removeEventListener('drop', handleAttachmentDrop);
+    };
+  }, [handleAttachmentDragLeave, handleAttachmentDragOver, handleAttachmentDrop]);
+
+  const handleDocumentInputChange = useCallback((
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const files = event.target.files;
+    if (files?.length) {
+      void processDocumentFiles(files);
+    }
+    event.target.value = '';
+  }, [processDocumentFiles]);
 
   // Scroll threshold in pixels - user is considered "at bottom" if within this distance
   const SCROLL_BOTTOM_THRESHOLD = 100;
@@ -220,29 +336,46 @@ export function Insights({ projectId }: InsightsProps) {
     textareaRef.current?.focus();
   }, []);
 
-  // Reset task creation state when switching sessions
-  // biome-ignore lint/correctness/useExhaustiveDependencies: session?.id is intentionally used as a trigger
+  // Reset session-scoped UI state when the active session actually changes.
   useEffect(() => {
+    const attachmentScopeChanged = previousAttachmentScopeRef.current !== attachmentScope;
+    previousAttachmentScopeRef.current = attachmentScope;
+    if (attachmentScopeChanged) {
+      // Pending documents are cleared by useInsightsDocumentReferences via scopeKey.
+      setPendingImages([]);
+    }
     setTaskCreated(new Set());
     setCreatingTask(new Set());
-  }, [session?.id]);
+    setAttachmentError(null);
+    setIsAttachmentDragOver(false);
+  }, [attachmentScope, setPendingImages]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
+    const draftAtSend = inputValue;
     const message = inputValue.trim();
     const hasImages = pendingImages.length > 0;
-    if ((!message && !hasImages) || isLoading) return;
+    const hasDocuments = pendingDocuments.length > 0;
+    if ((!message && !hasImages && !hasDocuments) || isInputDisabled) return;
 
-    setInputValue('');
-    sendMessage(projectId, message, session?.modelConfig, hasImages ? pendingImages : undefined);
-    setPendingImages([]);
-    setImageError(null);
+    const accepted = await sendMessage(
+      projectId,
+      message,
+      session?.modelConfig,
+      hasImages ? pendingImages : undefined,
+      hasDocuments ? pendingDocuments : undefined,
+    );
+    if (!accepted) return;
+
+    setInputValue((currentDraft) => currentDraft === draftAtSend ? '' : currentDraft);
+    setAttachmentError(null);
     setIsUserAtBottom(true); // Resume auto-scroll when user sends a message
   };
 
   const handleScreenshotCapture = useCallback(async (imageData: string) => {
+    const scopeAtCapture = attachmentScopeRef.current;
     // Check image count limit before processing
     if (pendingImages.length >= MAX_IMAGES_PER_TASK) {
-      setImageError(t('insights.images.maxImagesReached'));
+      setAttachmentError(t('insights.images.maxImagesReached'));
       return;
     }
 
@@ -251,12 +384,13 @@ export function Insights({ projectId }: InsightsProps) {
 
     // Validate size - match the validation used for regular image uploads
     if (approximateSize > MAX_IMAGE_SIZE) {
-      setImageError(t('insights.images.screenshotTooLarge', { size: Math.round(approximateSize / 1024 / 1024), max: Math.round(MAX_IMAGE_SIZE / 1024 / 1024) }));
+      setAttachmentError(t('insights.images.screenshotTooLarge', { size: Math.round(approximateSize / 1024 / 1024), max: Math.round(MAX_IMAGE_SIZE / 1024 / 1024) }));
       return;
     }
 
     const dataUrl = `data:image/png;base64,${imageData}`;
     const thumbnail = await createThumbnail(dataUrl);
+    if (attachmentScopeRef.current !== scopeAtCapture) return;
     const newImage: ImageAttachment = {
       id: generateImageId(),
       filename: `screenshot-${Date.now()}.png`,
@@ -265,14 +399,14 @@ export function Insights({ projectId }: InsightsProps) {
       data: imageData,
       thumbnail
     };
-    setPendingImages([...pendingImages, newImage]);
-    setImageError(null);
-  }, [pendingImages, setPendingImages, setImageError, t]);
+    setPendingImages([...useInsightsStore.getState().pendingImages, newImage]);
+    setAttachmentError(null);
+  }, [pendingImages, setPendingImages, t]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   };
 
@@ -357,16 +491,24 @@ export function Insights({ projectId }: InsightsProps) {
   const handleCreateTask = async (
     messageId: string,
     taskIndex: number,
-    taskData: { title: string; description: string; metadata?: TaskMetadata }
+    taskData: InsightsSuggestedTask
   ) => {
+    if (!session?.id) return;
+
     const taskKey = `${messageId}-${taskIndex}`;
     setCreatingTask(prev => new Set(prev).add(taskKey));
     try {
       const task = await createTaskFromSuggestion(
         projectId,
-        taskData.title,
-        taskData.description,
-        taskData.metadata
+        {
+          sessionId: session.id,
+          messageId,
+          taskIndex,
+          suggestionId: taskData.id,
+          title: taskData.title,
+          description: taskData.description,
+          metadata: taskData.metadata,
+        }
       );
 
       if (task) {
@@ -393,7 +535,7 @@ export function Insights({ projectId }: InsightsProps) {
   const messages = session?.messages || [];
 
   return (
-    <div className="flex h-full">
+    <div ref={chatAreaRef} className="relative flex h-full">
       {/* Chat History Sidebar */}
       {showSidebar && (
         <ChatHistorySidebar
@@ -414,7 +556,17 @@ export function Insights({ projectId }: InsightsProps) {
       )}
 
       {/* Main Chat Area */}
-      <div className="flex flex-1 flex-col">
+      <div className="relative flex flex-1 flex-col">
+        {isAttachmentDragOver && (
+          <div className="pointer-events-none absolute inset-2 z-50 flex items-center justify-center rounded-lg border-2 border-dashed border-primary bg-background/90">
+            <div className="flex flex-col items-center gap-2 text-primary">
+              <FileText className="h-8 w-8" />
+              <span className="text-sm font-medium">
+                {t('insights.attachments.dragOver')}
+              </span>
+            </div>
+          </div>
+        )}
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-6 py-4">
           <div className="flex items-center gap-3">
@@ -569,43 +721,53 @@ export function Insights({ projectId }: InsightsProps) {
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
               placeholder={t('insights.input.placeholder')}
               className={cn(
                 'min-h-[80px] resize-none',
-                isDragOver && 'border-primary ring-2 ring-primary/20'
+                isAttachmentDragOver && 'border-primary ring-2 ring-primary/20'
               )}
-              disabled={isLoading}
+              disabled={isInputDisabled}
             />
-            {/* Drag-over overlay */}
-            {isDragOver && (
-              <div className="absolute inset-0 flex items-center justify-center rounded-md bg-primary/5 border-2 border-dashed border-primary pointer-events-none">
-                <span className="text-sm font-medium text-primary">
-                  {t('insights.images.dragOver')}
-                </span>
-              </div>
-            )}
           </div>
           <div className="flex flex-col gap-1 self-end">
+            <input
+              ref={documentInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleDocumentInputChange}
+              tabIndex={-1}
+            />
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => documentInputRef.current?.click()}
+              disabled={isInputDisabled || !canAddMoreDocuments}
+              title={t('insights.documents.attachButton')}
+            >
+              <FileText className="h-4 w-4" />
+            </Button>
             <Button
               variant="outline"
               size="icon"
               className="h-9 w-9"
               onClick={() => setScreenshotOpen(true)}
-              disabled={isLoading || !canAddMore}
+              disabled={isInputDisabled || !canAddMoreImages}
               title={t('insights.images.screenshotButton')}
             >
               <Camera className="h-4 w-4" />
             </Button>
             <Button
               onClick={handleSend}
-              disabled={(!inputValue.trim() && pendingImages.length === 0) || isLoading}
+              disabled={
+                (!inputValue.trim() && pendingImages.length === 0 && pendingDocuments.length === 0) ||
+                isInputDisabled
+              }
               className="h-9 w-9"
               size="icon"
             >
-              {isLoading ? (
+              {isInputDisabled ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Send className="h-4 w-4" />
@@ -622,9 +784,9 @@ export function Insights({ projectId }: InsightsProps) {
           </div>
         )}
 
-        {/* Image error */}
-        {imageError && (
-          <p className="mt-1 text-xs text-destructive">{imageError}</p>
+        {/* Attachment error */}
+        {attachmentError && (
+          <p className="mt-1 text-xs text-destructive">{attachmentError}</p>
         )}
 
         {/* Image preview strip */}
@@ -656,8 +818,40 @@ export function Insights({ projectId }: InsightsProps) {
           </div>
         )}
 
+        {/* Local file path references */}
+        {pendingDocuments.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {pendingDocuments.map((document) => (
+              <div
+                key={document.id}
+                className="group flex max-w-[260px] items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-2"
+                title={document.path}
+              >
+                <FileText className="h-4 w-4 shrink-0 text-primary" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium text-foreground">
+                    {document.filename}
+                  </p>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {document.path}
+                    {typeof document.size === 'number' ? ` | ${formatFileSize(document.size)}` : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeDocument(document.id)}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+                  title={t('insights.documents.removeDocument')}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <p className="mt-2 text-xs text-muted-foreground">
-          {t('insights.images.pasteHint')} | {t('insights.input.sendHint')}
+          {t('insights.attachments.dropHint')} | {t('insights.input.sendHint')}
         </p>
       </div>
 
@@ -675,7 +869,7 @@ export function Insights({ projectId }: InsightsProps) {
 interface MessageBubbleProps {
   message: InsightsChatMessage;
   markdownComponents: Components;
-  onCreateTask: (messageId: string, taskIndex: number, taskData: { title: string; description: string; metadata?: TaskMetadata }) => void;
+  onCreateTask: (messageId: string, taskIndex: number, taskData: InsightsSuggestedTask) => void;
   creatingTask: Set<string>;
   taskCreated: Set<string>;
 }
@@ -689,6 +883,9 @@ function MessageBubble({
 }: MessageBubbleProps) {
   const { t } = useTranslation('common');
   const isUser = message.role === 'user';
+  const documentReferences = message.documents?.filter((document) => (
+    typeof document.path === 'string' && document.path.length > 0
+  ));
 
   return (
     <div className="flex gap-3">
@@ -735,6 +932,35 @@ function MessageBubble({
           </div>
         )}
 
+        {/* Local file path references for user messages */}
+        {isUser && documentReferences && documentReferences.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap gap-2">
+              {documentReferences.map((document) => (
+                <div
+                  key={document.id}
+                  className="flex max-w-[280px] items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-2"
+                  title={document.path}
+                >
+                  <FileText className="h-4 w-4 shrink-0 text-primary" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-foreground">
+                      {document.filename}
+                    </p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {document.path}
+                      {typeof document.size === 'number' ? ` | ${formatFileSize(document.size)}` : ''}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs italic text-muted-foreground">
+              {t('insights.documents.sharedWithModel')}
+            </p>
+          </div>
+        )}
+
         {/* Tool usage history for assistant messages */}
         {!isUser && message.toolsUsed && message.toolsUsed.length > 0 && (
           <LocalizedToolUsageHistory tools={message.toolsUsed} />
@@ -746,7 +972,7 @@ function MessageBubble({
             {message.suggestedTasks.map((task, index) => {
               const taskKey = `${message.id}-${index}`;
               const isCreating = creatingTask.has(taskKey);
-              const isCreated = taskCreated.has(taskKey);
+              const isCreated = Boolean(task.taskId) || taskCreated.has(taskKey);
 
               return (
                 <Card key={taskKey} className="border-primary/20 bg-primary/5">

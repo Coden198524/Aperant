@@ -18,6 +18,9 @@ export * from './roadmap';
 // Ideation constants
 export * from './ideation';
 
+// Insights chat constants
+export * from './insights';
+
 // Changelog constants
 export * from './changelog';
 

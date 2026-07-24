@@ -176,19 +176,67 @@ export interface InsightsToolUsage {
   timestamp: Date;
 }
 
+export interface InsightsDocumentReference {
+  id: string;
+  filename: string;
+  /** Absolute, main-process-validated local path. File content is not embedded in IPC/model prompts. */
+  path: string;
+  /** Informational only; the main process derives the authoritative size from disk. */
+  size?: number;
+}
+
+/** Result returned after the user explicitly selects a native local file. */
+export interface InsightsDocumentAuthorization {
+  filename: string;
+  path: string;
+  size: number;
+  authorizationToken: string;
+}
+
+/** Renderer-only pending reference. The token must never be persisted. */
+export interface InsightsPendingDocumentReference extends InsightsDocumentReference {
+  authorizationToken?: string;
+}
+
+/** Strict renderer-to-main IPC projection for a referenced document. */
+export interface InsightsDocumentRequest {
+  id: string;
+  path: string;
+  authorizationToken?: string;
+}
+
+export interface InsightsSuggestedTask {
+  /** Stable identity shared by streamed and persisted copies of the suggestion. */
+  id?: string;
+  title: string;
+  description: string;
+  metadata?: TaskMetadata;
+  /** ID of the task created from this suggestion, persisted with the chat session. */
+  taskId?: string;
+}
+
+export interface InsightsTaskCreationRequest {
+  sessionId: string;
+  messageId: string;
+  taskIndex: number;
+  /** Allows streamed suggestions to resolve before the authoritative message replaces the local copy. */
+  suggestionId?: string;
+  title: string;
+  description: string;
+  metadata?: TaskMetadata;
+}
+
 export interface InsightsChatMessage {
   id: string;
   role: InsightsChatRole;
   content: string;
   timestamp: Date;
   // For assistant messages that suggest task creation
-  suggestedTasks?: Array<{
-    title: string;
-    description: string;
-    metadata?: TaskMetadata;
-  }>;
+  suggestedTasks?: InsightsSuggestedTask[];
   // Image attachments (screenshots, pasted images)
   images?: ImageAttachment[];
+  // Local document paths authorized for read-only, on-demand access.
+  documents?: InsightsDocumentReference[];
   // Tools used during this response (assistant messages only)
   toolsUsed?: InsightsToolUsage[];
 }
@@ -202,6 +250,16 @@ export interface InsightsSession {
   createdAt: Date;
   updatedAt: Date;
   archivedAt?: Date;
+}
+
+/** Main-process acknowledgement after a user message is validated and persisted. */
+export interface InsightsSendMessageAcknowledgement {
+  /** Renderer-generated correlation ID echoed by main. */
+  clientMessageId: string;
+  /** Main-authoritative persisted user-message ID. */
+  messageId: string;
+  /** Authoritative token-free session snapshot at the acceptance boundary. */
+  session: InsightsSession;
 }
 
 // Summary of a session for the history list (without full messages)
@@ -225,11 +283,7 @@ export interface InsightsChatStatus {
 export interface InsightsStreamChunk {
   type: 'text' | 'task_suggestion' | 'tool_start' | 'tool_end' | 'done' | 'error';
   content?: string;
-  suggestedTasks?: Array<{
-    title: string;
-    description: string;
-    metadata?: TaskMetadata;
-  }>;
+  suggestedTasks?: InsightsSuggestedTask[];
   tool?: {
     name: string;
     input?: string;  // Brief description of what's being searched/read

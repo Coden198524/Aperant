@@ -523,6 +523,29 @@ describe('Design-Contract: 5 quality validation', () => {
     ]));
   });
 
+  it('requires Source Reconstruction in design_model.md rather than elsewhere in the package', () => {
+    const reverseDesign = designMarkdown
+      .replace('- Analysis direction: forward-design', '- Analysis direction: reverse-engineering')
+      .replace('- Primary source of truth: requirement', '- Primary source of truth: source')
+      .replace(
+        '## Risks And Evolution',
+        '## Source Reconstruction\nThis deliberately misplaced heading must not satisfy the design-model contract.\n\n## Risks And Evolution',
+      );
+
+    const errors = validateAutocodeStandardDesignStageArtifacts(
+      {
+        requirementModelMarkdown,
+        domainModelMarkdown,
+        designMarkdown: reverseDesign,
+        designModelMarkdown,
+      },
+      'design_model',
+    ).errors;
+
+    expect(errors).toContain('design_model.md missing "## Source Reconstruction" section.');
+    expect(errors).not.toContain('design.md missing "## Source Reconstruction" section.');
+  });
+
   it('routes validation errors by their owning artifact before inspecting referenced IDs', () => {
     expect(selectAutocodeDesignRevisionStages([
       'design.md Traceability must connect RM-001 through FUN-*, SSD-*, and DOM-*.',
@@ -532,6 +555,12 @@ describe('Design-Contract: 5 quality validation', () => {
     ])).toEqual(['design', 'design_model', 'implementation_model']);
     expect(selectAutocodeDesignRevisionStages([
       'design_model.md DES-001 Method derivation must reference RM-001 verbs.',
+    ])).toEqual(['design_model', 'implementation_model']);
+    expect(selectAutocodeDesignRevisionStages([
+      'design_model.md missing "## Source Reconstruction" section.',
+    ])).toEqual(['design_model', 'implementation_model']);
+    expect(selectAutocodeDesignRevisionStages([
+      'design.md missing "## Source Reconstruction" section.',
     ])).toEqual(['design_model', 'implementation_model']);
     expect(selectAutocodeDesignRevisionStages([
       'implementation_model.md IMP-001 lacks coverage.',
@@ -1034,6 +1063,9 @@ describe('Design-Contract: 5 quality validation', () => {
     expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).toContain(
       'RM-* -> FUN-* -> SSD-* -> DOM-* -> ADR-* -> SYS-* -> DES-* -> STATE-*/FLOW-*/CONTRACT-* -> LANG-* -> IMP-*',
     );
+    expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).toContain(
+      'design_model.md must also contain exactly ## Source Reconstruction',
+    );
     expect(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT).not.toContain('Design-Contract: 4');
   });
 
@@ -1082,12 +1114,13 @@ describe('design review human-input gate detection', () => {
     '- Evidence: observed - ADR-002 与 DES-011 冲突；unresolved - requirements.md Q2 尚未批准下落间隔初值与逐级函数。',
   ].join('\n');
 
-  it('flags a REVISE review blocked on unresolved open questions', () => {
+  it('flags a REVISE review with provenance-level unresolved evidence', () => {
     const gate = detectAutocodeDesignReviewHumanInputGate(reviseWithUnresolved);
     expect(gate.blocked).toBe(true);
     expect(gate.questions).toHaveLength(2);
     expect(gate.questions[0]).toContain('requirements.md Q1');
     expect(gate.questions[1]).toContain('requirements.md Q2');
+    expect(gate.decisions).toEqual([]);
     expect(gate.message).toContain('require a human decision');
     expect(gate.message).toContain('re-run planning');
   });
@@ -1104,6 +1137,23 @@ describe('design review human-input gate detection', () => {
       '- Evidence: observed - ADR-002 与 DES-011 冲突；inferred - 对象图不一致。',
     ].join('\n');
     expect(detectAutocodeDesignReviewHumanInputGate(fixableOnly).blocked).toBe(false);
+  });
+
+  it('does not treat negated or automatically repairable unresolved prose as human input', () => {
+    const automaticRevision = [
+      'Status: REVISE',
+      '',
+      '所有阻塞项均可依据现有需求与项目证据自动修订，不涉及只能由人工决定的 unresolved - open question。',
+      '',
+      '### DR-003 profile 资产载体与公共支撑类型预算没有闭合',
+      '- Evidence:',
+      '  - observed - LANG-001 明确保留 unresolved - `EDragonInteractionShape`、`EDragonPartEventType` 等类型究竟属于支撑类型还是额外公共契约。',
+      '- Simplest project-consistent correction: 在上游明确配置载体并统一类型预算。',
+    ].join('\n');
+    const gate = detectAutocodeDesignReviewHumanInputGate(automaticRevision);
+    expect(gate.blocked).toBe(false);
+    expect(gate.questions).toEqual([]);
+    expect(gate.decisions).toEqual([]);
   });
 
   it('ignores unresolved - none placeholders and deduplicates questions', () => {
@@ -1142,6 +1192,10 @@ describe('design review human-input gate detection', () => {
     ].join('\n');
     const gate = detectAutocodeDesignReviewHumanInputGate(withOptions);
     expect(gate.blocked).toBe(true);
+    expect(gate.questions[0]).toContain('requirements.md Q1');
+    expect(gate.questions[1]).toContain('requirements.md Q2');
+    expect(gate.message).toContain('require a human decision');
+    expect(gate.message).toContain('re-run planning');
     expect(gate.decisions).toHaveLength(2);
     expect(gate.decisions[0].id).toBe('HQ-001');
     expect(gate.decisions[0].options).toHaveLength(2);
@@ -1151,7 +1205,7 @@ describe('design review human-input gate detection', () => {
     expect(gate.decisions[1].options.find((option) => option.recommended)?.id).toBe('B');
   });
 
-  it('leaves decisions empty when the review omits the options section', () => {
+  it('keeps plain questions as a fallback when the review omits decision options', () => {
     const gate = detectAutocodeDesignReviewHumanInputGate(reviseWithUnresolved);
     expect(gate.blocked).toBe(true);
     expect(gate.decisions).toEqual([]);
@@ -1354,6 +1408,15 @@ describe('machine contract prompt stays aligned with the validator', () => {
 });
 
 describe('design quality retry prompt targeted repair guidance', () => {
+  it('routes Source Reconstruction repair to design_model.md without rewriting design.md', () => {
+    const prompt = buildAutocodeDesignQualityRetryPrompt([
+      'design_model.md missing "## Source Reconstruction" section.',
+    ]);
+    expect(prompt).toContain('Source Reconstruction is owned by design_model.md, never design.md.');
+    expect(prompt).toContain('add exactly ## Source Reconstruction to design_model.md');
+    expect(prompt).toContain('Preserve design.md ADRs, evidence, and stable IDs.');
+  });
+
   it('injects a Mermaid SSD skeleton when SSD checks fail', () => {
     const prompt = buildAutocodeDesignQualityRetryPrompt([
       'requirement_model.md SSD-001 SSD must enable Mermaid autonumber so business messages are displayed in order.',

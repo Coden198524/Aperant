@@ -63,7 +63,9 @@ export interface AutocodePlanQualityResult {
 
 export const AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS: AutocodePlanQualityLimits = {
   context: { maxLines: 220, maxChars: 18_000 },
-  spec: { maxLines: 150, maxChars: 16_000 },
+  // Complete observable specifications may legitimately be large. Keep structural,
+  // evidence, and ownership validation, but do not reject spec.md by line or character count.
+  spec: { maxLines: Number.MAX_SAFE_INTEGER, maxChars: Number.MAX_SAFE_INTEGER },
   requirements: { maxLines: 160, maxChars: 14_000 },
   design: { maxLines: 360, maxChars: 32_000 },
   // Size limits for the Design-Contract: 5 model files are intentionally disabled for now:

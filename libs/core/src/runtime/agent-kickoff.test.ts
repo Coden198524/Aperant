@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS,
-  buildAutocodeAgentKickoffMessage,
   buildAutocodeAgenticSpecOrchestratorKickoffMessage,
+  buildAutocodeAgentKickoffMessage,
   buildAutocodeSpecKickoffMessage,
 } from './agent-kickoff.js';
 
@@ -122,6 +122,32 @@ describe('buildAutocodeSpecKickoffMessage', () => {
     expect(message).toContain('Keep completed historical definitions unchanged');
     expect(message).toContain('Do not write implementation_plan.md');
     expect(message).not.toContain('Use Autocode Standard planning: update E:/Work/App/.autocode/specs/001-task/spec.md');
+  });
+
+  it('omits Design-Contract requirements from non-implementation planner and validation kickoff', () => {
+    const plannerMessage = buildAutocodeSpecKickoffMessage({
+      agentType: 'planner',
+      specPhase: 'planning',
+      specDir: 'E:/Work/App/.autocode/specs/001-analysis',
+      projectDir: 'E:/Work/App',
+      taskDescription: 'Analyze task logs and generate a findings document.',
+      designContractExempt: true,
+    });
+    const validationMessage = buildAutocodeSpecKickoffMessage({
+      agentType: 'spec_validation',
+      specPhase: 'spec_validation',
+      specDir: 'E:/Work/App/.autocode/specs/001-analysis',
+      projectDir: 'E:/Work/App',
+      taskDescription: 'Analyze task logs and generate a findings document.',
+      designContractExempt: true,
+    });
+
+    expect(plannerMessage).toContain('NON-IMPLEMENTATION STANDARD PLANNING CONTRACT');
+    expect(plannerMessage).toContain('Do not read, create, require, or reference a Design-Contract package');
+    expect(plannerMessage).not.toContain('complete five-file design package');
+    expect(plannerMessage).not.toContain('selected PAT-*');
+    expect(validationMessage).toContain('This non-implementation task has no Design-Contract package');
+    expect(validationMessage).not.toContain('complete five-file design package');
   });
   it('folds repeated prior phase output lines before kickoff context injection', () => {
     const repeatedLine = 'KICKOFF PRIOR REPEAT: same evidence line without new signal.';
@@ -251,6 +277,92 @@ describe('buildAutocodeSpecKickoffMessage', () => {
     expect(message).not.toContain('First update E:/Work/App/.autocode/specs/001-task/spec.md');
     expect(message).not.toContain('Update E:/Work/App/.autocode/specs/001-task/spec.md with Proposal/Goal');
   });
+
+  it('keeps non-implementation planner kickoff and Request Changes free of design IDs', () => {
+    const initialMessage = buildAutocodeAgentKickoffMessage({
+      agentType: 'planner',
+      specDir: 'E:/Work/App/.autocode/specs/001-analysis',
+      projectDir: 'E:/Work/App',
+      designContractExempt: true,
+    });
+    const retryMessage = buildAutocodeAgentKickoffMessage({
+      agentType: 'planner',
+      specDir: 'E:/Work/App/.autocode/specs/001-analysis',
+      projectDir: 'E:/Work/App',
+      designContractExempt: true,
+      forcePlanning: true,
+    });
+
+    for (const message of [initialMessage, retryMessage]) {
+      expect(message).toContain('do not read, create, require, or reference');
+      expect(message).not.toContain('complete five-file design package');
+      expect(message).not.toContain('selected PAT-*');
+      expect(message).not.toContain('and _Design_ references covering');
+    }
+    expect(retryMessage).toContain('Revise only affected still-pending definitions');
+    expect(retryMessage).toContain('Every new or revised task must map to affected R*/AC*/SCN-* IDs');
+  });
+
+  it('uses the tasks-only Design-Contract exemption for MMO planning phases only', () => {
+    const specPlanningMessage = buildAutocodeSpecKickoffMessage({
+      agentType: 'mmo_system_designer',
+      specPhase: 'planning',
+      specDir: 'E:/Work/App/.autocode/specs/001-analysis',
+      projectDir: 'E:/Work/App',
+      taskDescription: 'Analyze MMO task logs and write a findings document.',
+      designContractExempt: true,
+    });
+    const buildPlanningMessage = buildAutocodeAgentKickoffMessage({
+      agentType: 'mmo_system_designer',
+      specPhase: 'planning',
+      specDir: 'E:/Work/App/.autocode/specs/001-analysis',
+      projectDir: 'E:/Work/App',
+      designContractExempt: true,
+      forcePlanning: true,
+    });
+    const requirementsMessage = buildAutocodeSpecKickoffMessage({
+      agentType: 'mmo_system_designer',
+      specPhase: 'requirements',
+      specDir: 'E:/Work/App/.autocode/specs/001-analysis',
+      projectDir: 'E:/Work/App',
+      taskDescription: 'Analyze MMO task logs and write a findings document.',
+      designContractExempt: true,
+    });
+    const critiqueMessage = buildAutocodeSpecKickoffMessage({
+      agentType: 'mmo_system_designer',
+      specPhase: 'self_critique',
+      specDir: 'E:/Work/App/.autocode/specs/001-analysis',
+      projectDir: 'E:/Work/App',
+      taskDescription: 'Analyze MMO task logs and write a findings document.',
+      designContractExempt: true,
+    });
+
+    expect(specPlanningMessage).toContain('non-implementation MMO task');
+    expect(specPlanningMessage).toContain('Do not read, create, require, or reference the five-file design package');
+    expect(buildPlanningMessage).toContain('This is non-implementation planning');
+    expect(buildPlanningMessage).toContain('Revise only affected still-pending definitions');
+    expect(buildPlanningMessage).not.toContain('include valid _Design: ..._ references');
+    expect(requirementsMessage).not.toContain('non-implementation MMO task');
+    expect(requirementsMessage).not.toContain('Create E:/Work/App/.autocode/specs/001-analysis/tasks.md');
+    expect(critiqueMessage).not.toContain('non-implementation MMO task');
+    expect(critiqueMessage).not.toContain('Create E:/Work/App/.autocode/specs/001-analysis/tasks.md');
+  });
+
+  it('limits exempt agentic orchestration to requirements, specification, and tasks', () => {
+    const message = buildAutocodeAgenticSpecOrchestratorKickoffMessage({
+      taskDescription: 'Analyze the task log and generate a findings document.',
+      specDir: 'E:/Work/App/.autocode/specs/001-analysis',
+      projectDir: 'E:/Work/App',
+      designContractExempt: true,
+    });
+
+    expect(message).toContain('## NON-IMPLEMENTATION AGENTIC FLOW');
+    expect(message).toContain('`spec_gatherer -> spec_writer -> planner`');
+    expect(message).toContain('Do not dispatch requirement_modeler, domain_modeler, software_designer');
+    expect(message).toContain('never create implementation_plan.md or modify source code');
+    expect(message).toContain('supersedes any generic instruction that requires Design-Contract: 5');
+  });
+
   it('keeps Request Changes replanning on Standard artifacts instead of runtime plan edits', () => {
     const message = buildAutocodeAgentKickoffMessage({
       agentType: 'planner',

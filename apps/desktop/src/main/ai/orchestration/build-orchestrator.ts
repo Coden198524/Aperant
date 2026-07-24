@@ -40,6 +40,7 @@ import {
   formatAutocodeCodingRecoveryHints,
   formatAutocodeRetryErrorLines,
   isAutocodeImplementationPlanFileFailure,
+  isAutocodeNonImplementationDirectContext,
   isAutocodeWriteToolPlanOutputFailure,
   summarizeAutocodeCodingAttemptFailure,
   stringifyAutocodeContextMarkdown,
@@ -519,6 +520,8 @@ export interface PromptContext {
   attemptCount: number;
   /** Independent Standard design-package owner currently being generated. */
   designStage?: AutocodeDesignPackageStage;
+  /** Whether the current Standard planning task requires Design-Contract: 5. */
+  requireDesignContract?: boolean;
 }
 
 /** Minimal subtask info for prompt generation */
@@ -574,6 +577,8 @@ export interface SessionRunConfig {
   cliThinking?: string;
   /** Standard design-package owner stage used for a focused kickoff message. */
   specPhase?: AutocodeDesignPackageStage;
+  /** Whether the current Standard planning task requires Design-Contract: 5. */
+  requireDesignContract?: boolean;
   /** Optional Zod schema for structured output (uses AI SDK Output.object()) */
   outputSchema?: import('zod').ZodSchema;
 }
@@ -700,6 +705,60 @@ function isProjectDocumentationTaskMetadata(value: unknown): boolean {
     Array.isArray(metadata.projectDocumentOutputs);
 }
 
+function isDesignContractExemptTaskContext(
+  plan: unknown,
+  taskMetadata: unknown,
+  taskDescription?: string | null,
+): boolean {
+  const planRecord = asRecord(plan) ?? {};
+  return isAutocodeNonImplementationDirectContext({
+    plan: planRecord,
+    metadata: asRecord(taskMetadata),
+    description: [stringFrom(planRecord.description), taskDescription]
+      .filter((value): value is string => Boolean(value))
+      .join('\n'),
+  });
+}
+
+function latestNonEmptyLine(value: string | null): string {
+  return value
+    ?.replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1) ?? '';
+}
+
+function omitDesignOwnerStages(
+  ownerPlan: StandardPlanningOwnerPlan,
+): StandardPlanningOwnerPlan {
+  const stages = ownerPlan.stages.filter((stage) =>
+    !STANDARD_DESIGN_OWNER_STAGES.some((designStage) => designStage === stage)
+  );
+  return {
+    ...ownerPlan,
+    stages: stages.length > 0 ? stages : ['tasks'],
+  };
+}
+
+function buildStandardTasksRetryPrompt(
+  errors: string[],
+  requireDesignContract: boolean,
+): string {
+  return requireDesignContract
+    ? buildAutocodeStandardTasksValidationRetryPrompt(errors)
+    : buildAutocodePlanningStructuredOutputValidationRetryPrompt(errors);
+}
+
+function buildStandardPlanQualityRetryPrompt(
+  errors: string[],
+  requireDesignContract: boolean,
+): string {
+  return requireDesignContract
+    ? buildAutocodePlanQualityRetryPrompt(errors)
+    : buildAutocodePlanningStructuredOutputValidationRetryPrompt(errors);
+}
+
 function buildFallbackProjectDocumentationContext(metadata: Record<string, unknown>): Record<string, unknown> {
   const outputDir = stringFrom(metadata.projectDocumentOutputDir) || '.autocode/project-docs';
   const outputs = stringArrayFrom(metadata.projectDocumentOutputs);
@@ -796,6 +855,7 @@ export class BuildOrchestrator extends EventEmitter {
   private qaReturnToCodingCount = 0; // Track QA -> coding returns to prevent infinite loops
   private readonly MAX_QA_RETURNS = 2; // Maximum times we can return from QA to coding
   private readonly codingRecoveryHints = new Map<string, string[]>();
+  private requireDesignContractPromise?: Promise<boolean>;
 
   constructor(config: BuildOrchestratorConfig) {
     super();
@@ -990,7 +1050,39 @@ export class BuildOrchestrator extends EventEmitter {
     return true;
   }
 
+  private requiresStandardPlanningDesignContract(
+    planOverride?: ImplementationPlan | null,
+  ): Promise<boolean> {
+    this.requireDesignContractPromise ??= this.resolveStandardPlanningDesignContractRequirement(
+      planOverride,
+    );
+    return this.requireDesignContractPromise;
+  }
+
+  private async resolveStandardPlanningDesignContractRequirement(
+    planOverride?: ImplementationPlan | null,
+  ): Promise<boolean> {
+    const [plan, taskMetadata, requirements, humanInput, changeRequests] = await Promise.all([
+      planOverride === undefined
+        ? this.loadPlan().catch(() => null)
+        : Promise.resolve(planOverride),
+      this.readOptionalJsonPlanArtifact(AUTOCODE_TASK_ARTIFACTS.taskMetadata),
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.requirements),
+      this.readOptionalPlanArtifact('HUMAN_INPUT.md'),
+      this.readOptionalPlanArtifact(STANDARD_CHANGE_REQUESTS_FILE),
+    ]);
+    const description = [
+      requirements,
+      humanInput,
+      latestNonEmptyLine(changeRequests),
+    ].filter((value): value is string => Boolean(value)).join('\n');
+    return !isDesignContractExemptTaskContext(plan, taskMetadata, description);
+  }
+
   private async validateRuntimeDesignContract(plan: ImplementationPlan): Promise<string | undefined> {
+    if (!(await this.requiresStandardPlanningDesignContract(plan))) {
+      return undefined;
+    }
     const planRecord = plan as unknown as Record<string, unknown>;
     const sourceTask = asRecord(planRecord.source_task);
     const designContract = asRecord(sourceTask?.design_contract);
@@ -1034,6 +1126,7 @@ export class BuildOrchestrator extends EventEmitter {
 
   private async deriveRuntimePlanFromStandardTasks(
     snapshot?: StandardPlanningArtifactSnapshot,
+    requireDesignContract = true,
   ): Promise<{ success: boolean; error?: string }> {
     if (!this.shouldDeriveRuntimePlanFromStandardTasks()) {
       return { success: true };
@@ -1042,9 +1135,11 @@ export class BuildOrchestrator extends EventEmitter {
     const tasksPath = join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks);
     try {
       const tasksMarkdown = await readFile(tasksPath, 'utf-8');
-      const designPackage = await this.readStandardDesignPackageArtifacts();
-      const { designMarkdown } = designPackage;
-      if (!designMarkdown) {
+      const designPackage = requireDesignContract
+        ? await this.readStandardDesignPackageArtifacts()
+        : null;
+      const designMarkdown = designPackage?.designMarkdown ?? null;
+      if (requireDesignContract && !designMarkdown) {
         throw new Error(AUTOCODE_TASK_ARTIFACTS.design + ' is missing.');
       }
       const previousPlanMarkdown = this.config.forcePlanning === true
@@ -1061,12 +1156,16 @@ export class BuildOrchestrator extends EventEmitter {
         requireTaskEvidence: true,
         includeCompletedTasks: this.config.forcePlanning === true,
         preserveCompletedStateFromPreviousPlanMarkdown: previousPlanMarkdown,
-        designMarkdown,
-        requirementModelMarkdown: designPackage.requirementModelMarkdown ?? undefined,
-        domainModelMarkdown: designPackage.domainModelMarkdown ?? undefined,
-        designModelMarkdown: designPackage.designModelMarkdown ?? undefined,
-        implementationModelMarkdown: designPackage.implementationModelMarkdown ?? undefined,
-        designPath: AUTOCODE_TASK_ARTIFACTS.design,
+        ...(designPackage && designMarkdown
+          ? {
+              designMarkdown,
+              requirementModelMarkdown: designPackage.requirementModelMarkdown ?? undefined,
+              domainModelMarkdown: designPackage.domainModelMarkdown ?? undefined,
+              designModelMarkdown: designPackage.designModelMarkdown ?? undefined,
+              implementationModelMarkdown: designPackage.implementationModelMarkdown ?? undefined,
+              designPath: AUTOCODE_TASK_ARTIFACTS.design,
+            }
+          : {}),
       });
       await saveImplementationPlanToFiles(this.config.specDir, plan as never);
       this.emitTyped('log', translateLogMessage('Generated runtime work packages from tasks.md', this.config.language));
@@ -1080,12 +1179,15 @@ export class BuildOrchestrator extends EventEmitter {
   private async validateStandardPlanArtifactQuality(
     tasksMarkdown?: string,
     snapshot?: StandardPlanningArtifactSnapshot,
+    requireDesignContract = true,
   ): Promise<string[]> {
     const [specMarkdown, requirementsMarkdown, rawContextMarkdown, designPackage] = await Promise.all([
       this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.specFile),
       this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.requirements),
       this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.context),
-      this.readStandardDesignPackageArtifacts(),
+      requireDesignContract
+        ? this.readStandardDesignPackageArtifacts()
+        : Promise.resolve({}),
     ]);
     const contextMarkdown = await this.ensureProjectDocumentationContextArtifact(rawContextMarkdown);
     const result = validateAutocodeStandardPlanArtifacts({
@@ -1107,7 +1209,7 @@ export class BuildOrchestrator extends EventEmitter {
       requireRequirementsEvidence: true,
       requireTaskEvidence: true,
       requireContextEvidence: Boolean(contextMarkdown),
-      requireDesign: true,
+      requireDesign: requireDesignContract,
     });
     return result.errors;
   }
@@ -1303,10 +1405,12 @@ export class BuildOrchestrator extends EventEmitter {
     errorMessage: string,
     allowGranularityWarnings: boolean,
     snapshot?: StandardPlanningArtifactSnapshot,
+    requireDesignContract = true,
   ): Promise<{ success: boolean; error?: string }> {
     const artifactQualityErrors = await this.validateStandardPlanArtifactQuality(
       undefined,
       snapshot,
+      requireDesignContract,
     );
     if (artifactQualityErrors.length > 0) {
       if (allowGranularityWarnings && hasOnlyAutocodePlanTaskGranularityErrors(artifactQualityErrors)) {
@@ -1322,7 +1426,10 @@ export class BuildOrchestrator extends EventEmitter {
       }
     }
 
-    const derivedPlan = await this.deriveRuntimePlanFromStandardTasks(snapshot);
+    const derivedPlan = await this.deriveRuntimePlanFromStandardTasks(
+      snapshot,
+      requireDesignContract,
+    );
     if (!derivedPlan.success) {
       return {
         success: false,
@@ -1387,12 +1494,16 @@ export class BuildOrchestrator extends EventEmitter {
     return { success: true };
   }
 
-  private async resolveStandardPlanningOwnerPlan(): Promise<StandardPlanningOwnerPlan> {
+  private async resolveStandardPlanningOwnerPlan(
+    requireDesignContract = true,
+  ): Promise<StandardPlanningOwnerPlan> {
+    const finalizeOwnerPlan = (ownerPlan: StandardPlanningOwnerPlan): StandardPlanningOwnerPlan =>
+      requireDesignContract ? ownerPlan : omitDesignOwnerStages(ownerPlan);
     if (this.config.forcePlanning !== true) {
-      return {
+      return finalizeOwnerPlan({
         stages: ['design', 'design_review', 'tasks'],
         source: 'initial',
-      };
+      });
     }
 
     let changeRequestsMarkdown: string;
@@ -1406,29 +1517,30 @@ export class BuildOrchestrator extends EventEmitter {
         'log',
         'No change_requests.jsonl owner-stage contract was found; using the legacy design-to-tasks planning flow.',
       );
-      return {
+      return finalizeOwnerPlan({
         stages: ['design', 'design_review', 'tasks'],
         source: 'legacy_force',
-      };
+      });
     }
 
     const ownerPlan = parseAutocodeStandardPlanningOwnerPlan(changeRequestsMarkdown);
     if (ownerPlan) {
+      const resolvedOwnerPlan = finalizeOwnerPlan(ownerPlan);
       this.emitTyped(
         'log',
-        `Incremental Standard planning owner stages: ${ownerPlan.stages.join(' -> ')}`,
+        `Incremental Standard planning owner stages: ${resolvedOwnerPlan.stages.join(' -> ')}`,
       );
-      return ownerPlan;
+      return resolvedOwnerPlan;
     }
 
     this.emitTyped(
       'log',
       'change_requests.jsonl has no valid Standard planning entry; using the full owner-stage flow for recovery.',
     );
-    return {
+    return finalizeOwnerPlan({
       stages: [...STANDARD_PLANNING_OWNER_STAGE_ORDER],
       source: 'invalid_change_request',
-    };
+    });
   }
 
   private async validateStandardRequirementsAndSpec(
@@ -1942,7 +2054,14 @@ export class BuildOrchestrator extends EventEmitter {
     // Get retry limit from workflow config
     const retryLimits = getRetryLimits(this.config.workflowConfig ?? DEFAULT_WORKFLOW_CONFIG);
     const maxPlanningRetries = retryLimits.planning;
-    const ownerPlan = await this.resolveStandardPlanningOwnerPlan();
+    const requireDesignContract = await this.requiresStandardPlanningDesignContract();
+    if (!requireDesignContract) {
+      this.emitTyped(
+        'log',
+        'Non-implementation task: planning tasks.md without Design-Contract: 5 owner stages.',
+      );
+    }
+    const ownerPlan = await this.resolveStandardPlanningOwnerPlan(requireDesignContract);
     const requestedDesignOwnerStages = STANDARD_DESIGN_OWNER_STAGES.filter((stage) =>
       ownerPlan.stages.includes(stage)
     );
@@ -2034,7 +2153,7 @@ export class BuildOrchestrator extends EventEmitter {
           : designFailure;
       }
       validatedDesign = true;
-    } else {
+    } else if (requireDesignContract) {
       const designErrors = await this.validateExistingStandardDesignForTaskPlanning();
       if (designErrors.length > 0) {
         return failPlanning(
@@ -2052,6 +2171,7 @@ export class BuildOrchestrator extends EventEmitter {
         'interrupted planning recovery',
         true,
         artifactSnapshot,
+        requireDesignContract,
       );
       if (resumedResult.success) {
         validatedTasks = true;
@@ -2063,9 +2183,9 @@ export class BuildOrchestrator extends EventEmitter {
         );
         return completePlanning();
       }
-      planningRetryContext = buildAutocodeStandardTasksValidationRetryPrompt([
+      planningRetryContext = buildStandardTasksRetryPrompt([
         resumedResult.error ?? 'Persisted Standard planning artifacts require repair.',
-      ]);
+      ], requireDesignContract);
       this.emitTyped(
         'log',
         `Persisted Standard planning artifacts require focused repair: ${resumedResult.error ?? 'unknown validation error'}`,
@@ -2084,6 +2204,7 @@ export class BuildOrchestrator extends EventEmitter {
         iteration: this.iteration,
         planningRetryContext,
         attemptCount: attempt,
+        requireDesignContract,
       });
 
       const result = await this.config.runSession({
@@ -2096,6 +2217,7 @@ export class BuildOrchestrator extends EventEmitter {
         abortSignal: this.config.abortSignal,
         cliModel: this.config.cliModel,
         cliThinking: this.config.cliThinking,
+        requireDesignContract,
       });
 
       this.emitTyped('session-complete', result, 'planning');
@@ -2116,6 +2238,7 @@ export class BuildOrchestrator extends EventEmitter {
             errorMessage,
             true,
             artifactSnapshot,
+            requireDesignContract,
           )
           : null;
         if (existingArtifactResult?.success) {
@@ -2131,10 +2254,10 @@ export class BuildOrchestrator extends EventEmitter {
           continue;
         }
         if (attempt < maxPlanningRetries) {
-          planningRetryContext = buildAutocodeStandardTasksValidationRetryPrompt([
+          planningRetryContext = buildStandardTasksRetryPrompt([
             errorMessage,
             existingArtifactResult?.error ?? '',
-          ].filter(Boolean));
+          ].filter(Boolean), requireDesignContract);
           this.emitTyped(
             'log',
             'Planner session failed before tasks.md was validated; retrying only the tasks owner stage.',
@@ -2163,6 +2286,7 @@ export class BuildOrchestrator extends EventEmitter {
       const artifactQualityErrors = await this.validateStandardPlanArtifactQuality(
         undefined,
         artifactSnapshot,
+        requireDesignContract,
       );
       if (artifactQualityErrors.length > 0) {
         validationFailures++;
@@ -2179,7 +2303,10 @@ export class BuildOrchestrator extends EventEmitter {
             );
           }
         } else {
-          planningRetryContext = buildAutocodePlanQualityRetryPrompt(artifactQualityErrors);
+          planningRetryContext = buildStandardPlanQualityRetryPrompt(
+            artifactQualityErrors,
+            requireDesignContract,
+          );
           continue;
         }
       }
@@ -2192,7 +2319,10 @@ export class BuildOrchestrator extends EventEmitter {
         'active',
       );
 
-      const derivedPlan = await this.deriveRuntimePlanFromStandardTasks(artifactSnapshot);
+      const derivedPlan = await this.deriveRuntimePlanFromStandardTasks(
+        artifactSnapshot,
+        requireDesignContract,
+      );
       if (!derivedPlan.success) {
         const validationErrors = [`${AUTOCODE_TASK_ARTIFACTS.tasks} is missing or invalid: ${derivedPlan.error}`];
         validationFailures++;
@@ -2202,7 +2332,10 @@ export class BuildOrchestrator extends EventEmitter {
             `Standard task planning failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
           );
         }
-        planningRetryContext = buildAutocodeStandardTasksValidationRetryPrompt(validationErrors);
+        planningRetryContext = buildStandardTasksRetryPrompt(
+          validationErrors,
+          requireDesignContract,
+        );
         continue;
       }
 
@@ -2255,6 +2388,7 @@ export class BuildOrchestrator extends EventEmitter {
   private async runCodingPhase(): Promise<{ success: boolean; error?: string }> {
     this.transitionPhase('coding', translatePhaseMessage('coding', 'Starting implementation', this.config.language));
     const agentType = this.getAgentForPhase('coding');
+    const requireDesignContract = await this.requiresStandardPlanningDesignContract();
 
     // Get retry limit from workflow config
     const retryLimits = getRetryLimits(this.config.workflowConfig ?? DEFAULT_WORKFLOW_CONFIG);
@@ -2291,6 +2425,7 @@ export class BuildOrchestrator extends EventEmitter {
         subtask,
         attemptCount: attempt,
         recoveryHints: recoveryHints.join('\n'),
+        requireDesignContract,
       });
       if (recoveryHints.length > 0) {
         prompt = `${prompt}\n\n${formatAutocodeCodingRecoveryHints(subtask.id, recoveryHints)}`;
@@ -2330,6 +2465,7 @@ export class BuildOrchestrator extends EventEmitter {
         abortSignal: this.config.abortSignal,
         cliModel: this.config.cliModel,
         cliThinking: this.config.cliThinking,
+        requireDesignContract,
       });
       this.recordCodingAttemptResult(subtask, result, attempt);
       return result;
@@ -2466,6 +2602,7 @@ export class BuildOrchestrator extends EventEmitter {
     this.transitionPhase('qa_review', 'Running QA review');
     const reviewAgentType = this.getAgentForPhase('qa_review');
     const fixAgentType = this.getAgentForPhase('qa_fixing');
+    const requireDesignContract = await this.requiresStandardPlanningDesignContract();
 
     // Get QA cycle limit from workflow config
     const retryLimits = getRetryLimits(this.config.workflowConfig ?? DEFAULT_WORKFLOW_CONFIG);
@@ -2485,6 +2622,7 @@ export class BuildOrchestrator extends EventEmitter {
       const reviewPrompt = await this.config.generatePrompt(reviewAgentType, 'qa_review', {
         iteration: this.iteration,
         attemptCount: cycle,
+        requireDesignContract,
       });
 
       const reviewResult = await this.config.runSession({
@@ -2497,6 +2635,7 @@ export class BuildOrchestrator extends EventEmitter {
         abortSignal: this.config.abortSignal,
         cliModel: this.config.cliModel,
         cliThinking: this.config.cliThinking,
+        requireDesignContract,
       });
 
       this.emitTyped('session-complete', reviewResult, 'qa_review');
@@ -2540,6 +2679,7 @@ export class BuildOrchestrator extends EventEmitter {
         const fixPrompt = await this.config.generatePrompt(fixAgentType, 'qa_fixing', {
           iteration: this.iteration,
           attemptCount: cycle,
+          requireDesignContract,
         });
 
         const fixResult = await this.config.runSession({
@@ -2552,6 +2692,7 @@ export class BuildOrchestrator extends EventEmitter {
           abortSignal: this.config.abortSignal,
           cliModel: this.config.cliModel,
           cliThinking: this.config.cliThinking,
+          requireDesignContract,
         });
 
         this.emitTyped('session-complete', fixResult, 'qa_fixing');

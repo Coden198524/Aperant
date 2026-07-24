@@ -7,7 +7,8 @@ import type {
   InsightsStreamChunk,
   InsightsToolUsage,
   InsightsModelConfig,
-  TaskMetadata,
+  InsightsPendingDocumentReference,
+  InsightsTaskCreationRequest,
   Task,
   ImageAttachment
 } from '../../shared/types';
@@ -32,6 +33,7 @@ interface InsightsState {
   isLoadingSessions: boolean;
   showArchived: boolean; // Whether to include archived sessions in listings
   pendingImages: ImageAttachment[]; // Images pending attachment to next message
+  pendingDocuments: InsightsPendingDocumentReference[]; // Local paths pending reference in the next message
 
   // Actions
   setCurrentProjectId: (projectId: string | null) => void;
@@ -52,12 +54,22 @@ interface InsightsState {
   setLoadingSessions: (loading: boolean) => void;
   setShowArchived: (showArchived: boolean) => void;
   setPendingImages: (images: ImageAttachment[]) => void;
+  setPendingDocuments: (documents: InsightsPendingDocumentReference[]) => void;
 }
 
 const initialStatus: InsightsChatStatus = {
   phase: 'idle',
   message: ''
 };
+
+// Distinguishes chat scopes even when both happen to have `session === null`.
+// This prevents an acknowledgement from an older no-session epoch from being
+// applied after the user switched away and later returned to an empty chat.
+let insightsChatScopeGeneration = 0;
+
+function sessionScopeKey(session: InsightsSession | null): string {
+  return session ? `${session.projectId}\0${session.id}` : 'no-session';
+}
 
 export const useInsightsStore = create<InsightsState>((set, _get) => ({
   // Initial state
@@ -73,6 +85,7 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
   isLoadingSessions: false,
   showArchived: false,
   pendingImages: [],
+  pendingDocuments: [],
 
   // Actions
   setCurrentProjectId: (projectId) =>
@@ -80,6 +93,8 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
       if (state.currentProjectId === projectId) {
         return { currentProjectId: projectId };
       }
+
+      insightsChatScopeGeneration += 1;
 
       return {
         currentProjectId: projectId,
@@ -92,11 +107,18 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
         currentTool: null,
         toolsUsed: [],
         isLoadingSessions: false,
-        pendingImages: []
+        pendingImages: [],
+        pendingDocuments: [],
       };
     }),
 
-  setSession: (session) => set({ session }),
+  setSession: (session) =>
+    set((state) => {
+      if (sessionScopeKey(state.session) !== sessionScopeKey(session)) {
+        insightsChatScopeGeneration += 1;
+      }
+      return { session };
+    }),
 
   setSessions: (sessions) => set({ sessions }),
 
@@ -227,7 +249,8 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
       };
     }),
 
-  clearSession: () =>
+  clearSession: () => {
+    insightsChatScopeGeneration += 1;
     set({
       session: null,
       status: initialStatus,
@@ -236,10 +259,14 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
       streamingTasks: [],
       currentTool: null,
       toolsUsed: [],
-      pendingImages: []
-    }),
+      pendingImages: [],
+      pendingDocuments: [],
+    });
+  },
 
-  setPendingImages: (images) => set({ pendingImages: images })
+  setPendingImages: (images) => set({ pendingImages: images }),
+
+  setPendingDocuments: (documents) => set({ pendingDocuments: documents })
 }));
 
 // Helper functions
@@ -305,28 +332,28 @@ export async function loadInsightsSession(projectId: string, includeArchived?: b
   await loadInsightsSessions(projectId, includeArchived);
 }
 
-export function sendMessage(projectId: string, message: string, modelConfig?: InsightsModelConfig, images?: ImageAttachment[]): void {
+function createInsightsClientMessageId(): string {
+  return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export async function sendMessage(
+  projectId: string,
+  message: string,
+  modelConfig?: InsightsModelConfig,
+  images?: ImageAttachment[],
+  documents?: InsightsPendingDocumentReference[],
+): Promise<boolean> {
   beginInsightsProjectScope(projectId);
   const store = useInsightsStore.getState();
   const session = store.session;
+  const sessionIdAtSend = session?.id ?? null;
+  const scopeGenerationAtSend = insightsChatScopeGeneration;
+  const clientMessageId = createInsightsClientMessageId();
+  const sentImageIds = new Set(images?.map((image) => image.id) ?? []);
+  const sentDocumentIds = new Set(documents?.map((document) => document.id) ?? []);
 
-  // Add user message to session (strip data to keep memory usage low)
-  const displayImages = images?.map(img => ({
-    ...img,
-    data: undefined // Strip base64 data, keep thumbnails for display
-  }));
-  const userMessage: InsightsChatMessage = {
-    id: `msg-${Date.now()}`,
-    role: 'user',
-    content: message,
-    timestamp: new Date(),
-    ...(displayImages && displayImages.length > 0 ? { images: displayImages } : {})
-  };
-  store.addMessage(userMessage);
-
-  // Clear pending and set status
-  store.setPendingMessage('');
-  store.setPendingImages([]);
+  // Keep the draft and attachments until main confirms that validation and
+  // persistence succeeded. Executor failures happen after this boundary.
   store.clearStreamingContent();
   store.clearToolsUsed(); // Clear tools from previous response
   store.setStatus({
@@ -337,8 +364,95 @@ export function sendMessage(projectId: string, message: string, modelConfig?: In
   // Use provided modelConfig, or fall back to session's config
   const configToUse = modelConfig || session?.modelConfig;
 
-  // Send to main process
-  window.electronAPI.sendInsightsMessage(projectId, message, configToUse, images);
+  try {
+    const result = await window.electronAPI.sendInsightsMessage(
+      projectId,
+      message,
+      configToUse,
+      images,
+      documents,
+      clientMessageId,
+    );
+    const latest = useInsightsStore.getState();
+    const scopeIsCurrent = latest.currentProjectId === projectId &&
+      (latest.session?.id ?? null) === sessionIdAtSend &&
+      insightsChatScopeGeneration === scopeGenerationAtSend;
+    if (!scopeIsCurrent) return false;
+
+    if (
+      !result.success ||
+      !result.data ||
+      result.data.clientMessageId !== clientMessageId ||
+      result.data.session.projectId !== projectId ||
+      (sessionIdAtSend !== null && result.data.session.id !== sessionIdAtSend) ||
+      !result.data.session.messages.some((item) => item.id === result.data?.messageId)
+    ) {
+      latest.setStatus({
+        phase: 'error',
+        error: result.error || 'The message was not accepted. Please try again.',
+      });
+      return false;
+    }
+
+    const acceptedSession = result.data.session;
+    useInsightsStore.setState((state) => {
+      if (
+        state.currentProjectId !== projectId ||
+        (state.session?.id ?? null) !== sessionIdAtSend ||
+        insightsChatScopeGeneration !== scopeGenerationAtSend
+      ) {
+        return state;
+      }
+
+      const currentSession = state.session;
+      if (!currentSession) {
+        return {
+          session: acceptedSession,
+          pendingMessage: '',
+          pendingImages: state.pendingImages.filter((image) => !sentImageIds.has(image.id)),
+          pendingDocuments: state.pendingDocuments.filter(
+            (document) => !sentDocumentIds.has(document.id),
+          ),
+        };
+      }
+
+      const acceptedMessageIds = new Set(
+        acceptedSession.messages.map((acceptedMessage) => acceptedMessage.id),
+      );
+      const messagesAddedAfterAcceptance = currentSession.messages.filter(
+        (currentMessage) => !acceptedMessageIds.has(currentMessage.id),
+      );
+      return {
+        session: {
+          ...currentSession,
+          ...acceptedSession,
+          messages: [...acceptedSession.messages, ...messagesAddedAfterAcceptance],
+          updatedAt: messagesAddedAfterAcceptance.length > 0
+            ? currentSession.updatedAt
+            : acceptedSession.updatedAt,
+        },
+        pendingMessage: '',
+        pendingImages: state.pendingImages.filter((image) => !sentImageIds.has(image.id)),
+        pendingDocuments: state.pendingDocuments.filter(
+          (document) => !sentDocumentIds.has(document.id),
+        ),
+      };
+    });
+    return true;
+  } catch (error) {
+    const latest = useInsightsStore.getState();
+    if (
+      latest.currentProjectId === projectId &&
+      (latest.session?.id ?? null) === sessionIdAtSend &&
+      insightsChatScopeGeneration === scopeGenerationAtSend
+    ) {
+      latest.setStatus({
+        phase: 'error',
+        error: error instanceof Error ? error.message : 'Failed to send message.',
+      });
+    }
+    return false;
+  }
 }
 
 export async function clearSession(projectId: string, includeArchived?: boolean): Promise<void> {
@@ -356,6 +470,8 @@ export async function newSession(projectId: string): Promise<void> {
   const result = await window.electronAPI.newInsightsSession(projectId);
   if (result.success && result.data && isCurrentInsightsProject(projectId)) {
     useInsightsStore.getState().setSession(result.data);
+    useInsightsStore.getState().setPendingImages([]);
+    useInsightsStore.getState().setPendingDocuments([]);
     // Reload sessions list
     await loadInsightsSessions(projectId);
   }
@@ -370,6 +486,8 @@ export async function switchSession(projectId: string, sessionId: string): Promi
     useInsightsStore.getState().clearToolsUsed();
     useInsightsStore.getState().setCurrentTool(null);
     useInsightsStore.getState().setStatus({ phase: 'idle', message: '' });
+    useInsightsStore.getState().setPendingImages([]);
+    useInsightsStore.getState().setPendingDocuments([]);
   }
 }
 
@@ -440,18 +558,44 @@ export async function updateModelConfig(projectId: string, sessionId: string, mo
 
 export async function createTaskFromSuggestion(
   projectId: string,
-  title: string,
-  description: string,
-  metadata?: TaskMetadata
+  request: InsightsTaskCreationRequest
 ): Promise<Task | null> {
   const result = await window.electronAPI.createTaskFromInsights(
     projectId,
-    title,
-    description,
-    metadata
+    request
   );
 
   if (result.success && result.data) {
+    const createdTask = result.data;
+    useInsightsStore.setState((state) => {
+      if (state.session?.id !== request.sessionId) return {};
+
+      let didUpdate = false;
+      const messages = state.session.messages.map((message) => ({
+        ...message,
+        suggestedTasks: message.suggestedTasks?.map((suggestion, taskIndex) => {
+          const matchesSuggestionId = Boolean(
+            request.suggestionId && suggestion.id === request.suggestionId,
+          );
+          const matchesLegacyPosition = !request.suggestionId &&
+            message.id === request.messageId &&
+            taskIndex === request.taskIndex;
+          if (!matchesSuggestionId && !matchesLegacyPosition) return suggestion;
+
+          didUpdate = true;
+          return { ...suggestion, taskId: createdTask.id };
+        }),
+      }));
+
+      if (!didUpdate) return {};
+      return {
+        session: {
+          ...state.session,
+          messages,
+          updatedAt: new Date(),
+        },
+      };
+    });
     return result.data;
   }
   return null;

@@ -39,6 +39,17 @@ export class SessionManager {
   }
 
   /**
+   * Load a session by ID without changing the project's current-session pointer.
+   */
+  loadSessionById(projectId: string, projectPath: string, sessionId: string): InsightsSession | null {
+    const cachedSession = this.sessions.get(projectId);
+    if (cachedSession?.id === sessionId) {
+      return cachedSession;
+    }
+    return this.storage.loadSessionById(projectPath, sessionId);
+  }
+
+  /**
    * List all sessions for a project
    */
   listSessions(projectPath: string, includeArchived = false): InsightsSessionSummary[] {
@@ -234,6 +245,17 @@ export class SessionManager {
   saveSession(projectPath: string, session: InsightsSession): void {
     this.storage.saveSession(projectPath, session);
     this.sessions.set(session.projectId, session);
+  }
+
+  /**
+   * Save a specific session without making it the active cached session.
+   */
+  saveSessionById(projectPath: string, session: InsightsSession): void {
+    this.storage.saveSession(projectPath, session);
+    const cachedSession = this.sessions.get(session.projectId);
+    if (cachedSession?.id === session.id) {
+      this.sessions.set(session.projectId, session);
+    }
   }
 
   /**

@@ -29,9 +29,10 @@ vi.mock('node:fs', () => ({
 }));
 
 // Mock tool registry
+const mockGetToolsForAgent = vi.fn().mockReturnValue({});
 vi.mock('../../tools/build-registry', () => ({
   buildToolRegistry: () => ({
-    getToolsForAgent: vi.fn().mockReturnValue({}),
+    getToolsForAgent: mockGetToolsForAgent,
   }),
 }));
 
@@ -69,6 +70,7 @@ import {
 } from '../insights';
 import type { InsightsConfig, InsightsStreamEvent } from '../insights';
 import { parseLLMJson } from '../../schema/structured-output';
+import { MAX_INSIGHTS_DOCUMENT_PATH_CHARACTERS } from '../../../../shared/constants';
 
 // =============================================================================
 // Helpers
@@ -292,7 +294,9 @@ describe('runInsightsQuery', () => {
     );
 
     const events: InsightsStreamEvent[] = [];
-    await runInsightsQuery(baseConfig(), (e) => events.push(e));
+    await expect(runInsightsQuery(baseConfig(), (e) => events.push(e))).rejects.toThrow(
+      'tool failed',
+    );
 
     const errorEvents = events.filter((e) => e.type === 'error');
     expect(errorEvents).toHaveLength(1);
@@ -412,6 +416,70 @@ describe('runInsightsQuery', () => {
     expect(prompt).toContain('How does auth work?');
     expect(prompt).toContain('It uses JWT.');
     expect(prompt).toContain('What about refresh tokens?');
+  });
+
+  it('passes only referenced paths and grants read-only access to those exact files', async () => {
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    await runInsightsQuery(baseConfig({
+      message: 'Summarize the decision record.',
+      documents: [{
+        id: 'adr-1',
+        filename: 'ADR-001.md',
+        path: 'E:/External/ADR-001.md',
+        size: 8 * 1024 ** 3,
+      }],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    const prompt = callArgs.prompt as string;
+    expect(prompt).toContain('Summarize the decision record.');
+    expect(prompt).toContain('ADR-001.md');
+    expect(prompt).toContain('E:/External/ADR-001.md');
+    expect(prompt).toContain('paths only; contents are not embedded');
+    expect(prompt).not.toContain('BEGIN ATTACHED DOCUMENT');
+    expect(callArgs.messages).toBeUndefined();
+    expect(mockGetToolsForAgent.mock.calls[0][1]).toMatchObject({
+      allowedPathRoots: ['/project'],
+      allowedExactFilePaths: ['E:/External/ADR-001.md'],
+    });
+    expect(mockCreateSimpleClient.mock.calls[0][0].systemPrompt).toContain(
+      'Read only those exact paths as needed',
+    );
+  });
+
+  it('lists every referenced path without embedding file payloads', async () => {
+    mockStreamText.mockReturnValue(makeStream([]));
+    const documents = Array.from({ length: 3 }, (_, index) => ({
+      id: `document-${index}`,
+      filename: `document-${index}.log`,
+      path: `E:/Logs/document-${index}.log`,
+      size: 20 * 1024 ** 3,
+    }));
+
+    await runInsightsQuery(baseConfig({ documents }));
+
+    const prompt = mockStreamText.mock.calls[0][0].prompt as string;
+    expect(prompt).toContain('E:/Logs/document-0.log');
+    expect(prompt).toContain('E:/Logs/document-1.log');
+    expect(prompt).toContain('E:/Logs/document-2.log');
+    expect(prompt).not.toContain('data:');
+  });
+
+  it('rejects an over-budget document path batch before building tools or a prompt', async () => {
+    const segmentLength = Math.floor(MAX_INSIGHTS_DOCUMENT_PATH_CHARACTERS / 3) + 1;
+    const documents = Array.from({ length: 3 }, (_, index) => ({
+      id: `document-${index}`,
+      filename: `document-${index}.log`,
+      path: `E:/${String(index).repeat(segmentLength)}`,
+    }));
+
+    await expect(runInsightsQuery(baseConfig({ documents }))).rejects.toThrow(
+      `${MAX_INSIGHTS_DOCUMENT_PATH_CHARACTERS}-character`,
+    );
+    expect(mockCreateSimpleClient).not.toHaveBeenCalled();
+    expect(mockGetToolsForAgent).not.toHaveBeenCalled();
+    expect(mockStreamText).not.toHaveBeenCalled();
   });
 
   it('compacts long insights history while preserving the current question', async () => {

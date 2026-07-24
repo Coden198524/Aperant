@@ -117,6 +117,24 @@ const STANDARD_CONTEXT_MD = [
   '- spec.md - test fixture proves context.',
   '',
 ].join('\n');
+const NON_IMPLEMENTATION_REQUIREMENTS_MD = [
+  '# Requirements',
+  '',
+  'Requirements-Contract: 1',
+  '',
+  '## User Requirements',
+  '',
+  '- R1: Analyze the recorded task failure and produce an evidence-backed report.',
+  '',
+  '## Acceptance Criteria',
+  '',
+  '- AC1: The report explains the failure without modifying product code.',
+  '',
+  '## Evidence Sources',
+  '',
+  '- E1: task_logs.jsonl records the failure analyzed by this task.',
+  '',
+].join('\n');
 const STRICT_STANDARD_SPEC_MD = [
   '# Specification: Incremental owner stages',
   '',
@@ -159,6 +177,27 @@ const STRICT_STANDARD_TASKS_MD = [
   '    - _Evidence: E1; src/file-1.ts existing workflow_',
   '    - _Done when: SCN-001 is represented by one focused work package_',
   '    - _Verification: npm test -- file-1.test.ts_',
+  '',
+].join('\n');
+
+const NON_IMPLEMENTATION_TASKS_MD = [
+  '# Tasks',
+  '',
+  'Tasks-Contract: 1',
+  'Feature: Analyze task logs',
+  'Workflow: analysis',
+  'Status: pending',
+  '',
+  '- [ ] 1. Analysis report',
+  '',
+  '  - [ ] 1.1 Write the task-log analysis report',
+  '    - Summarize the observed failure and cite the evidence without changing product code.',
+  '    - _Files to create: docs/task-log-analysis.md_',
+  '    - _Depends on: none_',
+  '    - _Requirements: R1, AC1, SCN-001_',
+  '    - _Evidence: E1; requirements.md R1; spec.md SCN-001_',
+  '    - _Done when: docs/task-log-analysis.md explains the failure and evidence_',
+  '    - _Verification: Review docs/task-log-analysis.md against requirements.md and spec.md_',
   '',
 ].join('\n');
 
@@ -685,7 +724,10 @@ describe('BuildOrchestrator QA recovery', () => {
         },
       },
     })).resolves.toContain('does not bind the exact five-file Design-Contract: 5 package');
-    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockReadFile).toHaveBeenCalledWith(
+      expect.stringContaining('task_metadata.json'),
+      'utf-8',
+    );
   });
 
   it.each([3, 4])('rejects a v%s model even when its runtime fingerprint matches', async (version) => {
@@ -739,7 +781,86 @@ describe('BuildOrchestrator QA recovery', () => {
     await expect(orchestrator.validateRuntimeDesignContract({
       source_task: { kind: 'legacy-standard-plan' },
     })).resolves.toContain('no Design-Contract: 5 package fingerprint');
-    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockReadFile).toHaveBeenCalledWith(
+      expect.stringContaining('task_metadata.json'),
+      'utf-8',
+    );
+  });
+
+  it.each(['documentation', 'investigation', 'analysis', 'research'])(
+    'allows %s runtime plans without a design contract',
+    async (workflowType) => {
+      mockReadFile.mockRejectedValue(new Error('ENOENT'));
+      const orchestrator = makeOrchestrator() as unknown as {
+        validateRuntimeDesignContract: (
+          plan: Record<string, unknown>,
+        ) => Promise<string | undefined>;
+      };
+
+      await expect(orchestrator.validateRuntimeDesignContract({
+        workflow_type: workflowType,
+        source_task: { kind: 'non-implementation-task' },
+      })).resolves.toBeUndefined();
+      expect(mockReadFile).toHaveBeenCalledWith(
+        expect.stringContaining('task_metadata.json'),
+        'utf-8',
+      );
+    },
+  );
+
+  it('allows metadata-classified analysis tasks without a design contract', async () => {
+    mockReadFile.mockImplementation((filePath: string) =>
+      String(filePath).endsWith('task_metadata.json')
+        ? Promise.resolve(JSON.stringify({ taskType: 'analysis' }))
+        : Promise.reject(new Error('ENOENT')),
+    );
+    const orchestrator = makeOrchestrator() as unknown as {
+      validateRuntimeDesignContract: (
+        plan: Record<string, unknown>,
+      ) => Promise<string | undefined>;
+    };
+
+    await expect(orchestrator.validateRuntimeDesignContract({
+      workflow_type: 'feature',
+      source_task: { kind: 'manual-analysis' },
+    })).resolves.toBeUndefined();
+  });
+
+  it('still requires a design contract when an analysis-labelled task requests implementation', async () => {
+    mockReadFile.mockRejectedValue(new Error('ENOENT'));
+    const orchestrator = makeOrchestrator() as unknown as {
+      validateRuntimeDesignContract: (
+        plan: Record<string, unknown>,
+      ) => Promise<string | undefined>;
+    };
+
+    await expect(orchestrator.validateRuntimeDesignContract({
+      workflow_type: 'analysis',
+      description: 'Analyze the failure and fix the implementation in worker.ts.',
+      source_task: { kind: 'implementation-task' },
+    })).resolves.toContain('no Design-Contract: 5 package fingerprint');
+  });
+
+  it('uses the persisted task description to reject mislabeled implementation work', async () => {
+    mockReadFile.mockImplementation((filePath: string) => {
+      if (String(filePath).endsWith('task_metadata.json')) {
+        return Promise.resolve(JSON.stringify({ taskType: 'analysis' }));
+      }
+      if (String(filePath).endsWith('requirements.md')) {
+        return Promise.resolve('Analyze the current behavior, then build a report dashboard.');
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+    const orchestrator = makeOrchestrator() as unknown as {
+      validateRuntimeDesignContract: (
+        plan: Record<string, unknown>,
+      ) => Promise<string | undefined>;
+    };
+
+    await expect(orchestrator.validateRuntimeDesignContract({
+      workflow_type: 'analysis',
+      source_task: { kind: 'implementation-task' },
+    })).resolves.toContain('no Design-Contract: 5 package fingerprint');
   });
 
   it('does not reuse a stale passed review when the independent review session errors', async () => {
@@ -1358,6 +1479,344 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(mockIterateSubtasks).not.toHaveBeenCalled();
     expect(phases).toEqual(['planning']);
     expect(logs.some((log) => log.includes('Force planning requested'))).toBe(true);
+  });
+
+  it('runs only the tasks owner for a new analysis plan and omits stale design metadata', async () => {
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STRICT_STANDARD_SPEC_MD],
+      ['/spec/requirements.md', NON_IMPLEMENTATION_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/task_metadata.json', JSON.stringify({
+        taskType: 'analysis',
+        taskTitle: 'Analyze task logs and write an evidence report',
+      })],
+      ['/spec/design.md', 'stale design that must not be validated or rebound'],
+      ['/spec/design_review.md', 'Status: PASSED\n\nStale review.'],
+    ]);
+    installPlanningArtifactMap(files);
+    const generatePrompt = vi.fn().mockResolvedValue('prompt');
+    const runSession = vi.fn(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        files.set('/spec/tasks.md', NON_IMPLEMENTATION_TASKS_MD);
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = new BuildOrchestrator({
+      specDir: '/spec',
+      projectDir: '/project',
+      generatePrompt,
+      runSession,
+    }) as unknown as {
+      runPlanningPhase: () => Promise<{ success: boolean; error?: string }>;
+    };
+
+    const result = await orchestrator.runPlanningPhase();
+    const runtimePlan = JSON.parse(files.get('/spec/implementation_plan.md') ?? '{}');
+
+    expect(result.success, result.error).toBe(true);
+    expect(runSession.mock.calls.map(([config]) => config.agentType)).toEqual(['planner']);
+    expect(runtimePlan.source_task?.design_contract).toBeUndefined();
+    expect(files.get('/spec/design.md')).toBe('stale design that must not be validated or rebound');
+  });
+
+  it('filters all design owners from force planning for an analysis task', async () => {
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STRICT_STANDARD_SPEC_MD],
+      ['/spec/requirements.md', NON_IMPLEMENTATION_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/task_metadata.json', JSON.stringify({
+        taskType: 'analysis',
+        taskTitle: 'Summarize the task log failure in a report',
+      })],
+      ['/spec/design.md', 'invalid stale design'],
+      ['/spec/tasks.md', NON_IMPLEMENTATION_TASKS_MD],
+      ['/spec/implementation_plan.md', makePlanWithSchedulingMetadata(['pending'])],
+      ['/spec/change_requests.jsonl', makeStandardPlanningChangeRequest([
+        'design.md',
+        'requirement_model.md',
+        'domain_model.md',
+        'design_model.md',
+        'implementation_model.md',
+        'design_review.md',
+        'tasks.md',
+      ], 'cr-analysis-docs')],
+    ]);
+    installPlanningArtifactMap(files);
+    const runSession = vi.fn(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        files.set('/spec/tasks.md', NON_IMPLEMENTATION_TASKS_MD);
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession) as unknown as {
+      runPlanningPhase: () => Promise<{ success: boolean; error?: string }>;
+    };
+
+    const result = await orchestrator.runPlanningPhase();
+    const transaction = JSON.parse(files.get('/spec/planning-transaction.json') ?? '{}');
+
+    expect(result.success, result.error).toBe(true);
+    expect(runSession.mock.calls.map(([config]) => config.agentType)).toEqual(['planner']);
+    expect(transaction.ownerStages).toEqual(['tasks']);
+  });
+
+  it('uses a no-design retry prompt when analysis task planning must retry', async () => {
+    const files = new Map<string, string>([
+      ['/spec/spec.md', STRICT_STANDARD_SPEC_MD],
+      ['/spec/requirements.md', NON_IMPLEMENTATION_REQUIREMENTS_MD],
+      ['/spec/context.md', STANDARD_CONTEXT_MD],
+      ['/spec/task_metadata.json', JSON.stringify({
+        taskType: 'analysis',
+        taskTitle: 'Analyze task logs and write a report',
+      })],
+    ]);
+    installPlanningArtifactMap(files);
+    const generatePrompt = vi.fn().mockResolvedValue('prompt');
+    let plannerRuns = 0;
+    const runSession = vi.fn(async () => {
+      plannerRuns++;
+      if (plannerRuns === 1) {
+        return {
+          ...makeSessionResult('error'),
+          error: {
+            code: 'temporary-planner-error',
+            message: 'temporary planner failure',
+            retryable: true,
+          },
+        } satisfies SessionResult;
+      }
+      files.set('/spec/tasks.md', NON_IMPLEMENTATION_TASKS_MD);
+      return makeSessionResult('completed');
+    });
+    const orchestrator = new BuildOrchestrator({
+      specDir: '/spec',
+      projectDir: '/project',
+      generatePrompt,
+      runSession,
+    }) as unknown as {
+      runPlanningPhase: () => Promise<{ success: boolean; error?: string }>;
+    };
+
+    const result = await orchestrator.runPlanningPhase();
+    const retryContext = generatePrompt.mock.calls[1]?.[2]?.planningRetryContext as string;
+
+    expect(result.success, result.error).toBe(true);
+    expect(retryContext).toContain('REWRITE TASKS SOURCE');
+    expect(retryContext).not.toMatch(/Design-Contract|five-file|_Design_/i);
+  });
+
+  it('derives an exempt runtime plan without reading stale design artifacts', async () => {
+    const files = new Map<string, string>([
+      ['/spec/tasks.md', NON_IMPLEMENTATION_TASKS_MD],
+      ['/spec/design.md', 'stale design'],
+      ['/spec/requirement_model.md', 'stale requirement model'],
+      ['/spec/domain_model.md', 'stale domain model'],
+      ['/spec/design_model.md', 'stale design model'],
+      ['/spec/implementation_model.md', 'stale implementation model'],
+    ]);
+    installPlanningArtifactMap(files);
+    const orchestrator = makeOrchestrator() as unknown as {
+      deriveRuntimePlanFromStandardTasks: (
+        snapshot: undefined,
+        requireDesignContract: boolean,
+      ) => Promise<{ success: boolean; error?: string }>;
+    };
+    mockReadFile.mockClear();
+
+    const result = await orchestrator.deriveRuntimePlanFromStandardTasks(undefined, false);
+    const readPaths = mockReadFile.mock.calls.map(([path]) => String(path).replace(/\\/g, '/'));
+    const runtimePlan = JSON.parse(files.get('/spec/implementation_plan.md') ?? '{}');
+
+    expect(result.success, result.error).toBe(true);
+    expect(readPaths).toEqual(['/spec/tasks.md']);
+    expect(runtimePlan.source_task?.design_contract).toBeUndefined();
+  });
+
+  it('keeps Design-Contract planning for an analysis-labelled implementation request', async () => {
+    const files = new Map<string, string>([
+      ['/spec/requirements.md', 'Analyze the failure and fix the worker implementation.'],
+      ['/spec/task_metadata.json', JSON.stringify({
+        taskType: 'analysis',
+        taskTitle: 'Analyze the failure and implement the fix',
+      })],
+    ]);
+    installPlanningArtifactMap(files);
+    const orchestrator = makeOrchestrator() as unknown as {
+      requiresStandardPlanningDesignContract: () => Promise<boolean>;
+      resolveStandardPlanningOwnerPlan: (
+        requireDesignContract: boolean,
+      ) => Promise<{ stages: string[] }>;
+    };
+
+    const requireDesignContract = await orchestrator.requiresStandardPlanningDesignContract();
+    const ownerPlan = await orchestrator.resolveStandardPlanningOwnerPlan(requireDesignContract);
+
+    expect(requireDesignContract).toBe(true);
+    expect(ownerPlan.stages).toEqual(['design', 'design_review', 'tasks']);
+  });
+
+  it('ignores generic passive implementation boilerplate for an analysis task', async () => {
+    const files = new Map<string, string>([
+      ['/spec/requirements.md', [
+        NON_IMPLEMENTATION_REQUIREMENTS_MD,
+        'The requested change is implemented according to the task description.',
+      ].join('\n')],
+      ['/spec/task_metadata.json', JSON.stringify({ taskType: 'analysis' })],
+    ]);
+    installPlanningArtifactMap(files);
+    const orchestrator = makeOrchestrator() as unknown as {
+      requiresStandardPlanningDesignContract: () => Promise<boolean>;
+    };
+
+    await expect(orchestrator.requiresStandardPlanningDesignContract()).resolves.toBe(false);
+  });
+
+  it('keeps the cached no-design decision on coding and every QA reviewer/fixer session', async () => {
+    const buildPlan = (status: 'pending' | 'completed') => JSON.stringify({
+      workflow_type: 'analysis',
+      source_task: { kind: 'analysis-task' },
+      phases: [{
+        id: 'phase-1',
+        name: 'Analysis delivery',
+        subtasks: [{
+          id: '1.1',
+          description: 'Write the task-log findings report',
+          status,
+          depends_on: [],
+          evidence: 'E1; task_logs.jsonl',
+          verification: { type: 'manual', run: 'Review the findings report' },
+        }],
+      }],
+    });
+    const files = new Map<string, string>([
+      ['/spec/implementation_plan.md', buildPlan('pending')],
+      ['/spec/tasks.md', NON_IMPLEMENTATION_TASKS_MD],
+      ['/spec/spec.md', STRICT_STANDARD_SPEC_MD],
+      ['/spec/requirements.md', NON_IMPLEMENTATION_REQUIREMENTS_MD],
+      ['/spec/task_metadata.json', JSON.stringify({ taskType: 'analysis' })],
+    ]);
+    installPlanningArtifactMap(files);
+    const promptDecisions: Array<{ agentType: string; phase: string; requireDesignContract?: boolean }> = [];
+    const sessionDecisions: Array<{ agentType: string; requireDesignContract?: boolean }> = [];
+    const generatePrompt = vi.fn(async (
+      agentType: string,
+      phase: string,
+      context: { requireDesignContract?: boolean },
+    ) => {
+      promptDecisions.push({ agentType, phase, requireDesignContract: context.requireDesignContract });
+      return 'prompt';
+    });
+    let reviewerRuns = 0;
+    const runSession = vi.fn(async (config: { agentType: string; requireDesignContract?: boolean }) => {
+      sessionDecisions.push({
+        agentType: config.agentType,
+        requireDesignContract: config.requireDesignContract,
+      });
+      if (config.agentType === 'qa_reviewer') {
+        reviewerRuns++;
+        files.set('/spec/qa_report.md', reviewerRuns === 1
+          ? makeFailedQAReport()
+          : makePassedQAReport());
+      }
+      return makeSessionResult('completed');
+    });
+    mockIterateSubtasks.mockImplementationOnce(async (config: {
+      runSubtaskSession: (
+        subtask: { id: string; description: string; filesToCreate: string[] },
+        attempt: number,
+      ) => Promise<SessionResult>;
+    }) => {
+      await config.runSubtaskSession({
+        id: '1.1',
+        description: 'Write the task-log findings report',
+        filesToCreate: ['docs/task-log-analysis.md'],
+      }, 1);
+      files.set('/spec/implementation_plan.md', buildPlan('completed'));
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    const outcome = await new BuildOrchestrator({
+      specDir: '/spec',
+      projectDir: '/project',
+      generatePrompt,
+      runSession,
+      maxIterations: 2,
+    }).run();
+
+    expect(outcome.success, outcome.error).toBe(true);
+    expect(sessionDecisions.map(({ agentType }) => agentType)).toEqual([
+      'planner',
+      'coder',
+      'qa_reviewer',
+      'qa_fixer',
+      'qa_reviewer',
+    ]);
+    expect(promptDecisions.every(({ requireDesignContract }) => requireDesignContract === false)).toBe(true);
+    expect(sessionDecisions.every(({ requireDesignContract }) => requireDesignContract === false)).toBe(true);
+  });
+
+  it('keeps the cached Design-Contract decision on implementation coding and QA sessions', async () => {
+    const files = makeStandardArtifactMap([
+      ['/spec/implementation_plan.md', makePlan(['pending'])],
+      ['/spec/tasks.md', makeTasks(['pending'])],
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/task_metadata.json', JSON.stringify({ taskType: 'feature' })],
+      ['/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD],
+    ]);
+    installPlanningArtifactMap(files);
+    const promptDecisions: Array<boolean | undefined> = [];
+    const sessionDecisions: Array<boolean | undefined> = [];
+    const generatePrompt = vi.fn(async (
+      _agentType: string,
+      _phase: string,
+      context: { requireDesignContract?: boolean },
+    ) => {
+      promptDecisions.push(context.requireDesignContract);
+      return 'prompt';
+    });
+    const runSession = vi.fn(async (config: { agentType: string; requireDesignContract?: boolean }) => {
+      sessionDecisions.push(config.requireDesignContract);
+      if (config.agentType === 'qa_reviewer') {
+        files.set('/spec/qa_report.md', makePassedQAReport());
+      }
+      return makeSessionResult('completed');
+    });
+    mockIterateSubtasks.mockImplementationOnce(async (config: {
+      runSubtaskSession: (
+        subtask: { id: string; description: string; filesToModify: string[] },
+        attempt: number,
+      ) => Promise<SessionResult>;
+    }) => {
+      await config.runSubtaskSession({
+        id: 'subtask-1',
+        description: 'Implement subtask 1',
+        filesToModify: ['src/file-1.ts'],
+      }, 1);
+      files.set('/spec/implementation_plan.md', makePlan(['completed']));
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    const outcome = await new BuildOrchestrator({
+      specDir: '/spec',
+      projectDir: '/project',
+      generatePrompt,
+      runSession,
+    }).run();
+
+    expect(outcome.success, outcome.error).toBe(true);
+    expect(promptDecisions.every((value) => value === true)).toBe(true);
+    expect(sessionDecisions.every((value) => value === true)).toBe(true);
   });
 
   it('runs only the tasks owner for a tasks-only Request Changes plan', async () => {

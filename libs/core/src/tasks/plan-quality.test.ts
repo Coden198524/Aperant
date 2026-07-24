@@ -10,6 +10,21 @@ import {
 } from './plan-quality.js';
 
 describe('standard plan quality', () => {
+  it('does not impose a line or character limit on spec.md', () => {
+    const specMarkdown = Array.from(
+      { length: 400 },
+      (_, index) => `Observable scenario detail ${index + 1}: ${'behavior '.repeat(12)}`,
+    ).join('\n');
+
+    expect(specMarkdown.split('\n')).toHaveLength(400);
+    expect(specMarkdown.length).toBeGreaterThan(16_000);
+
+    const result = validateAutocodeStandardPlanArtifacts({ specMarkdown });
+
+    expect(result.errors).toEqual([]);
+    expect(result.valid).toBe(true);
+  });
+
   it('includes reader-first documentation guidance in retry prompts', () => {
     const prompt = buildAutocodePlanQualityRetryPrompt([
       'tasks.md missing reader-first documentation structure.',

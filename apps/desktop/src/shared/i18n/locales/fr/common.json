@@ -489,6 +489,18 @@
       "analysisUnsupported": "Note : L'analyse d'images n'est pas encore prise en charge. Les images sont stockées pour référence mais ne peuvent pas être analysées par le modèle.",
       "screenshotTooLarge": "La capture d'écran est trop volumineuse ({{size}}Mo). La taille maximale est de {{max}}Mo. Essayez de capturer une zone plus petite.",
       "notAnalyzed": "Les images ont été stockées pour référence mais n'ont pas été analysées par le modèle."
+    },
+    "attachments": {
+      "dragOver": "Déposez des images, ou des fichiers pour référencer leurs chemins locaux",
+      "dropHint": "Déposez des images, ou des fichiers pour référencer leurs chemins ; le contenu est lu uniquement si nécessaire"
+    },
+    "documents": {
+      "attachButton": "Référencer des fichiers locaux",
+      "removeDocument": "Supprimer la référence au fichier",
+      "maxReferencesReached": "Maximum de 20 références de fichiers autorisé",
+      "pathUnavailable": "Impossible de résoudre le chemin local du fichier",
+      "directoryUnsupported": "Les dossiers ne peuvent pas être référencés ici",
+      "sharedWithModel": "Seul le chemin local a été transmis. Le modèle lit le contenu à la demande."
     }
   },
   "ideation": {

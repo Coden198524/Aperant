@@ -143,6 +143,16 @@ describe('spec phase prompt mapping', () => {
     expect(prompt).not.toContain('Do not run broad discovery');
   });
 
+  it('does not impose hard line or character limits on spec.md', () => {
+    const writerPrompt = readPrompt('spec_writer.md');
+    const criticPrompt = readPrompt('spec_critic.md');
+
+    expect(writerPrompt).toContain('no hard line or character limit');
+    expect(writerPrompt).not.toContain('under 150 lines');
+    expect(criticPrompt).toContain('without imposing a line or character limit');
+    expect(criticPrompt).not.toContain('under 60 lines');
+  });
+
   it('keeps Standard prompts within concise bundled budgets', () => {
     const budgets: Record<string, number> = {
       'planner.md': 4000,

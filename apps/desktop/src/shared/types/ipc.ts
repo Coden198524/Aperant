@@ -111,7 +111,11 @@ import type {
   InsightsSessionSummary,
   InsightsChatStatus,
   InsightsStreamChunk,
-  InsightsModelConfig
+  InsightsModelConfig,
+  InsightsDocumentAuthorization,
+  InsightsPendingDocumentReference,
+  InsightsSendMessageAcknowledgement,
+  InsightsTaskCreationRequest
 } from './insights';
 import type {
   CompetitorAnalysis,
@@ -904,13 +908,22 @@ export interface ElectronAPI {
 
   // Insights operations
   getInsightsSession: (projectId: string) => Promise<IPCResult<InsightsSession | null>>;
-  sendInsightsMessage: (projectId: string, message: string, modelConfig?: InsightsModelConfig, images?: ImageAttachment[]) => void;
+  authorizeInsightsDocument: (
+    projectId: string,
+    file: File,
+  ) => Promise<IPCResult<InsightsDocumentAuthorization>>;
+  sendInsightsMessage: (
+    projectId: string,
+    message: string,
+    modelConfig?: InsightsModelConfig,
+    images?: ImageAttachment[],
+    documents?: InsightsPendingDocumentReference[],
+    clientMessageId?: string,
+  ) => Promise<IPCResult<InsightsSendMessageAcknowledgement>>;
   clearInsightsSession: (projectId: string) => Promise<IPCResult>;
   createTaskFromInsights: (
     projectId: string,
-    title: string,
-    description: string,
-    metadata?: TaskMetadata
+    request: InsightsTaskCreationRequest
   ) => Promise<IPCResult<Task>>;
   listInsightsSessions: (projectId: string, includeArchived?: boolean) => Promise<IPCResult<InsightsSessionSummary[]>>;
   newInsightsSession: (projectId: string) => Promise<IPCResult<InsightsSession>>;
