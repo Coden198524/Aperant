@@ -64,7 +64,7 @@ function selectAutocodeDesignErrorOwnerStage(
 export function selectAutocodeDesignRevisionStages(
   errors: readonly string[],
 ): AutocodeDesignPackageStage[] {
-  const ownerStages = errors.map(selectAutocodeDesignErrorOwnerStage);
+  const ownerStages = selectAutocodeDesignRevisionOwnerStages(errors);
   const firstStage = AUTOCODE_DESIGN_GENERATION_STAGE_ORDER.find((stage) =>
     ownerStages.includes(stage)
   ) ?? 'design';
@@ -72,6 +72,24 @@ export function selectAutocodeDesignRevisionStages(
     firstStage as (typeof AUTOCODE_DESIGN_GENERATION_STAGE_ORDER)[number],
   );
   return [...AUTOCODE_DESIGN_GENERATION_STAGE_ORDER.slice(Math.max(0, startIndex))];
+}
+
+/**
+ * Select only the artifacts that directly own the reported validation errors.
+ *
+ * This is intentionally narrower than selectAutocodeDesignRevisionStages(),
+ * which preserves the legacy "rerun from the earliest owner" behavior. Repair
+ * state machines should use this function, then run deterministic validation
+ * again and enqueue a downstream owner only when the new validation result
+ * proves that its artifact is invalid.
+ */
+export function selectAutocodeDesignRevisionOwnerStages(
+  errors: readonly string[],
+): AutocodeDesignPackageStage[] {
+  const ownerStages = new Set(errors.map(selectAutocodeDesignErrorOwnerStage));
+  return AUTOCODE_DESIGN_GENERATION_STAGE_ORDER.filter((stage) =>
+    ownerStages.has(stage)
+  );
 }
 
 export interface AutocodeDesignSection {

@@ -933,7 +933,7 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(mockUnlink).toHaveBeenCalledWith(expect.stringContaining('design_review.md'));
   });
 
-  it('routes a downstream traceability failure back to the design owner', async () => {
+  it('repairs a downstream traceability failure through only its design owner', async () => {
     const malformedDesign = STANDARD_DESIGN_MD.replace(
       ' -> LANG-001 -> IMP-001',
       '',
@@ -994,9 +994,63 @@ describe('BuildOrchestrator QA recovery', () => {
         'design_model',
         'implementation_model',
         'design',
-        'design_model',
-        'implementation_model',
       ]);
+    expect(logMessages).toContain(
+      'implementation_model validation scheduled focused repair 1/5; rerunning only: design.',
+    );
+    expect(logMessages).toContain(
+      'Reused implementation_model after focused upstream repair; deterministic validation still passes.',
+    );
+  });
+
+  it('repairs an upstream checkpoint error without rerunning valid downstream owners', async () => {
+    const malformedDesign = STANDARD_DESIGN_MD.replace(
+      ' -> LANG-001 -> IMP-001',
+      '',
+    );
+    const files = makeStandardArtifactMap([
+      ['/spec/spec.md', STANDARD_SPEC_MD],
+      ['/spec/requirements.md', STANDARD_REQUIREMENTS_MD],
+      ['/spec/design.md', malformedDesign],
+    ]);
+    installPlanningArtifactMap(files);
+
+    const runSession = vi.fn(async (config: {
+      agentType: string;
+      specPhase?: string;
+    }): Promise<SessionResult> => {
+      if (config.specPhase === 'design') {
+        files.set('/spec/design.md', STANDARD_DESIGN_MD);
+      }
+      if (config.agentType === 'design_critic') {
+        files.set('/spec/design_review.md', STANDARD_DESIGN_REVIEW_MD);
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeForcePlanningOrchestrator(runSession) as unknown as {
+      ensureStandardDesignForPlanning: (
+        transaction: Record<string, unknown>,
+      ) => Promise<{ success: boolean; error?: string }>;
+    };
+
+    const result = await orchestrator.ensureStandardDesignForPlanning({
+      version: 1,
+      id: 'focused-checkpoint-repair',
+      phase: 'planning',
+      status: 'active',
+      stage: 'implementation_model_validated',
+      checkpoint: 'implementation_model_validated',
+      createdAt: '2026-07-24T00:00:00.000Z',
+      updatedAt: '2026-07-24T00:00:00.000Z',
+      baselineArtifactHashes: {},
+      artifactHashes: {},
+    });
+
+    expect(result.success, result.error).toBe(true);
+    expect(runSession.mock.calls
+      .filter(([config]) => config.agentType === 'software_designer')
+      .map(([config]) => config.specPhase))
+      .toEqual(['design']);
   });
 
   it('compacts long pre-QA failure details before returning to coding', () => {

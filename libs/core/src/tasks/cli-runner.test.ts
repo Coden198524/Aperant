@@ -1442,13 +1442,17 @@ describe('Autocode CLI runner prompt', () => {
     // A REVISE must feed the reviewer's actual findings into the revision stage so it fixes
     // the cited defects instead of blindly regenerating the same design.
     expect(runner).toContain('The independent design review returned Status: REVISE. Resolve every blocking finding below');
-    expect(runner).toContain('selectStandardDesignRevisionStartStage(revisionGuidance)');
+    expect(runner).toContain('selectStandardDesignRevisionOwnerStages(revisionEvidence)');
+    expect(runner).toContain('scheduleStandardPlanningFocusedRepair');
+    expect(runner).toContain('Focused repair passed deterministic validation; reusing unaffected owner artifacts');
+    expect(runner).toContain('continuing with deterministic validation without another model call');
     // Transient provider network drops during spec/design must be retried, not hard-failed.
     expect(runner).toContain('function isTransientCliNetworkFailure(message)');
     expect(runner).toContain('const STANDARD_TRANSIENT_NETWORK_MAX_RETRIES = 3;');
     expect(runner).toContain('Autocode CLI hit a transient network error');
-    expect(runner).toContain('const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = 2;');
+    expect(runner).toContain('const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = standardDesignGenerationStageOrder.length;');
     expect(runner).toContain('found an upstream owner error; repair');
+    expect(runner).toContain("' reruns only ' + repairStages.join(' -> ')");
     // Planning must stop promptly when the independent review needs user input,
     // instead of consuming its revision rounds and rolling back.
     expect(runner).toContain('detectStandardDesignReviewHumanInputGate');
@@ -1838,6 +1842,213 @@ describe('Autocode CLI runner prompt', () => {
     expect(stdout).toContain('PLANNING_COMPLETE');
     expect(stdout).toContain('requireReviewBeforeCoding');
     expect(loadAutocodeImplementationPlanSync(specDir)?.phases?.[0]?.subtasks).toHaveLength(1);
+  });
+
+  it('repairs only the directly invalid design owner and reuses valid downstream models', () => {
+    const taskId = '001-standard-focused-design-repair';
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: taskId,
+      title: 'Focus deterministic design repair',
+      description: 'Repair one invalid design artifact without regenerating valid downstream models.',
+      metadata: { developmentMode: 'standard' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: taskId });
+    const requirementsMarkdown = [
+      '# Requirements',
+      '',
+      'Requirements-Contract: 1',
+      '',
+      '## User Requirements',
+      '- R1: Repair only the design artifact that owns a deterministic validation error.',
+      '',
+      '## Acceptance Criteria',
+      '- AC1: Valid downstream model artifacts are reused after focused validation passes.',
+      '',
+      '## Evidence Sources',
+      '- E1: planning-transaction.json and the focused owner call log.',
+      '',
+    ].join('\n');
+    const specMarkdown = [
+      '# Specification: Focus deterministic design repair',
+      '',
+      'Specification-Contract: 1',
+      '',
+      '## SCN-001 Reuse valid downstream models',
+      'Covers: R1, AC1',
+      'Evidence: E1',
+      '- Given a complete design package with one invalid design.md traceability field',
+      '- When implementation_model validation reports the upstream owner error',
+      '- Then only design.md is repaired before deterministic validation resumes.',
+      '',
+    ].join('\n');
+    const tasksMarkdown = withStandardDesignMetadata([
+      '# Tasks',
+      '',
+      'Tasks-Contract: 1',
+      '',
+      'Feature: Focus deterministic design repair',
+      'Workflow: feature',
+      '',
+      '- [ ] 1. Focused repair',
+      '',
+      '  - [ ] 1.1 Reuse downstream models',
+      '    - Preserve valid model artifacts after repairing design.md.',
+      '    - _Files to modify: src/focused-repair.ts_',
+      '    - _Depends on: none_',
+      '    - _Requirements: R1, AC1, SCN-001_',
+      '    - _Evidence: E1; requirements.md E1; src/focused-repair.ts existing repair boundary_',
+      '    - _Done when: design_model.md and implementation_model.md are not regenerated_',
+      '    - _Verification: npm test -- focused-repair.test.ts_',
+      '',
+    ].join('\n'));
+    mkdirSync(specDir, { recursive: true });
+    writeFileSync(join(specDir, 'requirements.md'), requirementsMarkdown, 'utf8');
+    writeFileSync(join(specDir, 'spec.md'), specMarkdown, 'utf8');
+    writeValidStandardDesignArtifacts(specDir);
+    writeFileSync(
+      join(specDir, 'design.md'),
+      VALID_STANDARD_DESIGN.replace(' -> LANG-001 -> IMP-001', ''),
+      'utf8',
+    );
+    writeFileSync(join(specDir, 'planning-transaction.json'), JSON.stringify({
+      version: 1,
+      id: 'focused-design-repair-transaction',
+      phase: 'planning',
+      status: 'repair_required',
+      stage: 'design_model_validated',
+      checkpoint: 'design_model_validated',
+      createdAt: '2026-07-24T00:00:00.000Z',
+      updatedAt: '2026-07-24T00:00:00.000Z',
+      baselineArtifactHashes: {},
+      artifactHashes: {},
+    }, null, 2), 'utf8');
+
+    const callsPath = join(projectRoot, 'focused-design-repair-calls.jsonl');
+    const fakeCliPath = join(projectRoot, 'focused-design-repair-cli.cjs');
+    writeFileSync(fakeCliPath, [
+      `const { appendFileSync, writeFileSync } = require('node:fs');`,
+      `const { join } = require('node:path');`,
+      `const specDir = process.argv[2];`,
+      `const callsPath = process.argv[3];`,
+      `let prompt = '';`,
+      `process.stdin.setEncoding('utf8');`,
+      `process.stdin.on('data', (chunk) => { prompt += chunk; });`,
+      `process.stdin.on('end', () => {`,
+      `  const stage = prompt.includes('# Standard Architecture Decision Stage') ? 'design'`,
+      `    : prompt.includes('# Standard Design Model Stage') ? 'design_model'`,
+      `      : prompt.includes('# Standard Implementation Model Stage') ? 'implementation_model'`,
+      `        : prompt.includes('# Independent Standard Design Review') ? 'design_review'`,
+      `          : prompt.includes('# Standard Task Planning Stage') ? 'tasks' : 'unknown';`,
+      `  appendFileSync(callsPath, JSON.stringify({ stage, focused: prompt.includes('Previous stage validation') }) + '\\n', 'utf8');`,
+      `  if (stage === 'design') {`,
+      `    writeFileSync(join(specDir, 'design.md'), ${JSON.stringify(VALID_STANDARD_DESIGN)}, 'utf8');`,
+      `  } else if (stage === 'design_model') {`,
+      `    writeFileSync(join(specDir, 'design_model.md'), ${JSON.stringify(VALID_STANDARD_DESIGN_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'implementation_model') {`,
+      `    writeFileSync(join(specDir, 'implementation_model.md'), ${JSON.stringify(VALID_STANDARD_IMPLEMENTATION_MODEL)}, 'utf8');`,
+      `  } else if (stage === 'design_review') {`,
+      `    writeFileSync(join(specDir, 'design_review.md'), ${JSON.stringify(VALID_STANDARD_DESIGN_REVIEW)}, 'utf8');`,
+      `  } else if (stage === 'tasks') {`,
+      `    writeFileSync(join(specDir, 'tasks.md'), ${JSON.stringify(tasksMarkdown)}, 'utf8');`,
+      `  } else {`,
+      `    process.exitCode = 2;`,
+      `  }`,
+      `});`,
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}" "${specDir.replace(/\\/g, '/')}" "${callsPath.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+    });
+    let stdout = '';
+    let executionFailure = '';
+    try {
+      stdout = execFileSync(process.execPath, [plan.runnerFilePath], {
+        cwd: projectRoot,
+        env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+        encoding: 'utf8',
+        timeout: 20_000,
+      });
+    } catch (error) {
+      const outputError = error as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
+      const outputText = (value?: Buffer | string): string =>
+        typeof value === 'string' ? value : value?.toString('utf8') ?? '';
+      executionFailure = [
+        outputError.message,
+        outputText(outputError.stdout),
+        outputText(outputError.stderr),
+        existsSync(callsPath) ? readFileSync(callsPath, 'utf8') : '',
+        existsSync(join(specDir, 'task_logs.jsonl'))
+          ? readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8')
+          : '',
+      ].filter(Boolean).join('\n');
+    }
+    expect(executionFailure).toBe('');
+    const calls = readFileSync(callsPath, 'utf8').trim().split(/\r?\n/).map((line) => (
+      JSON.parse(line) as { stage: string; focused: boolean }
+    ));
+    const taskLog = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
+
+    expect(calls.map((call) => call.stage)).toEqual([
+      'implementation_model',
+      'design',
+      'design_review',
+      'tasks',
+    ]);
+    expect(calls.filter((call) => call.stage === 'implementation_model')).toHaveLength(1);
+    expect(calls.find((call) => call.stage === 'design')?.focused).toBe(true);
+    expect(taskLog).toContain('reruns only design');
+    expect(taskLog).toContain('reusing unaffected owner artifacts');
+    expect(stdout).toContain('PLANNING_COMPLETE');
+
+    const completedTransaction = JSON.parse(
+      readFileSync(join(specDir, 'planning-transaction.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    writeFileSync(join(specDir, 'planning-transaction.json'), JSON.stringify({
+      ...completedTransaction,
+      status: 'repair_required',
+      stage: 'focused_design_repair',
+      checkpoint: 'design_validated',
+      focusedRepair: {
+        targetStage: 'implementation_model',
+        kind: 'upstream',
+        ownerStages: ['design'],
+        continuationStages: ['design_review', 'tasks'],
+        validationError: 'design.md Traceability must include IMP-001.',
+      },
+    }, null, 2), 'utf8');
+    writeFileSync(callsPath, '', 'utf8');
+
+    const resumedPlan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId,
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}" "${specDir.replace(/\\/g, '/')}" "${callsPath.replace(/\\/g, '/')}"`,
+      phase: 'planning',
+    });
+    const resumedStdout = execFileSync(process.execPath, [resumedPlan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'false' },
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+    const resumedCalls = readFileSync(callsPath, 'utf8').trim().split(/\r?\n/).map((line) => (
+      JSON.parse(line) as { stage: string }
+    ));
+    const resumedTaskLog = readFileSync(join(specDir, 'task_logs.jsonl'), 'utf8');
+
+    expect(resumedCalls.map((call) => call.stage)).toEqual(['design_review', 'tasks']);
+    expect(resumedTaskLog).toContain(
+      'is already valid; continuing with deterministic validation without another model call',
+    );
+    expect(resumedStdout).toContain('PLANNING_COMPLETE');
   });
 
   it('preserves validated requirements and resumes the spec owner after spec failure', () => {

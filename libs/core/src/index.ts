@@ -1578,6 +1578,7 @@ export {
   type AutocodeRequirementsBlockingGate,
   AUTOCODE_REQUIREMENTS_BLOCKING_TOKEN,
   parseAutocodeDesignSections,
+  selectAutocodeDesignRevisionOwnerStages,
   selectAutocodeDesignRevisionStages,
   validateAutocodeDesignPackageIdentity,
   validateAutocodeStandardDesignArtifacts,

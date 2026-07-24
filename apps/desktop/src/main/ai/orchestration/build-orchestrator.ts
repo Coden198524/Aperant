@@ -52,7 +52,7 @@ import {
   getAutocodeDesignPackageFingerprint,
   getAutocodeDesignReviewStatus,
   detectAutocodeDesignReviewHumanInputGate,
-  selectAutocodeDesignRevisionStages,
+  selectAutocodeDesignRevisionOwnerStages,
   validateAutocodeStandardDesignStageArtifacts,
   RequirementsOutputSchema,
   parseAutocodeStandardPlanningOwnerPlan,
@@ -1754,6 +1754,16 @@ export class BuildOrchestrator extends EventEmitter {
     return quality.errors;
   }
 
+  private async validateStandardDesignGenerationPackage(): Promise<string[]> {
+    const designPackage = await this.readStandardDesignPackageArtifacts();
+    return validateAutocodeStandardDesignArtifacts({
+      ...designPackage,
+      language: this.config.language,
+      requireReview: false,
+      requireTaskReferences: false,
+    }).errors;
+  }
+
   private async validateStandardDesignOwnerStage(
     stage: AutocodeDesignPackageStage,
   ): Promise<string[]> {
@@ -1782,6 +1792,20 @@ export class BuildOrchestrator extends EventEmitter {
       if (checkpointErrors.length === 0) {
         this.emitTyped('log', `Reusing checkpointed ${stage} owner output.`);
         return { success: true };
+      }
+      const checkpointRepairStage = selectAutocodeDesignRevisionOwnerStages(
+        checkpointErrors,
+      )[0];
+      if (
+        checkpointRepairStage &&
+        STANDARD_DESIGN_OWNER_STAGES.indexOf(checkpointRepairStage) <
+          STANDARD_DESIGN_OWNER_STAGES.indexOf(stage)
+      ) {
+        return {
+          success: false,
+          error: `Checkpointed ${stage} validation found errors owned by ${checkpointRepairStage}.`,
+          errors: checkpointErrors,
+        };
       }
       this.emitTyped(
         'log',
@@ -1856,7 +1880,7 @@ export class BuildOrchestrator extends EventEmitter {
             errors,
           };
         }
-        const repairStage = selectAutocodeDesignRevisionStages(errors)[0];
+        const repairStage = selectAutocodeDesignRevisionOwnerStages(errors)[0];
         if (
           repairStage &&
           STANDARD_DESIGN_OWNER_STAGES.indexOf(repairStage) <
@@ -1918,71 +1942,152 @@ export class BuildOrchestrator extends EventEmitter {
     const selectedStages = STANDARD_DESIGN_OWNER_STAGES.filter((stage) =>
       requestedOwnerStages.includes(stage)
     );
-    let generationStages = selectedStages.filter((stage) => stage !== 'design_review');
-    if (generationStages.length === 0 && !selectedStages.includes('design_review')) {
+    const selectedGenerationStages = selectedStages.filter(
+      (stage) => stage !== 'design_review',
+    );
+    if (selectedGenerationStages.length === 0 && !selectedStages.includes('design_review')) {
       return {
         success: false,
         error: 'No Standard design owner stage was selected.',
       };
     }
-    let retryContext: string | undefined = buildAutocodeDesignQualityRetryPrompt(
+    type GenerationAction = {
+      stage: AutocodeDesignPackageStage;
+      forceRun: boolean;
+      retryContext?: string;
+      validateOnly?: boolean;
+    };
+    const buildGenerationActions = (
+      stages: readonly AutocodeDesignPackageStage[],
+      retryContext: string | undefined,
+      forceRun: boolean,
+    ): GenerationAction[] => stages.map((stage) => ({
+      stage,
+      forceRun,
+      retryContext,
+    }));
+    const existingRetryContext = buildAutocodeDesignQualityRetryPrompt(
       existingQuality.errors,
     );
+    let generationActions = buildGenerationActions(
+      selectedGenerationStages,
+      existingRetryContext,
+      false,
+    );
+    let reviewRetryContext: string | undefined;
 
     let upstreamRepairs = 0;
-    const maxUpstreamRepairs = 2;
+    const maxUpstreamRepairs = STANDARD_DESIGN_OWNER_STAGES.length - 1;
 
     for (let revision = 0; revision <= 2; revision++) {
-      // Generation owners use a separate upstream-repair budget: an upstream-owner
-      // error re-runs the affected owners WITHOUT consuming a design-review revision,
-      // matching the CLI runner which tracks upstream repairs and review revisions
-      // as independent budgets.
       let generationFailure: { success: false; error?: string } | undefined;
-      let regenerate = true;
-      while (regenerate) {
-        regenerate = false;
-        for (const stage of generationStages) {
-          const stageResult = await this.runStandardDesignOwnerStage(
-            stage,
-            planningTransaction,
-            {
-              forceRun: revision > 0 || upstreamRepairs > 0,
-              retryContext,
-            },
-          );
-          if (!stageResult.success) {
-            const repairStages = stageResult.errors
-              ? selectAutocodeDesignRevisionStages(stageResult.errors)
-                  .filter((candidate) => candidate !== 'design_review')
-              : [];
-            const repairStage = repairStages[0];
-            if (
-              repairStage &&
-              STANDARD_DESIGN_OWNER_STAGES.indexOf(repairStage) <
-                STANDARD_DESIGN_OWNER_STAGES.indexOf(stage) &&
-              upstreamRepairs < maxUpstreamRepairs
-            ) {
-              upstreamRepairs += 1;
-              generationStages = repairStages;
-              retryContext = buildAutocodeDesignQualityRetryPrompt(
-                stageResult.errors ?? [],
+      let packageValidated = false;
+      const prependFocusedRepair = (
+        errors: readonly string[],
+        detectedBy: AutocodeDesignPackageStage | 'package',
+        resumeValidationStage?: AutocodeDesignPackageStage,
+      ): boolean => {
+        const repairStages = selectAutocodeDesignRevisionOwnerStages(errors)
+          .filter((stage) => stage !== 'design_review');
+        if (repairStages.length === 0 || upstreamRepairs >= maxUpstreamRepairs) {
+          return false;
+        }
+        upstreamRepairs += 1;
+        const repairContext = buildAutocodeDesignQualityRetryPrompt(errors);
+        generationActions.unshift(
+          ...buildGenerationActions(repairStages, repairContext, true),
+          ...(resumeValidationStage
+            ? [{
+                stage: resumeValidationStage,
+                forceRun: false,
+                retryContext: repairContext,
+                validateOnly: true,
+              } satisfies GenerationAction]
+            : []),
+        );
+        this.emitTyped(
+          'log',
+          `${detectedBy} validation scheduled focused repair ${upstreamRepairs}/${maxUpstreamRepairs}; rerunning only: ${repairStages.join(' -> ')}.`,
+        );
+        return true;
+      };
+
+      while (!packageValidated && !generationFailure) {
+        while (generationActions.length > 0) {
+          const action = generationActions.shift();
+          if (!action) {
+            break;
+          }
+          if (action.validateOnly) {
+            const resumedErrors = await this.validateStandardDesignOwnerStage(action.stage);
+            if (resumedErrors.length === 0) {
+              await updateStandardPlanningTransaction(
+                this.config.specDir,
+                planningTransaction,
+                STANDARD_DESIGN_STAGE_CHECKPOINT[action.stage],
+                'active',
               );
-              regenerate = true;
               this.emitTyped(
                 'log',
-                `${stage} validation found an upstream owner error; repair ${upstreamRepairs}/${maxUpstreamRepairs} resumes from ${repairStage}.`,
+                `Reused ${action.stage} after focused upstream repair; deterministic validation still passes.`,
               );
-              break;
+              continue;
+            }
+            if (prependFocusedRepair(resumedErrors, action.stage, action.stage)) {
+              continue;
             }
             generationFailure = {
               success: false,
-              error: stageResult.error ?? `${stage} owner failed.`,
+              error: `${action.stage} remained invalid after focused repair: ${resumedErrors.join(', ')}`,
             };
             break;
           }
-          retryContext = undefined;
+
+          const stageResult = await this.runStandardDesignOwnerStage(
+            action.stage,
+            planningTransaction,
+            {
+              forceRun: action.forceRun,
+              retryContext: action.retryContext,
+            },
+          );
+          if (!stageResult.success) {
+            if (
+              stageResult.errors &&
+              prependFocusedRepair(stageResult.errors, action.stage, action.stage)
+            ) {
+              continue;
+            }
+            generationFailure = {
+              success: false,
+              error: stageResult.error ?? `${action.stage} owner failed.`,
+            };
+            break;
+          }
+        }
+        if (generationFailure) {
+          break;
+        }
+
+        const packageErrors = await this.validateStandardDesignGenerationPackage();
+        if (packageErrors.length === 0) {
+          await updateStandardPlanningTransaction(
+            this.config.specDir,
+            planningTransaction,
+            STANDARD_DESIGN_STAGE_CHECKPOINT.implementation_model,
+            'active',
+          );
+          packageValidated = true;
+          break;
+        }
+        if (!prependFocusedRepair(packageErrors, 'package')) {
+          generationFailure = {
+            success: false,
+            error: `Standard design package remained invalid after focused repair: ${packageErrors.join(', ')}`,
+          };
         }
       }
+
       if (generationFailure) {
         return generationFailure;
       }
@@ -1991,8 +2096,8 @@ export class BuildOrchestrator extends EventEmitter {
         'design_review',
         planningTransaction,
         {
-          forceRun: revision > 0 || generationStages.length > 0,
-          retryContext,
+          forceRun: revision > 0 || selectedStages.includes('design_review'),
+          retryContext: reviewRetryContext,
         },
       );
       if (reviewResult.success) {
@@ -2026,12 +2131,42 @@ export class BuildOrchestrator extends EventEmitter {
       }
 
       const reviewErrors = reviewResult.errors ?? [reviewResult.error ?? 'Design review failed'];
-      generationStages = selectAutocodeDesignRevisionStages(reviewErrors)
-        .filter((stage) => stage !== 'design_review');
-      retryContext = buildAutocodeDesignQualityRetryPrompt(reviewErrors);
+      if (revision >= 2) {
+        break;
+      }
+      const reviewFindingLines = (reviewMarkdown ?? '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) =>
+          line.length > 0 &&
+          !/^Status:\s*(?:PASSED|REVISE)\s*$/i.test(line) &&
+          !/^#{1,6}\s/.test(line)
+        );
+      const explicitlyOwnedReviewFindings = reviewFindingLines.filter((line) =>
+        /\b(?:requirement_model|domain_model|design|design_model|implementation_model)\.md\b|\bSource Reconstruction\b|\b(?:ADR|RM|FUN|SSD|DOM|SYS|DES|STATE|FLOW|CONTRACT|PAT|REV|LANG|IMP)-[0-9]+\b/i.test(line)
+      );
+      const revisionEvidence = explicitlyOwnedReviewFindings.length > 0
+        ? explicitlyOwnedReviewFindings
+        : reviewFindingLines.length > 0
+          ? reviewFindingLines
+        : reviewErrors;
+      const revisionStages = selectAutocodeDesignRevisionOwnerStages(revisionEvidence);
+      const revisionGuidance = reviewMarkdown?.trim()
+        ? [
+            'The independent design review returned Status: REVISE. Resolve every blocking finding below, reconcile the cited IDs into one consistent decision, and keep valid evidence and stable IDs unchanged:',
+            '',
+            reviewMarkdown.trim(),
+          ].join('\n')
+        : buildAutocodeDesignQualityRetryPrompt(reviewErrors);
+      generationActions = buildGenerationActions(
+        revisionStages,
+        revisionGuidance,
+        true,
+      );
+      reviewRetryContext = revisionGuidance;
       this.emitTyped(
         'log',
-        `Independent design review requested revision ${revision + 1}/2; rerunning: ${generationStages.join(' -> ')}`,
+        `Independent design review requested revision ${revision + 1}/2; rerunning only: ${revisionStages.join(' -> ')}`,
       );
     }
 

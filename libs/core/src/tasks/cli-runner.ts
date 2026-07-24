@@ -1032,6 +1032,12 @@ const standardPlanningCheckpoints = new Set([
 const planningTransactionPath = join(specDir, artifacts.planningTransaction || 'planning-transaction.json');
 const planningTransaction = beginStandardPlanningTransaction();
 const planningArtifactSnapshot = captureStandardPlanningArtifactSnapshot(planningTransaction);
+let standardPlanningFocusedRepair = normalizeStandardPlanningFocusedRepair(
+  planningTransaction && planningTransaction.focusedRepair,
+);
+if (standardPlanningFocusedRepair) {
+  setStandardPlanningRunStages(standardPlanningFocusedRepair.ownerStages);
+}
 let standardPlanningRequirementsValidated = false;
 let standardPlanningSpecValidated = false;
 let standardPlanningSourcesValidated = false;
@@ -1041,8 +1047,12 @@ let standardPlanningTasksValidated = false;
 const standardPlanningValidatedDesignStages = new Set();
 let standardPlanningStage = resolveInitialStandardPlanningStage();
 let standardPlanningStageRetryCount = 0;
-let standardPlanningDesignRevisionCount = 0;
-let standardPlanningUpstreamRepairCount = 0;
+let standardPlanningDesignRevisionCount = Number.isInteger(
+  planningTransaction && planningTransaction.designRevisionCount,
+) ? planningTransaction.designRevisionCount : 0;
+let standardPlanningUpstreamRepairCount = Number.isInteger(
+  planningTransaction && planningTransaction.upstreamRepairCount,
+) ? planningTransaction.upstreamRepairCount : 0;
 const directSessionStateVersion = ${JSON.stringify(AUTOCODE_DIRECT_SESSION_STATE_VERSION)};
 const taskEventPrefix = ${JSON.stringify(AUTOCODE_TASK_EVENT_PREFIX)};
 const fileWriteLockScope = inferFileWriteLockScope();
@@ -1087,7 +1097,7 @@ const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
 const STANDARD_PLANNING_STAGE_RETRY_MAX_CHARS = 16000;
 const STANDARD_PLANNING_STAGE_DEFAULT_MAX_RETRIES = 2;
 const STANDARD_DESIGN_STAGE_MAX_RETRIES = 3;
-const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = 2;
+const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = standardDesignGenerationStageOrder.length;
 const STANDARD_TRANSIENT_NETWORK_MAX_RETRIES = 3;
 const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
@@ -2499,7 +2509,9 @@ async function finishRun(exitCode, signal, explicitError, validationError, needs
   } else {
     if (planningTransaction) {
       delete planningTransaction.baselineArtifacts;
+      delete planningTransaction.focusedRepair;
     }
+    standardPlanningFocusedRepair = null;
     updateStandardPlanningTransaction('committed', 'completed');
   }
   const rateLimited = !needsInputMessage && failed && isCliRateLimitFailure(defaultAttemptState, explicitError, validationError, failureMessage);
@@ -7175,6 +7187,8 @@ function updateStandardPlanningTransaction(stage, status, detail) {
     planningTransaction.checkpoint = stage;
   }
   planningTransaction.updatedAt = now;
+  planningTransaction.designRevisionCount = standardPlanningDesignRevisionCount;
+  planningTransaction.upstreamRepairCount = standardPlanningUpstreamRepairCount;
   planningTransaction.artifactHashes = getStandardPlanningArtifactHashes();
   if (detail) {
     planningTransaction.detail = compactRunnerDirectValidationReason(detail);
@@ -7232,6 +7246,16 @@ function getSelectedStandardPlanningStageAtOrAfter(minimumStage) {
   ) || 'tasks';
 }
 
+function setStandardPlanningRunStages(stages) {
+  const selected = new Set(Array.isArray(stages) ? stages : []);
+  standardPlanningRunStages = standardPlanningOwnerStageOrder.filter((stage) =>
+    selected.has(stage) && isStandardPlanningOwnerStageEnabled(stage)
+  );
+  if (planningTransaction) {
+    planningTransaction.ownerStages = [...standardPlanningRunStages];
+  }
+}
+
 function includeStandardPlanningStagesFrom(firstStage) {
   const startIndex = standardPlanningOwnerStageOrder.indexOf(firstStage);
   if (startIndex < 0) {
@@ -7243,12 +7267,7 @@ function includeStandardPlanningStagesFrom(firstStage) {
       selected.add(stage);
     }
   }
-  standardPlanningRunStages = standardPlanningOwnerStageOrder.filter((stage) =>
-    selected.has(stage) && isStandardPlanningOwnerStageEnabled(stage)
-  );
-  if (planningTransaction) {
-    planningTransaction.ownerStages = [...standardPlanningRunStages];
-  }
+  setStandardPlanningRunStages([...selected]);
 }
 
 function getNextStandardPlanningStage(stage) {
@@ -7261,6 +7280,9 @@ function getNextStandardPlanningStage(stage) {
 function resolveInitialStandardPlanningStage() {
   if (!isStandardDesignFirstPlanningRun()) {
     return 'complete';
+  }
+  if (standardPlanningFocusedRepair && standardPlanningFocusedRepair.ownerStages.length > 0) {
+    return standardPlanningFocusedRepair.ownerStages[0];
   }
   const checkpoint = planningTransaction && planningTransaction.checkpoint;
   if (checkpoint === 'requirement_model_validated') {
@@ -7743,6 +7765,186 @@ function resetStandardPlanningValidationFrom(stage) {
   standardPlanningTasksValidated = false;
 }
 
+function normalizeStandardPlanningFocusedRepair(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const targetStage = value.targetStage;
+  if (
+    !standardDesignGenerationStageOrder.includes(targetStage) &&
+    targetStage !== 'design_review'
+  ) {
+    return null;
+  }
+  const requestedOwners = new Set(Array.isArray(value.ownerStages) ? value.ownerStages : []);
+  const ownerStages = standardDesignGenerationStageOrder.filter((stage) =>
+    requestedOwners.has(stage) && isStandardPlanningOwnerStageEnabled(stage)
+  );
+  if (ownerStages.length === 0) {
+    return null;
+  }
+  const requestedContinuation = new Set(
+    Array.isArray(value.continuationStages) ? value.continuationStages : [],
+  );
+  const continuationStages = standardPlanningOwnerStageOrder.filter((stage) =>
+    requestedContinuation.has(stage) && isStandardPlanningOwnerStageEnabled(stage)
+  );
+  return {
+    targetStage,
+    kind: value.kind === 'review' ? 'review' : 'upstream',
+    ownerStages,
+    continuationStages,
+    validationError: typeof value.validationError === 'string'
+      ? value.validationError
+      : '',
+  };
+}
+
+function resetStandardPlanningValidationForFocusedRepair(ownerStages) {
+  for (const stage of ownerStages) {
+    standardPlanningValidatedDesignStages.delete(stage);
+  }
+  standardPlanningDesignValidated = false;
+  standardPlanningDesignReviewValidated = false;
+  standardPlanningTasksValidated = false;
+}
+
+function scheduleStandardPlanningFocusedRepair(
+  ownerStages,
+  targetStage,
+  kind,
+  validationError,
+) {
+  const requestedOwners = new Set(ownerStages);
+  const normalizedOwners = standardDesignGenerationStageOrder.filter((stage) =>
+    requestedOwners.has(stage) && isStandardPlanningOwnerStageEnabled(stage)
+  );
+  if (normalizedOwners.length === 0) {
+    return false;
+  }
+  const existingRepair = standardPlanningFocusedRepair;
+  const resolvedTargetStage = existingRepair
+    ? existingRepair.targetStage
+    : targetStage;
+  const targetIndex = standardPlanningOwnerStageOrder.indexOf(resolvedTargetStage);
+  const continuationStages = existingRepair
+    ? existingRepair.continuationStages
+    : standardPlanningRunStages.filter((stage) =>
+        standardPlanningOwnerStageOrder.indexOf(stage) > targetIndex
+      );
+  standardPlanningFocusedRepair = {
+    targetStage: resolvedTargetStage,
+    kind: existingRepair ? existingRepair.kind : kind,
+    ownerStages: normalizedOwners,
+    continuationStages,
+    validationError: limitStandardPlanningStageRetryGuidance(validationError),
+  };
+  setStandardPlanningRunStages(normalizedOwners);
+  resetStandardPlanningValidationForFocusedRepair(normalizedOwners);
+  standardPlanningStage = normalizedOwners[0];
+  standardPlanningStageRetryCount = 0;
+  if (planningTransaction) {
+    planningTransaction.focusedRepair = { ...standardPlanningFocusedRepair };
+  }
+  updateStandardPlanningTransaction(
+    'focused_design_repair',
+    'active',
+    validationError,
+  );
+  return true;
+}
+
+function clearStandardPlanningFocusedRepair() {
+  standardPlanningFocusedRepair = null;
+  if (planningTransaction) {
+    delete planningTransaction.focusedRepair;
+  }
+}
+
+async function completeStandardPlanningFocusedRepair() {
+  const repair = standardPlanningFocusedRepair;
+  if (!repair) {
+    return false;
+  }
+  const validationStage = repair.targetStage === 'design_review'
+    ? 'implementation_model'
+    : repair.targetStage;
+  const validationError = await validateStandardDesignOwnerStage(validationStage);
+  if (validationError) {
+    standardPlanningUpstreamRepairCount += 1;
+    const ownerStages = selectStandardDesignRevisionOwnerStages(validationError);
+    if (
+      standardPlanningUpstreamRepairCount <=
+        STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS &&
+      scheduleStandardPlanningFocusedRepair(
+        ownerStages,
+        repair.targetStage,
+        repair.kind,
+        validationError,
+      )
+    ) {
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Focused design repair exposed another invalid owner; repair ' +
+          standardPlanningUpstreamRepairCount + '/' +
+          STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS +
+          ' reruns only ' + ownerStages.join(' -> ') + ': ' +
+          compactRunnerDirectValidationReason(validationError),
+      );
+      startAttempt(buildPromptWithMemoryContext(
+        buildStandardPlanningStagePrompt(
+          standardPlanningStage,
+          standardPlanningFocusedRepair.validationError,
+        ),
+      ));
+      return true;
+    }
+    await finishRun(
+      1,
+      undefined,
+      'Standard planning focused repair failed after ' +
+        STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS +
+        ' dependency revisions: ' + validationError,
+      validationError,
+    );
+    return true;
+  }
+
+  if (validationStage === 'implementation_model') {
+    for (const stage of standardDesignGenerationStageOrder) {
+      markStandardPlanningOwnerStageValidated(stage);
+    }
+  } else {
+    markStandardPlanningOwnerStageValidated(validationStage);
+  }
+  const nextStages = repair.targetStage === 'design_review'
+    ? ['design_review', ...repair.continuationStages]
+    : [...repair.continuationStages];
+  clearStandardPlanningFocusedRepair();
+  setStandardPlanningRunStages(nextStages);
+  updateStandardPlanningTransaction(
+    standardDesignStageCheckpoint[validationStage],
+    'active',
+  );
+  appendTaskLogEntry(
+    logPhase,
+    'info',
+    'Focused repair passed deterministic validation; reusing unaffected owner artifacts and continuing from ' +
+      (nextStages[0] || 'completion') + '.',
+  );
+  if (nextStages.length === 0) {
+    standardPlanningStage = 'complete';
+    return false;
+  }
+  standardPlanningStage = nextStages[0];
+  clearStaleStandardDesignReview(standardPlanningStage);
+  startAttempt(buildPromptWithMemoryContext(
+    buildStandardPlanningStagePrompt(standardPlanningStage),
+  ));
+  return true;
+}
+
 function selectStandardDesignErrorOwnerStage(errorText) {
   const text = String(errorText || '');
   if (/Source Reconstruction/i.test(text)) return 'design_model';
@@ -7765,18 +7967,22 @@ function selectStandardDesignErrorOwnerStage(errorText) {
   return 'design';
 }
 
-function selectStandardDesignRevisionStartStage(validationError) {
+function extractStandardDesignRevisionOwnerText(validationError) {
   const text = String(validationError || '');
   const errorBlockBeginMarker = 'BEGIN STANDARD DESIGN VALIDATION ERRORS';
   const errorBlockEndMarker = 'END STANDARD DESIGN VALIDATION ERRORS';
   const errorBlockStart = text.indexOf(errorBlockBeginMarker);
   const errorBlockEnd = text.indexOf(errorBlockEndMarker);
-  const ownerText = errorBlockStart >= 0 && errorBlockEnd > errorBlockStart
+  return errorBlockStart >= 0 && errorBlockEnd > errorBlockStart
     ? text.slice(
         errorBlockStart + errorBlockBeginMarker.length,
         errorBlockEnd,
       )
     : text;
+}
+
+function selectStandardDesignRevisionOwnerStages(validationError) {
+  const ownerText = extractStandardDesignRevisionOwnerText(validationError);
   const stageOrder = [
     'requirement_model',
     'domain_model',
@@ -7787,10 +7993,22 @@ function selectStandardDesignRevisionStartStage(validationError) {
   const ownerStages = ownerText
     .split(String.fromCharCode(10))
     .map((line) => line.trim())
-    .filter(Boolean)
+    .filter((line) =>
+      line &&
+      !/^Status:\\s*(?:PASSED|REVISE)\\s*$/i.test(line) &&
+      !/^#{1,6}\\s/.test(line)
+    )
     .map(selectStandardDesignErrorOwnerStage);
-  return stageOrder.find((stage) => ownerStages.includes(stage)) ||
-    selectStandardDesignErrorOwnerStage(ownerText);
+  const selectedStages = stageOrder.filter((stage) => ownerStages.includes(stage));
+  return selectedStages.length > 0
+    ? selectedStages
+    : [selectStandardDesignErrorOwnerStage(ownerText)];
+}
+
+function hasExplicitStandardDesignOwnerEvidence(value) {
+  return /\\b(?:requirement_model|domain_model|design|design_model|implementation_model)\\.md\\b|\\bSource Reconstruction\\b|\\b(?:ADR|RM|FUN|SSD|DOM|SYS|DES|STATE|FLOW|CONTRACT|PAT|REV|LANG|IMP)-[0-9]+\\b/i.test(
+    String(value || ''),
+  );
 }
 
 async function reconcileStandardPlanningResumeStage() {
@@ -7804,6 +8022,30 @@ async function reconcileStandardPlanningResumeStage() {
   for (const stage of prerequisiteStages) {
     const validationError = await validateStandardPlanningOwnerStage(stage);
     if (validationError) {
+      if (standardDesignGenerationStageOrder.includes(stage)) {
+        const targetStage = standardPlanningFocusedRepair
+          ? standardPlanningFocusedRepair.targetStage
+          : standardPlanningStage === 'tasks'
+            ? 'design_review'
+            : standardPlanningStage;
+        const repairOwners = selectStandardDesignRevisionOwnerStages(validationError);
+        if (scheduleStandardPlanningFocusedRepair(
+          repairOwners,
+          targetStage,
+          targetStage === 'design_review' ? 'review' : 'upstream',
+          validationError,
+        )) {
+          return validationError;
+        }
+      }
+      if (standardPlanningFocusedRepair) {
+        clearStandardPlanningFocusedRepair();
+        updateStandardPlanningTransaction(
+          'repair_required',
+          'active',
+          validationError,
+        );
+      }
       includeStandardPlanningStagesFrom(stage);
       standardPlanningStage = stage;
       resetStandardPlanningValidationFrom(stage);
@@ -7823,7 +8065,8 @@ async function advanceStandardPlanningStage() {
   const validationError = await validateStandardPlanningOwnerStage(completedStage);
 
   if (validationError) {
-    const repairStage = selectStandardDesignRevisionStartStage(validationError);
+    const repairStages = selectStandardDesignRevisionOwnerStages(validationError);
+    const repairStage = repairStages[0];
     const completedStageIndex = standardPlanningOwnerStageOrder.indexOf(completedStage);
     const repairStageIndex = standardPlanningOwnerStageOrder.indexOf(repairStage);
     if (
@@ -7834,12 +8077,14 @@ async function advanceStandardPlanningStage() {
       standardPlanningUpstreamRepairCount += 1;
       if (
         standardPlanningUpstreamRepairCount <=
-        STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS
+          STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS &&
+        scheduleStandardPlanningFocusedRepair(
+          repairStages,
+          completedStage,
+          'upstream',
+          validationError,
+        )
       ) {
-        includeStandardPlanningStagesFrom(repairStage);
-        standardPlanningStage = repairStage;
-        resetStandardPlanningValidationFrom(repairStage);
-        standardPlanningStageRetryCount = 0;
         appendTaskLogEntry(
           logPhase,
           'info',
@@ -7847,11 +8092,11 @@ async function advanceStandardPlanningStage() {
             ' found an upstream owner error; repair ' +
             standardPlanningUpstreamRepairCount + '/' +
             STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS +
-            ' resumes from ' + repairStage + ': ' +
+            ' reruns only ' + repairStages.join(' -> ') + ': ' +
             compactRunnerDirectValidationReason(validationError),
         );
         startAttempt(buildPromptWithMemoryContext(
-          buildStandardPlanningStagePrompt(repairStage, validationError),
+          buildStandardPlanningStagePrompt(standardPlanningStage, validationError),
         ));
         return true;
       }
@@ -7899,14 +8144,33 @@ async function advanceStandardPlanningStage() {
         const revisionGuidance = reviewFindings.trim()
           ? 'The independent design review returned Status: REVISE. Resolve every blocking finding below, reconcile the cited IDs into one consistent decision, and keep valid evidence and stable IDs unchanged:\\n\\n' + reviewFindings.trim()
           : validationError;
-        const revisionStage = selectStandardDesignRevisionStartStage(revisionGuidance);
-        includeStandardPlanningStagesFrom(revisionStage);
-        standardPlanningStage = revisionStage;
-        resetStandardPlanningValidationFrom(revisionStage);
-        standardPlanningStageRetryCount = 0;
-        appendTaskLogEntry(logPhase, 'info', 'Independent design review requested revision ' + standardPlanningDesignRevisionCount + '/2; resuming from ' + revisionStage + ': ' + compactRunnerDirectValidationReason(reviewFindings || validationError));
-        startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(revisionStage, revisionGuidance)));
-        return true;
+        const reviewFindingLines = reviewFindings
+          .split(String.fromCharCode(10))
+          .map((line) => line.trim())
+          .filter((line) =>
+            line &&
+            !/^Status:\\s*(?:PASSED|REVISE)\\s*$/i.test(line) &&
+            !/^#{1,6}\\s/.test(line)
+          );
+        const explicitlyOwnedReviewFindings = reviewFindingLines.filter(
+          hasExplicitStandardDesignOwnerEvidence,
+        );
+        const revisionEvidence = (
+          explicitlyOwnedReviewFindings.length > 0
+            ? explicitlyOwnedReviewFindings
+            : reviewFindingLines
+        ).join(String.fromCharCode(10)) || validationError;
+        const revisionStages = selectStandardDesignRevisionOwnerStages(revisionEvidence);
+        if (scheduleStandardPlanningFocusedRepair(
+          revisionStages,
+          'design_review',
+          'review',
+          revisionGuidance,
+        )) {
+          appendTaskLogEntry(logPhase, 'info', 'Independent design review requested revision ' + standardPlanningDesignRevisionCount + '/2; rerunning only ' + revisionStages.join(' -> ') + ': ' + compactRunnerDirectValidationReason(reviewFindings || validationError));
+          startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(standardPlanningStage, revisionGuidance)));
+          return true;
+        }
       }
     } else {
       standardPlanningStageRetryCount += 1;
@@ -7957,10 +8221,19 @@ async function advanceStandardPlanningStage() {
       return true;
     }
   }
-  standardPlanningStage = getNextStandardPlanningStage(completedStage);
+  const nextStage = getNextStandardPlanningStage(completedStage);
+  if (standardPlanningFocusedRepair && nextStage === 'complete') {
+    return completeStandardPlanningFocusedRepair();
+  }
+  standardPlanningStage = nextStage;
   appendTaskLogEntry(logPhase, 'info', 'Starting Standard planning stage: ' + standardPlanningStage + '.');
   clearStaleStandardDesignReview(standardPlanningStage);
-  startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(standardPlanningStage)));
+  startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(
+    standardPlanningStage,
+    standardPlanningFocusedRepair
+      ? standardPlanningFocusedRepair.validationError
+      : undefined,
+  )));
   return true;
 }
 
@@ -7988,12 +8261,17 @@ async function startNonCodingRuntimeWithPlanningRecovery(attemptPrompt) {
       appendTaskLogEntry(
         logPhase,
         'info',
-        'The selected owner stages depend on an invalid upstream artifact; expanding repair from ' +
+        'The selected owner stages depend on an invalid upstream artifact; focusing repair on ' +
           standardPlanningStage + ': ' + compactRunnerDirectValidationReason(prerequisiteError),
       );
     }
     clearStaleStandardDesignReview(standardPlanningStage);
-    startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(standardPlanningStage)));
+    startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(
+      standardPlanningStage,
+      prerequisiteError || (standardPlanningFocusedRepair
+        ? standardPlanningFocusedRepair.validationError
+        : undefined),
+    )));
     return;
   }
   if (!shouldResumeStandardPlanning) {
@@ -8017,6 +8295,35 @@ async function startNonCodingRuntimeWithPlanningRecovery(attemptPrompt) {
       );
       startAttempt(buildPromptWithMemoryContext(
         buildStandardPlanningStagePrompt(standardPlanningStage, checkpointError),
+      ));
+      return;
+    }
+
+    if (standardPlanningFocusedRepair && standardPlanningStage !== 'tasks') {
+      const focusedStageError = await validateStandardPlanningOwnerStage(
+        standardPlanningStage,
+      );
+      if (!focusedStageError) {
+        appendTaskLogEntry(
+          logPhase,
+          'info',
+          'Checkpointed focused-repair owner ' + standardPlanningStage +
+            ' is already valid; continuing with deterministic validation without another model call.',
+        );
+        await advanceStandardPlanningStage();
+        return;
+      }
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Resuming interrupted focused repair at owner stage ' +
+          standardPlanningStage + '.',
+      );
+      startAttempt(buildPromptWithMemoryContext(
+        buildStandardPlanningStagePrompt(
+          standardPlanningStage,
+          focusedStageError || standardPlanningFocusedRepair.validationError,
+        ),
       ));
       return;
     }

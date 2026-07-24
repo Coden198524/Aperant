@@ -8,6 +8,7 @@ import {
   getAutocodeDesignPackageFingerprint,
   getAutocodeDesignContractVersion,
   parseAutocodeDesignSections,
+  selectAutocodeDesignRevisionOwnerStages,
   selectAutocodeDesignRevisionStages,
   validateAutocodeStandardDesignArtifacts,
   validateAutocodeStandardDesignStageArtifacts,
@@ -566,6 +567,23 @@ describe('Design-Contract: 5 quality validation', () => {
       'implementation_model.md IMP-001 lacks coverage.',
       'design.md Traceability must include IMP-001.',
     ])).toEqual(['design', 'design_model', 'implementation_model']);
+  });
+
+  it('selects only directly invalid design owners for focused repair', () => {
+    expect(selectAutocodeDesignRevisionOwnerStages([
+      'design.md Traceability must connect RM-001 through FUN-*, SSD-*, and DOM-*.',
+    ])).toEqual(['design']);
+    expect(selectAutocodeDesignRevisionOwnerStages([
+      'design_model.md missing "## Source Reconstruction" section.',
+    ])).toEqual(['design_model']);
+    expect(selectAutocodeDesignRevisionOwnerStages([
+      'design.md missing "## Source Reconstruction" section.',
+    ])).toEqual(['design_model']);
+    expect(selectAutocodeDesignRevisionOwnerStages([
+      'implementation_model.md IMP-001 lacks coverage.',
+      'design.md Traceability must include IMP-001.',
+    ])).toEqual(['design', 'implementation_model']);
+    expect(selectAutocodeDesignRevisionOwnerStages([])).toEqual([]);
   });
 
   it('accepts root project files and explained no-pattern declarations', () => {
