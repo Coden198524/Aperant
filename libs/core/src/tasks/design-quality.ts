@@ -525,7 +525,12 @@ const AUTOCODE_STATE_DIAGRAM_SKELETON = [
   '    <NextState> --> [*]',
 ].join('\n');
 
-export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
+/**
+ * The machine contract is composed from named fragments so the full contract and the
+ * per-stage (trimmed) contracts are generated from ONE source of truth. Never inline a rule
+ * in a stage prompt: add it to a fragment so both views stay in sync with the validator.
+ */
+const CONTRACT_UNIVERSAL_LINES = [
   'Deterministic machine contract. Keep every field label, list marker, ASCII colon, enum token, ID, and provenance prefix in English exactly as shown. Localize only descriptive prose.',
   'Write localized prose as natural, fluent, idiomatic technical writing in the target language: use complete, well-formed sentences and native terminology, not word-for-word translation of the English field names.',
   'Design package identity:',
@@ -571,8 +576,15 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   'Design Budget uses these exact bullet fields. Keep the English field names, list markers, and ASCII colons; do not use headings for these fields:',
   ...DESIGN_BUDGET_FORMAT_LINES,
   'At local depth, keep New dependencies allowed: 0 and New architectural patterns: none; escalate Design-Depth with complexity evidence before adding either.',
-  'Exact model fields and value formats:',
+] as const;
+
+/** Field specs owned by design.md (ADR + architecture principles). */
+const CONTRACT_DESIGN_ROOT_FIELD_LINES = [
   '- ADR: Decision; Status=proposed|accepted|superseded|rejected; Decision drivers; Alternatives considered; Trade-offs; Evidence basis.',
+] as const;
+
+/** Field specs owned by requirement_model.md (RM/FUN/SSD). */
+const CONTRACT_REQUIREMENT_MODEL_FIELD_LINES = [
   '- Requirement Analysis: Input requirements; Industry assumptions=inferred - ...|none - ...; Open requirement questions=unresolved - ...|none.',
   '- RM use case: Use case name; Scenario; 5W1H analysis; Trigger and preconditions; Use case description; Steps and outputs; Use case value=Why=<localized customer value>; Alternate and exception flows; Postconditions; 8C constraints; Evidence basis.',
   '- Scenario and 5W1H analysis must separate dimensions with ASCII semicolons and ASCII equals signs even when the prose is localized. Scenario: Who=...; Where=...; When=.... 5W1H analysis: Who=...; What=...; Why=...; When=...; Where=...; How=....',
@@ -582,11 +594,19 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   '- SSD: Use case=one RM-*; Participants; Main and exception messages; Evidence basis; one Mermaid sequenceDiagram with autonumber. Declare actor first, System second, and verified externals after; show a request, System activation and self-processing, and a dashed response. Expose no product internals.',
   'Exact SSD sequenceDiagram shape (keep the ASCII arrows and +/- activation markers; localize only prose):\n```mermaid\n' + AUTOCODE_SSD_MERMAID_SKELETON + '\n```',
   '- requirement_model.md headings: Requirement Analysis; Use Case List; Functional List; System Sequence Diagrams.',
+] as const;
+
+/** Field specs owned by domain_model.md (DOM + noun analysis + class diagram). */
+const CONTRACT_DOMAIN_MODEL_FIELD_LINES = [
   '- Noun Analysis: Candidate nouns; Excluded nouns; Synonym merges.',
   '- DOM Concept kind: ' + DOMAIN_CONCEPT_KIND_TOKENS.join('|'),
   '- DOM: Noun sources; Business meaning; Attributes (list each as name: type; constraint covering nullability and range, unit, or enum); Identity; Rules and invariants; Lifecycle states; Relationships; Related use cases=RM-*; Evidence basis. Domain classes define no software methods or file mapping.',
   '- domain_model.md headings: Noun Analysis; Domain Model; Domain Class Diagram. Use Mermaid classDiagram with labeled DOM_* boxes, <<Concept kind>>, attributes, and no methods. Start the classDiagram body with direction LR, and connect every DOM_* box to at least one other concept with a relationship. Association, aggregation, and composition show quoted multiplicity at both ends; generalization may omit it.',
   'Exact Domain Class Diagram shape (localize only prose; keep direction LR and quoted multiplicities):\n```mermaid\n' + AUTOCODE_DOMAIN_CLASS_DIAGRAM_SKELETON + '\n```',
+] as const;
+
+/** Field specs owned by design_model.md (SYS/DES/STATE/FLOW/CONTRACT/PAT/REV). */
+const CONTRACT_DESIGN_MODEL_FIELD_LINES = [
   '- SYS: Subsystem or boundary; Allocated requirements=RM-*; Allocated functions=FUN-*; Owns; Provides; Requires; Data and control boundary; Failure ownership; Evidence basis.',
   '- Element: ' + DESIGN_ELEMENT_TOKENS.join('|') + ' - <localized concrete element or symbol>',
   '- Role stereotype: ' + DESIGN_ROLE_STEREOTYPE_TOKENS.join('|'),
@@ -603,10 +623,22 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   '- Pattern application balances NOP: when a variation is real and evidenced, apply the fitting pattern instead of a growing switch/if-else over types or states; when no variation is verified, keep the direct mechanism and record none.',
   '- PAT (define one per Selected pattern; Design Budget New architectural patterns must list the same PAT-* IDs): Verified variation; Evidence; Expected horizon; Stable boundary; Encapsulated variation; Participants and roles; Application scope; Simpler alternative; Benefit; Cost and failure modes.',
   '- REV when applicable: External capability; Domain concepts; Responsibility path; Runtime path; Source symbols; Contradiction checks=checked|conflict|unresolved - <evidence>; Confidence=high|medium|low - <rationale>.',
+] as const;
+
+/** Field specs owned by implementation_model.md (LANG/IMP). */
+const CONTRACT_IMPLEMENTATION_MODEL_FIELD_LINES = [
   '- LANG: Scope; Language and version=<observed language and a concrete version number>; Naming and formatting; Type and interface rules; Class and visibility rules; Error handling; Resource and lifecycle management; Concurrency and state management; Framework integration; Testing and documentation; Evidence basis.',
   '- IMP: Project files and symbols=<path/to/file#symbol>; Design mapping=SYS-*, DES-*, FLOW-*/CONTRACT-* (add STATE-* when the DES owns state); Coding constraints=LANG-*; Class realization=DES-* -> <file#symbol>; Integration constraints; Verification (name focused tests that assert each owned invariant, every RM alternate and exception flow this element realizes, and any Security, Reliability, or Performance 8C constraint it must meet); Evidence basis.',
   '- implementation_model.md headings: Language And Coding Constraints; Implementation Model.',
+] as const;
+
+/** design.md-owned principles block (kept with the design root stage). */
+const CONTRACT_DESIGN_PRINCIPLES_LINES = [
   '- Applicable Design Principles: Single-responsibility decision; Open-closed decision; Liskov-substitution decision; Interface-segregation decision; Dependency-inversion decision; Cohesion and encapsulation decision; Framework adaptation decision; Underdesign checks.',
+] as const;
+
+/** Cross-stage invariants every stage must respect (traceability, consistency, self-check). */
+const CONTRACT_INVARIANT_LINES = [
   'Allocation and traceability invariants:',
   '- Every RM has at least one FUN and one SSD. Every SSD follows actor-left/System-right numbered black-box presentation with activation, System self-processing, and an observable response. Every FUN names all involved RM use cases and equivalent functions are merged.',
   '- Every RM and FUN is allocated by SYS. Every SYS has at least one DES implementation responsibility.',
@@ -618,7 +650,62 @@ export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
   '- Each fact has exactly one owner model. Downstream models reference upstream stable IDs and never restate, re-derive, or redefine an upstream fact in conflicting words or values.',
   '- Never fork a contradictory value: when an upstream fact is missing, ambiguous, or conflicts with another model, record it once as unresolved - <conflicting IDs and the contradiction> instead of silently choosing a divergent value.',
   '- Before finalizing this stage, self-check that every referenced upstream ID exists and that no two entries assert contradictory values for the same concept, constant, or state; reconcile the entries in place or mark them unresolved.',
+] as const;
+
+const CONTRACT_FIELD_HEADER_LINE = 'Exact model fields and value formats:';
+
+/**
+ * The complete machine contract: universal identity/evidence/budget rules, every model's field
+ * specs, and the cross-stage invariants. Assembled from the fragments above so a per-stage
+ * (trimmed) contract can never drift from the full one.
+ */
+export const AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT = [
+  ...CONTRACT_UNIVERSAL_LINES,
+  CONTRACT_FIELD_HEADER_LINE,
+  ...CONTRACT_DESIGN_ROOT_FIELD_LINES,
+  ...CONTRACT_REQUIREMENT_MODEL_FIELD_LINES,
+  ...CONTRACT_DOMAIN_MODEL_FIELD_LINES,
+  ...CONTRACT_DESIGN_MODEL_FIELD_LINES,
+  ...CONTRACT_IMPLEMENTATION_MODEL_FIELD_LINES,
+  ...CONTRACT_DESIGN_PRINCIPLES_LINES,
+  ...CONTRACT_INVARIANT_LINES,
 ].join('\n');
+
+/**
+ * Per-stage machine contract: the universal rules and cross-stage invariants (always required)
+ * plus only the field specs the stage actually owns, with the upstream specs it must reference.
+ * This shrinks the prompt sent on each design stage without dropping any rule that stage is
+ * validated against. Retries fall back to the full contract.
+ */
+export function buildAutocodeStandardDesignStageContractPrompt(
+  stage: AutocodeDesignPackageStage,
+  alsoIncludeStages: readonly AutocodeDesignPackageStage[] = [],
+): string {
+  const fieldLinesByStage: Partial<Record<AutocodeDesignPackageStage, readonly string[]>> = {
+    // Each stage gets its own field specs. Upstream specs are intentionally omitted: upstream
+    // artifacts are read directly, and the invariants below still bind the cross-stage links.
+    requirement_model: CONTRACT_REQUIREMENT_MODEL_FIELD_LINES,
+    domain_model: CONTRACT_DOMAIN_MODEL_FIELD_LINES,
+    design: [...CONTRACT_DESIGN_ROOT_FIELD_LINES, ...CONTRACT_DESIGN_PRINCIPLES_LINES],
+    design_model: CONTRACT_DESIGN_MODEL_FIELD_LINES,
+    implementation_model: CONTRACT_IMPLEMENTATION_MODEL_FIELD_LINES,
+  };
+  // Include the requested stage plus any co-generated stages, de-duplicated and kept in the
+  // canonical package order so the trimmed contract reads like the full one.
+  const requestedStages = new Set<AutocodeDesignPackageStage>([stage, ...alsoIncludeStages]);
+  const fieldLines = AUTOCODE_DESIGN_GENERATION_STAGE_ORDER
+    .filter((candidate) => requestedStages.has(candidate))
+    .flatMap((candidate) => fieldLinesByStage[candidate] ?? []);
+  if (fieldLines.length === 0) {
+    return AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT;
+  }
+  return [
+    ...CONTRACT_UNIVERSAL_LINES,
+    CONTRACT_FIELD_HEADER_LINE,
+    ...fieldLines,
+    ...CONTRACT_INVARIANT_LINES,
+  ].join('\n');
+}
 
 export const AUTOCODE_STANDARD_DESIGN_METHOD_PROMPT = `
 You are the software designer for a staged Standard-mode design package. Write only the artifact named by

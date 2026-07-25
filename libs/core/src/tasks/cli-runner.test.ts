@@ -1450,6 +1450,26 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('function isTransientCliNetworkFailure(message)');
     expect(runner).toContain('const STANDARD_TRANSIENT_NETWORK_MAX_RETRIES = 3;');
     expect(runner).toContain('Autocode CLI hit a transient network error');
+    // Speedup: the requirement_model stage co-generates a first-pass domain_model, and the
+    // advance loop skips a generation stage's CLI call when its artifact already validates.
+    expect(runner).toContain('so the separate domain-modeling round-trip can be skipped when the domain model already validates');
+    expect(runner).toContain('so the separate implementation-mapping round-trip can be skipped when that model already validates');
+    expect(runner).toContain('and already validates; skipping its generation call');
+    // Both co-generation pairs are declared, and the skip is gated on a freshly written
+    // artifact (mtime at/after the attempt start) so a stale-but-valid file from an
+    // interrupted run is never skipped.
+    // B: each design stage sends a trimmed per-stage contract, and retries fall back to the
+    // full contract so a failing stage still sees every rule.
+    expect(runner).toContain('function selectStandardDesignContractPrompt(stage, validationError)');
+    expect(runner).toContain('const standardDesignStageContractPrompt =');
+    expect(runner).toContain('selectStandardDesignContractPrompt(stage, validationError),');
+    // D: the spec stage self-checks R*/AC* coverage before finalizing, so an uncovered id is
+    // fixed in the same turn instead of costing another round-trip.
+    expect(runner).toContain('Before finalizing, self-check coverage: enumerate every R* and AC* id');
+    expect(runner).toContain('const standardDesignCoGeneratedStage = {');
+    expect(runner).toContain("requirement_model: 'domain_model',");
+    expect(runner).toContain("design_model: 'implementation_model',");
+    expect(runner).toContain('statSync(coGeneratedPath).mtimeMs >= currentAttemptStartedAt');
     expect(runner).toContain('const STANDARD_DESIGN_UPSTREAM_REPAIR_MAX_REVISIONS = standardDesignGenerationStageOrder.length;');
     expect(runner).toContain('found an upstream owner error; repair');
     expect(runner).toContain("' reruns only ' + repairStages.join(' -> ')");

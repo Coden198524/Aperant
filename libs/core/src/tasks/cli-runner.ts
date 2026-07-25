@@ -24,7 +24,10 @@ import {
 import { isAutocodeNonImplementationDirectContext } from '../runtime/direct-task-summary.js';
 import { foldRepeatedAutocodePromptLines } from '../runtime/prompt-context.js';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
-import { AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT } from './design-quality.js';
+import {
+  AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT,
+  buildAutocodeStandardDesignStageContractPrompt,
+} from './design-quality.js';
 import {
   AUTOCODE_STANDARD_CHANGE_REQUESTS_FILE,
   type AutocodeStandardPlanningOwnerPlan,
@@ -950,6 +953,26 @@ const projectId = ${JSON.stringify(input.projectId)};
 const language = ${JSON.stringify(input.language)};
 const standardPlanningStageLanguageInstruction = ${JSON.stringify(buildStandardPlanningStageLanguageInstruction(input.language))};
 const standardDesignMachineContractPrompt = ${JSON.stringify(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT)};
+// Per-stage contracts carry the universal rules, the stage's own field specs, and every
+// cross-stage invariant, but drop the other stages' field specs to shrink each design call.
+// Retries fall back to the full contract so a failing stage sees every rule.
+const standardDesignStageContractPrompt = ${JSON.stringify({
+    // Co-generating stages include the co-generated model's field specs too, since they write
+    // both files in one turn.
+    requirement_model: buildAutocodeStandardDesignStageContractPrompt('requirement_model', ['domain_model']),
+    domain_model: buildAutocodeStandardDesignStageContractPrompt('domain_model'),
+    design: buildAutocodeStandardDesignStageContractPrompt('design'),
+    design_model: buildAutocodeStandardDesignStageContractPrompt('design_model', ['implementation_model']),
+    implementation_model: buildAutocodeStandardDesignStageContractPrompt('implementation_model'),
+  })};
+function selectStandardDesignContractPrompt(stage, validationError) {
+  // On a retry (validationError present) send the complete contract so the failing stage sees
+  // every rule; otherwise send the trimmed per-stage contract.
+  if (validationError) {
+    return standardDesignMachineContractPrompt;
+  }
+  return standardDesignStageContractPrompt[stage] || standardDesignMachineContractPrompt;
+}
 const runtimeConcurrency = ${JSON.stringify(input.runtimeConcurrency)};
 const artifacts = ${JSON.stringify(AUTOCODE_TASK_ARTIFACTS)};
 const standardPlanningOwnerStageOrder = [
@@ -988,6 +1011,12 @@ const standardDesignStageArtifact = {
   design_model: artifacts.designModel || 'design_model.md',
   implementation_model: artifacts.implementationModel || 'implementation_model.md',
   design_review: artifacts.designReview || 'design_review.md',
+};
+// Stages whose prompt also produces a first-pass of the next model in the same turn, letting
+// the runner skip that model's own CLI round-trip when it already validates.
+const standardDesignCoGeneratedStage = {
+  requirement_model: 'domain_model',
+  design_model: 'implementation_model',
 };
 const standardDesignStageCheckpoint = {
   requirement_model: 'requirement_model_validated',
@@ -7375,6 +7404,7 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Declare Specification-Contract: 1. Write each observable behavior as a "### SCN-001" subsection (three-digit IDs) under a "## Observable Scenarios" heading, each with a Covers: R*, AC* line and an Evidence: E* line. Together the scenarios must cover every R* and AC* id from requirements.md.',
       'Do not copy requirement, acceptance, or evidence bodies. Do not define architecture, files, tasks, or runtime state.',
       'For Request Changes, preserve unaffected SCN-* IDs and revise only affected observable behavior.',
+      'Before finalizing, self-check coverage: enumerate every R* and AC* id in ' + artifacts.requirements + ' and confirm each one appears in at least one SCN-* Covers: line, and that every id you cite actually exists. Add or extend scenarios until coverage is complete, because an uncovered id fails validation and forces another round.',
       outputLanguage,
       retry,
     ].join('\\n');
@@ -7387,16 +7417,18 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Spec directory: ' + specDir,
       'Task: ' + taskDescription,
       '',
-      'Write only ' + join(specDir, standardDesignStageArtifact.requirement_model) + '.',
+      'Write ' + join(specDir, standardDesignStageArtifact.requirement_model) + ' and, in the same turn, a first-pass ' + join(specDir, standardDesignStageArtifact.domain_model) + ' following its contract, so the separate domain-modeling round-trip can be skipped when the domain model already validates.',
       'Read approved requirements.md and spec.md plus active Request Changes. Preserve unaffected RM/FUN/SSD IDs.',
       'Derive complete RM-* use cases with scenario, ordered actions and outputs, customer value, alternatives/exceptions, postconditions, and R*/AC*/SCN*/E* evidence.',
       'Apply 5W1H exactly as Who, Where, When, What, Why, How and 8C exactly as Performance, Cost, Time, Reliability, Security, Compliance, Technology, Compatibility.',
       'Extract and deduplicate FUN-* capabilities across use cases. Create exactly one Mermaid SSD-* system sequence diagram per RM-* using autonumber, actor-left/System-right declaration order, System activation bars, actor-to-System requests, coarse System self-processing, and dashed observable responses. Keep the product black-box and do not expose internal components as participants. Distinguish requirement facts from industry inference and unresolved questions.',
       'Where a use case depends on exact values (timings, coordinates, thresholds, or formulas), state the concrete numbers or tables in the steps, outputs, or 8C constraints rather than vague placeholders, consistent with requirements.md.',
-      'Declare Design-Contract: 5, the shared Design-Revision, Design-Root: design.md, and Model-Kind: requirement.',
+      'For ' + join(specDir, standardDesignStageArtifact.domain_model) + ' apply find nouns, add attributes, and connect relationships from the RM/FUN/SSD you just derived: record retained and excluded nouns, synonym merges, attributes, identity, rules, lifecycle states, and a method-free Mermaid classDiagram (start with direction LR, quoted multiplicities at both ends, no software methods). Keep DOM concepts consistent with those use cases.',
+      'Declare Design-Contract: 5, the shared Design-Revision, and Design-Root: design.md in both files; ' + join(specDir, standardDesignStageArtifact.requirement_model) + ' declares Model-Kind: requirement and ' + join(specDir, standardDesignStageArtifact.domain_model) + ' declares Model-Kind: domain.',
+      'If you cannot complete the domain model confidently, still finish ' + join(specDir, standardDesignStageArtifact.requirement_model) + ' completely; the domain stage runs separately when needed.',
       'Do not choose architecture, classes, modules, files, protocols, patterns, or tasks.',
       'Follow the deterministic package contract below:',
-      standardDesignMachineContractPrompt,
+      selectStandardDesignContractPrompt(stage, validationError),
       outputLanguage,
       retry,
     ].filter(Boolean).join('\\n');
@@ -7416,7 +7448,7 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Declare Design-Contract: 5, the shared Design-Revision, Design-Root: design.md, and Model-Kind: domain.',
       'Do not choose architecture, detailed software elements, file changes, patterns, or tasks.',
       'Follow the deterministic package contract below:',
-      standardDesignMachineContractPrompt,
+      selectStandardDesignContractPrompt(stage, validationError),
       outputLanguage,
       retry,
     ].filter(Boolean).join('\\n');
@@ -7439,7 +7471,7 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Declare Design-Contract: 5, Design-Depth, Design-Revision, and one analysis direction. Define ADR-* only and reference all four model files.',
       'Include Scope And Evidence, Complexity Assessment, Existing Architecture Fit, Engineering Adaptation, Design Budget, Architecture Candidates, Architecture Decision, Model Package, Change And Pattern Analysis, Applicable Design Principles, Rejected Complexity, Risks And Evolution, and Traceability.',
       'Follow the complete deterministic machine contract below. This contract is generated from the same token definitions used by validation:',
-      standardDesignMachineContractPrompt,
+      selectStandardDesignContractPrompt(stage, validationError),
       'For Request Changes, edit only affected stable-ID sections and preserve unaffected IDs. Supersede a changed ADR instead of silently changing its meaning.',
       'Do not create tasks and do not edit source code.',
       outputLanguage,
@@ -7457,16 +7489,18 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Spec directory: ' + specDir,
       'Task: ' + taskDescription,
       '',
-      'Write only ' + join(specDir, standardDesignStageArtifact.design_model) + '.',
+      'Write ' + join(specDir, standardDesignStageArtifact.design_model) + ' and, in the same turn, a first-pass ' + join(specDir, standardDesignStageArtifact.implementation_model) + ' following its contract, so the separate implementation-mapping round-trip can be skipped when that model already validates.',
       'Read approved requirement_model.md, domain_model.md, design.md, active Request Changes, and targeted project evidence. Preserve unaffected SYS/DES/STATE/FLOW/CONTRACT/PAT/REV IDs and obey ADR-* decisions.',
       'Allocate every RM-* and FUN-* to SYS-* before defining DES-* elements. Selectively map DOM names and attributes, derive methods from RM/FUN/SSD verbs, and assign each operation to its data/invariant owner.',
       'Apply SRP, OCP, LSP, ISP, and DIP with concrete decisions or justified n/a results. Add framework auxiliary elements only for observed obligations. Use CRC responsibility reasoning and prevent coordinators from absorbing domain rules.',
       'Produce a software class diagram, STATE-* Mermaid state diagrams for stateful DES owners, and one Mermaid sequenceDiagram per FLOW-*; require diagrams and machine fields to agree.',
       'Select project paradigm from evidence, not language. Apply NOP: compare direct mechanisms with applicable patterns only at verified variation points; local selects none, standard at most two, complex at most three.',
-      'Declare Design-Contract: 5, the same Design-Revision as design.md, Design-Root: design.md, and Model-Kind: design.',
-      'Do not edit architecture, upstream models, implementation mapping, tasks, or source.',
+      'For ' + join(specDir, standardDesignStageArtifact.implementation_model) + ' define LANG-* constraints for every in-scope language/toolchain (with a concrete version) and map each in-scope SYS/DES/STATE/FLOW-or-CONTRACT to exact observed files and symbols, class realization, integration order, and focused verification through IMP-*. Only claim a path or symbol you actually observed; mark uncertainty as unresolved instead of inventing it.',
+      'Declare Design-Contract: 5, the same Design-Revision as design.md, and Design-Root: design.md in both files; ' + join(specDir, standardDesignStageArtifact.design_model) + ' declares Model-Kind: design and ' + join(specDir, standardDesignStageArtifact.implementation_model) + ' declares Model-Kind: implementation.',
+      'If you cannot map the implementation confidently from observed sources, still finish ' + join(specDir, standardDesignStageArtifact.design_model) + ' completely; the implementation stage runs separately when needed.',
+      'Do not edit architecture, upstream models, tasks, or source.',
       'Follow the deterministic package contract below:',
-      standardDesignMachineContractPrompt,
+      selectStandardDesignContractPrompt(stage, validationError),
       outputLanguage,
       retry,
     ].filter(Boolean).join('\\n');
@@ -7487,7 +7521,7 @@ function buildStandardPlanningStagePrompt(stage, validationError) {
       'Declare Design-Contract: 5, the same Design-Revision as design.md, Design-Root: design.md, and Model-Kind: implementation.',
       'This is an implementation map, not a task list or source implementation. Do not edit upstream design, tasks, or code.',
       'Follow the deterministic package contract below:',
-      standardDesignMachineContractPrompt,
+      selectStandardDesignContractPrompt(stage, validationError),
       outputLanguage,
       retry,
     ].filter(Boolean).join('\\n');
@@ -8226,6 +8260,41 @@ async function advanceStandardPlanningStage() {
     return completeStandardPlanningFocusedRepair();
   }
   standardPlanningStage = nextStage;
+  // Some stages co-generate a first-pass of the next model in the same turn
+  // (requirement_model -> domain_model, design_model -> implementation_model). Skip that
+  // stage's CLI round-trip only when its artifact was freshly written by this attempt (mtime
+  // at or after the attempt start) and already passes deterministic validation. The mtime gate
+  // prevents skipping on a stale-but-valid artifact left by an interrupted run, and the
+  // validator gate means only already-correct work is skipped.
+  const coGeneratedNextStage = standardDesignCoGeneratedStage[completedStage];
+  if (
+    !standardPlanningFocusedRepair &&
+    coGeneratedNextStage &&
+    standardPlanningStage === coGeneratedNextStage
+  ) {
+    let coGeneratedFresh = false;
+    try {
+      const coGeneratedPath = join(specDir, standardDesignStageArtifact[coGeneratedNextStage]);
+      coGeneratedFresh = existsSync(coGeneratedPath) &&
+        statSync(coGeneratedPath).mtimeMs >= currentAttemptStartedAt;
+    } catch {
+      coGeneratedFresh = false;
+    }
+    if (coGeneratedFresh && !(await validateStandardPlanningOwnerStage(coGeneratedNextStage))) {
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Standard planning stage ' + coGeneratedNextStage + ' was co-generated with ' +
+          completedStage + ' and already validates; skipping its generation call.',
+      );
+      markStandardPlanningOwnerStageValidated(coGeneratedNextStage);
+      const skippedCheckpoint = standardDesignStageCheckpoint[coGeneratedNextStage];
+      if (skippedCheckpoint) {
+        updateStandardPlanningTransaction(skippedCheckpoint, 'active');
+      }
+      standardPlanningStage = getNextStandardPlanningStage(coGeneratedNextStage);
+    }
+  }
   appendTaskLogEntry(logPhase, 'info', 'Starting Standard planning stage: ' + standardPlanningStage + '.');
   clearStaleStandardDesignReview(standardPlanningStage);
   startAttempt(buildPromptWithMemoryContext(buildStandardPlanningStagePrompt(

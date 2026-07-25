@@ -3,6 +3,7 @@ import {
   AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT,
   buildAutocodeDesignPackageMarkdown,
   buildAutocodeDesignQualityRetryPrompt,
+  buildAutocodeStandardDesignStageContractPrompt,
   detectAutocodeDesignReviewHumanInputGate,
   detectAutocodeRequirementsBlockingGate,
   getAutocodeDesignPackageFingerprint,
@@ -1295,6 +1296,36 @@ describe('machine contract prompt stays aligned with the validator', () => {
     // stale planning-transaction.json state as observed facts, which never validate because
     // the review is rolled back each run.
     expect(prompt).toContain('Never cite design_review.md, planning-transaction.json, or other transient planning or runner artifacts as observed facts');
+  });
+
+  it('builds a per-stage contract that keeps every universal rule and invariant', () => {
+    // Speedup B: each design stage sends only its own field specs, but the universal identity,
+    // evidence, budget, traceability, and consistency rules must never be dropped, and the
+    // contract must stay assembled from the same fragments as the full one.
+    const domainContract = buildAutocodeStandardDesignStageContractPrompt('domain_model');
+    // Universal + invariant rules are always present.
+    expect(domainContract).toContain('Deterministic machine contract.');
+    expect(domainContract).toContain('- Design-Contract: 5');
+    expect(domainContract).toContain('Evidence provenance:');
+    expect(domainContract).toContain('Allocation and traceability invariants:');
+    expect(domainContract).toContain('RM-* -> FUN-* -> SSD-* -> DOM-* -> ADR-* -> SYS-* -> DES-* -> STATE-*/FLOW-*/CONTRACT-* -> LANG-* -> IMP-*');
+    expect(domainContract).toContain('Cross-model consistency and self-check');
+    // The stage keeps its own field specs.
+    expect(domainContract).toContain('- DOM: Noun sources;');
+    // Other stages' field specs are trimmed away, which is the actual saving.
+    expect(domainContract).not.toContain('- DES: System allocation=SYS-*;');
+    expect(domainContract).not.toContain('- IMP: Project files and symbols=');
+    expect(domainContract.length).toBeLessThan(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT.length);
+  });
+
+  it('includes co-generated stage field specs in one trimmed contract', () => {
+    // requirement_model co-generates domain_model, so that stage needs both field specs while
+    // still staying smaller than the full contract.
+    const contract = buildAutocodeStandardDesignStageContractPrompt('requirement_model', ['domain_model']);
+    expect(contract).toContain('- RM use case: Use case name;');
+    expect(contract).toContain('- DOM: Noun sources;');
+    expect(contract).not.toContain('- IMP: Project files and symbols=');
+    expect(contract.length).toBeLessThan(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT.length);
   });
 
   it('requires cross-model consistency binding and a pre-finalize self-check', () => {
