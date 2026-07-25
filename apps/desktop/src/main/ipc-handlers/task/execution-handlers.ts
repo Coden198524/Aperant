@@ -45,6 +45,7 @@ import { writeFileAtomicSync } from '../../utils/atomic-file';
 import { findTaskWorktree } from '../../worktree-paths';
 import { projectStore } from '../../project-store';
 import { getIsolatedGitEnv, detectWorktreeBranch } from '../../utils/git-isolation';
+import { cleanupWorktree, isWorktreeUntrackedByGit } from '../../utils/worktree-cleanup';
 import { cancelFallbackTimer } from '../agent-events-handlers';
 import { readSettingsFile } from '../../settings-utils';
 import type { ProviderAccount } from '../../../shared/types/provider-account';
@@ -2301,43 +2302,33 @@ export function registerTaskExecutionHandlers(
             // User confirmed cleanup - delete worktree and branch
             console.warn(`[TASK_UPDATE_STATUS] Cleaning up worktree for task ${taskId} (user confirmed)`);
             try {
-              // Get the branch name before removing the worktree
-              // Use shared utility to validate detected branch matches expected pattern
-              // This prevents deleting wrong branch when worktree is corrupted/orphaned
-              const { branch, usingFallback: usingFallbackBranch } = detectWorktreeBranch(
+              // Use the shared hardened cleanup: it deletes the directory with retries (Windows
+              // releases file locks a moment after the agent exits), prunes git's worktree
+              // references, and deletes the branch. A bare `git worktree remove --force` used to
+              // fail here whenever a file was still locked or the directory was held as a
+              // process working directory.
+              const cleanupResult = await cleanupWorktree({
                 worktreePath,
-                task.specId,
-                { timeout: 30000, logPrefix: '[TASK_UPDATE_STATUS]' }
-              );
-
-              // Remove the worktree
-              execFileSync(getToolPath('git'), ['worktree', 'remove', '--force', worktreePath], {
-                cwd: project.path,
-                encoding: 'utf-8',
-                timeout: 30000,
-                env: getIsolatedGitEnv()
+                projectPath: project.path,
+                specId: task.specId,
+                logPrefix: '[TASK_UPDATE_STATUS]'
               });
-              console.warn(`[TASK_UPDATE_STATUS] Worktree removed: ${worktreePath}`);
 
-              // Delete the branch (ignore errors if branch doesn't exist)
-              try {
-                execFileSync(getToolPath('git'), ['branch', '-D', branch], {
-                  cwd: project.path,
-                  encoding: 'utf-8',
-                  timeout: 30000,
-                  env: getIsolatedGitEnv()
-                });
-                console.warn(`[TASK_UPDATE_STATUS] Branch deleted: ${branch}`);
-              } catch (branchDeleteError) {
-                // Branch may not exist or may be the current branch
-                if (usingFallbackBranch) {
-                  // More concerning - fallback pattern didn't match actual branch
-                  console.warn(`[TASK_UPDATE_STATUS] Could not delete branch ${branch} using fallback pattern. Actual branch may still exist and need manual cleanup.`, branchDeleteError);
-                } else {
+              if (!cleanupResult.success) {
+                // The directory could not be removed. If git no longer tracks this worktree, the
+                // task is logically clean and only an empty leftover directory remains (a common
+                // Windows case when a process still holds it as its working directory), so let
+                // the task complete instead of blocking on it.
+                if (isWorktreeUntrackedByGit(project.path, worktreePath)) {
                   console.warn(
-                    `[TASK_UPDATE_STATUS] Could not delete branch ${branch} (may not exist or be checked out elsewhere)`,
-                    branchDeleteError
+                    `[TASK_UPDATE_STATUS] Worktree directory could not be deleted but git no longer tracks it; ` +
+                    `treating cleanup as complete and leaving the leftover directory: ${worktreePath}`
                   );
+                } else {
+                  return {
+                    success: false,
+                    error: `Failed to cleanup worktree: ${cleanupResult.warnings.join('; ') || 'unknown error'}`
+                  };
                 }
               }
 

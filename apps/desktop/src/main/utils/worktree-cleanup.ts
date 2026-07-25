@@ -24,6 +24,40 @@ import { getIsolatedGitEnv } from './git-isolation';
 import { getTaskWorktreeDir, getTerminalWorktreeDir, isPathWithinBase } from '../worktree-paths';
 
 /**
+ * Returns true when git no longer lists the given path as a worktree.
+ *
+ * On Windows a leftover worktree directory can survive deletion because a process still holds it
+ * (most often as its current working directory), even after git's own bookkeeping is clean. In
+ * that state the task is logically cleaned up and only an empty shell directory remains, so
+ * callers can complete instead of reporting a hard cleanup failure.
+ *
+ * Any failure to query git is reported as "still tracked", so an unknown state never silently
+ * skips real cleanup.
+ */
+export function isWorktreeUntrackedByGit(
+  projectPath: string,
+  worktreePath: string,
+  timeout = 30000,
+): boolean {
+  try {
+    const output = execFileSync(getToolPath('git'), ['worktree', 'list', '--porcelain'], {
+      cwd: projectPath,
+      encoding: 'utf-8',
+      env: getIsolatedGitEnv(),
+      timeout,
+    });
+    const normalize = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const target = normalize(worktreePath);
+    return !output
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('worktree '))
+      .some((line) => normalize(line.slice('worktree '.length).trim()) === target);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Options for worktree cleanup operation
  */
 export interface WorktreeCleanupOptions {
@@ -221,14 +255,36 @@ export async function cleanupWorktree(options: WorktreeCleanupOptions): Promise<
       await deleteDirectoryWithRetry(worktreePath, maxRetries, retryDelay, logPrefix);
       console.warn(`${logPrefix} Worktree directory deleted successfully`);
     } catch (deleteError) {
-      // This IS critical - if we can't delete the directory, the cleanup failed
       const msg = deleteError instanceof Error ? deleteError.message : String(deleteError);
-      console.error(`${logPrefix} Failed to delete worktree directory: ${msg}`);
-      return {
-        success: false,
-        branch: branch || undefined,
-        warnings: [...warnings, `Directory deletion failed: ${msg}`]
-      };
+      // Before failing, sync git's bookkeeping and re-check. On Windows the directory can be
+      // held by another process (commonly as its working directory) while git itself is already
+      // clean; in that case only an empty leftover directory remains and blocking the caller
+      // provides no value.
+      try {
+        execFileSync(getToolPath('git'), ['worktree', 'prune'], {
+          cwd: projectPath,
+          encoding: 'utf-8',
+          env: getIsolatedGitEnv(),
+          timeout
+        });
+      } catch {
+        // Prune is best-effort here; the tracking check below decides the outcome.
+      }
+      if (isWorktreeUntrackedByGit(projectPath, worktreePath, timeout)) {
+        console.warn(
+          `${logPrefix} Could not delete worktree directory (${msg}), but git no longer tracks it; ` +
+          `continuing cleanup and leaving the leftover directory behind`
+        );
+        warnings.push(`Worktree directory left behind (still locked by another process): ${msg}`);
+      } else {
+        // Still a real worktree - failing to delete it IS a cleanup failure.
+        console.error(`${logPrefix} Failed to delete worktree directory: ${msg}`);
+        return {
+          success: false,
+          branch: branch || undefined,
+          warnings: [...warnings, `Directory deletion failed: ${msg}`]
+        };
+      }
     }
   } else {
     console.warn(`${logPrefix} Worktree directory already deleted`);
