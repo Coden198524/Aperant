@@ -548,8 +548,9 @@ const CONTRACT_UNIVERSAL_LINES = [
   '- Architecture baseline: <observed current architecture or smallest viable baseline>',
   '- Candidate count: <integer; local=1, standard<=2, complex<=3>',
   '- Candidate comparison: separate candidates with ASCII semicolons and the five values within each candidate with ASCII pipes, even when the prose is localized. Provide exactly Candidate count entries: <candidate | fit | benefits | costs | risks>; repeat compactly.',
-  '- Selected architecture: <candidate name>',
-  '- Selection rationale: <evidence-backed trade-off>',
+  '- Candidates must differ substantively, not by wording: each one must place boundaries, assign state ownership, or point dependencies differently, and its fit must name the quality attribute or 8C dimension it favors. Do not list near-identical candidates to satisfy the count.',
+  '- Selected architecture: <candidate name; must be one of the candidates named in Candidate comparison>',
+  '- Selection rationale: <evidence-backed trade-off that names the deciding quality attribute or constraint, for example Performance, Reliability, Security, Compatibility, testability, or a C*/AC*/R* id>',
   '- Rejected alternatives: <candidate and concrete rejection reason>',
   '- Evolution trigger: <evidence that would justify a deeper architecture>',
   'Model package fields in design.md:',
@@ -578,9 +579,16 @@ const CONTRACT_UNIVERSAL_LINES = [
   'At local depth, keep New dependencies allowed: 0 and New architectural patterns: none; escalate Design-Depth with complexity evidence before adding either.',
 ] as const;
 
-/** Field specs owned by design.md (ADR + architecture principles). */
+/**
+ * Field specs owned by design.md: ADR decisions and the Change And Pattern Analysis section.
+ * These stay with the design root because design.md is where they are written and validated,
+ * and the design_model stage re-validates the root, so it includes this group too.
+ */
 const CONTRACT_DESIGN_ROOT_FIELD_LINES = [
   '- ADR: Decision; Status=proposed|accepted|superseded|rejected; Decision drivers; Alternatives considered; Trade-offs; Evidence basis.',
+  '- Change analysis: Verified variation points; Variation inventory; Candidate patterns evaluated (for each verified variation, name the applicable GoF or architectural pattern and compare it against the direct mechanism); Simplest change mechanism; Selected patterns=PAT-* IDs or none.',
+  '- Write Candidate patterns evaluated as a decision row per verified variation, separating rows with ASCII semicolons and the five values with ASCII pipes: <variation | direct mechanism | candidate pattern(s) | chosen mechanism | why the alternative was rejected>. Evaluate each inventoried variation on its own row instead of naming patterns generically.',
+  '- Pattern application balances NOP: when a variation is real and evidenced, apply the fitting pattern instead of a growing switch/if-else over types or states; when no variation is verified, keep the direct mechanism and record none.',
 ] as const;
 
 /** Field specs owned by requirement_model.md (RM/FUN/SSD). */
@@ -613,15 +621,16 @@ const CONTRACT_DESIGN_MODEL_FIELD_LINES = [
   '- Domain To Software Mapping: Mapped concepts; Unmapped concepts; Auxiliary elements.',
   '- DES: System allocation=SYS-*; Domain mapping=DOM-* or none - <auxiliary reason>; Name mapping; Attribute mapping (map each as domainAttr -> visibility name: type; constraint covering nullability and range, unit, or enum); Method derivation=RM-*/FUN-*/SSD-* verbs; Framework role; Owned state; Public operations (write each as name(param: type, ...): returnType with a one-line precondition and postcondition and the observable outcome a test can assert); Responsibilities (state the invariants this element always upholds, the errors or edge cases it owns, and any Security, Reliability, or Performance 8C constraint it realizes); Collaborators; Dependencies; Encapsulation boundary; Does not own; SOLID rationale; Pattern participation; Evidence basis.',
   '- DES SOLID rationale must contain exactly these dimensions with ASCII equals signs and semicolons: SRP=...; OCP=...; LSP=...; ISP=...; DIP=.... Use n/a - <reason> as a dimension value when justified. Use ASCII semicolons to separate the dimensions even when the prose is localized.',
+  '- DES Responsibilities must name the GRASP principle that justifies giving this element the responsibility, using one of Information Expert, Creator, Controller, Low Coupling, High Cohesion, Polymorphism, Pure Fabrication, Indirection, or Protected Variations. Assign each responsibility to the element that owns the information it needs, and prefer Polymorphism over conditional dispatch on a type or state.',
+  '- Keep each DES cohesive and free of these object-oriented smells: a DES that maps a DOM-* concept and owns state must expose at least one behavior operation, not only accessors such as getX, setX, isX, hasX, toX, or asX; list Public operations and Collaborators as semicolon-separated entries and keep them at 14 and 8 entries or fewer per element; and never let two DES elements list each other in Dependencies - invert one direction behind an interface or port, or give the shared responsibility one owner.',
   '- STATE: State owner=DES-*; States; Initial state; Transitions; Invalid transitions; Exception recovery; Evidence basis; one Mermaid stateDiagram-v2 block. If no DES owns mutable state, define no STATE-* and instead write "none - <reason>" under the State Transition Diagrams heading.',
   'Exact STATE stateDiagram-v2 shape (localize only prose; begin and end at [*]):\n```mermaid\n' + AUTOCODE_STATE_DIAGRAM_SKELETON + '\n```',
   '- FLOW: Trigger; Participants; Steps; State changes; Failure paths; Evidence basis; one Mermaid sequenceDiagram block. Steps name every DES participant in explicit order.',
   '- design_model.md headings: System Responsibility Allocation; Domain To Software Mapping; Design Model; Class Diagram; State Transition Diagrams; Sequence Diagrams.',
   '- For reverse-engineering or mixed analysis, design_model.md must also contain exactly ## Source Reconstruction and at least one REV-* entry beneath it. For forward-design, omit the heading and all REV-* entries.',
   '- CONTRACT: Inputs and outputs (typed signatures with nullability and value constraints); Compatibility; Errors (each error condition and how a caller detects and handles it); Lifecycle; Evidence basis.',
-  '- Change analysis: Verified variation points; Variation inventory; Candidate patterns evaluated (for each verified variation, name the applicable GoF or architectural pattern and compare it against the direct mechanism); Simplest change mechanism; Selected patterns=PAT-* IDs or none.',
-  '- Pattern application balances NOP: when a variation is real and evidenced, apply the fitting pattern instead of a growing switch/if-else over types or states; when no variation is verified, keep the direct mechanism and record none.',
   '- PAT (define one per Selected pattern; Design Budget New architectural patterns must list the same PAT-* IDs): Verified variation; Evidence; Expected horizon; Stable boundary; Encapsulated variation; Participants and roles; Application scope; Simpler alternative; Benefit; Cost and failure modes.',
+  '- Every PAT Verified variation must restate a variation that also appears in the design.md Variation inventory, and Simpler alternative and Cost and failure modes must be concrete: never introduce a pattern for a variation you did not verify and inventory.',
   '- REV when applicable: External capability; Domain concepts; Responsibility path; Runtime path; Source symbols; Contradiction checks=checked|conflict|unresolved - <evidence>; Confidence=high|medium|low - <rationale>.',
 ] as const;
 
@@ -687,7 +696,13 @@ export function buildAutocodeStandardDesignStageContractPrompt(
     requirement_model: CONTRACT_REQUIREMENT_MODEL_FIELD_LINES,
     domain_model: CONTRACT_DOMAIN_MODEL_FIELD_LINES,
     design: [...CONTRACT_DESIGN_ROOT_FIELD_LINES, ...CONTRACT_DESIGN_PRINCIPLES_LINES],
-    design_model: CONTRACT_DESIGN_MODEL_FIELD_LINES,
+    // The design_model stage re-validates design.md root quality (Change And Pattern Analysis,
+    // Applicable Design Principles, Design Budget), so it must carry the root specs too.
+    design_model: [
+      ...CONTRACT_DESIGN_ROOT_FIELD_LINES,
+      ...CONTRACT_DESIGN_PRINCIPLES_LINES,
+      ...CONTRACT_DESIGN_MODEL_FIELD_LINES,
+    ],
     implementation_model: CONTRACT_IMPLEMENTATION_MODEL_FIELD_LINES,
   };
   // Include the requested stage plus any co-generated stages, de-duplicated and kept in the
@@ -2589,6 +2604,24 @@ function validateArchitectureCandidateDecision(
       errors.push(location + ' ' + field + ' must be concrete and substantive.');
     }
   }
+  // The selected architecture must be one of the compared candidates, otherwise the candidate
+  // comparison is decorative. Matching is containment-based in both directions so a slightly
+  // longer or shorter restatement of the same candidate name still passes.
+  const selectedArchitecture = normalizeArchitectureCandidateName(
+    getMachineReadableField(markdown, 'Selected architecture') ?? '',
+  );
+  if (candidateNames.size > 0 && selectedArchitecture) {
+    // Match on shared significant terms rather than exact text, so restating a candidate as
+    // "existing task service boundary" still resolves to "existing task boundary" while an
+    // entirely different selection is still caught.
+    const matchesCandidate = [...candidateNames].some((candidate) =>
+      candidate === selectedArchitecture ||
+      shareSignificantCapabilityTerms(candidate, selectedArchitecture),
+    );
+    if (!matchesCandidate) {
+      errors.push(location + ' Selected architecture must name one of the compared candidates.');
+    }
+  }
   const rejectedAlternatives = getMachineReadableField(markdown, 'Rejected alternatives') ?? '';
   if (
     isSubstantiveArchitectureText(rejectedAlternatives, 16) &&
@@ -2703,7 +2736,83 @@ function validatePatternBudget(
     errors.push(AUTOCODE_TASK_ARTIFACTS.design + ' ' + (depth ?? 'local') + ' design exceeds its selected-pattern limit of ' + limit + '.');
   }
 
+  // Every selected pattern must answer to a real, inventoried variation and must record the
+  // simpler alternative it beats plus its cost. This blocks pattern-driven overdesign, where a
+  // pattern is introduced for a variation that was never verified.
+  const variationInventory = getMachineReadableField(changeAnalysis, 'Variation inventory') ?? '';
+  const inventoryHasVariations = Boolean(variationInventory) && !isNoneValue(variationInventory);
+  const normalizedInventory = normalizeCapabilityText(variationInventory);
+  for (const section of sections.filter((candidate) => candidate.kind === 'PAT')) {
+    const verifiedVariation = getMachineReadableField(section.markdown, 'Verified variation') ?? '';
+    const location = AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + section.id;
+    if (!verifiedVariation || isNoneValue(verifiedVariation)) {
+      errors.push(location + ' Verified variation must name the concrete variation this pattern encapsulates.');
+    } else if (inventoryHasVariations && !shareSignificantCapabilityTerms(normalizedInventory, verifiedVariation)) {
+      errors.push(
+        location +
+        ' Verified variation must correspond to an entry in the design.md Variation inventory; add the variation to the inventory or drop the pattern.',
+      );
+    }
+    for (const field of ['Simpler alternative', 'Cost and failure modes'] as const) {
+      const value = getMachineReadableField(section.markdown, field) ?? '';
+      if (!isSubstantiveArchitectureText(value, 12) || isNoneValue(value)) {
+        errors.push(location + ' ' + field + ' must be concrete so the pattern trade-off is reviewable.');
+      }
+    }
+  }
+
   return errors;
+}
+
+/**
+ * True when the pattern's verified variation shares meaningful wording with the inventory, so
+ * the check tolerates paraphrasing and localization while still catching a pattern introduced
+ * for a variation that was never inventoried.
+ */
+function shareSignificantCapabilityTerms(normalizedInventory: string, verifiedVariation: string): boolean {
+  const normalizedVariation = normalizeCapabilityText(verifiedVariation);
+  if (!normalizedInventory.trim() || !normalizedVariation.trim()) {
+    return true;
+  }
+  const inventoryTokens = collectCapabilityMatchTokens(normalizedInventory);
+  const variationTokens = collectCapabilityMatchTokens(normalizedVariation);
+  if (inventoryTokens.size === 0 || variationTokens.size === 0) {
+    return true;
+  }
+  for (const token of variationTokens) {
+    if (inventoryTokens.has(token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Builds comparable tokens from normalized text: whitespace words for alphabetic scripts and
+ * character bigrams for CJK, which has no word separators. Without the bigrams a localized
+ * Chinese variation would collapse into one token and never match the inventory.
+ */
+function collectCapabilityMatchTokens(normalizedText: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const word of normalizedText.split(' ')) {
+    if (!word) {
+      continue;
+    }
+    if (/[\u3400-\u9FFF]/u.test(word)) {
+      const characters = [...word];
+      for (let index = 0; index + 1 < characters.length; index += 1) {
+        tokens.add(characters[index] + characters[index + 1]);
+      }
+      if (characters.length === 1) {
+        tokens.add(characters[0]);
+      }
+      continue;
+    }
+    if (word.length >= 3) {
+      tokens.add(word);
+    }
+  }
+  return tokens;
 }
 
 function getDesignSectionArtifact(kind: AutocodeDesignSection['kind']): string {
@@ -3441,7 +3550,119 @@ function validateObjectModelDepth(
   errors.push(...validatePatternCandidateDepth(changeAnalysis, shape, depth));
   errors.push(...validateFlowParticipants(sections, broadInteractiveModel && depth !== 'local'));
   errors.push(...validateGodObjectResponsibilities(designSections));
+  errors.push(...validateObjectOrientedSmells(designSections));
   return errors;
+}
+
+/**
+ * Accessor-only operation names, which signal a data holder rather than a behavior owner. The
+ * prefix must be followed by an uppercase letter, underscore, or call parens so behavior verbs
+ * that merely start with those letters (assign, toggle, issue, setup, hasten) are not misread as
+ * accessors.
+ */
+const ACCESSOR_OPERATION_PATTERN = /^(?:get|set|is|has|to|as)(?=[A-Z_(]|$)/;
+const DESIGN_OPERATION_BUDGET = 14;
+const DESIGN_COLLABORATOR_BUDGET = 8;
+
+/**
+ * Domain-independent object-oriented smell checks. The older God-coordinator heuristic relies on
+ * game-specific vocabulary, so these use structural measures that hold in any domain: anemic
+ * domain elements, bloated public surfaces, and mutual dependency between design elements.
+ */
+function validateObjectOrientedSmells(
+  designSections: readonly AutocodeDesignSection[],
+): string[] {
+  const errors: string[] = [];
+  for (const section of designSections) {
+    const operations = splitDesignFieldEntries(
+      getMachineReadableField(section.markdown, 'Public operations') ?? '',
+    );
+    const location = AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + section.id;
+
+    // Anemic domain element: it maps a domain concept and owns state, yet exposes only accessors,
+    // which means its invariants are enforced somewhere else.
+    const domainMapping = getMachineReadableField(section.markdown, 'Domain mapping') ?? '';
+    const ownedState = getMachineReadableField(section.markdown, 'Owned state') ?? '';
+    const mapsDomainConcept = /\bDOM-\d{3,}\b/i.test(domainMapping);
+    const ownsState = Boolean(ownedState) && !isNoneValue(ownedState);
+    const behaviorOperations = operations.filter((operation) => {
+      const name = operation.replace(/^[-+#~\s]+/, '');
+      return name.length > 0 && !ACCESSOR_OPERATION_PATTERN.test(name);
+    });
+    if (mapsDomainConcept && ownsState && operations.length > 0 && behaviorOperations.length === 0) {
+      errors.push(
+        location +
+        ' is an anemic domain element: it owns state mapped from a DOM concept but exposes only accessors. Move the rules that enforce its invariants onto it.',
+      );
+    }
+
+    // Bloated public surface / too many collaborators: low cohesion regardless of domain.
+    if (operations.length > DESIGN_OPERATION_BUDGET) {
+      errors.push(
+        location + ' exposes ' + operations.length + ' public operations, above the ' +
+        DESIGN_OPERATION_BUDGET + ' the design budget allows for one cohesive element; split it by responsibility.',
+      );
+    }
+    const collaborators = splitDesignFieldEntries(
+      getMachineReadableField(section.markdown, 'Collaborators') ?? '',
+    ).filter((entry) => !isNoneValue(entry));
+    if (collaborators.length > DESIGN_COLLABORATOR_BUDGET) {
+      errors.push(
+        location + ' depends on ' + collaborators.length + ' collaborators, above the ' +
+        DESIGN_COLLABORATOR_BUDGET + ' one cohesive element should need; introduce a boundary or redistribute responsibility.',
+      );
+    }
+  }
+
+  // Mutual dependency between two design elements: A depends on B while B depends on A.
+  const dependenciesById = new Map<string, Set<string>>();
+  const knownIds = new Set(designSections.map((section) => section.id));
+  for (const section of designSections) {
+    const declared = (getMachineReadableField(section.markdown, 'Dependencies') ?? '')
+      .match(/\bDES-\d{3,}\b/gi) ?? [];
+    dependenciesById.set(
+      section.id,
+      new Set(
+        declared
+          .map((id) => id.toUpperCase())
+          .filter((id) => id !== section.id && knownIds.has(id)),
+      ),
+    );
+  }
+  const reportedCycles = new Set<string>();
+  for (const [id, dependencies] of dependenciesById) {
+    for (const dependency of dependencies) {
+      if (!dependenciesById.get(dependency)?.has(id)) {
+        continue;
+      }
+      const cycleKey = [id, dependency].sort().join('<->');
+      if (reportedCycles.has(cycleKey)) {
+        continue;
+      }
+      reportedCycles.add(cycleKey);
+      errors.push(
+        AUTOCODE_TASK_ARTIFACTS.designModel + ' ' + cycleKey.replace('<->', ' and ') +
+        ' declare a mutual dependency; invert one direction behind an interface or port, or move the shared responsibility to one owner.',
+      );
+    }
+  }
+  return errors;
+}
+
+/**
+ * Splits a machine field value into entries on the separators the contract mandates: ASCII or
+ * full-width semicolons, plus newlines. Commas are deliberately NOT separators, because a single
+ * operation described in prose ("submitDraft validates the data, returns a result") would
+ * otherwise be counted as several entries and trip the cohesion budgets.
+ */
+function splitDesignFieldEntries(value: string): string[] {
+  if (!value.trim() || isNoneValue(value)) {
+    return [];
+  }
+  return value
+    .split(/[;；\n]/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function validatePatternCandidateDepth(

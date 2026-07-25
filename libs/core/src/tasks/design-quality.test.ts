@@ -366,6 +366,96 @@ function removeRange(source: string, start: string, end: string): string {
 }
 
 describe('Design-Contract: 5 quality validation', () => {
+  it('rejects a selected architecture that is not one of the compared candidates', () => {
+    // Quality: without this the candidate comparison is decorative - a design could compare one
+    // architecture and then select something never evaluated.
+    const mismatched = designMarkdown.replace(
+      '- Selected architecture: existing task service boundary',
+      '- Selected architecture: event-driven microservice mesh',
+    );
+    expect(validatePackage({ designMarkdown: mismatched }).errors).toContain(
+      'design.md Architecture Candidates Selected architecture must name one of the compared candidates.',
+    );
+  });
+
+  it('rejects a pattern whose verified variation is not in the variation inventory', () => {
+    // Quality: blocks pattern-driven overdesign, where a pattern is introduced for a variation
+    // that was never verified or inventoried.
+    const withUninventoriedPattern = designMarkdown
+      .replace('- New architectural patterns: none', '- New architectural patterns: PAT-001')
+      .replace('- Selected patterns: none', '- Selected patterns: PAT-001')
+      .replace(
+        '- Variation inventory: none - no independent policy, type, or framework variants exist',
+        '- Variation inventory: two independent submission policies differ by approval rule',
+      );
+    const withPatternSection = designModelMarkdown + [
+      '',
+      '### PAT-001 Strategy for notification transport',
+      '- Verified variation: pluggable notification transports for email and webhook delivery',
+      '- Evidence: observed - apps/desktop/src/main/task-service.ts',
+      '- Expected horizon: the next release adds a third transport',
+      '- Stable boundary: the notification port stays stable',
+      '- Encapsulated variation: transport selection',
+      '- Participants and roles: DES-001 as context and transports as strategies',
+      '- Application scope: notification delivery only',
+      '- Simpler alternative: a direct conditional on transport kind stays smaller today',
+      '- Benefit: adding a transport needs no change to the caller',
+      '- Cost and failure modes: one more indirection layer and a wider test surface',
+      '',
+    ].join('\n');
+    const errors = validatePackage({
+      designMarkdown: withUninventoriedPattern,
+      designModelMarkdown: withPatternSection,
+    }).errors;
+    expect(errors.some((error) =>
+      error.includes('PAT-001 Verified variation must correspond to an entry in the design.md Variation inventory'),
+    )).toBe(true);
+  });
+
+  it('flags an anemic domain element that exposes only accessors', () => {
+    // Quality: a DES that maps a DOM concept and owns state must enforce its own invariants,
+    // otherwise the rules leak into a coordinator.
+    const anemic = designModelMarkdown.replace(
+      '- Public operations: submitDraft validates required data and returns an accepted or rejected result',
+      '- Public operations: getTitle(): string returns the title; getStatus(): string returns the status',
+    );
+    const errors = validatePackage({ designModelMarkdown: anemic }).errors;
+    expect(errors.some((error) => error.includes('is an anemic domain element'))).toBe(true);
+  });
+
+  it('flags two design elements that declare a mutual dependency', () => {
+    // Quality: domain-independent coupling smell the game-keyword God check cannot see.
+    const cyclic = designModelMarkdown
+      .replace(
+        '- Dependencies: depends on submitted-task persistence only after invariant validation',
+        '- Dependencies: DES-002 provides the persistence port',
+      ) + [
+      '',
+      '### DES-002 Task persistence adapter',
+      '- Element: class - TaskPersistenceAdapter',
+      '- System allocation: SYS-001',
+      '- Domain mapping: none - infrastructure adapter for the persistence port',
+      '- Name mapping: none - adapter named after the existing port',
+      '- Attribute mapping: none - the adapter holds no domain attributes',
+      '- Method derivation: FUN-001 persistence verbs',
+      '- Role stereotype: adapter',
+      '- Framework role: none - plain module invoked by the service',
+      '- Owned state: none - the adapter is stateless',
+      '- Public operations: persist(task: TaskExecution): void writes an accepted submission',
+      '- Responsibilities: High Cohesion - translate accepted submissions to the storage format',
+      '- Collaborators: DES-001 supplies the accepted submission',
+      '- Dependencies: DES-001 defines the accepted submission shape',
+      '- Encapsulation boundary: storage format stays private to the adapter',
+      '- Does not own: invariant validation or transition authority',
+      '- SOLID rationale: SRP=one translation duty; OCP=new formats add adapters; LSP=n/a - no subtype; ISP=single narrow port; DIP=depends on the port abstraction',
+      '- Pattern participation: none - no verified variation',
+      '- Evidence basis: observed - apps/desktop/src/main/task-service.ts',
+      '',
+    ].join('\n');
+    const errors = validatePackage({ designModelMarkdown: cyclic }).errors;
+    expect(errors.some((error) => error.includes('declare a mutual dependency'))).toBe(true);
+  });
+
   it('does not require every LANG-* to appear in design.md Traceability', () => {
     // Regression: secondary cross-cutting LANG constraints (e.g. a test/toolchain language)
     // are traced through IMP "Coding constraints=LANG-*"; the machine contract only requires
@@ -1298,6 +1388,22 @@ describe('machine contract prompt stays aligned with the validator', () => {
     expect(prompt).toContain('Never cite design_review.md, planning-transaction.json, or other transient planning or runner artifacts as observed facts');
   });
 
+  it('declares the object-oriented design technique rules the validator enforces', () => {
+    // Quality: GRASP responsibility assignment, the per-variation pattern decision table,
+    // differentiated architecture candidates, and the OO smell budgets must all be stated in the
+    // contract, otherwise the model cannot satisfy the checks that enforce them.
+    const contract = AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT;
+    expect(contract).toContain('DES Responsibilities must name the GRASP principle');
+    expect(contract).toContain('Information Expert, Creator, Controller, Low Coupling, High Cohesion, Polymorphism, Pure Fabrication, Indirection, or Protected Variations');
+    expect(contract).toContain('prefer Polymorphism over conditional dispatch');
+    expect(contract).toContain('<variation | direct mechanism | candidate pattern(s) | chosen mechanism | why the alternative was rejected>');
+    expect(contract).toContain('Candidates must differ substantively, not by wording');
+    expect(contract).toContain('must expose at least one behavior operation, not only accessors such as getX, setX, isX, hasX, toX, or asX');
+    expect(contract).toContain('never let two DES elements list each other in Dependencies');
+    expect(contract).toContain('Every PAT Verified variation must restate a variation that also appears in the design.md Variation inventory');
+    expect(contract).toContain('must be one of the candidates named in Candidate comparison');
+  });
+
   it('builds a per-stage contract that keeps every universal rule and invariant', () => {
     // Speedup B: each design stage sends only its own field specs, but the universal identity,
     // evidence, budget, traceability, and consistency rules must never be dropped, and the
@@ -1316,6 +1422,18 @@ describe('machine contract prompt stays aligned with the validator', () => {
     expect(domainContract).not.toContain('- DES: System allocation=SYS-*;');
     expect(domainContract).not.toContain('- IMP: Project files and symbols=');
     expect(domainContract.length).toBeLessThan(AUTOCODE_STANDARD_DESIGN_MACHINE_CONTRACT_PROMPT.length);
+  });
+
+  it('keeps design.md root specs in every stage that re-validates the root', () => {
+    // Regression: Change And Pattern Analysis and Applicable Design Principles live in design.md
+    // and are validated at BOTH the design and design_model stages. Trimming them out of either
+    // stage's contract would require fields the prompt never described.
+    for (const stage of ['design', 'design_model'] as const) {
+      const contract = buildAutocodeStandardDesignStageContractPrompt(stage);
+      expect(contract).toContain('- Change analysis: Verified variation points;');
+      expect(contract).toContain('- Applicable Design Principles:');
+      expect(contract).toContain('- Candidate comparison:');
+    }
   });
 
   it('includes co-generated stage field specs in one trimmed contract', () => {

@@ -1466,6 +1466,14 @@ describe('Autocode CLI runner prompt', () => {
     // D: the spec stage self-checks R*/AC* coverage before finalizing, so an uncovered id is
     // fixed in the same turn instead of costing another round-trip.
     expect(runner).toContain('Before finalizing, self-check coverage: enumerate every R* and AC* id');
+    // Design quality: architecture candidates must differ substantively, patterns are decided per
+    // variation, responsibilities are assigned with GRASP, and the review scores a rubric that
+    // mechanically decides PASSED vs REVISE.
+    expect(runner).toContain('Make the candidates substantively different');
+    expect(runner).toContain('<variation | direct mechanism | candidate pattern(s) | chosen mechanism | rejection reason>');
+    expect(runner).toContain('Assign every responsibility with GRASP and name the principle used');
+    expect(runner).toContain('## Design Scorecard');
+    expect(runner).toContain('Derive Status mechanically from the scorecard');
     expect(runner).toContain('const standardDesignCoGeneratedStage = {');
     expect(runner).toContain("requirement_model: 'domain_model',");
     expect(runner).toContain("design_model: 'implementation_model',");
