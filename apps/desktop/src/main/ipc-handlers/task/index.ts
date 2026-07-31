@@ -34,7 +34,7 @@ export function registerTaskHandlers(
   registerTaskExecutionHandlers(agentManager, getMainWindow, openSpecService);
 
   // Register worktree handlers (status, diff, merge, discard, list)
-  registerWorktreeHandlers(getMainWindow);
+  registerWorktreeHandlers(getMainWindow, openSpecService);
 
   // Register logs handlers (get, watch, unwatch)
   registerTaskLogsHandlers(getMainWindow);

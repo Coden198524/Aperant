@@ -33,7 +33,7 @@ import { isSpecDevelopmentTask } from '../../shared/utils/task-mode';
 import { resolveOpenSpecWorkflowAction } from '../../shared/utils/openspec-workflow-action';
 import type { AgentManager } from '../agent';
 import { projectStore } from '../project-store';
-import { findTaskWorktree } from '../worktree-paths';
+import { findTaskWorktree, isPathWithinBase } from '../worktree-paths';
 import { OpenSpecActionRunner } from './openspec-action-runner';
 import { OpenSpecCliAdapter } from './openspec-cli-adapter';
 import { OpenSpecLockManager } from './openspec-lock-manager';
@@ -322,7 +322,10 @@ export class OpenSpecService {
   }
 
   private async closeWatcher(task: Task, project: Project): Promise<void> {
-    const key = taskKey(task, project);
+    await this.closeWatcherByKey(taskKey(task, project));
+  }
+
+  private async closeWatcherByKey(key: string): Promise<void> {
     const existing = this.watchers.get(key);
     if (!existing) return;
     if (existing.timer) clearTimeout(existing.timer);
@@ -1007,14 +1010,7 @@ export class OpenSpecService {
     }
   }
 
-  async disposeTask(task: Task, project: Project): Promise<void> {
-    const key = taskKey(task, project);
-    const registration = this.watchers.get(key);
-    if (registration) {
-      if (registration.timer) clearTimeout(registration.timer);
-      await registration.watcher.close();
-      this.watchers.delete(key);
-    }
+  private forgetTaskState(key: string, projectId: string): void {
     this.snapshots.delete(key);
     this.validations.delete(key);
     this.recoveredTasks.delete(key);
@@ -1023,7 +1019,37 @@ export class OpenSpecService {
     this.reconciledGenerations.delete(key);
     this.taskStartPromises.delete(key);
     this.planningRoots.delete(key);
-    this.clearProjectPreflightCache(project.id);
+    this.clearProjectPreflightCache(projectId);
+  }
+
+  async disposeTask(task: Task, project: Project): Promise<void> {
+    const key = taskKey(task, project);
+    await this.closeWatcherByKey(key);
+    this.forgetTaskState(key, project.id);
+  }
+
+  /**
+   * Release every watcher this service holds inside a worktree directory.
+   *
+   * A Spec task watches its whole worktree, and Windows refuses `rmdir` while a
+   * directory handle is still open, so worktree cleanup fails with EBUSY unless
+   * the watcher is closed first. Keyed by path rather than task so that
+   * orphaned-worktree cleanup, which has no Task object, is covered too.
+   */
+  async releaseWorktreeHandles(
+    project: Project,
+    worktreePath: string,
+  ): Promise<void> {
+    if (!worktreePath) return;
+    const base = resolve(worktreePath);
+    const affected = [...this.watchers.entries()]
+      .filter(([, registration]) => registration.paths.some((path) =>
+        isPathWithinBase(resolve(path), base)))
+      .map(([key]) => key);
+    for (const key of affected) {
+      await this.closeWatcherByKey(key);
+      this.forgetTaskState(key, project.id);
+    }
   }
 
   async dispose(): Promise<void> {

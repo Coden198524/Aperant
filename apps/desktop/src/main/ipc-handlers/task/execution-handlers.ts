@@ -46,6 +46,7 @@ import { findTaskWorktree } from '../../worktree-paths';
 import { projectStore } from '../../project-store';
 import { getIsolatedGitEnv, detectWorktreeBranch } from '../../utils/git-isolation';
 import { cleanupWorktree, isWorktreeUntrackedByGit } from '../../utils/worktree-cleanup';
+import { releaseOpenSpecWorktreeHandles } from './worktree-handle-release';
 import { cancelFallbackTimer } from '../agent-events-handlers';
 import { readSettingsFile } from '../../settings-utils';
 import type { ProviderAccount } from '../../../shared/types/provider-account';
@@ -2404,6 +2405,12 @@ export function registerTaskExecutionHandlers(
               // references, and deletes the branch. A bare `git worktree remove --force` used to
               // fail here whenever a file was still locked or the directory was held as a
               // process working directory.
+              await releaseOpenSpecWorktreeHandles(
+                openSpecService,
+                project,
+                worktreePath,
+                '[TASK_UPDATE_STATUS]'
+              );
               const cleanupResult = await cleanupWorktree({
                 worktreePath,
                 projectPath: project.path,

@@ -97,6 +97,59 @@ describe('OpenSpecService watcher scope', () => {
     ].sort());
   });
 
+  it('releases only the watchers inside a worktree before it is deleted', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'aperant-openspec-release-'));
+    temporaryRoots.push(projectRoot);
+    const worktreePath = join(
+      projectRoot,
+      '.autocode',
+      'worktrees',
+      'tasks',
+      '005-spec-task',
+    );
+    mkdirSync(join(worktreePath, 'openspec'), { recursive: true });
+
+    const service = new OpenSpecService({} as never, vi.fn(), vi.fn());
+    const internal = service as unknown as {
+      watchers: Map<string, {
+        watcher: { close: () => Promise<void> };
+        paths: string[];
+        timer: ReturnType<typeof setTimeout> | null;
+      }>;
+    };
+    const closeWorktreeRoot = vi.fn().mockResolvedValue(undefined);
+    const closeNestedPlanningRoot = vi.fn().mockResolvedValue(undefined);
+    const closeProjectRoot = vi.fn().mockResolvedValue(undefined);
+    const pendingReconcile = setTimeout(() => undefined, 60_000);
+    internal.watchers.set('worktree-root', {
+      watcher: { close: closeWorktreeRoot },
+      paths: [worktreePath],
+      timer: pendingReconcile,
+    });
+    internal.watchers.set('worktree-planning-root', {
+      watcher: { close: closeNestedPlanningRoot },
+      paths: [join(worktreePath, 'openspec')],
+      timer: null,
+    });
+    internal.watchers.set('project-root', {
+      watcher: { close: closeProjectRoot },
+      paths: [projectRoot],
+      timer: null,
+    });
+
+    await service.releaseWorktreeHandles(
+      { id: 'project-a', path: projectRoot } as Project,
+      worktreePath,
+    );
+
+    expect(closeWorktreeRoot).toHaveBeenCalledOnce();
+    expect(closeNestedPlanningRoot).toHaveBeenCalledOnce();
+    expect(closeProjectRoot).not.toHaveBeenCalled();
+    expect([...internal.watchers.keys()]).toEqual(['project-root']);
+
+    clearTimeout(pendingReconcile);
+  });
+
   it('does not ignore an explicitly watched Git index while ignoring broad internal trees', () => {
     const root = mkdtempSync(join(tmpdir(), 'aperant-openspec-watch-ignore-'));
     temporaryRoots.push(root);

@@ -44,6 +44,8 @@ import {
   findTaskWorktree,
 } from '../../worktree-paths';
 import { persistPlanStatus, updateTaskMetadataReviewRequest } from './plan-file-utils';
+import type { OpenSpecService } from '../../openspec/openspec-service';
+import { releaseOpenSpecWorktreeHandles } from './worktree-handle-release';
 import { getIsolatedGitEnv, refreshGitIndex } from '../../utils/git-isolation';
 import { cleanupWorktree } from '../../utils/worktree-cleanup';
 import { taskStateManager } from '../../task-state-manager';
@@ -2403,7 +2405,8 @@ async function withRetry<T>(
  * Register worktree management handlers
  */
 export function registerWorktreeHandlers(
-  getMainWindow: () => BrowserWindow | null
+  getMainWindow: () => BrowserWindow | null,
+  openSpecService?: OpenSpecService
 ): void {
   /**
    * Get the worktree status for a task
@@ -2892,6 +2895,12 @@ export function registerWorktreeHandlers(
                 // This allows drag-to-Done workflow since TASK_UPDATE_STATUS blocks 'done' when worktree exists
                 // Uses shared cleanup utility for robust Windows support (fixes #1539)
                 if (worktreePath && existsSync(worktreePath)) {
+                  await releaseOpenSpecWorktreeHandles(
+                    openSpecService,
+                    project,
+                    worktreePath,
+                    '[TASK_WORKTREE_MERGE]'
+                  );
                   const cleanupResult = await cleanupWorktree({
                     worktreePath,
                     projectPath: project.path,
@@ -3250,6 +3259,15 @@ export function registerWorktreeHandlers(
           };
         }
 
+        // A Spec task watches its worktree, and Windows cannot delete a directory
+        // that still has an open handle, so release watchers before cleanup.
+        await releaseOpenSpecWorktreeHandles(
+          openSpecService,
+          project,
+          worktreePath,
+          '[TASK_WORKTREE_DISCARD]'
+        );
+
         // Use the shared cleanup utility for robust, cross-platform worktree deletion
         const cleanupResult = await cleanupWorktree({
           worktreePath,
@@ -3341,6 +3359,14 @@ export function registerWorktreeHandlers(
             }
           };
         }
+
+        // Released by path: an orphaned worktree has no Task object to dispose.
+        await releaseOpenSpecWorktreeHandles(
+          openSpecService,
+          project,
+          worktreePath,
+          '[ORPHAN_CLEANUP]'
+        );
 
         // Use cleanupWorktree for robust, cross-platform worktree deletion
         const cleanupResult = await cleanupWorktree({

@@ -32,6 +32,7 @@ import { findTaskAndProject } from './shared';
 import { findAllSpecPaths, isValidTaskId } from '../../utils/spec-path-helpers';
 import { isPathWithinBase, findTaskWorktree } from '../../worktree-paths';
 import { cleanupWorktree } from '../../utils/worktree-cleanup';
+import { releaseOpenSpecWorktreeHandles } from './worktree-handle-release';
 import { getToolPath } from '../../cli-tool-manager';
 import { getIsolatedGitEnv } from '../../utils/git-isolation';
 import { taskStateManager } from '../../task-state-manager';
@@ -559,6 +560,12 @@ export function registerTaskCRUDHandlers(
       const worktreePath = findTaskWorktree(project.path, task.specId);
       if (worktreePath) {
         console.warn(`[TASK_DELETE] Found worktree at: ${worktreePath}`);
+        await releaseOpenSpecWorktreeHandles(
+          openSpecService,
+          project,
+          worktreePath,
+          '[TASK_DELETE]'
+        );
         const cleanupResult = await cleanupWorktree({
           worktreePath,
           projectPath: project.path,
