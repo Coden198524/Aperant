@@ -23,6 +23,9 @@ export const LOCAL_TOOL_REGISTRATION_ORDER = [
   'Glob',
   'Grep',
   'WebFetch',
+  'AskUserQuestion',
+  'TodoWrite',
+  'Task',
 ] as const;
 
 export const AUTOCODE_TOOL_REGISTRATION_ORDER = [

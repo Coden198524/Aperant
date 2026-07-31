@@ -49,6 +49,7 @@ import { createStreamHandler } from './stream-handler';
 import type { FullStreamPart } from './stream-handler';
 import { classifyError, isAuthenticationError, isRateLimitError, isModelNotFoundError } from './error-classifier';
 import { ProgressTracker } from './progress-tracker';
+import { CODEX_OAUTH_RESPONSES_TRANSPORT } from '../agent/provider-transport';
 import type {
   SessionConfig,
   SessionResult,
@@ -67,6 +68,24 @@ import { debugLog } from '../../../shared/utils/debug-logger';
 
 /** Maximum number of auth refresh retries before giving up */
 const MAX_AUTH_RETRIES = 1;
+
+/** Additional retries for an OpenSpec request that fails before producing output. */
+const MAX_OPENSPEC_TRANSIENT_RETRIES = 5;
+
+/** Fail over promptly when the caller provides a replay-safe alternate transport. */
+const MAX_OPENSPEC_TRANSIENT_RETRIES_BEFORE_FALLBACK = 2;
+
+/** Initial OpenSpec retry delay; subsequent attempts use exponential backoff. */
+const OPENSPEC_TRANSIENT_RETRY_BASE_DELAY_MS = 2_000;
+
+/** Keep a single retry delay bounded while still tolerating a short provider incident. */
+const OPENSPEC_TRANSIENT_RETRY_MAX_DELAY_MS = 20_000;
+
+const OPENSPEC_TRANSIENT_ERROR_CODES = new Set([
+  'rate_limited',
+  'network_error',
+  'temporarily_unavailable',
+]);
 
 /** Default max steps if not specified in config - safety backstop for spinning agents */
 const DEFAULT_MAX_STEPS = 160;
@@ -105,6 +124,110 @@ const STREAM_INACTIVITY_TIMEOUT_MS = 120_000; // 2 minutes - increased for compl
 const MEMORY_REASONING_OBSERVATION_FLUSH_CHARS = 1_800;
 
 type StreamTextProviderOptions = NonNullable<Parameters<typeof streamText>[0]['providerOptions']>;
+
+class SessionAttemptError extends Error {
+  constructor(
+    readonly originalError: unknown,
+    readonly retrySafe: boolean,
+    readonly source: 'provider' | 'local' = 'provider',
+  ) {
+    super(readSessionAttemptErrorMessage(originalError));
+    this.name = 'SessionAttemptError';
+  }
+}
+
+function readSessionAttemptErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (error && typeof error === 'object') {
+    const message = (error as Record<string, unknown>).message;
+    if (typeof message === 'string' && message.trim()) return message;
+  }
+  return 'Agent session attempt failed';
+}
+
+function startSessionAttempt<T>(operation: () => T): T {
+  try {
+    return operation();
+  } catch (error) {
+    throw new SessionAttemptError(error, true);
+  }
+}
+
+function isStreamInactivityTimeoutAttempt(error: SessionAttemptError): boolean {
+  return Boolean(
+    error.originalError &&
+    typeof error.originalError === 'object' &&
+    (error.originalError as { code?: unknown }).code === 'stream_timeout',
+  );
+}
+
+function shouldRetryOpenSpecTransientError(
+  config: Pick<SessionConfig, 'agentType'>,
+  error: unknown,
+  sessionError: SessionError,
+  retryCount: number,
+  retryLimit = MAX_OPENSPEC_TRANSIENT_RETRIES,
+): error is SessionAttemptError {
+  return config.agentType === 'openspec' &&
+    error instanceof SessionAttemptError &&
+    error.source === 'provider' &&
+    error.retrySafe &&
+    !isStreamInactivityTimeoutAttempt(error) &&
+    sessionError.retryable &&
+    OPENSPEC_TRANSIENT_ERROR_CODES.has(sessionError.code) &&
+    retryCount < retryLimit;
+}
+
+function canFallbackAfterProviderFailure(
+  config: Pick<SessionConfig, 'agentType' | 'abortSignal'>,
+  error: unknown,
+  sessionError: SessionError,
+  allowAfterProgress: boolean,
+): error is SessionAttemptError {
+  const canResumeAfterProgress =
+    allowAfterProgress &&
+    sessionError.retryable &&
+    OPENSPEC_TRANSIENT_ERROR_CODES.has(sessionError.code);
+
+  return config.agentType === 'openspec' &&
+    !config.abortSignal?.aborted &&
+    error instanceof SessionAttemptError &&
+    error.source === 'provider' &&
+    sessionError.code !== 'aborted' &&
+    sessionError.code !== 'tool_execution_error' &&
+    (error.retrySafe || canResumeAfterProgress);
+}
+
+function canReplaySessionAfterProviderError(
+  config: Pick<SessionConfig, 'agentType'>,
+  error: unknown,
+): boolean {
+  return config.agentType !== 'openspec' ||
+    (
+      error instanceof SessionAttemptError &&
+      error.source === 'provider' &&
+      error.retrySafe
+    );
+}
+
+async function waitForOpenSpecRetry(delayMs: number, abortSignal?: AbortSignal): Promise<boolean> {
+  if (abortSignal?.aborted) return false;
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (shouldRetry: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      abortSignal?.removeEventListener('abort', handleAbort);
+      resolve(shouldRetry);
+    };
+    const handleAbort = () => finish(false);
+    const timer = setTimeout(() => finish(true), delayMs);
+    abortSignal?.addEventListener('abort', handleAbort, { once: true });
+    if (abortSignal?.aborted) handleAbort();
+  });
+}
 
 async function repairMalformedToolCall(options: {
   toolCall: LanguageModelV3ToolCall;
@@ -171,6 +294,23 @@ export interface RunnerOptions {
   onAccountSwitch?: (failedAccountId: string, error: SessionError) => Promise<QueueResolvedAuth | null>;
   /** Current account ID from the priority queue (needed for account-switch retry) */
   currentAccountId?: string;
+  /**
+   * Optional alternate transport for a provider failure. By default it is
+   * invoked only before any model output, tool call, or completed step.
+   * Returning null preserves the original provider error.
+   */
+  onProviderFailureFallback?: (context: {
+    originalError: unknown;
+    sessionError: SessionError;
+    outcome: SessionOutcome;
+  }) => Promise<SessionResult | null>;
+  /**
+   * Allow the provider fallback to resume an OpenSpec Action after the API
+   * attempt has already produced output or executed tools. Enable this only
+   * when the fallback can inspect persisted workspace state and continue
+   * without replaying completed mutations.
+   */
+  allowProviderFailureFallbackAfterProgress?: boolean;
 }
 
 // =============================================================================
@@ -195,29 +335,59 @@ export async function runAgentSession(
   config: SessionConfig,
   options: RunnerOptions = {},
 ): Promise<SessionResult> {
-  const { onEvent, onAuthRefresh, onModelRefresh, tools, memoryContext, onAccountSwitch, currentAccountId } = options;
+  const {
+    onEvent,
+    onAuthRefresh,
+    onModelRefresh,
+    tools,
+    memoryContext,
+    onAccountSwitch,
+    currentAccountId,
+    onProviderFailureFallback,
+    allowProviderFailureFallbackAfterProgress = false,
+  } = options;
   const startTime = Date.now();
   const sessionId = config.sessionId ?? crypto.randomUUID();
+  const openSpecTransientRetryLimit = onProviderFailureFallback
+    ? MAX_OPENSPEC_TRANSIENT_RETRIES_BEFORE_FALLBACK
+    : MAX_OPENSPEC_TRANSIENT_RETRIES;
 
   let authRetries = 0;
+  let transientRetries = 0;
   let activeConfig = config;
   let activeAccountId = currentAccountId;
 
   // Retry loop for auth refresh and account switching
   while (authRetries <= MAX_AUTH_RETRIES) {
     try {
-      const result = await executeStream(activeConfig, tools, onEvent, memoryContext, sessionId);
+      const result = await executeStream(
+        activeConfig,
+        tools,
+        onEvent,
+        memoryContext,
+        sessionId,
+        Boolean(onProviderFailureFallback),
+        allowProviderFailureFallbackAfterProgress,
+      );
       return {
         ...result,
         durationMs: Date.now() - startTime,
       };
     } catch (error: unknown) {
-      const { sessionError, outcome } = classifyError(error);
+      const classifiedError = error instanceof SessionAttemptError
+        ? error.originalError
+        : error;
+      const { sessionError, outcome } = classifyError(classifiedError);
 
       // Account-switch on rate limit (429), auth failure (401), or model not found (404)
       // This enables cross-provider fallback via the global priority queue
       if (
-        (isRateLimitError(error) || isAuthenticationError(error) || isModelNotFoundError(error)) &&
+        (
+          isRateLimitError(classifiedError) ||
+          isAuthenticationError(classifiedError) ||
+          isModelNotFoundError(classifiedError)
+        ) &&
+        canReplaySessionAfterProviderError(activeConfig, error) &&
         onAccountSwitch &&
         activeAccountId &&
         authRetries < MAX_AUTH_RETRIES
@@ -225,9 +395,11 @@ export async function runAgentSession(
         authRetries++;
 
         // Log the reason for switching
-        const errorType = isRateLimitError(error) ? 'rate limit' :
-                         isAuthenticationError(error) ? 'authentication failure' :
-                         'model not found';
+        const errorType = isRateLimitError(classifiedError)
+          ? 'rate limit'
+          : isAuthenticationError(classifiedError)
+            ? 'authentication failure'
+            : 'model not found';
         console.warn(`[SessionRunner] ${errorType} detected, attempting to switch accounts...`);
 
         const newAuth = await onAccountSwitch(activeAccountId, sessionError);
@@ -265,7 +437,8 @@ export async function runAgentSession(
 
       // Legacy auth refresh (single-provider token refresh)
       if (
-        isAuthenticationError(error) &&
+        isAuthenticationError(classifiedError) &&
+        canReplaySessionAfterProviderError(activeConfig, error) &&
         authRetries < MAX_AUTH_RETRIES &&
         onAuthRefresh
       ) {
@@ -283,6 +456,75 @@ export async function runAgentSession(
           activeConfig = { ...activeConfig, model: onModelRefresh(newToken) };
         }
         continue;
+      }
+
+      if (shouldRetryOpenSpecTransientError(
+        activeConfig,
+        error,
+        sessionError,
+        transientRetries,
+        openSpecTransientRetryLimit,
+      )) {
+        const retryNumber = transientRetries + 1;
+        const delayMs = Math.min(
+          OPENSPEC_TRANSIENT_RETRY_BASE_DELAY_MS * 2 ** transientRetries,
+          OPENSPEC_TRANSIENT_RETRY_MAX_DELAY_MS,
+        );
+        transientRetries = retryNumber;
+        onEvent?.({
+          type: 'text-delta',
+          text:
+            `[Provider] Temporarily unavailable. Retrying automatically in ` +
+            `${Math.ceil(delayMs / 1_000)}s (${retryNumber}/${openSpecTransientRetryLimit}).\n`,
+        });
+        console.warn(
+          `[SessionRunner] OpenSpec provider request failed before producing output; ` +
+          `retrying in ${delayMs}ms (${retryNumber}/${openSpecTransientRetryLimit}): ` +
+          sessionError.message,
+        );
+        const shouldContinue = await waitForOpenSpecRetry(delayMs, activeConfig.abortSignal);
+        if (!shouldContinue) {
+          return buildErrorResult(
+            'cancelled',
+            {
+              code: 'aborted',
+              message: 'Session was cancelled',
+              retryable: false,
+            },
+            startTime,
+            sessionId,
+          );
+        }
+        continue;
+      }
+
+      if (
+        onProviderFailureFallback &&
+        canFallbackAfterProviderFailure(
+          activeConfig,
+          error,
+          sessionError,
+          allowProviderFailureFallbackAfterProgress,
+        )
+      ) {
+        try {
+          const fallbackResult = await onProviderFailureFallback({
+            originalError: classifiedError,
+            sessionError,
+            outcome,
+          });
+          if (fallbackResult) {
+            return {
+              ...fallbackResult,
+              durationMs: Date.now() - startTime,
+            };
+          }
+        } catch (fallbackError) {
+          console.warn(
+            '[SessionRunner] Replay-safe provider fallback failed:',
+            fallbackError,
+          );
+        }
       }
 
       // Non-retryable error or retries exhausted
@@ -409,6 +651,8 @@ async function executeStream(
   onEvent: SessionEventCallback | undefined,
   memoryContext: MemorySessionContext | undefined,
   sessionId: string,
+  providerFailureFallbackEnabled: boolean,
+  allowProviderFailureFallbackAfterProgress: boolean,
 ): Promise<Omit<SessionResult, 'durationMs'>> {
   const baseMaxSteps = config.maxSteps ?? DEFAULT_MAX_STEPS;
 
@@ -544,6 +788,8 @@ async function executeStream(
   const normalizedProviderId = typeof effectiveProviderId === 'string' ? effectiveProviderId.toLowerCase() : '';
   const configuredProviderTransport = config.providerTransport;
   const usesResponsesTransport = isOpenAIResponsesTransport(configuredProviderTransport ?? modelProviderId, modelId);
+  const usesCodexOAuthTransport =
+    configuredProviderTransport?.toLowerCase() === CODEX_OAUTH_RESPONSES_TRANSPORT;
   const usesAnthropicProvider = normalizedProviderId === 'anthropic';
 
   // Compute thinking/reasoning provider options from session config
@@ -583,22 +829,33 @@ async function executeStream(
   // (validateAndNormalizeJsonFile + repairJsonWithLLM) handle the rest.
   const hasTools = tools != null && Object.keys(tools).length > 0;
   const useOutputSchema = config.outputSchema != null && !hasTools;
-  const maxOutputTokens = resolveMaxOutputTokens(config);
-  const providerResponsePersistenceOptions = resolveProviderResponsePersistenceOptions(config, {
-    modelId,
-    provider: modelProviderId ?? config.provider,
-    sessionId,
-  });
-  const responsePersistence = config.responsePersistence === true ||
+  // The ChatGPT/Codex subscription endpoint rejects max_output_tokens. This is
+  // a transport constraint, not an OpenSpec workflow constraint.
+  const omitMaxOutputTokens = usesCodexOAuthTransport;
+  const maxOutputTokens = omitMaxOutputTokens
+    ? undefined
+    : resolveMaxOutputTokens(config);
+  const providerResponsePersistenceOptions = usesCodexOAuthTransport
+    ? undefined
+    : resolveProviderResponsePersistenceOptions(config, {
+        modelId,
+        provider: modelProviderId ?? config.provider,
+        sessionId,
+      });
+  const responsePersistence = !usesCodexOAuthTransport && (
+    config.responsePersistence === true ||
     Boolean(config.previousResponseId) ||
-    Boolean(config.providerResponsePersistence);
+    Boolean(config.providerResponsePersistence)
+  );
   const providerOptions = mergeProviderOptions(
     thinkingOptions,
     usesResponsesTransport ? {
       openai: {
         ...(config.systemPrompt ? { instructions: config.systemPrompt } : {}),
         store: responsePersistence,
-        ...(config.previousResponseId ? { previousResponseId: config.previousResponseId } : {}),
+        ...(!usesCodexOAuthTransport && config.previousResponseId
+          ? { previousResponseId: config.previousResponseId }
+          : {}),
       },
     } : undefined,
     useOutputSchema && usesAnthropicProvider ? {
@@ -606,21 +863,31 @@ async function executeStream(
     } : undefined,
     config.providerOptions,
     providerResponsePersistenceOptions,
+    usesCodexOAuthTransport ? {
+      openai: {
+        store: false,
+        previousResponseId: undefined,
+      },
+    } : undefined,
   );
 
-  const result = streamText({
+  const result = startSessionAttempt(() => streamText({
     model: config.model,
     system: usesResponsesTransport ? undefined : config.systemPrompt,
     messages: aiMessages,
     tools: tools ?? {},
     ...(useOutputSchema ? { output: Output.object({ schema: config.outputSchema! }) } : {}),
-    maxOutputTokens,
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     stopWhen: stopCondition,
     abortSignal: mergedAbortSignal,
     ...(providerOptions ? { providerOptions } : {}),
     ...(promptCachingMetadata ? {
       experimental_providerMetadata: promptCachingMetadata,
     } : {}),
+    // Providing an error callback suppresses AI SDK's default console.error
+    // dump. The full stream still carries the error to the classified retry
+    // and Codex CLI fallback path below.
+    onError: () => undefined,
     experimental_repairToolCall: repairMalformedToolCall,
     prepareStep: async ({ stepNumber }) => {
       flushMemoryReasoningBuffer();
@@ -737,7 +1004,7 @@ async function executeStream(
       // onStepFinish is called after each agentic step.
       // Step results (tool calls, usage) are handled via the fullStream handler.
     },
-  });
+  }));
 
   // Consume the full stream with inactivity timeout protection.
   // The timer fires if no stream parts arrive within STREAM_INACTIVITY_TIMEOUT_MS,
@@ -754,6 +1021,18 @@ async function executeStream(
   try {
     for await (const part of result.fullStream) {
       resetStreamInactivityTimer(); // Reset on each part
+      if ((part as { type?: string }).type === 'error') {
+        const summary = streamHandler.getSummary();
+        const retrySafe = summary.stepsExecuted === 0 &&
+          summary.toolCallCount === 0 &&
+          streamedCompletionChars === 0;
+        const streamError = (part as { error?: unknown }).error;
+        throw new SessionAttemptError(
+          streamError ?? new Error('Stream error'),
+          retrySafe,
+        );
+      }
+
       streamHandler.processPart(part as FullStreamPart);
       const policyPart = part as unknown as AutocodeStreamPartLike;
       const estimatedPartSize = estimateStreamPartSize(policyPart);
@@ -780,7 +1059,14 @@ async function executeStream(
           }
         }
         if (writeToolInputFailureCount >= MAX_WRITE_TOOL_INPUT_FAILURES_PER_SESSION) {
-          throw new Error(`Tool 'Write' input JSON failed after ${writeToolInputFailureCount} attempts: ${writeToolInputFailure.message}`);
+          throw new SessionAttemptError(
+            new Error(
+              `Tool 'Write' input JSON failed after ${writeToolInputFailureCount} attempts: ` +
+              writeToolInputFailure.message,
+            ),
+            false,
+            'local',
+          );
         }
         writeToolInputCorrectionPrompt = buildWriteToolInputCorrectionPrompt(writeToolInputFailure);
       } else if (
@@ -792,14 +1078,6 @@ async function executeStream(
         writeToolInputFailureCallIds.clear();
         writeToolInputCorrectionPrompt = undefined;
       }
-
-      // Some providers surface request failures as `error` parts instead of
-      // throwing from the async iterator. Treat these as fatal for the current
-      // session so retry/account-switch logic can run in the outer catch.
-      if ((part as { type?: string }).type === 'error') {
-        const streamError = (part as { error?: unknown }).error;
-        throw streamError ?? new Error('Stream error');
-      }
     }
   } catch (error: unknown) {
     // Stream-level errors (network, abort, etc.)
@@ -810,13 +1088,28 @@ async function executeStream(
       streamInactivityController.signal.aborted &&
       streamInactivityController.signal.reason === STREAM_INACTIVITY_REASON
     ) {
+      const message =
+        `Stream inactivity timeout - no data received from provider for ` +
+        `${STREAM_INACTIVITY_TIMEOUT_MS / 1000}s`;
+      const retrySafe = summary.stepsExecuted === 0 &&
+        summary.toolCallCount === 0 &&
+        streamedCompletionChars === 0;
+      if (
+        providerFailureFallbackEnabled &&
+        (retrySafe || allowProviderFailureFallbackAfterProgress)
+      ) {
+        throw new SessionAttemptError(
+          Object.assign(new Error(message), { code: 'stream_timeout' }),
+          retrySafe,
+        );
+      }
       return {
         outcome: 'error',
         stepsExecuted: summary.stepsExecuted,
         usage: summary.usage,
         error: {
           code: 'stream_timeout',
-          message: `Stream inactivity timeout - no data received from provider for ${STREAM_INACTIVITY_TIMEOUT_MS / 1000}s`,
+          message,
           retryable: true,
         },
         messages,
@@ -857,7 +1150,15 @@ async function executeStream(
       };
     }
     // Re-throw for classification in the outer try/catch
-    throw error;
+    if (error instanceof SessionAttemptError) {
+      throw error;
+    }
+    throw new SessionAttemptError(
+      error,
+      summary.stepsExecuted === 0 &&
+        summary.toolCallCount === 0 &&
+        streamedCompletionChars === 0,
+    );
   } finally {
     flushMemoryReasoningBuffer();
     if (streamInactivityTimer) clearTimeout(streamInactivityTimer);

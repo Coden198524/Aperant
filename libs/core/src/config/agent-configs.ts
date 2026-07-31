@@ -37,6 +37,15 @@ export const SPEC_TOOLS = [...BASE_READ_TOOLS, 'Write', ...WEB_TOOLS] as const;
 
 export const DIRECT_TASK_TOOLS = [...BASE_READ_TOOLS, ...BASE_WRITE_TOOLS] as const;
 
+/** Tools referenced by the byte-identical upstream OpenSpec workflow prompts. */
+export const OPENSPEC_TOOLS = [
+  ...BASE_READ_TOOLS,
+  ...BASE_WRITE_TOOLS,
+  'AskUserQuestion',
+  'TodoWrite',
+  'Task',
+] as const;
+
 // =============================================================================
 // Autocode MCP Tools (Custom build management)
 // =============================================================================
@@ -120,6 +129,7 @@ export const ELECTRON_TOOLS = [
 
 /** All known agent types */
 export type AgentType =
+  | 'openspec'
   | 'spec_gatherer'
   | 'spec_researcher'
   | 'spec_writer'
@@ -200,6 +210,13 @@ export interface AgentConfig {
  * See apps/desktop/src/main/ai/config/agent-configs.ts for the full TypeScript implementation.
  */
 export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
+  openspec: {
+    tools: [...OPENSPEC_TOOLS],
+    mcpServers: [],
+    mcpServersOptional: [],
+    autoClaudeTools: [],
+    thinkingDefault: 'high',
+  },
   // ═══════════════════════════════════════════════════════════════════════
   // SPEC CREATION PHASES (Minimal tools, fast startup)
   // ═══════════════════════════════════════════════════════════════════════

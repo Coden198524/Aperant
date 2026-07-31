@@ -215,7 +215,8 @@
     "saveBaseBranch": "Save",
     "developmentMode": {
       "direct": "Direct",
-      "standard": "Standard"
+      "standard": "Standard",
+      "spec": "Spec (OpenSpec)"
     },
     "severity": "severity",
     "pullRequest": "Pull Request",
@@ -276,7 +277,9 @@
       "pushNewBranchesLabel": "Automatically push new branch",
       "pushNewBranchesDescription": "Publish this task branch to GitHub and set upstream tracking automatically. Disable to keep it local-only.",
       "useWorktreeLabel": "Use isolated workspace",
-      "useWorktreeDescription": "Creates changes in a separate git worktree and branch for review before merging. Leave off to build directly in the current project workspace."
+      "useWorktreeDescription": "Creates changes in a separate git worktree and branch for review before merging. Leave off to build directly in the current project workspace.",
+      "stateOn": "On",
+      "stateOff": "Off"
     },
     "errors": {
       "createFailed": "Failed to create task. Please try again.",
@@ -338,7 +341,38 @@
         "title": "Standard",
         "description": "Autocode planning with requirements, design notes, task checklist, implementation plan, and QA.",
         "performance": "Structured requirements-to-tasks workflow for reliable iterative development."
+      },
+      "spec": {
+        "title": "Spec (OpenSpec)",
+        "description": "Official OpenSpec actions, schemas, prompts, and Markdown artifacts without Autocode Standard orchestration.",
+        "performance": "Best for auditable specification-driven work using the upstream OpenSpec workflow."
       }
+    },
+    "openSpec": {
+      "title": "OpenSpec configuration",
+      "description": "These values are passed to the pinned official OpenSpec workflow. Planning documents remain under the selected OpenSpec root.",
+      "rootKind": "OpenSpec root",
+      "rootProject": "Current project",
+      "rootStore": "Registered Store",
+      "schema": "Schema",
+      "schemaNames": {
+        "specDrivenWithAdr": "Spec-driven + ADR"
+      },
+      "startAction": "Start Action",
+      "changeName": "Change ID (optional)",
+      "changeNamePlaceholder": "generated from the request",
+      "storeId": "Store ID",
+      "storeIdPlaceholder": "registered-store-id",
+      "startActionHelp": {
+        "new": "New creates artifacts progressively using the official workflow.",
+        "propose": "Propose prepares the complete proposal artifact set in one Action.",
+        "explore": "Explore investigates the request without committing planning files."
+      },
+      "invalidChangeName": "Change ID must be a kebab-case OpenSpec identifier.",
+      "invalidStoreId": "Store ID must identify a registered OpenSpec Store in kebab-case.",
+      "invalidSchema": "Schema must be a kebab-case OpenSpec schema name.",
+      "preflightFailed": "The official OpenSpec preflight failed.",
+      "preflightChecking": "Checking the pinned OpenSpec runtime…"
     },
     "workflowOptimization": {
       "label": "Workflow Optimization",
@@ -409,6 +443,295 @@
           "high": "High Impact",
           "critical": "Critical Impact"
         }
+      }
+    }
+  },
+  "openSpec": {
+    "loading": "Loading OpenSpec workspace…",
+    "common": {
+      "action": "OpenSpec Action",
+      "none": "None",
+      "unknown": "unknown",
+      "unspecified": "unspecified"
+    },
+    "actions": {
+      "explore": "Explore",
+      "propose": "Propose",
+      "apply": "Apply",
+      "update": "Update",
+      "sync": "Sync",
+      "archive": "Archive",
+      "new": "New",
+      "continue": "Continue",
+      "ff": "Fast Forward",
+      "verify": "Verify",
+      "bulkArchive": "Bulk Archive",
+      "onboard": "Onboard"
+    },
+    "runStates": {
+      "queued": "Queued",
+      "preparing": "Preparing",
+      "running": "Running",
+      "awaiting_user": "Awaiting input",
+      "cancelling": "Cancelling",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "interrupted": "Interrupted"
+    },
+    "detail": {
+      "description": "OpenSpec artifact board and official Action workspace for {{title}}"
+    },
+    "automatic": {
+      "explore": {
+        "label": "Explore request",
+        "description": "AI will inspect the request and OpenSpec context without changing project files."
+      },
+      "start": {
+        "label": "Start specification",
+        "description": "AI will initialize the official OpenSpec workflow and create the required planning artifacts."
+      },
+      "inspectUnsupported": {
+        "label": "Inspect workflow",
+        "description": "AI will inspect the unsupported OpenSpec status without mutating project files."
+      },
+      "continuePlanning": {
+        "label": "Continue planning",
+        "description": "AI will read the official status and create the next required OpenSpec artifact."
+      },
+      "completePlanning": {
+        "label": "Complete planning",
+        "description": "AI will complete the remaining official planning artifacts in dependency order."
+      },
+      "reviewImplementation": {
+        "label": "Review implementation",
+        "description": "AI will verify the implementation against the completed OpenSpec artifacts and tasks."
+      },
+      "continueImplementation": {
+        "label": "Continue implementation"
+      },
+      "startImplementation": {
+        "label": "Start implementation"
+      },
+      "implementation": {
+        "description": "AI will read the official apply instructions and work through the pending task list."
+      },
+      "reviewWorkflow": {
+        "label": "Review workflow",
+        "description": "AI will verify the current OpenSpec state and report the next safe step."
+      },
+      "inspectWorkflow": {
+        "label": "Inspect workflow",
+        "description": "AI will inspect the current OpenSpec context without changing project files."
+      },
+      "retry": {
+        "label": "Retry workflow",
+        "description": "The provider stayed unavailable after automatic retries. Retry will re-read official OpenSpec status and continue safely."
+      },
+      "archiveVerified": {
+        "label": "Archive verified change",
+        "description": "Implementation verification is complete. Review the validation result, then confirm the official Archive workflow."
+      },
+      "followUpIteration": {
+        "label": "Create follow-up iteration",
+        "description": "Create a new incremental OpenSpec Change from the archived specification baseline.",
+        "defaultGuidance": "Create a new incremental Change based on the archived Change {{change}} and the current OpenSpec baseline. Do not reuse the archived Change name. Task context: {{description}}"
+      }
+    },
+    "planIteration": {
+      "refine": "Refine plan",
+      "afterVerify": "Continue iterating",
+      "dialog": {
+        "titleRefine": "Refine the current plan",
+        "titleContinue": "Plan the next iteration",
+        "descriptionRefine": "Explain what should be added, changed, or removed from the current plan. AI will update OpenSpec planning artifacts only and will not start implementation.",
+        "descriptionContinue": "Describe the next iteration after this verified implementation. AI will return the workflow to planning and will not start implementation.",
+        "label": "Iteration requirements",
+        "placeholder": "For example: add an offline mode requirement, revise the acceptance scenarios, and split the migration work into separate tasks…",
+        "submit": "Start planning iteration"
+      },
+      "review": {
+        "title": "Planning changes",
+        "description": "{{count}} planning document(s) changed in this run. Review every change before deciding whether to start implementation.",
+        "loading": "Collecting all planning document changes…",
+        "noChanges": "The planning Action completed without changing any readable OpenSpec document.",
+        "loadFailed": "The planning Action completed, but its persisted change list could not be loaded.",
+        "captureFailed": "The planning Action completed, but Aperant could not capture every authorized planning file. Retry the review without rerunning the planning Action.",
+        "retryLoad": "Reload change list",
+        "retry": "Retry change capture",
+        "retrying": "Retrying change capture…",
+        "acknowledge": "I reviewed all changes",
+        "acknowledging": "Saving review…",
+        "openDiff": "View changes to {{path}}",
+        "diffTitle": "Planning file changes",
+        "diffDescription": "{{kind}} · {{path}}",
+        "kind": {
+          "created": "Created",
+          "modified": "Modified",
+          "deleted": "Deleted"
+        }
+      }
+    },
+    "artifact": {
+      "openAria": "Open {{id}} artifact",
+      "requiredBeforeImplementation": "Required before implementation",
+      "documentCount": "{{count}} document(s)",
+      "requirementCount": "{{count}} requirements",
+      "scenarioCount": "{{count}} scenarios",
+      "status": {
+        "inProgress": "In progress",
+        "complete": "Complete",
+        "ready": "Ready",
+        "waiting": "Waiting",
+        "unsupported": "Unsupported"
+      }
+    },
+    "header": {
+      "title": "OpenSpec workflow",
+      "selectChange": "Select a change",
+      "selectChangeAria": "Select OpenSpec change",
+      "rootFallback": "OpenSpec root",
+      "rootVersion": "{{root}} · OpenSpec {{version}}",
+      "archived": "Archived",
+      "upToDate": "The current workflow is up to date.",
+      "selectExisting": "Select an existing change to continue."
+    },
+    "phase": {
+      "planning": "Planning",
+      "implementation": "Implementation",
+      "verification": "Verification",
+      "archive": "Archive"
+    },
+    "timing": {
+      "title": "Cumulative AI time",
+      "scope": "This task",
+      "active": "Timing in progress"
+    },
+    "primaryAction": {
+      "working": "AI is working",
+      "archived": "Workflow archived",
+      "selectChange": "Select a change",
+      "none": "No action required",
+      "openWorkspace": "Open Spec"
+    },
+    "toolbar": {
+      "stopAria": "Stop current OpenSpec workflow",
+      "moreAria": "More OpenSpec options",
+      "validate": "Validate current change",
+      "refresh": "Refresh status",
+      "archive": "Archive current change…",
+      "bulkArchive": "Archive multiple changes…"
+    },
+    "guidance": {
+      "added": "AI guidance added",
+      "add": "Add optional guidance for the next run",
+      "aria": "AI workflow guidance",
+      "placeholder": "Describe any additional constraint or requested emphasis…"
+    },
+    "notice": {
+      "unsupportedStatus": "OpenSpec returned an unsupported artifact status. Mutating Actions are disabled; raw status remains available for diagnostics.",
+      "affectedAreaSelection": "The official status requires affected-area selection. Apply is disabled because pinned OpenSpec 1.6.0 does not expose that removed selection workflow.",
+      "selectionExpired": "The selected OpenSpec change no longer exists. Select an active change to reload the workflow.",
+      "archived": "The selected OpenSpec change is archived. Its official archive entry is available in History."
+    },
+    "interrupted": {
+      "title": "{{action}} was interrupted when Aperant exited.",
+      "description": "Continuing starts the same byte-identical official Action against the latest OpenSpec status; existing files are kept.",
+      "continue": "Continue official Action",
+      "cancel": "Cancel interrupted run"
+    },
+    "board": {
+      "title": "Workflow",
+      "progress": "{{completed}} of {{total}} stages complete",
+      "implementationProgress": "{{completed}} of {{total}} implementation tasks complete",
+      "planningComplete": "Planning {{completed}}/{{total}}",
+      "next": "Next:",
+      "archivedNext": "The selected change is archived. Select an active change, or create a new change or proposal.",
+      "initializeNext": "Initialize OpenSpec to create the workflow.",
+      "selectChangeNext": "Select an active change, or create a new change or proposal.",
+      "empty": "The AI will add workflow stages after OpenSpec is initialized."
+    },
+    "preview": {
+      "title": "Document preview",
+      "externalLinkBlocked": "External link blocked in OpenSpec preview: {{href}}",
+      "remoteImageBlocked": "Remote image blocked{{alt}}",
+      "loading": "Loading document…",
+      "selectStage": "Select a workflow stage to inspect its OpenSpec document.",
+      "noDocument": "This stage has no generated document yet.",
+      "noSource": "No generated source yet.",
+      "base": "Base:",
+      "noDiff": "No diff is available.",
+      "dependencies": "Dependencies",
+      "unlocks": "Unlocks",
+      "officialInstructions": "Official instructions",
+      "noInstructions": "No instruction text returned.",
+      "officialTemplate": "Official template",
+      "tabs": {
+        "preview": "Preview",
+        "source": "Source",
+        "diff": "Diff",
+        "context": "Context"
+      },
+      "diffBase": {
+        "git": "Git",
+        "actionSnapshot": "Action snapshot",
+        "unavailable": "Unavailable"
+      }
+    },
+    "context": {
+      "title": "Workflow context",
+      "planningHome": "Planning home",
+      "sourceOfTruth": "Source of truth",
+      "allowedEditRoots": "Allowed edit roots",
+      "linkedContext": "Linked context",
+      "constraints": "Constraints"
+    },
+    "activity": {
+      "title": "AI activity"
+    },
+    "interaction": {
+      "needsInput": "AI needs your input",
+      "additionalAnswerAria": "Additional answer for question {{number}}",
+      "answerAria": "Answer question {{number}}",
+      "optionalDetailPlaceholder": "Optional additional detail…",
+      "answerPlaceholder": "Answer the official workflow question…",
+      "submitting": "Submitting…",
+      "submit": "Submit answer"
+    },
+    "console": {
+      "title": "Action console",
+      "aria": "OpenSpec Action console",
+      "empty": "AI decisions, tool calls, and results will appear here.",
+      "earlierOutputTruncated": "[Earlier output truncated]"
+    },
+    "validation": {
+      "valid": "Valid",
+      "issuesFound": "Issues found",
+      "severity": {
+        "error": "Error",
+        "warning": "Warning",
+        "info": "Info"
+      }
+    },
+    "history": {
+      "title": "History",
+      "viewLog": "View log",
+      "empty": "No workflow history yet.",
+      "archivedChanges": "Archived changes"
+    },
+    "dialogs": {
+      "confirm": {
+        "title": "Confirm {{action}}",
+        "description": "This runs the official OpenSpec workflow against {{root}}. Official validation and conflict checks are not bypassed.",
+        "changeLabel": "Change:",
+        "validationValid": "Validation: valid",
+        "validationIssues": "Validation: {{count}} issue(s)",
+        "run": "Run official {{action}}"
+      },
+      "resume": {
+        "title": "Resume interrupted {{action}}",
+        "description": "The official destructive workflow will be restarted against {{root}}. OpenSpec validation and conflict checks remain enabled, and no existing files are rolled back.",
+        "confirm": "Resume official Action"
       }
     }
   },

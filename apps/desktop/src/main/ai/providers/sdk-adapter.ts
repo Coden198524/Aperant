@@ -13,7 +13,10 @@ import {
   type ProviderSdkInstancePlan,
 } from '@autocode/core';
 
-import { createOAuthProviderFetch } from './oauth-fetch';
+import {
+  CODEX_API_BASE_URL,
+  createCodexOAuthFetch,
+} from './codex-oauth-fetch';
 import { createOpenAICompatibleEndpointFetch } from './openai-base-url';
 
 export function createProviderSdkInstanceFromPlan(plan: ProviderSdkInstancePlan) {
@@ -30,7 +33,9 @@ export function createProviderSdkInstanceFromPlan(plan: ProviderSdkInstancePlan)
     case 'openai':
       return createOpenAI({
         apiKey: plan.apiKey,
-        baseURL: plan.baseURL,
+        baseURL: plan.fetchStrategy === 'openai-codex-oauth'
+          ? CODEX_API_BASE_URL
+          : plan.baseURL,
         headers: plan.headers,
         fetch: fetchImpl,
       });
@@ -94,9 +99,9 @@ export function createProviderSdkInstanceFromPlan(plan: ProviderSdkInstancePlan)
 
 function createFetchForPlan(plan: ProviderSdkInstancePlan): typeof fetch | undefined {
   switch (plan.fetchStrategy) {
-    case 'openai-oauth':
+    case 'openai-codex-oauth':
       return plan.oauthTokenFilePath
-        ? createOAuthProviderFetch(plan.oauthTokenFilePath, 'openai')
+        ? createCodexOAuthFetch(plan.oauthTokenFilePath)
         : undefined;
     case 'openai-compatible-alternate':
       return createOpenAICompatibleEndpointFetch();

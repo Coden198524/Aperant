@@ -47,6 +47,8 @@ import { TaskFiles } from './TaskFiles';
 import { TaskGitChanges } from './TaskGitChanges';
 import { TaskReview } from './TaskReview';
 import type { Task, TaskLogPhase, WorktreeCreatePROptions } from '../../../shared/types';
+import { isSpecDevelopmentTask } from '../../../shared/utils/task-mode';
+import { OpenSpecTaskDetailModal } from './OpenSpecTaskDetailModal';
 
 interface TaskDetailModalProps {
   open: boolean;
@@ -62,6 +64,16 @@ export function TaskDetailModal({ open, task, onOpenChange, onSwitchToTerminals,
   // prevents background work from blocking the next open.
   if (!open || !task) {
     return null;
+  }
+
+  if (isSpecDevelopmentTask(task)) {
+    return (
+      <OpenSpecTaskDetailModal
+        open={open}
+        task={task}
+        onOpenChange={onOpenChange}
+      />
+    );
   }
 
   return (
@@ -586,6 +598,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
 
           {/* Full-height centered modal content */}
           <DialogPrimitive.Content
+            data-testid="standard-task-detail"
             className={cn(
               'fixed inset-y-0 left-[50%] z-50',
               'translate-x-[-50%]',

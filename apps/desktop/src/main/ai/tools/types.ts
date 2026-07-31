@@ -19,6 +19,16 @@ import type { SecurityProfile } from '../security/bash-validator';
 import type { FileContentCache } from './cache/file-cache';
 import type { TaskWorkflowMode } from '../../../shared/types';
 
+export interface OpenSpecDelegationInput {
+  action: 'sync';
+  prompt: string;
+  description?: string;
+}
+
+export type OpenSpecDelegationCallback = (
+  input: OpenSpecDelegationInput,
+) => Promise<string>;
+
 export {
   DEFAULT_EXECUTION_OPTIONS,
   ToolPermission,
@@ -61,6 +71,34 @@ export interface ToolContext extends CoreToolPolicyContext {
   securityProfile: SecurityProfile;
   /** Optional abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** Per-session environment additions passed to Bash child processes. */
+  commandEnv?: Record<string, string>;
+  /** Deny filesystem-mutating tools/commands for read-only workflow actions. */
+  readOnlySession?: boolean;
+  /** Restrict OpenSpec Bash paths and Store selection to trusted roots/IDs. */
+  openSpecBashPolicy?: {
+    allowedPathRoots: string[];
+    allowedWritePaths: string[];
+    storeId?: string;
+  };
+  /** Host resolution bridge used by AskUserQuestion; OpenSpec resolves it automatically. */
+  requestUserInput?: (input: {
+    questions: Array<{
+      question: string;
+      header?: string;
+      options?: Array<{ label: string; description?: string }>;
+      multiSelect?: boolean;
+    }>;
+  }) => Promise<string>;
+  /** Pinned official prompts used by host tools invoked from OpenSpec Actions. */
+  openSpecDelegatedPrompts?: {
+    sync?: string;
+  };
+  /**
+   * Runs an official OpenSpec Task delegation in a separate, isolated model
+   * session. This callback is only installed for the OpenSpec runtime.
+   */
+  runOpenSpecDelegation?: OpenSpecDelegationCallback;
   /** If set, Write/Edit tools can only write within these directories */
   allowedWritePaths?: string[];
   /** Optional file content cache for session-scoped caching */

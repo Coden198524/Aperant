@@ -19,6 +19,9 @@ import { grepTool } from './builtin/grep';
 import { webFetchTool } from './builtin/web-fetch';
 import { webSearchTool } from './builtin/web-search';
 import { spawnSubagentTool } from './builtin/spawn-subagent';
+import { askUserQuestionTool } from './builtin/ask-user-question';
+import { todoWriteTool } from './builtin/todo-write';
+import { openSpecTaskTool } from './builtin/openspec-task';
 import { isSearchProviderConfigured } from './providers';
 import {
   updateSubtaskStatusTool,
@@ -42,6 +45,9 @@ const TOOL_IMPLEMENTATIONS: Record<string, DefinedTool> = {
   WebFetch: asDefined(webFetchTool),
   WebSearch: asDefined(webSearchTool),
   SpawnSubagent: asDefined(spawnSubagentTool),
+  AskUserQuestion: asDefined(askUserQuestionTool),
+  TodoWrite: asDefined(todoWriteTool),
+  Task: asDefined(openSpecTaskTool),
   mcp__autocode__update_subtask_status: asDefined(updateSubtaskStatusTool),
   mcp__autocode__get_build_progress: asDefined(getBuildProgressTool),
   mcp__autocode__record_discovery: asDefined(recordDiscoveryTool),

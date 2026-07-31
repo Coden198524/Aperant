@@ -9,10 +9,10 @@ import {
   AUTOCODE_TASK_ARTIFACTS,
   DEFAULT_AUTOCODE_CLI,
   DEFAULT_PHASE_THINKING,
+  appendAutocodeLanguageRequirement,
   buildAutocodeDefaultDirectTaskPrompt,
   buildAutocodeDirectProviderContinuationRuntime,
   buildAutocodeDirectProviderFallbackRuntime,
-  buildProviderModelCreationPlan,
   detectProviderFromModel,
   buildAutocodeDefaultPlannerPrompt,
   buildAutocodeDefaultQAPrompt,
@@ -36,7 +36,6 @@ import {
   normalizeAutocodeBaseBranch,
   normalizeAutocodeRuntimePath,
   parseAutocodeModelProviderRoutes,
-  parseAutocodeProviderModelInvocationRoutes,
   parseAutocodeCliRuntimeRoutes,
   parseAutocodeDirectProviderContinuationCapabilities,
   parseAutocodeDirectProviderFallbackCapabilities,
@@ -46,6 +45,7 @@ import {
   resolveAutocodeTaskPhaseModelId,
   resolveAutocodeTaskPhaseProvider,
   resolveAutocodeTaskRuntimeConcurrency,
+  resolveAutocodeTaskDevelopmentMode,
   resolveAutocodeTaskWorkflowMode,
   resolveAutocodeDirectSessionState,
   readAutocodeTaskLogsFromSpecDir,
@@ -67,6 +67,7 @@ import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
 import { AgentQueueManager } from './agent-queue';
+import { getAppLanguage } from '../app-language';
 import { getClaudeProfileManager, initializeClaudeProfileManager } from '../claude-profile-manager';
 import type { ClaudeProfileManager } from '../claude-profile-manager';
 import { getOperationRegistry } from '../claude-profile/operation-registry';
@@ -76,6 +77,7 @@ import {
   RoadmapConfig
 } from './types';
 import type { IdeationConfig, TaskMetadata, TaskWorkflowMode } from '../../shared/types';
+import type { OpenSpecAction } from '../../shared/types';
 import { resetStuckSubtasks } from '../ipc-handlers/task/plan-file-utils';
 import { projectStore } from '../project-store';
 import { resolveAuth, resolveAuthFromQueue } from '../ai/auth/resolver';
@@ -92,6 +94,8 @@ import type { ProviderAccount } from '../../shared/types/provider-account';
 import { tryLoadPrompt } from '../ai/prompts/prompt-loader';
 import { buildProviderQueueResolutionErrorMessage } from './provider-queue-errors';
 import { resolveProjectAgentProfile } from '../ai/config/project-agent-profile';
+import { resolveSessionProviderTransport } from '../ai/agent/provider-transport';
+import { appendOpenSpecAutomaticDecisionRequirement } from '../ai/agent/openspec-auto-answer';
 
 export function inferPinnedProviderFromModel(
   model: string | undefined,
@@ -110,9 +114,138 @@ function normalizeSupportedProvider(value: string | null | undefined): Supported
     : undefined;
 }
 
+function resolveAgentAppLanguage(
+  settingsLanguage: unknown,
+  trackedAppLanguage: string | undefined,
+): SerializableSessionConfig['language'] {
+  const language = typeof settingsLanguage === 'string' && settingsLanguage.trim()
+    ? settingsLanguage
+    : trackedAppLanguage;
+  return typeof language === 'string' && language.trim()
+    ? resolveSupportedLanguage(language)
+    : undefined;
+}
+
 export const __agentManagerTestUtils = {
   normalizeBaseBranch: normalizeAutocodeBaseBranch,
+  resolveAgentAppLanguage,
   resolveTaskBaseBranch,
+};
+
+export interface OpenSpecAgentActionInput {
+  taskId: string;
+  projectId?: string;
+  runId: string;
+  action: OpenSpecAction;
+  projectPath: string;
+  runtimeRoot: string;
+  specDir: string;
+  prompt: string;
+  userMessage: string;
+  commandEnv: Record<string, string>;
+  allowedPathRoots: string[];
+  trustedRuntimeReadPaths: string[];
+  allowedWritePaths: string[];
+  openSpecStoreId?: string;
+  readOnly: boolean;
+  delegatedPrompts?: {
+    sync?: string;
+  };
+}
+
+interface BuildOpenSpecSessionConfigInput {
+  actionInput: OpenSpecAgentActionInput;
+  language: SerializableSessionConfig['language'];
+  phase: NonNullable<SerializableSessionConfig['phase']>;
+  maxSteps: number;
+  phaseStepBudgets?: SerializableSessionConfig['phaseStepBudgets'];
+  thinkingLevel: SerializableSessionConfig['thinkingLevel'];
+  provider: string;
+  modelId: string;
+  apiKey?: string;
+  baseURL?: string;
+  configDir?: string;
+  oauthTokenFilePath?: string;
+  providerModelInvocationRoutes?: SerializableSessionConfig['providerModelInvocationRoutes'];
+  securityProfile: SerializedSecurityProfile;
+}
+
+function buildOpenSpecSessionConfig(
+  input: BuildOpenSpecSessionConfigInput,
+): SerializableSessionConfig {
+  const action = input.actionInput;
+  return {
+    agentType: 'openspec',
+    systemPrompt: action.prompt,
+    preservePromptBytes: true,
+    disableTaskLogs: true,
+    openSpecRunId: action.runId,
+    openSpecAction: action.action,
+    openSpecReadOnly: action.readOnly,
+    openSpecDelegatedPrompts: action.delegatedPrompts,
+    initialMessages: [{
+      role: 'user',
+      content: appendOpenSpecAutomaticDecisionRequirement(
+        appendAutocodeLanguageRequirement(
+          action.userMessage,
+          input.language,
+        ),
+        input.language,
+      ),
+    }],
+    maxSteps: input.maxSteps,
+    phaseStepBudgets: input.phaseStepBudgets,
+    // Do not expose .autocode task metadata/plans to the OpenSpec agent.
+    // Runtime bookkeeping remains in main; tools see only the resolved root.
+    specDir: action.runtimeRoot,
+    projectDir: action.runtimeRoot,
+    phase: input.phase,
+    thinkingLevel: input.thinkingLevel,
+    language: input.language,
+    provider: input.provider,
+    modelId: input.modelId,
+    apiKey: input.apiKey,
+    baseURL: input.baseURL,
+    configDir: input.configDir,
+    oauthTokenFilePath: input.oauthTokenFilePath,
+    providerModelInvocationRoutes: input.providerModelInvocationRoutes,
+    mcpOptions: {
+      context7Enabled: false,
+      memoryEnabled: false,
+      linearEnabled: false,
+      yunxiaoEnabled: false,
+      electronMcpEnabled: false,
+      puppeteerMcpEnabled: false,
+      customMcpServers: [],
+      mcpEnv: {
+        GRAPHITI_ENABLED: 'false',
+      },
+    },
+    workflowMode: 'balanced',
+    // Every official OpenSpec action is a self-contained session. Responses
+    // must not be stored server-side (some OpenAI auth modes reject store=true).
+    responsePersistence: false,
+    toolContext: {
+      cwd: action.runtimeRoot,
+      projectDir: action.runtimeRoot,
+      specDir: action.runtimeRoot,
+      allowedPathRoots: action.allowedPathRoots,
+      trustedRuntimeReadPaths: action.trustedRuntimeReadPaths,
+      allowedWritePaths: action.allowedWritePaths,
+      openSpecBashPolicy: {
+        allowedPathRoots: action.allowedPathRoots,
+        allowedWritePaths: action.allowedWritePaths,
+        ...(action.openSpecStoreId ? { storeId: action.openSpecStoreId } : {}),
+      },
+      commandEnv: action.commandEnv,
+      readOnlySession: action.readOnly,
+      securityProfile: input.securityProfile,
+    },
+  };
+}
+
+export const __openSpecAgentManagerTestUtils = {
+  buildOpenSpecSessionConfig,
 };
 
 const SPEC_INITIAL_TASK_DESCRIPTION_MAX_CHARS = 4_000;
@@ -369,6 +502,10 @@ export class AgentManager extends EventEmitter {
   private processManager: AgentProcessManager;
   private queueManager: AgentQueueManager;
   private startingTaskExecutions = new Set<string>();
+  private startingOpenSpecActions = new Map<string, {
+    runId: string;
+    promise: Promise<void>;
+  }>();
   private taskExecutionContext: Map<string, {
     projectPath: string;
     specId: string;
@@ -1010,12 +1147,24 @@ export class AgentManager extends EventEmitter {
       dataDirName: project?.autoBuildPath,
       specId,
     });
-    const workflowMode = this.resolveTaskWorkflowMode(specDir);
-    if (workflowMode === 'off') {
+    const taskRuntimeMetadata = loadAutocodeTaskRuntimeMetadataConfig(specDir);
+    const developmentMode = resolveAutocodeTaskDevelopmentMode(
+      taskRuntimeMetadata as Parameters<typeof resolveAutocodeTaskDevelopmentMode>[0],
+      'standard',
+    );
+    if (developmentMode === 'direct') {
       this.finishTaskExecutionStart(taskId, projectId);
       await this.startDirectTaskExecution(taskId, projectPath, specId, options, projectId);
       return;
     }
+    if (developmentMode === 'spec') {
+      this.throwStartupError(
+        taskId,
+        'Spec tasks must be started through the isolated OpenSpec action runner.',
+        projectId,
+      );
+    }
+    const workflowMode = this.resolveTaskWorkflowMode(specDir);
 
     // Load model configuration from task_metadata.json if available
     const modelId = await this.resolveTaskModelId(specDir, 'planning');
@@ -1196,6 +1345,133 @@ export class AgentManager extends EventEmitter {
     // const combinedEnv = this.processManager.getCombinedEnv(projectPath);
     // const args = [runPath, '--spec', specId, '--project-dir', projectPath, '--auto-continue', '--force'];
     // await this.processManager.spawnProcess(taskId, projectPath, args, combinedEnv, 'task-execution', projectId);
+  }
+
+  /**
+   * Start one byte-preserving official OpenSpec Action session.
+   *
+   * This entry point deliberately bypasses SpecOrchestrator, Standard prompt
+   * assembly, task planning messages, QA, memory, MCP, and Direct quality gates.
+   */
+  async startOpenSpecAction(input: OpenSpecAgentActionInput): Promise<void> {
+    const executionKey = getScopedTaskExecutionKey(input.taskId, input.projectId);
+    const inFlight = this.startingOpenSpecActions.get(executionKey);
+    if (inFlight) {
+      if (inFlight.runId === input.runId) {
+        await inFlight.promise;
+        return;
+      }
+      throw new Error('Another OpenSpec Action is already starting for this task.');
+    }
+
+    // OpenSpecActionRunner owns Action-level mutual exclusion. Keep this
+    // startup gate separate from Standard/Direct so a cancelled OpenSpec worker
+    // cannot leave the generic task-start guard blocking the next Action.
+    const operation = this.startOpenSpecActionOnce(input);
+    this.startingOpenSpecActions.set(executionKey, {
+      runId: input.runId,
+      promise: operation,
+    });
+
+    try {
+      await operation;
+    } finally {
+      const current = this.startingOpenSpecActions.get(executionKey);
+      if (current?.promise === operation) {
+        this.startingOpenSpecActions.delete(executionKey);
+      }
+    }
+  }
+
+  private async startOpenSpecActionOnce(input: OpenSpecAgentActionInput): Promise<void> {
+    let profileManager: ClaudeProfileManager;
+    try {
+      profileManager = await initializeClaudeProfileManager();
+    } catch (error) {
+      console.error('[AgentManager] Failed to initialize profile manager for OpenSpec:', error);
+      this.throwStartupError(
+        input.taskId,
+        'Failed to initialize profile manager. Please check file permissions and disk space.',
+        input.projectId,
+      );
+    }
+    if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount()) {
+      this.throwStartupError(
+        input.taskId,
+        'Authentication required. Please add an account in Settings > Accounts before starting OpenSpec.',
+        input.projectId,
+      );
+    }
+
+    const phase = input.action === 'apply' || input.action === 'onboard' ? 'coding' : 'planning';
+    const modelId = await this.resolveTaskModelId(input.specDir, phase);
+    const preferredProvider = this.resolveTaskPhaseProvider(input.specDir, phase);
+    const thinkingLevel = this.resolveTaskThinkingLevel(input.specDir, phase);
+    let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
+    try {
+      resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : 'Failed to resolve a compatible account for OpenSpec.';
+      this.throwStartupError(input.taskId, message, input.projectId);
+    }
+    if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
+      this.throwStartupError(
+        input.taskId,
+        `No credentials available for provider "${resolved.provider}".`,
+        input.projectId,
+      );
+    }
+
+    const settings = readSettingsFile();
+    const sessionRuntime = this.buildSessionRuntimeOptions('balanced', input.runtimeRoot, 'openspec');
+    const sessionConfig = buildOpenSpecSessionConfig({
+      actionInput: input,
+      language: this.resolveAppLanguage(),
+      phase,
+      maxSteps: sessionRuntime.maxSteps,
+      phaseStepBudgets: sessionRuntime.phaseStepBudgets,
+      thinkingLevel,
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+      apiKey: resolved.auth?.apiKey,
+      baseURL: resolved.auth?.baseURL,
+      configDir: resolved.configDir,
+      oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
+      providerModelInvocationRoutes: this.resolveConfiguredProviderModelInvocationRouteConfigs(
+        settings,
+        loadAutocodeTaskRuntimeMetadataConfig(input.specDir),
+      ),
+      securityProfile: this.serializeSecurityProfile(input.runtimeRoot),
+    });
+    const executorConfig: AgentExecutorConfig = {
+      taskId: input.taskId,
+      projectId: input.projectId,
+      processType: 'openspec-action',
+      session: sessionConfig,
+    };
+    await this.processManager.spawnWorkerProcess(
+      input.taskId,
+      executorConfig,
+      {},
+      'openspec-action',
+      input.projectId,
+    );
+  }
+
+  answerOpenSpecInteraction(
+    taskId: string,
+    interactionId: string,
+    answer: string,
+    projectId?: string,
+  ): boolean {
+    return this.processManager.answerOpenSpecInteraction(
+      taskId,
+      interactionId,
+      answer,
+      projectId,
+    );
   }
 
   /**
@@ -1975,11 +2251,10 @@ export class AgentManager extends EventEmitter {
   }
 
   private resolveAppLanguage(): SerializableSessionConfig['language'] {
-    const language = readSettingsFile()?.language;
-    if (typeof language === 'string' && language.trim()) {
-      return resolveSupportedLanguage(language);
-    }
-    return undefined;
+    return resolveAgentAppLanguage(
+      readSettingsFile()?.language,
+      getAppLanguage(),
+    );
   }
 
   private toCrossProviderModelRequest(model: string): string {
@@ -1995,24 +2270,13 @@ export class AgentManager extends EventEmitter {
     modelId: string;
     auth: { apiKey?: string; baseURL?: string; oauthTokenFilePath?: string } | null;
   }, providerModelInvocationRoutes: AutocodeProviderModelInvocationRouteConfig[] = []): string | undefined {
-    const provider = resolved.provider.trim();
-    if (!provider) {
-      return undefined;
-    }
-
-    try {
-      const plan = buildProviderModelCreationPlan({
-        provider: provider as SupportedProvider,
-        apiKey: resolved.auth?.apiKey,
-        baseURL: resolved.auth?.baseURL,
-        oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
-      }, resolved.modelId, {
-        invocationRoutes: parseAutocodeProviderModelInvocationRoutes(providerModelInvocationRoutes),
-      });
-      return `${provider}.${plan.invocation.method}`;
-    } catch {
-      return provider;
-    }
+    return resolveSessionProviderTransport({
+      provider: resolved.provider,
+      apiKey: resolved.auth?.apiKey,
+      baseURL: resolved.auth?.baseURL,
+      oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
+      providerModelInvocationRoutes,
+    }, resolved.modelId);
   }
 
   private resolveCliRuntimeStartOptions(resolved: {

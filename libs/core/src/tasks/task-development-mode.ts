@@ -1,4 +1,4 @@
-export type AutocodeTaskDevelopmentModeValue = 'direct' | 'standard';
+export type AutocodeTaskDevelopmentModeValue = 'direct' | 'standard' | 'spec';
 
 export interface AutocodeTaskDevelopmentModeMetadataLike {
   developmentMode?: unknown;
@@ -8,7 +8,7 @@ export interface AutocodeTaskDevelopmentModeMetadataLike {
 export function isAutocodeTaskDevelopmentModeValue(
   value: unknown,
 ): value is AutocodeTaskDevelopmentModeValue {
-  return value === 'direct' || value === 'standard';
+  return value === 'direct' || value === 'standard' || value === 'spec';
 }
 
 export function normalizeAutocodeTaskDevelopmentModeValue(

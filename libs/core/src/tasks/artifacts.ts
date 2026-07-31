@@ -24,6 +24,9 @@ export const AUTOCODE_TASK_ARTIFACTS = {
   qaReport: 'qa_report.md',
   runResult: 'autocode-run-result.json',
   planningTransaction: 'planning-transaction.json',
+  openSpecLink: 'openspec-link.json',
+  openSpecRuntime: 'openspec-runtime.json',
+  openSpecActions: 'openspec-actions.jsonl',
 } as const;
 
 export const AUTOCODE_STANDARD_DESIGN_MODEL_ARTIFACTS = [

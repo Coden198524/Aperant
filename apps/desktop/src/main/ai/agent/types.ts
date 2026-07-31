@@ -10,7 +10,13 @@
 import type { ExecutionProgressData, ProcessType } from '../../../main/agent/types';
 import type { SessionConfig, SessionResult, StreamEvent } from '../session/types';
 import type { RunnerOptions } from '../session/runner';
-import type { CustomMcpServer, TaskLogPhase, TaskWorkflowMode, TokenUsage } from '../../../shared/types';
+import type {
+  CustomMcpServer,
+  OpenSpecAction,
+  TaskLogPhase,
+  TaskWorkflowMode,
+  TokenUsage,
+} from '../../../shared/types';
 import type { ProjectType } from '../../../shared/types';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import type {
@@ -50,6 +56,28 @@ export interface SerializableSessionConfig {
   sessionId?: string;
   agentType: SessionConfig['agentType'];
   systemPrompt: string;
+  /**
+   * Preserve the upstream workflow system prompt byte-for-byte.
+   * The isolated OpenSpec path may append a user-level output-language
+   * preference without modifying the pinned official prompt.
+   */
+  preservePromptBytes?: boolean;
+  /** Disable Standard task log artifacts for isolated workflow sessions. */
+  disableTaskLogs?: boolean;
+  /** Correlates OpenSpec interaction/output events with one action run. */
+  openSpecRunId?: string;
+  /**
+   * Official OpenSpec Action executed by this isolated session.
+   * Used to fail closed when a transport fallback cannot provide the host
+   * tools required by that Action.
+   */
+  openSpecAction?: OpenSpecAction;
+  /** Enforce a read-only tool surface for Explore/Verify. */
+  openSpecReadOnly?: boolean;
+  /** Byte-identical pinned prompts used by upstream host-tool delegation. */
+  openSpecDelegatedPrompts?: {
+    sync?: string;
+  };
   initialMessages: SessionConfig['initialMessages'];
   maxSteps: number;
   phaseStepBudgets?: Partial<Record<'spec' | 'planning' | 'coding' | 'qa', number>>;
@@ -139,6 +167,21 @@ export interface SerializableSessionConfig {
     cwd: string;
     projectDir: string;
     specDir: string;
+    /** Extra trusted roots for OpenSpec Store/worktree reads. */
+    allowedPathRoots?: string[];
+    /** Read-only roots required by the pinned OpenSpec/Codex runtime. */
+    trustedRuntimeReadPaths?: string[];
+    /** Restrict OpenSpec Write/Edit operations to these roots. */
+    allowedWritePaths?: string[];
+    /** Fail-closed command boundary for the isolated OpenSpec Bash tool. */
+    openSpecBashPolicy?: {
+      allowedPathRoots: string[];
+      allowedWritePaths: string[];
+      storeId?: string;
+    };
+    /** Per-session command environment, primarily the pinned OpenSpec PATH shim. */
+    commandEnv?: Record<string, string>;
+    readOnlySession?: boolean;
     /**
      * Serialized security profile. SecurityProfile uses Set objects which
      * aren't transferable across worker boundaries, so we serialize to arrays.
@@ -159,7 +202,29 @@ export type WorkerMessage =
   | WorkerStreamEventMessage
   | WorkerTokenUsageMessage
   | WorkerResultMessage
-  | WorkerTaskEventMessage;
+  | WorkerTaskEventMessage
+  | WorkerOpenSpecInteractionRequiredMessage;
+
+export interface WorkerOpenSpecQuestion {
+  question: string;
+  header?: string;
+  options?: Array<{
+    label: string;
+    description?: string;
+  }>;
+  multiSelect?: boolean;
+}
+
+export interface WorkerOpenSpecInteractionRequiredMessage {
+  type: 'openspec-interaction-required';
+  taskId: string;
+  projectId?: string;
+  runId: string;
+  interactionId: string;
+  prompt: string;
+  questions: WorkerOpenSpecQuestion[];
+  createdAt: string;
+}
 
 export interface WorkerLogMessage {
   type: 'log';
@@ -221,7 +286,12 @@ export interface WorkerTaskEventMessage {
 
 /** Messages sent from main thread to worker */
 export type MainToWorkerMessage =
-  | { type: 'abort' };
+  | { type: 'abort' }
+  | {
+      type: 'openspec-interaction-response';
+      interactionId: string;
+      answer: string;
+    };
 
 // =============================================================================
 // Serialized Security Profile

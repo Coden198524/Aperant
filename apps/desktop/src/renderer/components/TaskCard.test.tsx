@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '../../shared/types';
 import { TaskCard } from './TaskCard';
@@ -166,6 +166,28 @@ describe('TaskCard', () => {
     const progress = screen.getByTestId('phase-progress-indicator');
     expect(progress).toHaveAttribute('data-phase', 'complete');
     expect(progress).toHaveAttribute('data-phase-progress', '100');
+  });
+
+  it('opens the Spec workspace instead of generically starting a Plan review', () => {
+    const task = createTask();
+    task.status = 'human_review';
+    task.reviewReason = 'plan_review';
+    task.metadata = {
+      developmentMode: 'spec',
+      openSpec: {
+        formatVersion: 1,
+        rootKind: 'project',
+        schemaName: 'spec-driven',
+      },
+    };
+    const onClick = vi.fn();
+
+    render(<TaskCard task={task} onClick={onClick} />);
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'openSpec.primaryAction.openWorkspace',
+    }));
+    expect(onClick).toHaveBeenCalledOnce();
   });
 
   it('does not show stale complete progress after request changes restarts a task', () => {

@@ -209,7 +209,8 @@
     "saveBaseBranch": "Enregistrer",
     "developmentMode": {
       "direct": "Direct",
-      "standard": "Standard"
+      "standard": "Standard",
+      "spec": "Spec (OpenSpec)"
     },
     "severity": "sévérité",
     "pullRequest": "Pull Request",
@@ -270,7 +271,9 @@
       "pushNewBranchesLabel": "Pousser automatiquement la nouvelle branche",
       "pushNewBranchesDescription": "Publier automatiquement cette branche de tâche sur GitHub et configurer le suivi. Désactivez pour la garder locale uniquement.",
       "useWorktreeLabel": "Utiliser un espace de travail isolé",
-      "useWorktreeDescription": "Crée les changements dans un worktree git et une branche séparés pour révision avant fusion. Laissez désactivé pour travailler directement dans l'espace projet actuel."
+      "useWorktreeDescription": "Crée les changements dans un worktree git et une branche séparés pour révision avant fusion. Laissez désactivé pour travailler directement dans l'espace projet actuel.",
+      "stateOn": "Activé",
+      "stateOff": "Désactivé"
     },
     "errors": {
       "createFailed": "Échec de la création de la tâche. Veuillez réessayer.",
@@ -328,7 +331,38 @@
         "title": "Standard",
         "description": "Planification Autocode avec exigences, notes de conception, liste de taches, plan d'implementation et QA.",
         "performance": "Bon equilibre entre vitesse et structure pour la plupart des travaux."
+      },
+      "spec": {
+        "title": "Spec (OpenSpec)",
+        "description": "Actions, schemas, invites et documents Markdown officiels OpenSpec, sans orchestration Standard Autocode.",
+        "performance": "Adapte au developpement auditable pilote par specifications avec le flux OpenSpec en amont."
       }
+    },
+    "openSpec": {
+      "title": "Configuration OpenSpec",
+      "description": "Ces valeurs sont transmises au flux OpenSpec officiel épinglé. Les documents de planification restent dans la racine OpenSpec sélectionnée.",
+      "rootKind": "Racine OpenSpec",
+      "rootProject": "Projet actuel",
+      "rootStore": "Store enregistré",
+      "schema": "Schéma",
+      "schemaNames": {
+        "specDrivenWithAdr": "Piloté par spécification + ADR"
+      },
+      "startAction": "Action initiale",
+      "changeName": "ID du changement (optionnel)",
+      "changeNamePlaceholder": "généré depuis la demande",
+      "storeId": "ID du Store",
+      "storeIdPlaceholder": "registered-store-id",
+      "startActionHelp": {
+        "new": "New crée progressivement les artefacts avec le flux officiel.",
+        "propose": "Propose prépare tous les artefacts de proposition en une seule Action.",
+        "explore": "Explore analyse la demande sans valider de fichiers de planification."
+      },
+      "invalidChangeName": "L’ID du changement doit être un identifiant OpenSpec en kebab-case.",
+      "invalidStoreId": "L’ID du Store doit désigner un Store OpenSpec enregistré en kebab-case.",
+      "invalidSchema": "Le schéma doit être un nom de schéma OpenSpec en kebab-case.",
+      "preflightFailed": "La vérification préalable officielle d’OpenSpec a échoué.",
+      "preflightChecking": "Vérification de l’environnement OpenSpec épinglé…"
     },
     "workflowOptimization": {
       "label": "Optimisation du flux de travail",
@@ -399,6 +433,295 @@
           "high": "Impact élevé",
           "critical": "Impact critique"
         }
+      }
+    }
+  },
+  "openSpec": {
+    "loading": "Chargement de l’espace de travail OpenSpec…",
+    "common": {
+      "action": "Action OpenSpec",
+      "none": "Aucun",
+      "unknown": "inconnu",
+      "unspecified": "non spécifié"
+    },
+    "actions": {
+      "explore": "Explorer",
+      "propose": "Proposer",
+      "apply": "Appliquer",
+      "update": "Mettre à jour",
+      "sync": "Synchroniser",
+      "archive": "Archiver",
+      "new": "Nouveau",
+      "continue": "Continuer",
+      "ff": "Avance rapide",
+      "verify": "Vérifier",
+      "bulkArchive": "Archivage groupé",
+      "onboard": "Prise en main"
+    },
+    "runStates": {
+      "queued": "En attente",
+      "preparing": "Préparation",
+      "running": "En cours",
+      "awaiting_user": "Saisie attendue",
+      "cancelling": "Annulation",
+      "succeeded": "Réussi",
+      "failed": "Échoué",
+      "cancelled": "Annulé",
+      "interrupted": "Interrompu"
+    },
+    "detail": {
+      "description": "Tableau des artefacts OpenSpec et espace de travail des Actions officielles pour {{title}}"
+    },
+    "automatic": {
+      "explore": {
+        "label": "Explorer la demande",
+        "description": "L’IA examinera la demande et le contexte OpenSpec sans modifier les fichiers du projet."
+      },
+      "start": {
+        "label": "Démarrer la spécification",
+        "description": "L’IA initialisera le flux OpenSpec officiel et créera les artefacts de planification requis."
+      },
+      "inspectUnsupported": {
+        "label": "Examiner le flux",
+        "description": "L’IA examinera l’état OpenSpec non pris en charge sans modifier les fichiers du projet."
+      },
+      "continuePlanning": {
+        "label": "Continuer la planification",
+        "description": "L’IA lira l’état officiel et créera le prochain artefact OpenSpec requis."
+      },
+      "completePlanning": {
+        "label": "Terminer la planification",
+        "description": "L’IA terminera les artefacts de planification officiels restants dans l’ordre des dépendances."
+      },
+      "reviewImplementation": {
+        "label": "Réviser l’implémentation",
+        "description": "L’IA vérifiera l’implémentation par rapport aux artefacts et tâches OpenSpec terminés."
+      },
+      "continueImplementation": {
+        "label": "Continuer l’implémentation"
+      },
+      "startImplementation": {
+        "label": "Démarrer l’implémentation"
+      },
+      "implementation": {
+        "description": "L’IA lira les instructions d’application officielles et traitera les tâches en attente."
+      },
+      "reviewWorkflow": {
+        "label": "Réviser le flux",
+        "description": "L’IA vérifiera l’état OpenSpec actuel et indiquera la prochaine étape sûre."
+      },
+      "inspectWorkflow": {
+        "label": "Examiner le flux",
+        "description": "L’IA examinera le contexte OpenSpec actuel sans modifier les fichiers du projet."
+      },
+      "retry": {
+        "label": "Réessayer le flux",
+        "description": "Le fournisseur est resté indisponible après les nouvelles tentatives automatiques. Une nouvelle tentative relira l’état OpenSpec officiel avant de poursuivre en toute sécurité."
+      },
+      "archiveVerified": {
+        "label": "Archiver le changement vérifié",
+        "description": "La vérification de l’implémentation est terminée. Examinez le résultat, puis confirmez le flux Archive officiel."
+      },
+      "followUpIteration": {
+        "label": "Créer une itération suivante",
+        "description": "Créez un nouveau Change OpenSpec incrémental à partir de la base de spécifications archivée.",
+        "defaultGuidance": "Créez un nouveau Change incrémental basé sur le Change archivé {{change}} et la base OpenSpec actuelle. Ne réutilisez pas le nom du Change archivé. Contexte de la tâche : {{description}}"
+      }
+    },
+    "planIteration": {
+      "refine": "Affiner le plan",
+      "afterVerify": "Poursuivre l’itération",
+      "dialog": {
+        "titleRefine": "Affiner le plan actuel",
+        "titleContinue": "Planifier l’itération suivante",
+        "descriptionRefine": "Expliquez ce qui doit être ajouté, modifié ou supprimé dans le plan actuel. L’IA mettra uniquement à jour les artefacts de planification OpenSpec sans démarrer l’implémentation.",
+        "descriptionContinue": "Décrivez l’itération suivante après cette implémentation vérifiée. Le flux reviendra uniquement à la planification sans démarrer l’implémentation.",
+        "label": "Exigences de l’itération",
+        "placeholder": "Par exemple : ajouter un mode hors ligne, réviser les scénarios d’acceptation et séparer la migration en tâches distinctes…",
+        "submit": "Démarrer l’itération de planification"
+      },
+      "review": {
+        "title": "Modifications de planification",
+        "description": "{{count}} document(s) de planification modifié(s) pendant cette exécution. Examinez chaque changement avant de décider de démarrer l’implémentation.",
+        "loading": "Collecte de toutes les modifications des documents de planification…",
+        "noChanges": "L’Action de planification est terminée sans modification d’un document OpenSpec lisible.",
+        "loadFailed": "L’Action de planification est terminée, mais sa liste persistante de modifications n’a pas pu être chargée.",
+        "captureFailed": "L’Action de planification est terminée, mais Aperant n’a pas pu capturer tous les fichiers autorisés. Réessayez la capture sans relancer la planification.",
+        "retryLoad": "Recharger les modifications",
+        "retry": "Réessayer la capture",
+        "retrying": "Nouvelle capture en cours…",
+        "acknowledge": "J’ai examiné toutes les modifications",
+        "acknowledging": "Enregistrement de la révision…",
+        "openDiff": "Afficher les modifications de {{path}}",
+        "diffTitle": "Modifications du fichier de planification",
+        "diffDescription": "{{kind}} · {{path}}",
+        "kind": {
+          "created": "Créé",
+          "modified": "Modifié",
+          "deleted": "Supprimé"
+        }
+      }
+    },
+    "artifact": {
+      "openAria": "Ouvrir l’artefact {{id}}",
+      "requiredBeforeImplementation": "Requis avant l’implémentation",
+      "documentCount": "{{count}} document(s)",
+      "requirementCount": "{{count}} exigences",
+      "scenarioCount": "{{count}} scénarios",
+      "status": {
+        "inProgress": "En cours",
+        "complete": "Terminé",
+        "ready": "Prêt",
+        "waiting": "En attente",
+        "unsupported": "Non pris en charge"
+      }
+    },
+    "header": {
+      "title": "Flux OpenSpec",
+      "selectChange": "Sélectionner un changement",
+      "selectChangeAria": "Sélectionner un changement OpenSpec",
+      "rootFallback": "Racine OpenSpec",
+      "rootVersion": "{{root}} · OpenSpec {{version}}",
+      "archived": "Archivé",
+      "upToDate": "Le flux actuel est à jour.",
+      "selectExisting": "Sélectionnez un changement existant pour continuer."
+    },
+    "phase": {
+      "planning": "Planification",
+      "implementation": "Implémentation",
+      "verification": "Vérification",
+      "archive": "Archivage"
+    },
+    "timing": {
+      "title": "Temps IA cumulé",
+      "scope": "Cette tâche",
+      "active": "Chronométrage en cours"
+    },
+    "primaryAction": {
+      "working": "L’IA travaille",
+      "archived": "Flux archivé",
+      "selectChange": "Sélectionner un changement",
+      "none": "Aucune action requise",
+      "openWorkspace": "Ouvrir Spec"
+    },
+    "toolbar": {
+      "stopAria": "Arrêter le flux OpenSpec actuel",
+      "moreAria": "Plus d’options OpenSpec",
+      "validate": "Valider le changement actuel",
+      "refresh": "Actualiser l’état",
+      "archive": "Archiver le changement actuel…",
+      "bulkArchive": "Archiver plusieurs changements…"
+    },
+    "guidance": {
+      "added": "Consigne ajoutée à l’IA",
+      "add": "Ajouter une consigne facultative pour la prochaine exécution",
+      "aria": "Consigne du flux IA",
+      "placeholder": "Décrivez toute contrainte supplémentaire ou tout point à privilégier…"
+    },
+    "notice": {
+      "unsupportedStatus": "OpenSpec a renvoyé un état d’artefact non pris en charge. Les Actions de modification sont désactivées ; l’état brut reste disponible pour le diagnostic.",
+      "affectedAreaSelection": "L’état officiel exige la sélection de la zone affectée. Apply est désactivée, car la version OpenSpec 1.6.0 épinglée n’expose plus ce processus de sélection.",
+      "selectionExpired": "Le changement OpenSpec sélectionné n’existe plus. Sélectionnez un changement actif pour recharger le flux.",
+      "archived": "Le changement OpenSpec sélectionné est archivé. Son entrée d’archive officielle est disponible dans l’historique."
+    },
+    "interrupted": {
+      "title": "{{action}} a été interrompue lors de la fermeture d’Aperant.",
+      "description": "Continuer redémarre la même Action officielle, à l’octet près, avec le dernier état OpenSpec ; les fichiers existants sont conservés.",
+      "continue": "Continuer l’Action officielle",
+      "cancel": "Annuler l’exécution interrompue"
+    },
+    "board": {
+      "title": "Flux",
+      "progress": "{{completed}} étape(s) terminée(s) sur {{total}}",
+      "implementationProgress": "{{completed}} tâche(s) d’implémentation terminée(s) sur {{total}}",
+      "planningComplete": "Planification {{completed}}/{{total}}",
+      "next": "Suivant :",
+      "archivedNext": "Le changement sélectionné est archivé. Sélectionnez un changement actif, ou créez un nouveau changement ou une nouvelle proposition.",
+      "initializeNext": "Initialisez OpenSpec pour créer le flux.",
+      "selectChangeNext": "Sélectionnez un changement actif, ou créez un nouveau changement ou une nouvelle proposition.",
+      "empty": "L’IA ajoutera les étapes du flux après l’initialisation d’OpenSpec."
+    },
+    "preview": {
+      "title": "Aperçu du document",
+      "externalLinkBlocked": "Lien externe bloqué dans l’aperçu OpenSpec : {{href}}",
+      "remoteImageBlocked": "Image distante bloquée{{alt}}",
+      "loading": "Chargement du document…",
+      "selectStage": "Sélectionnez une étape du flux pour examiner son document OpenSpec.",
+      "noDocument": "Cette étape ne comporte pas encore de document généré.",
+      "noSource": "Aucune source générée pour le moment.",
+      "base": "Base :",
+      "noDiff": "Aucune différence n’est disponible.",
+      "dependencies": "Dépendances",
+      "unlocks": "Déverrouille",
+      "officialInstructions": "Instructions officielles",
+      "noInstructions": "Aucun texte d’instruction renvoyé.",
+      "officialTemplate": "Modèle officiel",
+      "tabs": {
+        "preview": "Aperçu",
+        "source": "Source",
+        "diff": "Différence",
+        "context": "Contexte"
+      },
+      "diffBase": {
+        "git": "Git",
+        "actionSnapshot": "Instantané de l’Action",
+        "unavailable": "Indisponible"
+      }
+    },
+    "context": {
+      "title": "Contexte du flux",
+      "planningHome": "Dossier de planification",
+      "sourceOfTruth": "Source de vérité",
+      "allowedEditRoots": "Racines modifiables",
+      "linkedContext": "Contexte lié",
+      "constraints": "Contraintes"
+    },
+    "activity": {
+      "title": "Activité de l’IA"
+    },
+    "interaction": {
+      "needsInput": "L’IA a besoin de votre réponse",
+      "additionalAnswerAria": "Réponse complémentaire à la question {{number}}",
+      "answerAria": "Répondre à la question {{number}}",
+      "optionalDetailPlaceholder": "Détail complémentaire facultatif…",
+      "answerPlaceholder": "Répondez à la question du flux officiel…",
+      "submitting": "Envoi…",
+      "submit": "Envoyer la réponse"
+    },
+    "console": {
+      "title": "Console de l’Action",
+      "aria": "Console de l’Action OpenSpec",
+      "empty": "Les décisions de l’IA, les appels d’outils et leurs résultats apparaîtront ici.",
+      "earlierOutputTruncated": "[Sortie antérieure tronquée]"
+    },
+    "validation": {
+      "valid": "Valide",
+      "issuesFound": "Problèmes détectés",
+      "severity": {
+        "error": "Erreur",
+        "warning": "Avertissement",
+        "info": "Information"
+      }
+    },
+    "history": {
+      "title": "Historique",
+      "viewLog": "Afficher le journal",
+      "empty": "Aucun historique de flux pour le moment.",
+      "archivedChanges": "Changements archivés"
+    },
+    "dialogs": {
+      "confirm": {
+        "title": "Confirmer {{action}}",
+        "description": "Cette opération exécute le flux OpenSpec officiel sur {{root}}. La validation officielle et les contrôles de conflits restent actifs.",
+        "changeLabel": "Changement :",
+        "validationValid": "Validation : valide",
+        "validationIssues": "Validation : {{count}} problème(s)",
+        "run": "Exécuter l’Action officielle {{action}}"
+      },
+      "resume": {
+        "title": "Reprendre {{action}} interrompue",
+        "description": "Le flux destructif officiel sera redémarré sur {{root}}. La validation OpenSpec et les contrôles de conflits restent actifs, et aucun fichier existant n’est annulé.",
+        "confirm": "Reprendre l’Action officielle"
       }
     }
   },

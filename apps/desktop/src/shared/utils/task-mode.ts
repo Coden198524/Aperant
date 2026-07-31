@@ -1,5 +1,5 @@
 /**
- * task-mode - Single source of truth for Direct vs Standard development mode.
+ * task-mode - Single source of truth for Direct, Standard, and Spec mode.
  *
  * "Direct" development mode (developmentMode === 'direct', equivalently
  * workflowMode === 'off') runs a task as one model session with no planning /
@@ -58,6 +58,16 @@ export function isDirectDevelopmentMetadata(metadata: TaskDevelopmentModeMetadat
   return resolveTaskDevelopmentMode(metadata) === 'direct';
 }
 
+/** True only for Aperant's built-in Standard workflow. */
+export function isStandardDevelopmentMetadata(metadata: TaskDevelopmentModeMetadataLike): boolean {
+  return resolveTaskDevelopmentMode(metadata) === 'standard';
+}
+
+/** True only for the OpenSpec-backed Spec workflow. */
+export function isSpecDevelopmentMetadata(metadata: TaskDevelopmentModeMetadataLike): boolean {
+  return resolveTaskDevelopmentMode(metadata) === 'spec';
+}
+
 /** True when an implementation plan carries Direct-mode execution markers. */
 export function isDirectDevelopmentPlan(plan: DirectModePlanLike): boolean {
   if (!plan) {
@@ -79,4 +89,16 @@ export function isDirectDevelopmentTask(
   plan?: DirectModePlanLike,
 ): boolean {
   return isDirectDevelopmentMetadata(task?.metadata) || isDirectDevelopmentPlan(plan);
+}
+
+export function isStandardDevelopmentTask(
+  task?: { metadata?: TaskDevelopmentModeMetadataLike } | null,
+): boolean {
+  return isStandardDevelopmentMetadata(task?.metadata);
+}
+
+export function isSpecDevelopmentTask(
+  task?: { metadata?: TaskDevelopmentModeMetadataLike } | null,
+): boolean {
+  return isSpecDevelopmentMetadata(task?.metadata);
 }

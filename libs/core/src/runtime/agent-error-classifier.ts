@@ -22,6 +22,21 @@ export type AutocodeSessionErrorCode =
 
 const WORD_BOUNDARY_429 = /\b429\b/;
 const WORD_BOUNDARY_401 = /\b401\b/;
+const MAX_NESTED_ERROR_DEPTH = 5;
+const MAX_RETRY_ERROR_DETAILS = 1;
+
+const REQUEST_ID_FIELDS = [
+  'requestId',
+  'request_id',
+  '_request_id',
+] as const;
+
+const REQUEST_ID_HEADERS = new Set([
+  'request-id',
+  'x-request-id',
+  'x-amz-request-id',
+  'x-amzn-requestid',
+]);
 
 const BILLING_ERROR_PATTERNS = [
   'insufficient balance',
@@ -61,6 +76,7 @@ const AUTH_PATTERNS = [
 const TRANSIENT_NETWORK_PATTERNS = [
   'stream disconnected before completion',
   'error sending request for url',
+  'request aborted',
   'failed to connect to websocket',
   'tls handshake eof',
   'socket hang up',
@@ -78,11 +94,15 @@ const TRANSIENT_NETWORK_PATTERNS = [
 const TEMPORARILY_UNAVAILABLE_PATTERNS = [
   'temporarily unavailable',
   'service unavailable',
+  'service_unavailable_error',
+  'server_error',
   'bad gateway',
   'gateway timeout',
   'upstream timeout',
+  'stream inactivity timeout',
   'provider overloaded',
   'server overloaded',
+  'server_is_overloaded',
   'try again later',
 ] as const;
 
@@ -106,7 +126,7 @@ export interface AutocodeClassifiedSessionError {
 }
 
 export function isAutocodeBillingError(error: unknown): boolean {
-  const errorStr = errorToString(error);
+  const errorStr = normalizedErrorText(error);
   return BILLING_ERROR_PATTERNS.some((pattern) => errorStr.includes(pattern));
 }
 
@@ -114,7 +134,7 @@ export function isAutocodeRateLimitError(error: unknown): boolean {
   if (isAutocodeBillingError(error)) return false;
   const statusCode = getHttpStatusCode(error);
   if (statusCode === 429) return true;
-  const errorStr = errorToString(error);
+  const errorStr = normalizedErrorText(error);
   if (WORD_BOUNDARY_429.test(errorStr)) return true;
   return RATE_LIMIT_PATTERNS.some((pattern) => errorStr.includes(pattern));
 }
@@ -122,13 +142,13 @@ export function isAutocodeRateLimitError(error: unknown): boolean {
 export function isAutocodeAuthenticationError(error: unknown): boolean {
   const statusCode = getHttpStatusCode(error);
   if (statusCode === 401) return true;
-  const errorStr = errorToString(error);
+  const errorStr = normalizedErrorText(error);
   if (WORD_BOUNDARY_401.test(errorStr)) return true;
   return AUTH_PATTERNS.some((pattern) => errorStr.includes(pattern));
 }
 
 export function isAutocodeToolConcurrencyError(error: unknown): boolean {
-  const errorStr = errorToString(error);
+  const errorStr = normalizedErrorText(error);
   return /\b400\b/.test(errorStr) &&
     ((errorStr.includes('tool') && errorStr.includes('concurrency')) ||
       errorStr.includes('too many tools') ||
@@ -136,21 +156,27 @@ export function isAutocodeToolConcurrencyError(error: unknown): boolean {
 }
 
 export function isAutocodeTransientNetworkError(error: unknown): boolean {
-  const errorStr = errorToString(error);
+  const errorStr = normalizedErrorText(error);
   return TRANSIENT_NETWORK_PATTERNS.some((pattern) => errorStr.includes(pattern));
 }
 
 export function isAutocodeTemporarilyUnavailableError(error: unknown): boolean {
   const statusCode = getHttpStatusCode(error);
-  if (statusCode === 502 || statusCode === 503 || statusCode === 504) return true;
-  const errorStr = errorToString(error);
+  if (
+    statusCode === 408 ||
+    statusCode === 409 ||
+    (statusCode !== undefined && statusCode >= 500)
+  ) {
+    return true;
+  }
+  const errorStr = normalizedErrorText(error);
   return TEMPORARILY_UNAVAILABLE_PATTERNS.some((pattern) => errorStr.includes(pattern));
 }
 
 export function isAutocodeModelNotFoundError(error: unknown): boolean {
   const statusCode = getHttpStatusCode(error);
   if (statusCode === 404) return true;
-  const errorStr = errorToString(error);
+  const errorStr = normalizedErrorText(error);
   if (/\b404\b/.test(errorStr)) return true;
   return MODEL_NOT_FOUND_PATTERNS.some((pattern) => errorStr.includes(pattern));
 }
@@ -158,10 +184,14 @@ export function isAutocodeModelNotFoundError(error: unknown): boolean {
 export function isAutocodeAbortError(error: unknown): boolean {
   if (error && typeof error === 'object') {
     const record = error as Record<string, unknown>;
-    if (record.name === 'AbortError') return true;
+    return record.name === 'AbortError' ||
+      record.code === 'ABORT_ERR' ||
+      record.code === 'ERR_CANCELED';
   }
-  const errorStr = errorToString(error);
-  return errorStr.includes('aborted') || errorStr.includes('abort');
+  // Provider/network failures frequently include words such as "aborted".
+  // Treat cancellation as structured state only so those errors are not
+  // misreported as an explicit user cancellation.
+  return false;
 }
 
 export function classifyAutocodeSessionError(error: unknown): AutocodeClassifiedSessionError {
@@ -288,46 +318,157 @@ export function classifyAutocodeToolError(
 }
 
 function errorToString(error: unknown): string {
-  if (error instanceof Error) {
-    return buildErrorText(error.message, error as unknown as Record<string, unknown>).toLowerCase();
-  }
-  if (typeof error === 'string') return error.toLowerCase();
-  if (error && typeof error === 'object') {
-    return buildErrorText(undefined, error as Record<string, unknown>).toLowerCase();
-  }
-  return String(error).toLowerCase();
+  return errorToDiagnosticText(error, new Set<object>(), 0);
 }
 
-function buildErrorText(primaryMessage: string | undefined, errorObject: Record<string, unknown>): string {
-  const parts: string[] = [];
-  if (primaryMessage?.trim()) {
-    parts.push(primaryMessage.trim());
+function normalizedErrorText(error: unknown): string {
+  return errorToString(error).toLowerCase();
+}
+
+function errorToDiagnosticText(
+  error: unknown,
+  seen: Set<object>,
+  depth: number,
+): string {
+  if (typeof error === 'string') return error;
+  if (error == null || typeof error !== 'object') return String(error);
+  if (seen.has(error)) return '';
+  if (depth > MAX_NESTED_ERROR_DEPTH) {
+    return serializeUnknown(error) ?? '';
   }
+  seen.add(error);
+  return buildErrorText(
+    error instanceof Error ? error.message : undefined,
+    error as Record<string, unknown>,
+    seen,
+    depth,
+  );
+}
+
+function appendUnique(parts: string[], value: string | undefined): void {
+  const normalized = value?.trim();
+  if (normalized && !parts.includes(normalized)) {
+    parts.push(normalized);
+  }
+}
+
+function buildErrorText(
+  primaryMessage: string | undefined,
+  errorObject: Record<string, unknown>,
+  seen: Set<object>,
+  depth: number,
+): string {
+  const parts: string[] = [];
+  appendUnique(parts, primaryMessage);
+
+  const structuredMessage = safeString(errorObject.message);
+  appendUnique(parts, structuredMessage);
 
   const statusCode = getHttpStatusCode(errorObject);
   if (statusCode !== undefined) {
-    parts.push(`http ${statusCode}`);
+    appendUnique(parts, `http ${statusCode}`);
   }
 
   const maybeCode = safeString(errorObject.code);
-  if (maybeCode) parts.push(maybeCode);
+  appendUnique(parts, maybeCode);
 
   const maybeType = safeString(errorObject.type);
-  if (maybeType) parts.push(maybeType);
+  appendUnique(parts, maybeType);
 
   const maybeUrl = safeString(errorObject.url);
-  if (maybeUrl) parts.push(maybeUrl);
+  appendUnique(parts, maybeUrl);
+
+  for (const requestId of requestIds(errorObject)) {
+    appendUnique(parts, `request-id: ${requestId}`);
+  }
 
   const responseBody = safeString(errorObject.responseBody);
-  if (responseBody) parts.push(responseBody);
+  appendUnique(parts, responseBody);
 
   const dataString = serializeUnknown(errorObject.data);
-  if (dataString) parts.push(dataString);
+  appendUnique(parts, dataString);
 
-  const causeString = serializeUnknown(errorObject.cause);
-  if (causeString) parts.push(causeString);
+  appendUnique(
+    parts,
+    nestedErrorText(errorObject.error, seen, depth + 1),
+  );
+
+  appendUnique(
+    parts,
+    nestedErrorText(errorObject.cause, seen, depth + 1),
+  );
+
+  appendUnique(
+    parts,
+    nestedErrorText(errorObject.lastError, seen, depth + 1),
+  );
+
+  if (Array.isArray(errorObject.errors)) {
+    for (
+      let index = errorObject.errors.length - 1, included = 0;
+      index >= 0 && included < MAX_RETRY_ERROR_DETAILS;
+      index--
+    ) {
+      const detail = nestedErrorText(errorObject.errors[index], seen, depth + 1);
+      if (detail) {
+        appendUnique(parts, detail);
+        included++;
+      }
+    }
+  }
 
   return parts.length > 0 ? parts.join(' ') : String(errorObject);
+}
+
+function nestedErrorText(
+  value: unknown,
+  seen: Set<object>,
+  depth: number,
+): string | undefined {
+  if (value == null) return undefined;
+  const text = errorToDiagnosticText(value, seen, depth).trim();
+  return text || undefined;
+}
+
+function requestIds(errorObject: Record<string, unknown>): string[] {
+  const ids = new Set<string>();
+  for (const field of REQUEST_ID_FIELDS) {
+    const value = safeDiagnosticIdentifier(errorObject[field]);
+    if (value) ids.add(value);
+  }
+
+  collectRequestIdsFromHeaders(errorObject.responseHeaders, ids);
+  const response = errorObject.response;
+  if (response && typeof response === 'object' && !Array.isArray(response)) {
+    collectRequestIdsFromHeaders(
+      (response as Record<string, unknown>).headers,
+      ids,
+    );
+  }
+  return [...ids];
+}
+
+function collectRequestIdsFromHeaders(value: unknown, ids: Set<string>): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  if (typeof Headers !== 'undefined' && value instanceof Headers) {
+    value.forEach((rawValue, name) => {
+      if (!REQUEST_ID_HEADERS.has(name.toLowerCase())) return;
+      const requestId = safeDiagnosticIdentifier(rawValue);
+      if (requestId) ids.add(requestId);
+    });
+    return;
+  }
+  for (const [name, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    if (!REQUEST_ID_HEADERS.has(name.toLowerCase())) continue;
+    const requestId = safeDiagnosticIdentifier(rawValue);
+    if (requestId) ids.add(requestId);
+  }
+}
+
+function safeDiagnosticIdentifier(value: unknown): string | undefined {
+  const identifier = safeString(value);
+  if (!identifier) return undefined;
+  return identifier.slice(0, 512);
 }
 
 function safeString(value: unknown): string | undefined {
@@ -347,28 +488,52 @@ function serializeUnknown(value: unknown): string | undefined {
   }
 }
 
-function getHttpStatusCode(error: unknown): number | undefined {
+function getHttpStatusCode(
+  error: unknown,
+  seen = new Set<object>(),
+  depth = 0,
+): number | undefined {
   if (!error || typeof error !== 'object') return undefined;
+  if (seen.has(error) || depth > MAX_NESTED_ERROR_DEPTH) return undefined;
+  seen.add(error);
   const e = error as Record<string, unknown>;
 
-  const directStatus = e.statusCode ?? e.status;
-  if (typeof directStatus === 'number') return directStatus;
-  if (typeof directStatus === 'string') {
-    const parsed = Number.parseInt(directStatus, 10);
-    if (Number.isFinite(parsed)) return parsed;
-  }
+  const directStatus = parseHttpStatusCode(e.statusCode ?? e.status);
+  if (directStatus !== undefined) return directStatus;
 
   const response = e.response;
   if (response && typeof response === 'object') {
-    const responseStatus = (response as Record<string, unknown>).status;
-    if (typeof responseStatus === 'number') return responseStatus;
-    if (typeof responseStatus === 'string') {
-      const parsed = Number.parseInt(responseStatus, 10);
-      if (Number.isFinite(parsed)) return parsed;
-    }
+    const responseStatus = parseHttpStatusCode(
+      (response as Record<string, unknown>).status,
+    );
+    if (responseStatus !== undefined) return responseStatus;
+  }
+
+  const nestedCandidates = [
+    e.lastError,
+    e.cause,
+    e.error,
+    ...(Array.isArray(e.errors) && e.errors.length > 0
+      ? [e.errors[e.errors.length - 1]]
+      : []),
+  ];
+  for (const candidate of nestedCandidates) {
+    const nestedStatus = getHttpStatusCode(candidate, seen, depth + 1);
+    if (nestedStatus !== undefined) return nestedStatus;
   }
 
   return undefined;
+}
+
+function parseHttpStatusCode(value: unknown): number | undefined {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^\d{3}$/.test(value.trim())
+      ? Number(value.trim())
+      : Number.NaN;
+  return Number.isInteger(parsed) && parsed >= 100 && parsed <= 599
+    ? parsed
+    : undefined;
 }
 
 function sanitizeErrorMessage(message: string): string {

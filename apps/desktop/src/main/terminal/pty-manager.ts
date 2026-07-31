@@ -6,6 +6,8 @@
 import * as pty from '@lydell/node-pty';
 import * as os from 'os';
 import { existsSync } from 'fs';
+import type { Socket } from 'node:net';
+import type { Worker } from 'node:worker_threads';
 import type { TerminalProcess, WindowGetter, WindowsShellType } from './types';
 import { isWindows, getWindowsShellPaths } from '../platform';
 import { IPC_CHANNELS } from '../../shared/constants';
@@ -70,11 +72,244 @@ const pendingExitPromises = new Map<string, {
 }>();
 
 /**
+ * Private Windows shape shared by @lydell/node-pty 1.1.x and 1.2.x.
+ *
+ * Both releases defer public operations, including kill(), until the first PTY
+ * data event. A terminal closed between spawn and its first output can therefore
+ * retain the native ConPTY callback and worker beyond Electron's environment
+ * lifetime. Keep this compatibility type local to the Windows shutdown path.
+ */
+interface InternalWindowsPtyAgent {
+  exitCode: number | undefined;
+  innerPid: number;
+  outSocket: Socket;
+  _inSocket: Socket;
+  _pty: unknown;
+  _ptyNative: {
+    kill: (ptyHandle: unknown, useConptyDll?: boolean) => void;
+  };
+  _useConptyDll?: boolean;
+  _pendingPtyInfo?: unknown;
+  _getConsoleProcessList: () => Promise<number[]>;
+  _conoutSocketWorker: {
+    _worker: Worker;
+    dispose: () => void;
+  };
+}
+
+interface InternalWindowsPty extends pty.IPty {
+  _isReady: boolean;
+  _deferreds: Array<{ run: () => void }>;
+  _agent: InternalWindowsPtyAgent;
+  _close: () => void;
+}
+
+/**
+ * Deduplicate concurrent destroy/quit calls for the same native PTY.
+ */
+const windowsPtyShutdowns = new WeakMap<object, Promise<void>>();
+
+/**
  * Default timeouts for waiting for PTY exit (in milliseconds).
  * Windows needs longer timeout due to slower process termination.
+ *
+ * @lydell/node-pty's Windows kill path can spend up to 5 seconds querying the
+ * console process list, then another 1 second flushing ConPTY output before its
+ * onExit callback fires. Keep a safety margin beyond that native lifecycle so
+ * Electron never tears down while the callback is still pending.
  */
-const PTY_EXIT_TIMEOUT_WINDOWS = 2000;
+const PTY_EXIT_TIMEOUT_WINDOWS = 8000;
 const PTY_EXIT_TIMEOUT_UNIX = 500;
+
+function resolvePendingPtyExit(terminalId: string): void {
+  const pendingExit = pendingExitPromises.get(terminalId);
+  if (!pendingExit) return;
+
+  clearTimeout(pendingExit.timeoutId);
+  pendingExitPromises.delete(terminalId);
+  pendingExit.resolve();
+}
+
+function isInternalWindowsPty(ptyProcess: pty.IPty): ptyProcess is InternalWindowsPty {
+  if (!isWindows()) return false;
+
+  const candidate = ptyProcess as Partial<InternalWindowsPty>;
+  const agent = candidate._agent as Partial<InternalWindowsPtyAgent> | undefined;
+  const conoutWorker = agent?._conoutSocketWorker;
+
+  return (
+    typeof candidate._isReady === 'boolean'
+    && Array.isArray(candidate._deferreds)
+    && typeof candidate._close === 'function'
+    && typeof agent === 'object'
+    && typeof agent._getConsoleProcessList === 'function'
+    && typeof agent._ptyNative?.kill === 'function'
+    && typeof agent.outSocket?.once === 'function'
+    && typeof agent._inSocket?.destroy === 'function'
+    && typeof conoutWorker?.dispose === 'function'
+    && typeof conoutWorker._worker?.once === 'function'
+    && (agent._useConptyDll === undefined || typeof agent._useConptyDll === 'boolean')
+  );
+}
+
+function waitForSocketClose(socket: Socket): Promise<void> {
+  if (socket.destroyed) return Promise.resolve();
+
+  return new Promise<void>((resolve) => {
+    const onClose = (): void => {
+      resolve();
+    };
+    socket.once('close', onClose);
+
+    // Cover a close between the initial check and listener registration.
+    if (socket.destroyed) {
+      socket.off('close', onClose);
+      resolve();
+    }
+  });
+}
+
+function waitForWorkerExit(worker: Worker): Promise<void> {
+  if (worker.threadId === -1) return Promise.resolve();
+
+  return new Promise<void>((resolve) => {
+    const onExit = (): void => {
+      resolve();
+    };
+    worker.once('exit', onExit);
+
+    // Cover an exit between the initial check and listener registration.
+    if (worker.threadId === -1) {
+      worker.off('exit', onExit);
+      resolve();
+    }
+  });
+}
+
+function waitForNativePtyExit(agent: InternalWindowsPtyAgent): Promise<void> {
+  if (agent.exitCode !== undefined) return Promise.resolve();
+
+  // node-pty 1.1.x does not expose its native process-exit callback as an
+  // event. Polling this private field keeps the Electron environment alive
+  // until that callback has actually run, even if the output socket closes
+  // earlier when the ConPTY worker is disposed.
+  return new Promise<void>((resolve) => {
+    const intervalId = setInterval(() => {
+      if (agent.exitCode === undefined) return;
+      clearInterval(intervalId);
+      resolve();
+    }, 10);
+  });
+}
+
+async function requestInternalWindowsPtyTermination(agent: InternalWindowsPtyAgent): Promise<void> {
+  // node-pty 1.2 defers the native connect until its output worker is ready.
+  // Cancel that connection before the first await so it cannot create a child
+  // after shutdown has already started.
+  if (agent._pendingPtyInfo !== undefined) {
+    agent._pendingPtyInfo = undefined;
+  }
+
+  let processIds: number[];
+  try {
+    // This private method has its own five-second fallback. Await it here
+    // instead of using agent.kill(), whose untracked .then() can otherwise run
+    // after Electron has already torn down the JavaScript environment.
+    processIds = await agent._getConsoleProcessList();
+  } catch (error) {
+    debugError('[PtyManager] Failed to query legacy Windows PTY process list:', error);
+    processIds = [agent.innerPid];
+  }
+
+  try {
+    if (agent.exitCode === undefined) {
+      for (const processId of processIds) {
+        if (!Number.isInteger(processId) || processId <= 0 || processId === process.pid) continue;
+        try {
+          process.kill(processId);
+        } catch {
+          // The process may already have exited.
+        }
+      }
+
+      // Close the native pseudoconsole only after process discovery completes.
+      // Keeping the output worker alive until this point avoids a ConPTY output
+      // drain deadlock while ClosePseudoConsole runs.
+      if (agent._useConptyDll === undefined) {
+        agent._ptyNative.kill(agent._pty);
+      } else {
+        agent._ptyNative.kill(agent._pty, agent._useConptyDll);
+      }
+    }
+  } finally {
+    // dispose() drains output for one second and asynchronously terminates its
+    // worker. shutdownInternalWindowsPty() explicitly waits for that worker.
+    agent._conoutSocketWorker.dispose();
+  }
+}
+
+async function shutdownInternalWindowsPty(
+  terminal: TerminalProcess,
+  ptyProcess: InternalWindowsPty,
+): Promise<void> {
+  const existingShutdown = windowsPtyShutdowns.get(ptyProcess);
+  if (existingShutdown) return existingShutdown;
+
+  const shutdown = (async (): Promise<void> => {
+    const { _agent: agent } = ptyProcess;
+    const connectionWasPending = agent._pendingPtyInfo !== undefined;
+    const socketClosed = waitForSocketClose(agent.outSocket);
+    const workerExited = waitForWorkerExit(agent._conoutSocketWorker._worker);
+    // A 1.2 PTY killed before its deferred native connect has no registered
+    // native exit callback. Closing its pseudoconsole is the terminal native
+    // action; the worker and sockets below are still awaited explicitly.
+    const nativeExited = connectionWasPending ? Promise.resolve() : waitForNativePtyExit(agent);
+
+    // Drop queued writes/resizes/kill calls. In node-pty 1.1.x they can never
+    // run if the shell has not produced its first data event.
+    ptyProcess._deferreds.length = 0;
+    ptyProcess._close();
+
+    log.info(
+      '[PtyManager] Closing Windows PTY:',
+      terminal.id,
+      'pid:',
+      terminal.pty.pid,
+      'ready:',
+      ptyProcess._isReady,
+    );
+
+    if (agent.exitCode === undefined) {
+      await requestInternalWindowsPtyTermination(agent);
+    } else {
+      agent._conoutSocketWorker.dispose();
+    }
+
+    // Do not treat a wall-clock timeout as successful native cleanup. The
+    // native callback and worker can both call into Node/Electron and must be
+    // gone first. If node-pty leaves an unconnected output socket open, close
+    // it only after the drain worker has exited.
+    await Promise.all([nativeExited, workerExited]);
+    if (!agent.outSocket.destroyed) {
+      agent.outSocket.destroy();
+    }
+    await socketClosed;
+
+    agent._inSocket.destroy();
+    terminal.hasExited = true;
+    pendingWrites.delete(terminal.id);
+    resolvePendingPtyExit(terminal.id);
+
+    log.info('[PtyManager] Windows PTY shutdown complete:', terminal.id);
+  })();
+
+  windowsPtyShutdowns.set(ptyProcess, shutdown);
+  try {
+    await shutdown;
+  } finally {
+    windowsPtyShutdowns.delete(ptyProcess);
+  }
+}
 
 /**
  * Wait for a PTY process to exit.
@@ -338,12 +573,7 @@ export function setupPtyHandlers(
 
     // Always resolve pending exit promises, even during shutdown
     // (needed for waitForPtyExit callers to complete)
-    const pendingExit = pendingExitPromises.get(id);
-    if (pendingExit) {
-      clearTimeout(pendingExit.timeoutId);
-      pendingExitPromises.delete(id);
-      pendingExit.resolve();
-    }
+    resolvePendingPtyExit(id);
 
     // Shutdown guard (GitHub #1469): skip accessing win.webContents and callbacks
     // to avoid pty.node SIGABRT from destroyed BrowserWindow resources
@@ -529,6 +759,16 @@ export function resizePty(terminal: TerminalProcess, cols: number, rows: number)
 export function killPty(terminal: TerminalProcess, waitForExit: true): Promise<void>;
 export function killPty(terminal: TerminalProcess, waitForExit?: false): void;
 export function killPty(terminal: TerminalProcess, waitForExit?: boolean): Promise<void> | void {
+  if (isInternalWindowsPty(terminal.pty)) {
+    const shutdown = shutdownInternalWindowsPty(terminal, terminal.pty);
+    if (waitForExit) return shutdown;
+
+    void shutdown.catch((error) => {
+      debugError('[PtyManager] Windows PTY shutdown failed:', terminal.id, error);
+    });
+    return;
+  }
+
   if (terminal.hasExited) {
     return waitForExit ? Promise.resolve() : undefined;
   }
@@ -539,12 +779,7 @@ export function killPty(terminal: TerminalProcess, waitForExit?: boolean): Promi
       terminal.pty.kill();
     } catch (error) {
       // Clean up the pending promise if kill() throws
-      const pending = pendingExitPromises.get(terminal.id);
-      if (pending) {
-        clearTimeout(pending.timeoutId);
-        pendingExitPromises.delete(terminal.id);
-        pending.resolve();
-      }
+      resolvePendingPtyExit(terminal.id);
       throw error;
     }
     return exitPromise;

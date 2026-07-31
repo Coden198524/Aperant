@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
+import type { Worker } from 'worker_threads';
 
 // Create a mock process object that will be returned by spawn
 function createMockProcess() {
@@ -952,6 +953,41 @@ describe('AgentProcessManager - API Profile Env Injection (Story 2.3)', () => {
       );
 
       expect(spawnCalls).toHaveLength(1);
+    });
+  });
+
+  describe('Application shutdown', () => {
+    it('waits for worker termination before killAllProcesses resolves', async () => {
+      let resolveTermination: ((exitCode: number) => void) | undefined;
+      const termination = new Promise<number>((resolve) => {
+        resolveTermination = resolve;
+      });
+      const terminate = vi.fn(() => termination);
+      const spawnId = state.generateSpawnId();
+
+      state.addProcess('worker-task', {
+        taskId: 'worker-task',
+        process: null,
+        worker: { terminate } as unknown as Worker,
+        startedAt: new Date(),
+        spawnId,
+      });
+
+      let cleanupResolved = false;
+      const cleanup = processManager.killAllProcesses().then(() => {
+        cleanupResolved = true;
+      });
+
+      await Promise.resolve();
+
+      expect(terminate).toHaveBeenCalledOnce();
+      expect(cleanupResolved).toBe(false);
+      expect(state.hasProcess('worker-task')).toBe(false);
+
+      resolveTermination?.(1);
+      await cleanup;
+
+      expect(cleanupResolved).toBe(true);
     });
   });
 });

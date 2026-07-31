@@ -4,7 +4,10 @@ import type { AutocodeRuntimeWorkspaceClaimInput } from './workspace-claims.js';
 
 export const AUTOCODE_TASK_TOKEN_USAGE_PREFIX = '__TASK_TOKEN_USAGE__:';
 
-export type AutocodeAgentProcessType = AutocodeAgentRuntimeProcessType | 'qa-process';
+export type AutocodeAgentProcessType =
+  | AutocodeAgentRuntimeProcessType
+  | 'qa-process'
+  | 'openspec-action';
 export type AutocodeAgentProcessInitialPhase = 'planning' | 'coding' | 'qa_review';
 
 export interface AutocodeAgentWorkerProcessStartPlanInput {
@@ -32,6 +35,7 @@ export function getAutocodeInitialPhaseForProcess(
       return 'planning';
     case 'qa-process':
       return 'qa_review';
+    case 'openspec-action':
     case 'task-execution':
     default:
       return 'coding';

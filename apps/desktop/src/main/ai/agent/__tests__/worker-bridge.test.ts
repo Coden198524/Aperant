@@ -1236,6 +1236,34 @@ describe('WorkerBridge', () => {
   // ---------------------------------------------------------------------------
 
   describe('result handling', () => {
+    it('emits the original session result before exit', () => {
+      const eventOrder: string[] = [];
+      const resultHandler = vi.fn((_taskId: string, _result: SessionResult, _projectId?: string) => {
+        eventOrder.push('session-result');
+      });
+      const exitHandler = vi.fn(() => {
+        eventOrder.push('exit');
+      });
+      bridge.on('session-result', resultHandler);
+      bridge.on('exit', exitHandler);
+      bridge.spawn(createConfig());
+
+      const result = createSessionResult({
+        outcome: 'completed',
+        stepsExecuted: 7,
+      });
+      getWorker().emit('message', {
+        type: 'result',
+        taskId: 'task-123',
+        data: result,
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      expect(resultHandler).toHaveBeenCalledWith('task-123', result, 'proj-456');
+      expect(resultHandler.mock.calls[0]?.[1]).toBe(result);
+      expect(eventOrder).toEqual(['session-result', 'exit']);
+    });
+
     it('maps completed outcome to exit code 0', () => {
       const exitHandler = vi.fn();
       bridge.on('exit', exitHandler);

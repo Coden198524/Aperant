@@ -12,6 +12,7 @@ on:
     branches: [main, develop]
     paths:
       - 'apps/**'
+      - 'libs/**'
       - 'package*.json'
       - 'tsconfig*.json'
       - 'biome.jsonc'
@@ -21,6 +22,7 @@ on:
     branches: [main, develop]
     paths:
       - 'apps/**'
+      - 'libs/**'
       - 'package*.json'
       - 'tsconfig*.json'
       - 'biome.jsonc'
@@ -97,21 +99,85 @@ jobs:
         run: npm run build
 
   # --------------------------------------------------------------------------
+  # Packaged OpenSpec Runtime - All Production Platforms
+  # --------------------------------------------------------------------------
+  verify-openspec-package:
+    name: verify-openspec-package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+          - os: windows-latest
+            target: win
+          - os: macos-latest
+            target: mac
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js frontend
+        uses: ./.github/actions/setup-node-frontend
+
+      - name: Package unpacked application
+        working-directory: apps/desktop
+        run: npm run package:${{ matrix.target }} -- --dir
+
+      - name: Run OpenSpec Electron E2E
+        if: runner.os == 'Windows'
+        working-directory: apps/desktop
+        run: npm run test:e2e -- --grep "OpenSpec Spec mode" --reporter=line
+
+      - name: Verify packaged OpenSpec runtime (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          node apps/desktop/scripts/verify-openspec-runtime.cjs
+          apps/desktop/dist/win-unpacked/resources/openspec/1.6.0
+          apps/desktop/dist/win-unpacked/Autocode.exe
+
+      - name: Verify packaged OpenSpec runtime (Linux)
+        if: runner.os == 'Linux'
+        run: >-
+          node apps/desktop/scripts/verify-openspec-runtime.cjs
+          apps/desktop/dist/linux-unpacked/resources/openspec/1.6.0
+          apps/desktop/dist/linux-unpacked/autocode
+
+      - name: Verify packaged OpenSpec runtime (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP_PATH="$(find apps/desktop/dist -maxdepth 3 -type d -name Autocode.app -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::Packaged Autocode.app was not found."
+            exit 1
+          fi
+          node apps/desktop/scripts/verify-openspec-runtime.cjs \
+            "$APP_PATH/Contents/Resources/openspec/1.6.0" \
+            "$APP_PATH/Contents/MacOS/Autocode"
+
+  # --------------------------------------------------------------------------
   # Gate Job - Single check for branch protection
   # --------------------------------------------------------------------------
   ci-complete:
     name: CI Complete
     runs-on: ubuntu-latest
-    needs: [test-frontend]
+    needs: [test-frontend, verify-openspec-package]
     if: always()
     steps:
       - name: Check all CI jobs passed
         run: |
           echo "CI Job Results:"
           echo "  test-frontend: ${{ needs.test-frontend.result }}"
+          echo "  verify-openspec-package: ${{ needs.verify-openspec-package.result }}"
           echo ""
 
-          if [[ "${{ needs.test-frontend.result }}" != "success" ]]; then
+          if [[ "${{ needs.test-frontend.result }}" != "success" ]] || \
+             [[ "${{ needs.verify-openspec-package.result }}" != "success" ]]; then
             echo "❌ One or more CI jobs failed"
             exit 1
           fi

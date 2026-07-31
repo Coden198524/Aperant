@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import type { SessionConfig, StreamEvent } from '../types';
+import type { SessionConfig, SessionResult, StreamEvent } from '../types';
 
 // =============================================================================
 // Mock AI SDK
@@ -64,6 +64,21 @@ function createMockStreamResult(
     ),
     providerMetadata: Promise.resolve(options?.providerMetadata),
     output: Promise.resolve(options?.output),
+  };
+}
+
+function createCompletedFallbackResult(content: string): SessionResult {
+  return {
+    outcome: 'completed',
+    stepsExecuted: 1,
+    usage: {
+      promptTokens: 12,
+      completionTokens: 6,
+      totalTokens: 18,
+    },
+    messages: [{ role: 'assistant', content }],
+    durationMs: 1,
+    toolCallCount: 0,
   };
 }
 
@@ -213,6 +228,644 @@ describe('runAgentSession', () => {
 
     expect(result.outcome).toBe('error');
     expect(result.error!.code).toBe('network_error');
+  });
+
+  it('retries an OpenSpec server overload that occurs before output', async () => {
+    vi.useFakeTimers();
+    try {
+      const events: StreamEvent[] = [];
+      mockStreamText
+        .mockReturnValueOnce(
+          createMockStreamResult([{
+            type: 'error',
+            error: {
+              type: 'service_unavailable_error',
+              code: 'server_is_overloaded',
+              message: 'Our servers are currently overloaded. Please try again later.',
+              param: null,
+            },
+          }]),
+        )
+        .mockReturnValueOnce(
+          createMockStreamResult(
+            [
+              { type: 'text-delta', id: 'text-1', delta: 'OpenSpec ready' },
+              { type: 'finish-step', usage: { inputTokens: 20, outputTokens: 5 } },
+            ],
+            {
+              text: 'OpenSpec ready',
+              totalUsage: { inputTokens: 20, outputTokens: 5 },
+            },
+          ),
+        );
+
+      const resultPromise = runAgentSession(createMockConfig({
+        agentType: 'openspec',
+        systemPrompt: 'Official OpenSpec prompt bytes',
+      }), {
+        onEvent: (event) => events.push(event),
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      const result = await resultPromise;
+
+      expect(result.outcome).toBe('completed');
+      expect(mockStreamText).toHaveBeenCalledTimes(2);
+      expect(events).toContainEqual({
+        type: 'text-delta',
+        text: '[Provider] Temporarily unavailable. Retrying automatically in 2s (1/5).\n',
+      });
+      expect(mockStreamText.mock.calls[0][0].system).toBe('Official OpenSpec prompt bytes');
+      expect(mockStreamText.mock.calls[1][0].system).toBe('Official OpenSpec prompt bytes');
+      expect(mockStreamText.mock.calls[0][0].onError).toBeTypeOf('function');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds OpenSpec overload retries and returns a retryable failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const events: StreamEvent[] = [];
+      mockStreamText.mockImplementation(() =>
+        createMockStreamResult([{
+          type: 'error',
+          error: {
+            type: 'service_unavailable_error',
+            code: 'server_is_overloaded',
+            message: 'Our servers are currently overloaded. Please try again later.',
+          },
+        }]),
+      );
+
+      const resultPromise = runAgentSession(
+        createMockConfig({ agentType: 'openspec' }),
+        { onEvent: (event) => events.push(event) },
+      );
+      await vi.runAllTimersAsync();
+      const result = await resultPromise;
+
+      expect(mockStreamText).toHaveBeenCalledTimes(6);
+      expect(events.filter(
+        (event) =>
+          event.type === 'text-delta' &&
+          event.text.includes('Retrying automatically'),
+      )).toHaveLength(5);
+      expect(result.outcome).toBe('error');
+      expect(result.error).toMatchObject({
+        code: 'temporarily_unavailable',
+        retryable: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('switches to the replay-safe provider fallback after two transient retries', async () => {
+    vi.useFakeTimers();
+    try {
+      const events: StreamEvent[] = [];
+      const providerError = {
+        type: 'service_unavailable_error',
+        code: 'server_is_overloaded',
+        message: 'Our servers are currently overloaded. Please try again later.',
+      };
+      mockStreamText.mockImplementation(() =>
+        createMockStreamResult([{ type: 'error', error: providerError }]),
+      );
+      const fallbackResult: SessionResult = {
+        outcome: 'completed',
+        stepsExecuted: 1,
+        usage: {
+          promptTokens: 21,
+          completionTokens: 8,
+          totalTokens: 29,
+        },
+        messages: [{ role: 'assistant', content: 'Completed through Codex CLI.' }],
+        durationMs: 10,
+        toolCallCount: 0,
+      };
+      const onProviderFailureFallback = vi.fn(async () => fallbackResult);
+
+      const resultPromise = runAgentSession(
+        createMockConfig({ agentType: 'openspec' }),
+        {
+          onEvent: (event) => events.push(event),
+          onProviderFailureFallback,
+        },
+      );
+      await vi.runAllTimersAsync();
+      const result = await resultPromise;
+
+      expect(mockStreamText).toHaveBeenCalledTimes(3);
+      expect(events.filter(
+        (event) =>
+          event.type === 'text-delta' &&
+          event.text.includes('Retrying automatically'),
+      )).toHaveLength(2);
+      expect(onProviderFailureFallback).toHaveBeenCalledTimes(1);
+      expect(onProviderFailureFallback).toHaveBeenCalledWith(expect.objectContaining({
+        originalError: providerError,
+        sessionError: expect.objectContaining({
+          code: 'temporarily_unavailable',
+          retryable: true,
+        }),
+      }));
+      expect(result).toMatchObject({
+        outcome: 'completed',
+        stepsExecuted: 1,
+        messages: [{ role: 'assistant', content: 'Completed through Codex CLI.' }],
+      });
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not replay an OpenSpec session after observable output', async () => {
+    const onProviderFailureFallback = vi.fn();
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([
+        { type: 'text-delta', id: 'text-1', delta: 'Partial response' },
+        {
+          type: 'error',
+          error: {
+            type: 'service_unavailable_error',
+            code: 'server_is_overloaded',
+            message: 'Our servers are currently overloaded. Please try again later.',
+          },
+        },
+      ]),
+    );
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      { onProviderFailureFallback },
+    );
+
+    expect(result.outcome).toBe('error');
+    expect(result.error?.code).toBe('temporarily_unavailable');
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    expect(onProviderFailureFallback).not.toHaveBeenCalled();
+  });
+
+  it('resumes an OpenSpec session through the provider fallback after observable output when enabled', async () => {
+    const providerError = {
+      type: 'service_unavailable_error',
+      code: 'server_is_overloaded',
+      message: 'Our servers are currently overloaded. Please try again later.',
+    };
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([
+        { type: 'text-delta', id: 'text-1', delta: 'Partial response' },
+        { type: 'error', error: providerError },
+      ]),
+    );
+    const fallbackResult: SessionResult = {
+      outcome: 'completed',
+      stepsExecuted: 1,
+      usage: {
+        promptTokens: 18,
+        completionTokens: 7,
+        totalTokens: 25,
+      },
+      messages: [{ role: 'assistant', content: 'CLI resumed after partial output.' }],
+      durationMs: 1,
+      toolCallCount: 0,
+    };
+    const onProviderFailureFallback = vi.fn(async () => fallbackResult);
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      {
+        onProviderFailureFallback,
+        allowProviderFailureFallbackAfterProgress: true,
+      },
+    );
+
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    expect(onProviderFailureFallback).toHaveBeenCalledTimes(1);
+    expect(onProviderFailureFallback).toHaveBeenCalledWith(expect.objectContaining({
+      originalError: providerError,
+      sessionError: expect.objectContaining({
+        code: 'temporarily_unavailable',
+        retryable: true,
+      }),
+    }));
+    expect(result).toMatchObject({
+      outcome: 'completed',
+      messages: [{ role: 'assistant', content: 'CLI resumed after partial output.' }],
+    });
+  });
+
+  it('does not replay an OpenSpec session after a tool call', async () => {
+    const onProviderFailureFallback = vi.fn();
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([
+        {
+          type: 'tool-call',
+          toolName: 'Write',
+          toolCallId: 'write-before-provider-error',
+          input: {
+            file_path: 'openspec/changes/change-a/proposal.md',
+            content: '# Proposal',
+          },
+        },
+        {
+          type: 'error',
+          error: {
+            type: 'service_unavailable_error',
+            code: 'server_is_overloaded',
+            message: 'Our servers are currently overloaded. Please try again later.',
+          },
+        },
+      ]),
+    );
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      { onProviderFailureFallback },
+    );
+
+    expect(result.outcome).toBe('error');
+    expect(result.error?.code).toBe('temporarily_unavailable');
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    expect(onProviderFailureFallback).not.toHaveBeenCalled();
+  });
+
+  it('resumes an OpenSpec session through the provider fallback after completed tools when enabled', async () => {
+    const providerError = {
+      type: 'service_unavailable_error',
+      code: 'server_is_overloaded',
+      message: 'Our servers are currently overloaded. Please try again later.',
+    };
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([
+        {
+          type: 'tool-call',
+          toolName: 'Read',
+          toolCallId: 'read-before-provider-error',
+          input: { file_path: 'openspec/changes/change-a/tasks.md' },
+        },
+        {
+          type: 'tool-result',
+          toolName: 'Read',
+          toolCallId: 'read-before-provider-error',
+          input: { file_path: 'openspec/changes/change-a/tasks.md' },
+          output: '- [ ] Implement the change',
+        },
+        {
+          type: 'tool-call',
+          toolName: 'Bash',
+          toolCallId: 'bash-before-provider-error',
+          input: { command: 'openspec status --change change-a --json' },
+        },
+        {
+          type: 'tool-result',
+          toolName: 'Bash',
+          toolCallId: 'bash-before-provider-error',
+          input: { command: 'openspec status --change change-a --json' },
+          output: '{"ready":true}',
+        },
+        {
+          type: 'tool-call',
+          toolName: 'Write',
+          toolCallId: 'write-before-provider-error',
+          input: {
+            file_path: 'src/change-a.ts',
+            content: 'export const changeA = true;',
+          },
+        },
+        {
+          type: 'tool-result',
+          toolName: 'Write',
+          toolCallId: 'write-before-provider-error',
+          input: {
+            file_path: 'src/change-a.ts',
+            content: 'export const changeA = true;',
+          },
+          output: 'Wrote src/change-a.ts',
+        },
+        {
+          type: 'finish-step',
+          usage: { inputTokens: 80, outputTokens: 20 },
+        },
+        { type: 'error', error: providerError },
+      ]),
+    );
+    const fallbackResult: SessionResult = {
+      outcome: 'completed',
+      stepsExecuted: 2,
+      usage: {
+        promptTokens: 90,
+        completionTokens: 30,
+        totalTokens: 120,
+      },
+      messages: [{ role: 'assistant', content: 'CLI continued from workspace state.' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    };
+    const onProviderFailureFallback = vi.fn(async () => fallbackResult);
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      {
+        onProviderFailureFallback,
+        allowProviderFailureFallbackAfterProgress: true,
+      },
+    );
+
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    expect(onProviderFailureFallback).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      outcome: 'completed',
+      messages: [{ role: 'assistant', content: 'CLI continued from workspace state.' }],
+    });
+  });
+
+  it('resumes through the provider fallback after a network exception with prior progress', async () => {
+    const providerError = new Error('Network error: connection reset');
+    mockStreamText.mockReturnValue({
+      fullStream: (async function* () {
+        yield { type: 'text-delta', id: 'text-1', delta: 'Partial response' };
+        throw providerError;
+      })(),
+      text: Promise.resolve(''),
+      totalUsage: Promise.resolve({ inputTokens: 0, outputTokens: 0 }),
+    });
+    const onProviderFailureFallback = vi.fn(async () =>
+      createCompletedFallbackResult('CLI resumed after network failure.'));
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      {
+        onProviderFailureFallback,
+        allowProviderFailureFallbackAfterProgress: true,
+      },
+    );
+
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    expect(onProviderFailureFallback).toHaveBeenCalledWith(expect.objectContaining({
+      originalError: providerError,
+      sessionError: expect.objectContaining({
+        code: 'network_error',
+        retryable: true,
+      }),
+    }));
+    expect(result.outcome).toBe('completed');
+  });
+
+  it('uses the provider fallback instead of switching accounts after a mid-stream rate limit', async () => {
+    const providerError = Object.assign(new Error('rate limit exceeded'), {
+      statusCode: 429,
+    });
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([
+        {
+          type: 'tool-call',
+          toolName: 'Read',
+          toolCallId: 'read-before-rate-limit',
+          input: { file_path: 'openspec/changes/change-a/tasks.md' },
+        },
+        { type: 'error', error: providerError },
+      ]),
+    );
+    const onAccountSwitch = vi.fn(async () => null);
+    const onProviderFailureFallback = vi.fn(async () =>
+      createCompletedFallbackResult('CLI resumed after rate limit.'));
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      {
+        currentAccountId: 'openai-1',
+        onAccountSwitch,
+        onProviderFailureFallback,
+        allowProviderFailureFallbackAfterProgress: true,
+      },
+    );
+
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    expect(onAccountSwitch).not.toHaveBeenCalled();
+    expect(onProviderFailureFallback).toHaveBeenCalledTimes(1);
+    expect(result.outcome).toBe('completed');
+  });
+
+  it.each([
+    {
+      name: 'authentication failure',
+      providerError: Object.assign(new Error('http 401 unauthorized'), {
+        statusCode: 401,
+      }),
+      expectedCode: 'auth_failure',
+    },
+    {
+      name: 'model not found',
+      providerError: Object.assign(new Error('http 404 model not found'), {
+        statusCode: 404,
+      }),
+      expectedCode: 'model_not_found',
+    },
+    {
+      name: 'bad request',
+      providerError: new Error(
+        'bad request http 400: unsupported parameter: max_output_tokens',
+      ),
+      expectedCode: 'generic_error',
+    },
+  ])('does not use progress fallback for a mid-stream $name', async ({
+    providerError,
+    expectedCode,
+  }) => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([
+        { type: 'text-delta', id: 'text-1', delta: 'Partial response' },
+        { type: 'error', error: providerError },
+      ]),
+    );
+    const onAccountSwitch = vi.fn(async () => null);
+    const onAuthRefresh = vi.fn(async () => 'refreshed-token');
+    const onProviderFailureFallback = vi.fn();
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      {
+        currentAccountId: 'openai-1',
+        onAccountSwitch,
+        onAuthRefresh,
+        onProviderFailureFallback,
+        allowProviderFailureFallbackAfterProgress: true,
+      },
+    );
+
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    expect(onAccountSwitch).not.toHaveBeenCalled();
+    expect(onAuthRefresh).not.toHaveBeenCalled();
+    expect(onProviderFailureFallback).not.toHaveBeenCalled();
+    expect(result.error?.code).toBe(expectedCode);
+  });
+
+  it('uses the provider fallback immediately for a replay-safe non-transient 400', async () => {
+    const providerError = new Error(
+      'bad request http 400: unsupported parameter: max_output_tokens',
+    );
+    mockStreamText.mockImplementation(() => {
+      throw providerError;
+    });
+    const fallbackResult: SessionResult = {
+      outcome: 'completed',
+      stepsExecuted: 1,
+      usage: {
+        promptTokens: 10,
+        completionTokens: 4,
+        totalTokens: 14,
+      },
+      messages: [{ role: 'assistant', content: 'CLI recovered the action.' }],
+      durationMs: 1,
+      toolCallCount: 0,
+    };
+    const onProviderFailureFallback = vi.fn(async () => fallbackResult);
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      { onProviderFailureFallback },
+    );
+
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    expect(onProviderFailureFallback).toHaveBeenCalledTimes(1);
+    expect(onProviderFailureFallback).toHaveBeenCalledWith(expect.objectContaining({
+      originalError: providerError,
+    }));
+    expect(result.outcome).toBe('completed');
+    expect(result.messages.at(-1)?.content).toBe('CLI recovered the action.');
+  });
+
+  it('preserves the original provider error when the fallback declines', async () => {
+    const providerError = new Error(
+      'bad request http 400: unsupported parameter: max_output_tokens',
+    );
+    mockStreamText.mockImplementation(() => {
+      throw providerError;
+    });
+    const onProviderFailureFallback = vi.fn(async () => null);
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      { onProviderFailureFallback },
+    );
+
+    expect(onProviderFailureFallback).toHaveBeenCalledTimes(1);
+    expect(result.outcome).toBe('error');
+    expect(result.error?.message).toContain('unsupported parameter: max_output_tokens');
+  });
+
+  it('uses the provider fallback after a replay-safe stream inactivity timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      mockStreamText.mockImplementation((args: { abortSignal: AbortSignal }) => ({
+        fullStream: (async function* () {
+          await new Promise<void>((_resolve, reject) => {
+            args.abortSignal.addEventListener(
+              'abort',
+              () => reject(args.abortSignal.reason),
+              { once: true },
+            );
+          });
+        })(),
+        text: Promise.resolve(''),
+        totalUsage: Promise.resolve({ inputTokens: 0, outputTokens: 0 }),
+      }));
+      const onProviderFailureFallback = vi.fn(
+        async (): Promise<SessionResult> => ({
+          outcome: 'completed',
+          stepsExecuted: 1,
+          usage: {
+            promptTokens: 5,
+            completionTokens: 3,
+            totalTokens: 8,
+          },
+          messages: [{ role: 'assistant', content: 'CLI completed after timeout.' }],
+          durationMs: 1,
+          toolCallCount: 0,
+        }),
+      );
+
+      const resultPromise = runAgentSession(
+        createMockConfig({ agentType: 'openspec' }),
+        { onProviderFailureFallback },
+      );
+      await vi.advanceTimersByTimeAsync(120_000);
+      const result = await resultPromise;
+
+      expect(mockStreamText).toHaveBeenCalledTimes(1);
+      expect(onProviderFailureFallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionError: expect.objectContaining({
+            message: expect.stringContaining('Stream inactivity timeout'),
+          }),
+        }),
+      );
+      expect(result.outcome).toBe('completed');
+      expect(result.messages.at(-1)?.content).toBe('CLI completed after timeout.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses the provider fallback after a stream inactivity timeout with prior output when enabled', async () => {
+    vi.useFakeTimers();
+    try {
+      mockStreamText.mockImplementation((args: { abortSignal: AbortSignal }) => ({
+        fullStream: (async function* () {
+          yield { type: 'text-delta', id: 'text-1', delta: 'Partial response' };
+          await new Promise<void>((_resolve, reject) => {
+            args.abortSignal.addEventListener(
+              'abort',
+              () => reject(args.abortSignal.reason),
+              { once: true },
+            );
+          });
+        })(),
+        text: Promise.resolve(''),
+        totalUsage: Promise.resolve({ inputTokens: 0, outputTokens: 0 }),
+      }));
+      const onProviderFailureFallback = vi.fn(
+        async (): Promise<SessionResult> => ({
+          outcome: 'completed',
+          stepsExecuted: 1,
+          usage: {
+            promptTokens: 8,
+            completionTokens: 4,
+            totalTokens: 12,
+          },
+          messages: [{ role: 'assistant', content: 'CLI resumed after timeout.' }],
+          durationMs: 1,
+          toolCallCount: 0,
+        }),
+      );
+
+      const resultPromise = runAgentSession(
+        createMockConfig({ agentType: 'openspec' }),
+        {
+          onProviderFailureFallback,
+          allowProviderFailureFallbackAfterProgress: true,
+        },
+      );
+      await vi.advanceTimersByTimeAsync(120_000);
+      const result = await resultPromise;
+
+      expect(mockStreamText).toHaveBeenCalledTimes(1);
+      expect(onProviderFailureFallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionError: expect.objectContaining({
+            code: 'temporarily_unavailable',
+            retryable: true,
+          }),
+        }),
+      );
+      expect(result.outcome).toBe('completed');
+      expect(result.messages.at(-1)?.content).toBe('CLI resumed after timeout.');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('normalizes snake_case total usage from compatible providers', async () => {
@@ -403,6 +1056,7 @@ describe('runAgentSession', () => {
 
   it('should inject correction after malformed Write input and fail on repeat', async () => {
     let injectedSystem = '';
+    const onProviderFailureFallback = vi.fn();
     mockStreamText.mockImplementation((args: {
       prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
     }) => ({
@@ -430,12 +1084,19 @@ describe('runAgentSession', () => {
       totalUsage: Promise.resolve({ inputTokens: 20, outputTokens: 10 }),
     }));
 
-    const result = await runAgentSession(createMockConfig());
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      {
+        onProviderFailureFallback,
+        allowProviderFailureFallbackAfterProgress: true,
+      },
+    );
 
     expect(result.outcome).toBe('error');
-    expect(result.error!.message).toContain('tool \'write\' input json failed');
+    expect(result.error!.message.toLowerCase()).toContain('tool \'write\' input json failed');
     expect(injectedSystem).toContain('WRITE TOOL INPUT CORRECTION');
     expect(injectedSystem).toContain('e:/work/project/.autocode/specs/001/spec.md');
+    expect(onProviderFailureFallback).not.toHaveBeenCalled();
   });
 
   it('should count matching malformed Write tool-call and tool-error as one failure', async () => {
@@ -484,6 +1145,63 @@ describe('runAgentSession', () => {
   // ===========================================================================
   // Auth retry
   // ===========================================================================
+
+  it('does not switch accounts for OpenSpec after a tool call has been observed', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([
+        {
+          type: 'tool-call',
+          toolName: 'Write',
+          toolCallId: 'write-before-rate-limit',
+          input: { file_path: '/project/openspec/changes/a/tasks.md' },
+        },
+        {
+          type: 'error',
+          error: new Error('429 Too Many Requests'),
+        },
+      ]),
+    );
+    const onAccountSwitch = vi.fn();
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      {
+        currentAccountId: 'openai-account-1',
+        onAccountSwitch,
+      },
+    );
+
+    expect(result.outcome).toBe('rate_limited');
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    expect(onAccountSwitch).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh OpenSpec auth after a tool call has been observed', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([
+        {
+          type: 'tool-call',
+          toolName: 'Bash',
+          toolCallId: 'command-before-auth-failure',
+          input: { command: 'openspec validate --strict --json' },
+        },
+        {
+          type: 'error',
+          error: new Error('401 Unauthorized'),
+        },
+      ]),
+    );
+    const onAuthRefresh = vi.fn();
+
+    const result = await runAgentSession(
+      createMockConfig({ agentType: 'openspec' }),
+      { onAuthRefresh },
+    );
+
+    expect(result.outcome).toBe('auth_failure');
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    expect(onAuthRefresh).not.toHaveBeenCalled();
+  });
 
   it('should retry on auth failure when onAuthRefresh succeeds', async () => {
     let callCount = 0;
@@ -604,6 +1322,7 @@ describe('runAgentSession', () => {
 
   it('should return cancelled when abortSignal fires during stream', async () => {
     const controller = new AbortController();
+    const onProviderFailureFallback = vi.fn();
 
     mockStreamText.mockReturnValue({
       fullStream: (async function* () {
@@ -616,10 +1335,18 @@ describe('runAgentSession', () => {
     });
 
     const result = await runAgentSession(
-      createMockConfig({ abortSignal: controller.signal }),
+      createMockConfig({
+        agentType: 'openspec',
+        abortSignal: controller.signal,
+      }),
+      {
+        onProviderFailureFallback,
+        allowProviderFailureFallbackAfterProgress: true,
+      },
     );
 
     expect(result.outcome).toBe('cancelled');
+    expect(onProviderFailureFallback).not.toHaveBeenCalled();
   });
 
   // ===========================================================================
@@ -1140,6 +1867,92 @@ describe('runAgentSession', () => {
     expect(callArgs.providerOptions?.openai).toMatchObject({
       instructions: 'Spec prompt',
       store: false,
+    });
+  });
+
+  it('should omit maxOutputTokens for Codex OAuth Responses sessions', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      agentType: 'openspec',
+      systemPrompt: 'Official OpenSpec prompt',
+      responsePersistence: false,
+      provider: 'openai',
+      providerTransport: 'openai.codex-oauth.responses',
+      model: {
+        modelId: 'gpt-5.3-codex',
+        provider: 'openai.responses',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs).not.toHaveProperty('maxOutputTokens');
+    expect(callArgs.providerOptions?.openai).toMatchObject({
+      instructions: 'Official OpenSpec prompt',
+      store: false,
+    });
+  });
+
+  it('should keep maxOutputTokens for public OpenAI Responses OpenSpec sessions', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      agentType: 'openspec',
+      provider: 'openai',
+      providerTransport: 'openai.responses',
+      model: {
+        modelId: 'gpt-5.4',
+        provider: 'openai.responses',
+      } as SessionConfig['model'],
+    }));
+
+    expect(mockStreamText.mock.calls[0][0].maxOutputTokens).toBe(12000);
+  });
+
+  it('should disable persistence options for Codex OAuth even when configured', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      systemPrompt: 'Direct prompt',
+      provider: 'openai',
+      providerTransport: 'openai.codex-oauth.responses',
+      responsePersistence: true,
+      previousResponseId: 'resp_must_not_be_reused',
+      providerOptions: {
+        openai: {
+          store: true,
+          previousResponseId: 'resp_from_options',
+        },
+      },
+      providerResponsePersistence: {
+        capabilityId: 'responses-previous-response',
+        mode: 'provider',
+        providerResponseId: 'resp_from_runtime',
+        continuationProviderOptions: {
+          openai: {
+            store: true,
+            previousResponseId: '{providerResponseId}',
+          },
+        },
+      },
+      model: {
+        modelId: 'gpt-5.6-sol',
+        provider: 'openai.responses',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs).not.toHaveProperty('maxOutputTokens');
+    expect(callArgs.providerOptions?.openai).toMatchObject({
+      instructions: 'Direct prompt',
+      store: false,
+      previousResponseId: undefined,
     });
   });
 

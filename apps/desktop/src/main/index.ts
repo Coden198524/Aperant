@@ -59,12 +59,13 @@ import { DEFAULT_APP_SETTINGS, IPC_CHANNELS, SPELL_CHECK_LANGUAGE_MAP, DEFAULT_S
 import { getAppLanguage, initAppLanguage } from './app-language';
 import { readSettingsFile } from './settings-utils';
 import { registerSettingsAccessor } from './ai/auth/resolver';
-import { appLog, setupErrorLogging } from './app-logger';
+import { appLog, logger, setupErrorLogging } from './app-logger';
 import { initializeClaudeProfileManager, getClaudeProfileManager } from './claude-profile-manager';
 import { isProfileAuthenticated } from './claude-profile/profile-utils';
 import { isMacOS, isWindows } from './platform';
 import { ptyDaemonClient } from './terminal/pty-daemon-client';
 import { getYunxiaoAutoSyncService } from './integrations/yunxiao-auto-sync';
+import { registerBrokenStdioHandler, registerGracefulShutdownSignals } from './shutdown-signals';
 import type { AppSettings, AuthFailureInfo } from '../shared/types';
 import type { ProviderAccount } from '../shared/types/provider-account';
 
@@ -422,6 +423,32 @@ app.on('child-process-gone', (_event, details) => {
 // The second call sees isQuitting=true and allows quit to proceed immediately.
 // Fixes: pty.node SIGABRT crash caused by environment teardown before PTY cleanup (GitHub #1469)
 let isQuitting = false;
+let shutdownRequestSource = 'app';
+
+function requestGracefulShutdown(source: string): void {
+  if (isQuitting) {
+    appLog.info('[main] Ignoring duplicate shutdown request:', source);
+    return;
+  }
+
+  shutdownRequestSource = source;
+  appLog.info('[main] Graceful shutdown requested:', source);
+  app.quit();
+}
+
+// Development runners can stop Electron through a Node signal instead of
+// Electron's before-quit event. Route signals through the same native cleanup;
+// runners that close inherited stdio are handled separately below.
+registerGracefulShutdownSignals((signal) => {
+  requestGracefulShutdown(`signal:${signal}`);
+});
+
+registerBrokenStdioHandler([process.stdout, process.stderr], () => {
+  // Prevent electron-log from recursively writing another message to the same
+  // broken stream while the application performs its native cleanup.
+  logger.transports.console.level = false;
+  requestGracefulShutdown('stdio:EPIPE');
+});
 
 function createWindow(): void {
   // Get the primary display's work area (accounts for taskbar, dock, etc.)
@@ -607,13 +634,19 @@ function createWindow(): void {
     mainWindow.webContents.openDevTools({ mode: 'right' });
   }
 
-  // Clean up on close
+  // On macOS, closing the window keeps the app alive, so stop agents here.
+  // On Windows/Linux, window-all-closed triggers the awaited before-quit cleanup.
+  // Starting an unawaited cleanup here would remove workers from tracking before
+  // before-quit can wait for their termination, allowing native callbacks to race
+  // with Electron's JS environment teardown.
   mainWindow.on('closed', () => {
-    // Kill all agents when window closes (prevents orphaned processes)
-    agentManager?.killAll?.()?.catch((err: unknown) => {
-      console.warn('[main] Error killing agents on window close:', err);
-    });
     mainWindow = null;
+
+    if (isMacOS() && !isQuitting) {
+      agentManager?.killAll?.()?.catch((err: unknown) => {
+        console.warn('[main] Error killing agents on window close:', err);
+      });
+    }
   });
 }
 
@@ -810,7 +843,7 @@ app.whenReady().then(async () => {
 // Quit when all windows are closed (except on macOS)
 app.on('window-all-closed', () => {
   if (!isMacOS()) {
-    app.quit();
+    requestGracefulShutdown('window-all-closed');
   }
 });
 
@@ -823,6 +856,7 @@ app.on('before-quit', (event) => {
     return;
   }
   isQuitting = true;
+  appLog.info('[main] Async shutdown cleanup starting:', shutdownRequestSource);
 
   // Pause quit to perform async cleanup
   event.preventDefault();
@@ -840,22 +874,29 @@ app.on('before-quit', (event) => {
     try {
       // Kill all running agent processes
       if (agentManager) {
+        appLog.info('[main] Agent cleanup starting');
         await agentManager.killAll();
+        appLog.info('[main] Agent cleanup complete');
       }
 
-      // Kill all terminal processes — waits for PTY exit with bounded timeout
+      // Kill all terminal processes and wait for their native resources to close.
       if (terminalManager) {
+        appLog.info('[main] Terminal cleanup starting');
         await terminalManager.killAll();
+        appLog.info('[main] Terminal cleanup complete');
       }
 
       // Shut down PTY daemon client AFTER terminal cleanup completes,
       // ensuring all kill commands reach PTY processes before the daemon disconnects
       ptyDaemonClient.shutdown();
       console.warn('[main] PTY daemon client shutdown complete');
+      appLog.info('[main] PTY daemon client shutdown complete');
     } catch (error) {
       console.error('[main] Error during pre-quit cleanup:', error);
+      appLog.error('[main] Error during pre-quit cleanup:', error);
     } finally {
       // Always allow quit to proceed, even if cleanup fails
+      appLog.info('[main] Async shutdown cleanup complete; allowing app quit');
       app.quit();
     }
   })();

@@ -70,6 +70,10 @@ import { refreshOAuthTokenReactive } from '../auth/resolver';
 import { buildToolRegistry } from '../tools/build-registry';
 import type { ToolRegistry } from '../tools/registry';
 import { SubagentExecutorImpl } from '../orchestration/subagent-executor';
+import {
+  failSessionForOpenSpecDelegation,
+  OpenSpecDelegationExecutor,
+} from '../orchestration/openspec-delegation-executor';
 import type { ToolContext, ToolUsageState } from '../tools/types';
 import type { SecurityProfile } from '../security/bash-validator';
 import type {
@@ -80,7 +84,12 @@ import type {
   WorkerTaskEventMessage,
 } from './types';
 import type { LanguageModel, Tool as AITool } from 'ai';
-import type { SessionConfig, StreamEvent, SessionResult } from '../session/types';
+import type {
+  SessionConfig,
+  SessionError,
+  StreamEvent,
+  SessionResult,
+} from '../session/types';
 import { BuildOrchestrator, type BuildOutcome } from '../orchestration/build-orchestrator';
 import { QALoop } from '../orchestration/qa-loop';
 import { SpecOrchestrator } from '../orchestration/spec-orchestrator';
@@ -112,6 +121,9 @@ import {
   shouldFallbackForProviderError,
   shouldForceProviderFallbackTransport,
 } from './provider-transport';
+import { runOpenSpecCodexCliFallback } from './openspec-codex-cli-fallback';
+import { resolveOpenSpecCodexCliFallbackRegistration } from './openspec-codex-cli-capability';
+import { createOpenSpecAutomaticInputResponder } from './openspec-auto-answer';
 import { buildFocusedCoderKickoffMessage } from './session-efficiency';
 import { specPhaseToPromptName } from './spec-phase-prompts';
 import {
@@ -256,7 +268,7 @@ function getQualityConfigFromWorkflowConfig(
 
 // Single writer instance for this worker's spec, shared across all sessions
 // so that planning/coding/QA phases accumulate into one task_logs.jsonl file.
-const logWriter = config.session.specDir
+const logWriter = config.session.specDir && config.session.disableTaskLogs !== true
   ? new TaskLogWriter(config.session.specDir, basename(config.session.specDir))
   : null;
 
@@ -350,7 +362,7 @@ function isWorkerMemoryEnabled(session: SerializableSessionConfig): boolean {
   return envToggle?.toLowerCase() !== 'false';
 }
 
-const memoryProxy = isWorkerMemoryEnabled(config.session)
+const memoryProxy = config.session.preservePromptBytes !== true && isWorkerMemoryEnabled(config.session)
   ? new WorkerObserverProxy(parentPort)
   : null;
 
@@ -481,6 +493,7 @@ function buildToolContext(session: SerializableSessionConfig, securityProfile: S
     session.sourceProjectDir,
     session.toolContext.specDir,
     session.sourceSpecDir,
+    ...(session.toolContext.allowedPathRoots ?? []),
   ].filter((value): value is string => Boolean(value));
 
   return {
@@ -490,6 +503,17 @@ function buildToolContext(session: SerializableSessionConfig, securityProfile: S
     specDir: session.toolContext.specDir,
     securityProfile,
     abortSignal: abortController.signal,
+    commandEnv: session.toolContext.commandEnv,
+    readOnlySession: session.toolContext.readOnlySession,
+    openSpecBashPolicy: session.toolContext.openSpecBashPolicy,
+    requestUserInput: createOpenSpecAutomaticInputResponder({
+      agentType: session.agentType,
+      openSpecRunId: session.openSpecRunId,
+      language: session.language,
+      abortSignal: abortController.signal,
+    }),
+    openSpecDelegatedPrompts: session.openSpecDelegatedPrompts,
+    allowedWritePaths: session.toolContext.allowedWritePaths,
     fileCache,
     workflowMode: session.workflowMode,
     currentSubtaskId: session.subtaskId,
@@ -1007,6 +1031,10 @@ async function runSingleSession(
       : {}),
     ...(mergeMcpTools(mcpClients) as Record<string, AITool>),
   };
+  if (baseSession.openSpecReadOnly) {
+    delete tools.Write;
+    delete tools.Edit;
+  }
 
   // Build initial messages: use provided kickoff message, or fall back to session messages
   const initialMessages = appendLanguageRequirementToMessages(
@@ -1828,6 +1856,88 @@ async function runDefaultSession(
   const model = createSessionModel(session, session.modelId);
   const defaultPhase: Phase = session.phase ?? 'coding';
   const projectId = config.projectId || config.taskId;
+  let openSpecDelegationFailure: Error | undefined;
+  let openSpecDelegationActive = false;
+  const runtimeToolContext: ToolContext = session.agentType === 'openspec'
+    ? { ...toolContext }
+    : toolContext;
+  const handleOpenSpecDelegationEvent = (event: StreamEvent) => {
+    postMessage({
+      type: 'stream-event',
+      taskId: config.taskId,
+      data: event,
+      projectId: config.projectId,
+      phase: toTaskLogPhase('planning'),
+      subtaskId: 'openspec-sync',
+      sessionNumber: session.sessionNumber,
+      provider: session.provider,
+      modelId: session.modelId,
+    });
+  };
+
+  if (session.agentType === 'openspec') {
+    runtimeToolContext.runOpenSpecDelegation = async (input) => {
+      if (openSpecDelegationActive) {
+        const error = new Error(
+          'A nested or concurrent OpenSpec delegation was rejected.',
+        );
+        openSpecDelegationFailure = error;
+        throw error;
+      }
+
+      const syncSystemPrompt = session.openSpecDelegatedPrompts?.sync;
+      if (!syncSystemPrompt) {
+        const error = new Error(
+          'The pinned official OpenSpec Sync prompt is unavailable; Archive cannot continue.',
+        );
+        openSpecDelegationFailure = error;
+        throw error;
+      }
+
+      openSpecDelegationActive = true;
+      try {
+        const executor = new OpenSpecDelegationExecutor({
+          // A fresh model object creates a separate provider session while
+          // retaining the parent Action's exact provider and model choice.
+          model: createSessionModel(session, session.modelId),
+          registry,
+          baseToolContext: runtimeToolContext,
+          syncSystemPrompt,
+          language: session.language,
+          maxSteps: resolvePhaseStepBudget(session, 'planning'),
+          thinkingLevel: session.thinkingLevel,
+          provider: session.provider as SupportedProvider,
+          providerTransport: resolveEffectiveSessionProviderTransport(
+            session,
+            session.modelId,
+            PROVIDER_FALLBACK_BROKEN_KEYS,
+          ),
+          providerModelInvocationRoutes: session.providerModelInvocationRoutes,
+          contextWindowLimit: getModelContextWindow(session.modelId),
+          abortSignal: abortController.signal,
+          onEvent: handleOpenSpecDelegationEvent,
+          onAuthRefresh: session.configDir
+            ? () => refreshOAuthTokenReactive(session.configDir as string)
+            : undefined,
+          onModelRefresh: session.configDir
+            ? (newToken: string) => createSessionModel({
+                ...session,
+                apiKey: newToken,
+              }, session.modelId)
+            : undefined,
+        });
+        return await executor.run(input);
+      } catch (error) {
+        openSpecDelegationFailure = error instanceof Error
+          ? error
+          : new Error(String(error));
+        throw openSpecDelegationFailure;
+      } finally {
+        openSpecDelegationActive = false;
+      }
+    };
+  }
+
   const memorySessionId = [
     config.taskId,
     session.agentType,
@@ -1837,7 +1947,7 @@ async function runDefaultSession(
   ].join(':');
 
   const tools: Record<string, AITool> = {
-    ...registry.getToolsForAgent(session.agentType, toolContext),
+    ...registry.getToolsForAgent(session.agentType, runtimeToolContext),
     ...(memoryProxy
       ? {
           search_memory: createSearchMemoryTool(memoryProxy, projectId),
@@ -1846,6 +1956,10 @@ async function runDefaultSession(
       : {}),
     ...(mergeMcpTools(mcpClients) as Record<string, AITool>),
   };
+  if (session.openSpecReadOnly) {
+    delete tools.Write;
+    delete tools.Edit;
+  }
 
   const initialMessages = useProviderFallback && isDirectTaskSession(session)
     ? buildDirectSummaryFallbackMessages(session, session.initialMessages)
@@ -1858,9 +1972,13 @@ async function runDefaultSession(
     sessionId: session.sessionId,
     agentType: session.agentType,
     model,
-    systemPrompt: appendLanguageRequirement(session.systemPrompt, session.language),
-    initialMessages: appendLanguageRequirementToMessages(initialMessages, session.language),
-    toolContext,
+    systemPrompt: session.preservePromptBytes
+      ? session.systemPrompt
+      : appendLanguageRequirement(session.systemPrompt, session.language),
+    initialMessages: session.preservePromptBytes
+      ? initialMessages
+      : appendLanguageRequirementToMessages(initialMessages, session.language),
+    toolContext: runtimeToolContext,
     maxSteps: resolvePhaseStepBudget(session, session.phase),
     thinkingLevel: session.thinkingLevel,
     abortSignal: abortController.signal,
@@ -1902,49 +2020,87 @@ async function runDefaultSession(
     if (isDirectTaskSession(session)) {
       directChangedFileBaseline = await collectGitChangedFileSnapshot(session.projectDir);
     }
+    const handleSessionEvent = (event: StreamEvent) => {
+      if (isDirectTaskSession(session) && event.type === 'text-delta') {
+        if (activeDirectAttempt) {
+          activeDirectAttempt.streamedText += event.text;
+        } else {
+          streamedText += event.text;
+        }
+      }
+      if (isDirectTaskSession(session) && event.type === 'tool-call' && shouldTrackDirectModifiedFile(event.toolName)) {
+        const filePath = extractFilePathFromToolArgs(event.args);
+        if (filePath) {
+          directModifiedFiles.add(filePath);
+          activeDirectAttempt?.modifiedFiles.add(filePath);
+        }
+      }
+      // Write stream events to task_logs.jsonl for UI log display
+      if (logWriter) {
+        logWriter.processEvent(event, defaultPhase, session.subtaskId);
+      }
+      postMessage({
+        type: 'stream-event',
+        taskId: config.taskId,
+        data: event,
+        projectId: config.projectId,
+        phase: toTaskLogPhase(defaultPhase),
+        subtaskId: session.subtaskId,
+        sessionNumber: session.sessionNumber,
+        provider: session.provider,
+        modelId: session.modelId,
+      });
+    };
+    const openSpecCliFallbackRegistration =
+      resolveOpenSpecCodexCliFallbackRegistration({
+        agentType: session.agentType,
+        provider: session.provider,
+        initialMessages: session.initialMessages,
+        action: session.openSpecAction,
+        readOnly: session.openSpecReadOnly,
+        allowedPathRoots: runtimeToolContext.allowedPathRoots,
+        trustedRuntimeReadPaths: session.toolContext.trustedRuntimeReadPaths,
+        allowedWritePaths: runtimeToolContext.allowedWritePaths,
+      });
     const runnerOptions = {
       tools,
       memoryContext: memoryProxy ? { proxy: memoryProxy } : undefined,
-      onEvent: (event: StreamEvent) => {
-        if (isDirectTaskSession(session) && event.type === 'text-delta') {
-          if (activeDirectAttempt) {
-            activeDirectAttempt.streamedText += event.text;
-          } else {
-            streamedText += event.text;
-          }
-        }
-        if (isDirectTaskSession(session) && event.type === 'tool-call' && shouldTrackDirectModifiedFile(event.toolName)) {
-          const filePath = extractFilePathFromToolArgs(event.args);
-          if (filePath) {
-            directModifiedFiles.add(filePath);
-            activeDirectAttempt?.modifiedFiles.add(filePath);
-          }
-        }
-        // Write stream events to task_logs.jsonl for UI log display
-        if (logWriter) {
-          logWriter.processEvent(event, defaultPhase, session.subtaskId);
-        }
-        postMessage({
-          type: 'stream-event',
-          taskId: config.taskId,
-          data: event,
-          projectId: config.projectId,
-          phase: toTaskLogPhase(defaultPhase),
-          subtaskId: session.subtaskId,
-          sessionNumber: session.sessionNumber,
-          provider: session.provider,
-          modelId: session.modelId,
-        });
-      },
+      onEvent: handleSessionEvent,
       onAuthRefresh: session.configDir
         ? () => refreshOAuthTokenReactive(session.configDir as string)
         : undefined,
       onModelRefresh: session.configDir
         ? (newToken: string) => createSessionModel({
             ...session,
-            apiKey: newToken,
-          }, session.modelId)
-        : undefined,
+              apiKey: newToken,
+            }, session.modelId)
+          : undefined,
+      ...(openSpecCliFallbackRegistration
+        ? {
+            allowProviderFailureFallbackAfterProgress:
+              openSpecCliFallbackRegistration.allowProviderFailureFallbackAfterProgress,
+            onProviderFailureFallback: ({ sessionError }: { sessionError: SessionError }) =>
+              runOpenSpecCodexCliFallback({
+                action: openSpecCliFallbackRegistration.action,
+                systemPrompt: baseSessionConfig.systemPrompt,
+                userMessage: openSpecCliFallbackRegistration.userMessage,
+                cwd: runtimeToolContext.cwd,
+                modelId: session.modelId,
+                thinkingLevel: session.thinkingLevel,
+                readOnly: openSpecCliFallbackRegistration.readOnly,
+                allowedPathRoots:
+                  openSpecCliFallbackRegistration.allowedPathRoots,
+                trustedRuntimeReadPaths:
+                  openSpecCliFallbackRegistration.trustedRuntimeReadPaths,
+                allowedWritePaths:
+                  openSpecCliFallbackRegistration.allowedWritePaths,
+                commandEnv: runtimeToolContext.commandEnv,
+                abortSignal: abortController.signal,
+                onEvent: handleSessionEvent,
+                previousError: sessionError,
+              }),
+          }
+        : {}),
     };
     const continuationOptions = {
       contextWindowLimit,
@@ -1992,6 +2148,15 @@ async function runDefaultSession(
       logWriter.endPhase(defaultPhase, success ?? false);
       logWriter.setSubtask(undefined);
     }
+  }
+
+  if (openSpecDelegationFailure && result) {
+    // A parent model must not be able to ignore a failed Sync tool result and
+    // report Archive success. Fail the complete Action closed.
+    result = failSessionForOpenSpecDelegation(
+      result,
+      openSpecDelegationFailure,
+    );
   }
 
   if (isDirectTaskSession(session)) {

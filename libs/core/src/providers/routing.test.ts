@@ -58,4 +58,29 @@ describe('provider model invocation routing', () => {
     expect(plan.instance.sdk).toBe('openai');
     expect(plan.invocation.method).toBe('responses');
   });
+
+  it('keeps ChatGPT OAuth on its dedicated Responses transport', () => {
+    const routes = parseAutocodeProviderModelInvocationRoutes({
+      provider: 'openai',
+      method: 'chat',
+    });
+    const plan = buildProviderModelCreationPlan(
+      {
+        provider: SupportedProvider.OpenAI,
+        apiKey: 'codex-oauth-placeholder',
+        baseURL: 'https://custom.example.com/v1',
+        oauthTokenFilePath: 'C:/autocode/codex-auth.json',
+      },
+      'gpt-5.6-sol',
+      { invocationRoutes: routes },
+    );
+
+    expect(plan.instance).toMatchObject({
+      sdk: 'openai',
+      fetchStrategy: 'openai-codex-oauth',
+      oauthTokenFilePath: 'C:/autocode/codex-auth.json',
+    });
+    expect(plan.invocation.method).toBe('responses');
+    expect(plan.invocation.supportsPromptCaching).toBe(false);
+  });
 });

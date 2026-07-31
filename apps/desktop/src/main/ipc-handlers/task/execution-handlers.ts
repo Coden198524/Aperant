@@ -50,6 +50,7 @@ import { cancelFallbackTimer } from '../agent-events-handlers';
 import { readSettingsFile } from '../../settings-utils';
 import type { ProviderAccount } from '../../../shared/types/provider-account';
 import { createDesktopAgentRuntimeAdapter } from '../../agent/core-runtime-adapter';
+import type { OpenSpecService } from '../../openspec/openspec-service';
 
 const TASK_STOP_STARTUP_GRACE_MS = 5000;
 const CHANGE_REQUESTS_LOG_FILE = 'change_requests.jsonl';
@@ -540,6 +541,10 @@ function isDirectWorkflowTask(task: Task): boolean {
 
 function isStandardWorkflowTask(task: Task): boolean {
   return resolveAutocodeTaskDevelopmentMode(task.metadata as CoreTaskModeMetadata, 'standard') === 'standard';
+}
+
+function isOpenSpecWorkflowTask(task: Task): boolean {
+  return resolveAutocodeTaskDevelopmentMode(task.metadata as CoreTaskModeMetadata, 'standard') === 'spec';
 }
 
 function isPlanReviewRequest(task: Task, currentXState?: string | null): boolean {
@@ -1422,7 +1427,8 @@ function patchDirectChangeRequestRuntimePlan(
  */
 export function registerTaskExecutionHandlers(
   agentManager: AgentManager,
-  getMainWindow: () => BrowserWindow | null
+  getMainWindow: () => BrowserWindow | null,
+  openSpecService?: OpenSpecService,
 ): void {
   taskStateManager.configure(getMainWindow);
   const runtimeAdapter = createDesktopAgentRuntimeAdapter(agentManager);
@@ -1601,6 +1607,33 @@ export function registerTaskExecutionHandlers(
 
       console.warn('[TASK_START] Found task:', task.specId, 'status:', task.status, 'reviewReason:', task.reviewReason, 'subtasks:', task.subtasks.length);
 
+      // Spec is an isolated OpenSpec workflow. Route it before any Standard
+      // plan lookup, XState transition, file watcher, or runtime-plan creation.
+      if (isOpenSpecWorkflowTask(task)) {
+        if (!openSpecService) {
+          mainWindow.webContents.send(
+            IPC_CHANNELS.TASK_ERROR,
+            taskId,
+            'OpenSpec service is unavailable.',
+            project.id,
+          );
+          return;
+        }
+        try {
+          await openSpecService.startTask(task, project);
+        } catch (error) {
+          const message = getRuntimeStartErrorMessage(error);
+          console.error('[TASK_START] Failed to start OpenSpec Action:', error);
+          mainWindow.webContents.send(
+            IPC_CHANNELS.TASK_ERROR,
+            taskId,
+            message,
+            project.id,
+          );
+        }
+        return;
+      }
+
       // Check if implementation_plan.md has valid subtasks BEFORE XState handling.
       // This is more reliable than task.subtasks.length which may not be loaded yet.
       const specsBaseDir = getSpecsDir(project.autoBuildPath);
@@ -1730,6 +1763,25 @@ export function registerTaskExecutionHandlers(
    * Stop a task
    */
   ipcMain.on(IPC_CHANNELS.TASK_STOP, (_, taskId: string, projectId?: string) => {
+    const scoped = findTaskAndProject(taskId, projectId);
+    if (scoped.task && scoped.project && isOpenSpecWorkflowTask(scoped.task)) {
+      if (!openSpecService) return;
+      try {
+        openSpecService.stopTask(scoped.task, scoped.project);
+      } catch (error) {
+        const window = getMainWindow();
+        if (window && !window.isDestroyed()) {
+          window.webContents.send(
+            IPC_CHANNELS.TASK_ERROR,
+            taskId,
+            error instanceof Error ? error.message : String(error),
+            scoped.project.id,
+          );
+        }
+      }
+      return;
+    }
+
     const runtimeMs = typeof agentManager.getTaskRuntimeMs === 'function'
       ? agentManager.getTaskRuntimeMs(taskId, projectId)
       : null;
@@ -1792,6 +1844,51 @@ export function registerTaskExecutionHandlers(
 
       if (!task || !project) {
         return { success: false, error: 'Task not found' };
+      }
+
+      // Spec feedback never enters Standard QA or the Iteration Protocol.
+      // Approval is a strict OpenSpec validation; requested changes run the
+      // official Update Action with feedback as the user message.
+      if (isOpenSpecWorkflowTask(task)) {
+        if (!openSpecService) {
+          return { success: false, error: 'OpenSpec service is unavailable.' };
+        }
+        try {
+          if (approved) {
+            const validation = await openSpecService.validate(task, project, {
+              taskId: task.id,
+              projectId: project.id,
+              changeName: task.metadata?.openSpec?.changeName,
+              strict: true,
+            });
+            return validation.valid
+              ? { success: true, data: validation }
+              : {
+                  success: false,
+                  data: validation,
+                  error: 'OpenSpec validation failed. Resolve the reported issues before approval.',
+                };
+          }
+          if (!feedback?.trim() && (!images || images.length === 0)) {
+            return { success: false, error: 'Feedback is required to update an OpenSpec change.' };
+          }
+          const attachmentNote = images?.length
+            ? `\n\nThe user attached ${images.length} image(s). Inspect the task attachments if relevant.`
+            : '';
+          const result = await openSpecService.runAction(task, project, {
+            taskId: task.id,
+            projectId: project.id,
+            action: 'update',
+            changeName: task.metadata?.openSpec?.changeName,
+            arguments: `${feedback?.trim() ?? ''}${attachmentNote}`.trim(),
+          });
+          return { success: true, data: result };
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
       }
 
       // Check if dev mode is enabled for this project
@@ -2682,6 +2779,76 @@ export function registerTaskExecutionHandlers(
 
       if (!task || !project) {
         return { success: false, error: 'Task not found' };
+      }
+
+      // Spec recovery is owned exclusively by OpenSpec. It must be routed
+      // before reading or mutating any Standard implementation_plan artifact.
+      if (isOpenSpecWorkflowTask(task)) {
+        if (!autoRestart) {
+          return {
+            success: false,
+            error: 'Spec tasks must be recovered through the OpenSpec workflow. Enable automatic restart to resume the current OpenSpec action.',
+            data: {
+              taskId,
+              recovered: false,
+              newStatus: task.status,
+              message: 'OpenSpec recovery requires automatic restart.',
+              autoRestarted: false,
+            },
+          };
+        }
+
+        if (!openSpecService) {
+          return {
+            success: false,
+            error: 'Cannot restart Spec task: OpenSpec service is unavailable.',
+          };
+        }
+
+        const gitStatusForRestart = checkGitStatus(project.path);
+        if (!gitStatusForRestart.isGitRepo || !gitStatusForRestart.hasCommits) {
+          return {
+            success: false,
+            error: `Cannot restart Spec task: ${gitStatusForRestart.error || 'Git repository with commits required.'}`,
+          };
+        }
+
+        const initResult = await ensureProfileManagerInitialized();
+        if (!initResult.success) {
+          return {
+            success: false,
+            error: `Cannot restart Spec task: ${initResult.error}`,
+          };
+        }
+        if (!initResult.profileManager.hasValidAuth() && !hasAnyProviderAccount()) {
+          return {
+            success: false,
+            error: 'Cannot restart Spec task: authentication required. Please add an account in Settings > Accounts.',
+          };
+        }
+
+        try {
+          cancelFallbackTimer(taskId, project.id);
+          taskStateManager.prepareForRestart(taskId, project.id);
+          await openSpecService.startTask(task, project);
+          return {
+            success: true,
+            data: {
+              taskId,
+              recovered: true,
+              newStatus: 'in_progress',
+              message: 'Spec task recovered and restarted through OpenSpec successfully',
+              autoRestarted: true,
+            },
+          };
+        } catch (error) {
+          const message = getRuntimeStartErrorMessage(error);
+          console.error('[TASK_RECOVER_STUCK] Failed to restart OpenSpec Action:', error);
+          return {
+            success: false,
+            error: `Failed to restart Spec task through OpenSpec: ${message}`,
+          };
+        }
       }
 
       // Get the spec directory - use task.specsPath if available (handles worktree vs main)

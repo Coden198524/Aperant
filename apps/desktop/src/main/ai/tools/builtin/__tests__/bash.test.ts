@@ -21,11 +21,20 @@ vi.mock('node:child_process', () => ({
 
 const mockIsWindows = vi.fn(() => false);
 const mockFindExecutable = vi.fn<() => string | null>(() => null);
+const mockGetShellConfig = vi.fn(() => ({
+  executable: 'C:\\Program Files\\Git\\bin\\bash.exe',
+  args: ['--login'],
+  env: {},
+}));
 const mockKillProcessGracefully = vi.fn();
 
 vi.mock('../../../../platform/index', () => ({
+  ShellType: {
+    Bash: 'bash',
+  },
   isWindows: () => mockIsWindows(),
   findExecutable: (_name: string, _additionalPaths?: string[]) => mockFindExecutable(),
+  getShellConfig: (_preferredShell?: string) => mockGetShellConfig(),
   killProcessGracefully: (_childProcess: unknown, _options?: unknown) => mockKillProcessGracefully(),
 }));
 
@@ -73,6 +82,12 @@ describe('Bash Tool', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsWindows.mockReturnValue(false);
+    mockFindExecutable.mockReturnValue(null);
+    mockGetShellConfig.mockReturnValue({
+      executable: 'C:\\Program Files\\Git\\bin\\bash.exe',
+      args: ['--login'],
+      env: {},
+    });
     mockBashSecurityHook.mockReturnValue({});
   });
 
@@ -390,16 +405,39 @@ describe('Bash Tool', () => {
     );
   });
 
-  it('should use cmd.exe args (/c) on Windows when bash not found', async () => {
-    // The Windows branch uses /c rather than -c for cmd.exe.
-    // We verify the logic by checking that bash uses -c on non-Windows (already tested
-    // above) and that the findExecutable mock would select the right executable.
-    // This test validates the cmd.exe ComSpec fallback resolution path.
+  it('should use configured Git Bash instead of the Windows WSL launcher', async () => {
     mockIsWindows.mockReturnValue(true);
-    mockFindExecutable.mockReturnValue(null);
+    mockFindExecutable.mockReturnValue('C:\\Windows\\System32\\bash.exe');
+    setupExecFile('{"state":"ready"}', '', 0);
 
-    const origComSpec = process.env.ComSpec;
-    process.env.ComSpec = 'C:\\Windows\\System32\\cmd.exe';
+    await bashTool.config.execute(
+      {
+        command:
+          'openspec status --change "define-browser-match-three-product-scope" --json',
+      },
+      baseContext,
+    );
+
+    expect(mockFindExecutable).not.toHaveBeenCalled();
+    expect(mockGetShellConfig).toHaveBeenCalled();
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'C:\\Program Files\\Git\\bin\\bash.exe',
+      [
+        '-c',
+        'openspec status --change "define-browser-match-three-product-scope" --json',
+      ],
+      expect.any(Object),
+      expect.any(Function),
+    );
+  });
+
+  it('should use cmd.exe args (/c) on Windows when bash not found', async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockGetShellConfig.mockReturnValue({
+      executable: 'C:\\Windows\\System32\\cmd.exe',
+      args: [],
+      env: {},
+    });
 
     setupExecFile('output', '', 0);
 
@@ -417,7 +455,5 @@ describe('Bash Tool', () => {
     expect(shell).toBe('C:\\Windows\\System32\\cmd.exe');
     expect(args[0]).toBe('/c');
     expect(args[1]).toBe('dir');
-
-    process.env.ComSpec = origComSpec;
   });
 });

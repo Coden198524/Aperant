@@ -34,6 +34,7 @@ export function isAutocodeOpenAIResponsesTransport(
   if (modelProviderId) {
     const normalizedProviderId = modelProviderId.toLowerCase();
     const isResponsesProvider = normalizedProviderId === 'openai.responses' ||
+      normalizedProviderId === 'openai.codex-oauth.responses' ||
       normalizedProviderId === 'openai-responses' ||
       normalizedProviderId === 'responses';
     if (isResponsesProvider) return true;

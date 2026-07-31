@@ -15,6 +15,7 @@ const { spawn } = require('child_process');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
+const { prepareOpenSpecSchemas } = require('./prepare-openspec-schemas.cjs');
 
 const isWindows = os.platform() === 'win32';
 
@@ -133,6 +134,11 @@ function isNodePtyBuilt() {
  * Main postinstall logic
  */
 async function main() {
+  const schemaResult = prepareOpenSpecSchemas();
+  console.log(
+    `[postinstall] ${schemaResult.changed ? 'Injected' : 'Verified'} ` +
+      'the bundled OpenSpec ADR Schema.',
+  );
   console.log('[postinstall] Setting up native modules for Electron...\n');
 
   // If node-pty is already built (e.g., from a previous successful install), skip

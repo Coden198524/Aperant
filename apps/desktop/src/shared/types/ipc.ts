@@ -29,6 +29,28 @@ import type {
 } from './project';
 import type { ScreenshotSource } from './screenshot';
 import type {
+  AnswerOpenSpecInteractionInput,
+  ConfirmOpenSpecActionInput,
+  GetOpenSpecArtifactDiffInput,
+  OpenSpecActionHistory,
+  OpenSpecArtifactContent,
+  OpenSpecArtifactDiff,
+  OpenSpecBoardSnapshot,
+  OpenSpecChangeSummary,
+  OpenSpecPlanningReview,
+  OpenSpecPlanningReviewInput,
+  OpenSpecPlanningReviewSummary,
+  OpenSpecPreflightInput,
+  OpenSpecPreflightResult,
+  OpenSpecRendererEvent,
+  OpenSpecRunLog,
+  OpenSpecValidationSummary,
+  ReadOpenSpecArtifactInput,
+  ResumeOpenSpecActionInput,
+  RunOpenSpecActionInput,
+  ValidateOpenSpecInput,
+} from './openspec';
+import type {
   Task,
   TaskStatus,
   TaskStartOptions,
@@ -306,6 +328,44 @@ export interface ElectronAPI {
   onTaskStatusChange: (callback: (taskId: string, status: TaskStatus, projectId?: string, reviewReason?: ReviewReason) => void) => () => void;
   onTaskExecutionProgress: (callback: (taskId: string, progress: ExecutionProgress, projectId?: string) => void) => () => void;
   onTaskTokenUsage: (callback: (taskId: string, usage: TokenUsage, projectId?: string) => void) => () => void;
+
+  // OpenSpec-backed Spec workflow
+  getOpenSpecSnapshot: (taskId: string, projectId?: string) => Promise<OpenSpecBoardSnapshot>;
+  selectOpenSpecChange: (
+    taskId: string,
+    changeName: string,
+    projectId?: string,
+  ) => Promise<OpenSpecBoardSnapshot>;
+  runOpenSpecAction: (input: RunOpenSpecActionInput) => Promise<{ runId: string }>;
+  confirmOpenSpecAction: (input: ConfirmOpenSpecActionInput) => Promise<{ runId: string }>;
+  cancelOpenSpecAction: (taskId: string, runId: string, projectId?: string) => Promise<void>;
+  answerOpenSpecInteraction: (input: AnswerOpenSpecInteractionInput) => Promise<void>;
+  readOpenSpecArtifact: (input: ReadOpenSpecArtifactInput) => Promise<OpenSpecArtifactContent>;
+  getOpenSpecArtifactDiff: (input: GetOpenSpecArtifactDiffInput) => Promise<OpenSpecArtifactDiff>;
+  validateOpenSpec: (input: ValidateOpenSpecInput) => Promise<OpenSpecValidationSummary>;
+  listOpenSpecChanges: (taskId: string, projectId?: string) => Promise<OpenSpecChangeSummary[]>;
+  preflightOpenSpec: (input: OpenSpecPreflightInput) => Promise<OpenSpecPreflightResult>;
+  getOpenSpecHistory: (taskId: string, projectId?: string) => Promise<OpenSpecActionHistory>;
+  readOpenSpecRunLog: (
+    taskId: string,
+    runId: string,
+    projectId?: string,
+  ) => Promise<OpenSpecRunLog>;
+  resumeOpenSpecAction: (input: ResumeOpenSpecActionInput) => Promise<{ runId: string }>;
+  getOpenSpecPlanningReview: (
+    input: OpenSpecPlanningReviewInput,
+  ) => Promise<OpenSpecPlanningReview>;
+  acknowledgeOpenSpecPlanningReview: (
+    input: OpenSpecPlanningReviewInput,
+  ) => Promise<OpenSpecPlanningReviewSummary | null>;
+  retryOpenSpecPlanningReview: (
+    input: OpenSpecPlanningReviewInput,
+  ) => Promise<OpenSpecPlanningReview>;
+  onOpenSpecEvent: (
+    taskId: string,
+    callback: (event: OpenSpecRendererEvent) => void,
+    projectId?: string,
+  ) => () => void;
 
   // Terminal operations
   createTerminal: (options: TerminalCreateOptions) => Promise<IPCResult>;

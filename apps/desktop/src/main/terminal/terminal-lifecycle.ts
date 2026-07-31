@@ -377,14 +377,9 @@ export async function destroyTerminal(
 }
 
 /**
- * Global timeout for destroyAllTerminals to prevent shutdown from hanging (ms).
- */
-const DESTROY_ALL_TIMEOUT = 3000;
-
-/**
  * Kill all terminal processes.
  * Sets the shutdown flag first to prevent PTY handlers from accessing destroyed
- * resources, then waits for all PTY processes to exit (with a global timeout).
+ * resources, then waits for all PTY processes to exit.
  *
  * This is the core fix for GitHub issue #1469: by setting the shutdown flag and
  * awaiting PTY exit before returning, we ensure pty.node's native callbacks
@@ -416,12 +411,10 @@ export async function destroyAllTerminals(
     );
   });
 
-  // Wait for all PTY processes to exit, but cap with a global timeout
-  // so shutdown never hangs indefinitely
-  await Promise.race([
-    Promise.all(killPromises),
-    new Promise<void>((resolve) => setTimeout(resolve, DESTROY_ALL_TIMEOUT))
-  ]);
+  // Await the native lifecycle tracked by killPty(..., true). In particular,
+  // the legacy Windows path does not report a wall-clock timeout as successful
+  // cleanup while node-pty can still call into Electron.
+  await Promise.all(killPromises);
 
   terminals.clear();
 

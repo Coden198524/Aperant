@@ -86,7 +86,104 @@ const pdfPagesSchema = z
   .regex(/^\d+(?:-\d+)?$/, 'Pages must be a single page or an inclusive range such as 1-5')
   .refine(isValidPdfPageRange, 'Pages must be positive, ordered, and contain at most 20 pages');
 
-const inputSchema = z.object({
+const READ_OPTIONAL_INPUT_KEYS = [
+  'offset',
+  'limit',
+  'byte_offset',
+  'byte_limit',
+  'pages',
+] as const;
+
+function isValidOptionalInteger(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): boolean {
+  return value === undefined ||
+    (typeof value === 'number' &&
+      Number.isSafeInteger(value) &&
+      value >= minimum &&
+      value <= maximum);
+}
+
+function hasValidReadModeValues(input: Record<string, unknown>): boolean {
+  return isValidOptionalInteger(input.offset, 0, MAX_READ_OFFSET) &&
+    isValidOptionalInteger(input.limit, 1, MAX_EXPLICIT_READ_LINE_LIMIT) &&
+    isValidOptionalInteger(input.byte_offset, 0, MAX_READ_BYTE_OFFSET) &&
+    isValidOptionalInteger(input.byte_limit, 1, MAX_READ_BYTE_RANGE_BYTES) &&
+    (input.pages === undefined || pdfPagesSchema.safeParse(input.pages).success);
+}
+
+/**
+ * Some OpenAI-compatible providers populate every optional Read property,
+ * which combines line, byte, and PDF modes into one otherwise-invalid call.
+ * Normalize only unambiguous/default collisions before Zod validation; invalid
+ * types, ranges, and genuinely conflicting non-zero offsets still fail.
+ */
+function normalizeReadInput(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const input = { ...(value as Record<string, unknown>) };
+  for (const key of READ_OPTIONAL_INPUT_KEYS) {
+    if (input[key] === null) {
+      delete input[key];
+    }
+  }
+
+  if (typeof input.file_path !== 'string' || !hasValidReadModeValues(input)) {
+    return input;
+  }
+
+  if (isPdfFile(input.file_path)) {
+    delete input.offset;
+    delete input.limit;
+    delete input.byte_offset;
+    delete input.byte_limit;
+    return input;
+  }
+
+  if (isImageFile(input.file_path)) {
+    for (const key of READ_OPTIONAL_INPUT_KEYS) {
+      delete input[key];
+    }
+    return input;
+  }
+
+  // Page ranges have no meaning for text files and are commonly emitted as
+  // the default "1" alongside every other optional field.
+  delete input.pages;
+
+  const hasLineMode = input.offset !== undefined || input.limit !== undefined;
+  const hasByteMode = input.byte_offset !== undefined || input.byte_limit !== undefined;
+  if (!hasLineMode || !hasByteMode) {
+    return input;
+  }
+
+  const lineOffset = typeof input.offset === 'number' ? input.offset : 0;
+  const byteOffset = typeof input.byte_offset === 'number' ? input.byte_offset : 0;
+
+  // Two non-zero starting positions express genuinely different ranges. Keep
+  // the call invalid so the model must choose instead of silently changing it.
+  if (lineOffset > 0 && byteOffset > 0) {
+    return input;
+  }
+
+  if (byteOffset > 0) {
+    delete input.offset;
+    delete input.limit;
+  } else {
+    // At the start of a text file, ordinary line mode is the least surprising
+    // interpretation and handles the provider "all optionals filled" pattern.
+    delete input.byte_offset;
+    delete input.byte_limit;
+  }
+
+  return input;
+}
+
+const validatedInputSchema = z.object({
   file_path: z.string().describe('The absolute path to the file to read'),
   offset: z
     .number()
@@ -94,31 +191,31 @@ const inputSchema = z.object({
     .nonnegative()
     .max(MAX_READ_OFFSET)
     .optional()
-    .describe('The zero-based line offset to start reading from. Only provide if the file is too large to read at once'),
+    .describe('Line mode only: zero-based line offset. Never combine with byte_offset, byte_limit, or pages'),
   limit: z
     .number()
     .int()
     .positive()
     .max(MAX_EXPLICIT_READ_LINE_LIMIT)
     .optional()
-    .describe(`The number of lines to read (maximum ${MAX_EXPLICIT_READ_LINE_LIMIT}). Only provide if the file is too large to read at once.`),
+    .describe(`Line mode only: number of lines to read (maximum ${MAX_EXPLICIT_READ_LINE_LIMIT}). Never combine with byte_offset, byte_limit, or pages.`),
   byte_offset: z
     .number()
     .int()
     .nonnegative()
     .max(MAX_READ_BYTE_OFFSET)
     .optional()
-    .describe('Absolute byte offset for direct bounded access to a deep region of a very large text file. Use the next byte_offset returned by Read for continuation.'),
+    .describe('Byte mode only: absolute byte offset for a large text file. Never combine with offset, limit, or pages. Use the next byte_offset returned by Read for continuation.'),
   byte_limit: z
     .number()
     .int()
     .positive()
     .max(MAX_READ_BYTE_RANGE_BYTES)
     .optional()
-    .describe(`Number of bytes to read with byte_offset (maximum ${MAX_READ_BYTE_RANGE_BYTES}).`),
+    .describe(`Byte mode only: number of bytes to read with byte_offset (maximum ${MAX_READ_BYTE_RANGE_BYTES}). Never combine with offset, limit, or pages.`),
   pages: pdfPagesSchema
     .optional()
-    .describe('Optional PDF page-range metadata (e.g., 1-5, 3, 10-20). Validates at most 20 pages; this tool does not extract PDF page text.'),
+    .describe('PDF mode only: optional page-range metadata (e.g., 1-5, 3, 10-20). Never combine with line or byte ranges; this tool does not extract PDF page text.'),
 }).superRefine((value, context) => {
   if (value.byte_limit !== undefined && value.byte_offset === undefined) {
     context.addIssue({
@@ -138,6 +235,8 @@ const inputSchema = z.object({
     });
   }
 });
+
+const inputSchema = z.preprocess(normalizeReadInput, validatedInputSchema);
 
 interface PartialTextReadResult {
   lines: string[];

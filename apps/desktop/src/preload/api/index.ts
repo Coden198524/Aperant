@@ -16,6 +16,7 @@ import { ProfileAPI, createProfileAPI } from './profile-api';
 import { ScreenshotAPI, createScreenshotAPI } from './screenshot-api';
 import { QueueAPI, createQueueAPI } from './queue-api';
 import { WorkflowOptimizationAPI, createWorkflowOptimizationAPI } from './workflow-optimization-api';
+import { OpenSpecRendererAPI, createOpenSpecAPI } from './openspec-api';
 
 export interface ElectronAPI extends
   ProjectAPI,
@@ -33,6 +34,7 @@ export interface ElectronAPI extends
   McpAPI,
   ProfileAPI,
   ScreenshotAPI,
+  OpenSpecRendererAPI,
   WorkflowOptimizationAPI {
   github: GitHubAPI;
   /** Queue routing API for rate limit recovery */
@@ -52,6 +54,7 @@ export const createElectronAPI = (): ElectronAPI => ({
   ...createMcpAPI(),
   ...createProfileAPI(),
   ...createScreenshotAPI(),
+  ...createOpenSpecAPI(),
   ...createWorkflowOptimizationAPI(),
   github: createGitHubAPI(),
   queue: createQueueAPI()  // Queue routing for rate limit recovery
@@ -73,6 +76,7 @@ export {
   createClaudeCodeAPI,
   createMcpAPI,
   createScreenshotAPI,
+  createOpenSpecAPI,
   createQueueAPI,
   createWorkflowOptimizationAPI
 };
@@ -94,6 +98,7 @@ export type {
   ClaudeCodeAPI,
   McpAPI,
   ScreenshotAPI,
+  OpenSpecRendererAPI,
   QueueAPI,
   WorkflowOptimizationAPI
 };

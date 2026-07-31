@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import type {
 	ToolUsageLimits,
@@ -20,6 +20,7 @@ export const DEFAULT_MAX_DUPLICATE_READ_ONLY_CALLS = 3;
  * `'},` etc. at the end of a path.
  */
 const TRAILING_JSON_ARTIFACT_RE = /['"}\],{]+$/;
+const WINDOWS_MSYS_DRIVE_PATH_RE = /^\/([A-Za-z])(?:\/(.*))?$/;
 const PATH_SIGNATURE_KEYS = new Set(["file_path", "path", "cwd"]);
 const URL_SIGNATURE_KEYS = new Set(["url"]);
 const QUERY_SIGNATURE_KEYS = new Set(["query"]);
@@ -37,13 +38,23 @@ const DOMAIN_LIST_SIGNATURE_KEYS = new Set([
  *
  * Mutates the input object in place for compatibility with AI SDK tool calls.
  */
-export function sanitizeFilePathArg(input: Record<string, unknown>): void {
+export function sanitizeFilePathArg(
+	input: Record<string, unknown>,
+	platform: NodeJS.Platform = process.platform,
+): void {
 	const filePath = input.file_path;
 	if (typeof filePath !== "string") return;
 
 	let cleaned = filePath;
 	cleaned = cleaned.replace(TRAILING_JSON_ARTIFACT_RE, "");
 	cleaned = cleaned.replace(/\\/g, "/");
+	if (platform === "win32") {
+		const msysDrivePath = WINDOWS_MSYS_DRIVE_PATH_RE.exec(cleaned);
+		if (msysDrivePath) {
+			const [, drive, rest = ""] = msysDrivePath;
+			cleaned = `${drive.toUpperCase()}:/${rest}`;
+		}
+	}
 
 	if (cleaned !== filePath) {
 		input.file_path = cleaned;
@@ -286,9 +297,13 @@ export function getToolWritePathDenial(
 		if (typeof writePath !== "string" || !writePath) continue;
 
 		const resolved = resolve(writePath);
-		const allowed = allowedWritePaths.some((dir) =>
-			resolved.startsWith(resolve(dir)),
-		);
+		const allowed = allowedWritePaths.some((dir) => {
+			const rel = relative(resolve(dir), resolved);
+			return (
+				rel === "" ||
+				(rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+			);
+		});
 		if (!allowed) {
 			return `Write denied: ${toolName} cannot write to ${writePath}. Allowed directories: ${allowedWritePaths.join(", ")}`;
 		}

@@ -24,6 +24,7 @@ import {
   isAutocodeTaskDevelopmentModeValue,
   normalizeAutocodeTaskDevelopmentModeValue,
   resolveAutocodeTaskDevelopmentModeValue,
+  type AutocodeTaskDevelopmentModeValue,
 } from './task-development-mode.js';
 export type { AutocodeTaskRequirements } from './requirements-store.js';
 
@@ -54,7 +55,7 @@ export type AutocodeTaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 
 export type AutocodeTaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type AutocodeTaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type AutocodeTaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
-export type AutocodeTaskDevelopmentMode = 'direct' | 'standard';
+export type AutocodeTaskDevelopmentMode = AutocodeTaskDevelopmentModeValue;
 export type AutocodeTaskDevelopmentModeMetadata = AutocodeTaskDevelopmentMode;
 export type AutocodeSubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 export type AutocodeExecutionPhase =
@@ -72,6 +73,11 @@ export type AutocodeExecutionPhase =
 export interface AutocodeTaskMetadata {
   sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs';
   taskTitle?: string;
+  /** Runtime-only task description for Spec tasks that do not use Autocode requirements.md. */
+  taskDescription?: string;
+  /** Runtime-only timestamps for Spec tasks that do not use an Autocode implementation plan. */
+  taskCreatedAt?: string;
+  taskUpdatedAt?: string;
   developmentMode?: AutocodeTaskDevelopmentModeMetadata;
   category?: AutocodeTaskCategory;
   complexity?: AutocodeTaskComplexity;
@@ -212,6 +218,15 @@ interface ImplementationPlanFile {
   source_task?: Record<string, unknown>;
 }
 
+interface OpenSpecRuntimeFile {
+  formatVersion?: number;
+  taskStatus?: AutocodeTaskStatus;
+  reviewReason?: AutocodeReviewReason;
+  executionPhase?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 interface RawPlanSubtask {
   id?: unknown;
   title?: unknown;
@@ -335,19 +350,35 @@ export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask
   metadata = withResolvedRuntimeConcurrency({
     ...metadata,
     taskTitle: title,
+    ...(resolveAutocodeTaskDevelopmentMode(metadata) === 'spec'
+      ? {
+          taskDescription: description,
+          taskCreatedAt: now,
+          taskUpdatedAt: now,
+        }
+      : {}),
   });
 
-  const plan = buildInitialAutocodeTaskPlan(title, description, metadata, now);
-
-  saveAutocodeImplementationPlanSync(specDir, plan as MutableAutocodePlan);
   writeJson(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata), metadata);
-  saveAutocodeTaskRequirementsSync(
-    specDir,
-    buildAutocodeTaskRequirements(description, metadata, {
-      ...input.requirements,
-      ...prepared?.requirements,
-    }),
-  );
+  if (resolveAutocodeTaskDevelopmentMode(metadata) === 'spec') {
+    writeJson(join(specDir, AUTOCODE_TASK_ARTIFACTS.openSpecRuntime), {
+      formatVersion: 1,
+      taskStatus: 'backlog',
+      executionPhase: 'idle',
+      createdAt: now,
+      updatedAt: now,
+    } satisfies OpenSpecRuntimeFile);
+  } else {
+    const plan = buildInitialAutocodeTaskPlan(title, description, metadata, now);
+    saveAutocodeImplementationPlanSync(specDir, plan as MutableAutocodePlan);
+    saveAutocodeTaskRequirementsSync(
+      specDir,
+      buildAutocodeTaskRequirements(description, metadata, {
+        ...input.requirements,
+        ...prepared?.requirements,
+      }),
+    );
+  }
 
   return {
     id: specId,
@@ -432,6 +463,22 @@ export function buildAutocodeTaskModeMetadata(
     };
   }
 
+  if (developmentMode === 'spec') {
+    return {
+      ...metadata,
+      sourceType: 'manual',
+      developmentMode: 'spec',
+      // Retain the legacy workflow field for old consumers, but never use it
+      // to route Spec into Aperant's Standard orchestration.
+      workflowMode: 'balanced',
+      runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency({
+        ...metadata,
+        developmentMode: 'spec',
+        workflowMode: 'balanced',
+      }),
+    };
+  }
+
   return {
     ...metadata,
     sourceType: 'manual',
@@ -460,6 +507,28 @@ export function updateAutocodeTaskPlanStatus(input: UpdateAutocodeTaskPlanStatus
     dataDirName: input.dataDirName,
     specId: task.specId,
   });
+  if (resolveAutocodeTaskDevelopmentMode(task.metadata) === 'spec') {
+    const runtimePath = join(specDir, AUTOCODE_TASK_ARTIFACTS.openSpecRuntime);
+    const currentRuntime = readJson<OpenSpecRuntimeFile>(runtimePath) ?? {};
+    const now = new Date().toISOString();
+    const { status } = mapPlanStatus(input.planStatus, input.reviewReason);
+    writeJson(runtimePath, {
+      ...currentRuntime,
+      formatVersion: 1,
+      taskStatus: status,
+      ...(input.reviewReason ? { reviewReason: input.reviewReason } : {}),
+      ...(!input.reviewReason && status !== 'human_review' ? { reviewReason: undefined } : {}),
+      ...(input.executionPhase ? { executionPhase: input.executionPhase } : {}),
+      createdAt: currentRuntime.createdAt ?? task.createdAt ?? now,
+      updatedAt: now,
+    });
+    return readAutocodeTask({
+      projectRoot: input.projectRoot,
+      dataDirName: input.dataDirName,
+      specId: task.specId,
+    }) ?? task;
+  }
+
   const plan = loadAutocodeImplementationPlanSync(specDir) as ImplementationPlanFile | null ??
     buildInitialAutocodeTaskPlan(task.title, task.description, task.metadata, task.createdAt);
   const now = new Date().toISOString();
@@ -516,6 +585,9 @@ function readAutocodeTask(input: AutocodeTaskPathsInput & { specId: string }): A
   const requirements = loadAutocodeTaskRequirementsSync(specDir);
   const storedMetadata = readJson<AutocodeTaskMetadata>(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata)) ?? undefined;
   const metadata = storedMetadata ? withResolvedRuntimeConcurrency(storedMetadata) : undefined;
+  const openSpecRuntime = metadata?.developmentMode === 'spec'
+    ? readJson<OpenSpecRuntimeFile>(join(specDir, AUTOCODE_TASK_ARTIFACTS.openSpecRuntime))
+    : null;
   const specTitle = readSpecTitle(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile));
 
   if (!plan && !requirements && !storedMetadata && !specTitle) {
@@ -523,11 +595,31 @@ function readAutocodeTask(input: AutocodeTaskPathsInput & { specId: string }): A
   }
 
   const title = stringFrom(metadata?.taskTitle, specTitle, plan?.feature, plan?.title, input.specId);
-  const description = stringFrom(requirements?.task_description, plan?.description, '');
-  const { status, reviewReason } = mapPlanStatus(plan?.status, plan?.reviewReason);
-  const createdAt = stringFrom(plan?.created_at, new Date(0).toISOString());
-  const updatedAt = stringFrom(plan?.updated_at, createdAt);
-  const executionPhase = optionalStringFrom(plan?.executionPhase);
+  const description = stringFrom(
+    metadata?.taskDescription,
+    requirements?.task_description,
+    plan?.description,
+    '',
+  );
+  const mappedPlanState = mapPlanStatus(plan?.status, plan?.reviewReason);
+  const status = openSpecRuntime?.taskStatus ?? mappedPlanState.status;
+  const reviewReason = openSpecRuntime?.reviewReason ?? mappedPlanState.reviewReason;
+  const createdAt = stringFrom(
+    openSpecRuntime?.createdAt,
+    metadata?.taskCreatedAt,
+    plan?.created_at,
+    new Date(0).toISOString(),
+  );
+  const updatedAt = stringFrom(
+    openSpecRuntime?.updatedAt,
+    metadata?.taskUpdatedAt,
+    plan?.updated_at,
+    createdAt,
+  );
+  const executionPhase = optionalStringFrom(
+    openSpecRuntime?.executionPhase,
+    plan?.executionPhase,
+  );
 
   return {
     id: input.specId,

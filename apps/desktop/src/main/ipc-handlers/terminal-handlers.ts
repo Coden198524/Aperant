@@ -14,6 +14,7 @@ import { debugLog, } from '../../shared/utils/debug-logger';
 import { migrateSession } from '../claude-profile/session-utils';
 import { createProfileDirectory } from '../claude-profile/profile-utils';
 import { isValidConfigDir } from '../utils/config-path-validator';
+import { getCodexNativeHistory } from '../terminal/codex-native-history';
 import { deepSeekSessionsToNativeHistory } from '../terminal/deepseek-history';
 
 function formatCliSessionTitle(text: unknown, fallback: string): string {
@@ -51,188 +52,6 @@ function readJsonLines(filePath: string): unknown[] {
       }
     })
     .filter((entry): entry is unknown => entry !== null);
-}
-
-function walkJsonlFiles(rootDir: string): string[] {
-  if (!fs.existsSync(rootDir)) {
-    return [];
-  }
-
-  const files: string[] = [];
-  const stack = [rootDir];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) {
-      continue;
-    }
-
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const entryPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(entryPath);
-      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-        files.push(entryPath);
-      }
-    }
-  }
-
-  return files;
-}
-
-function getCodexSessionIdFromPath(filePath: string): string | undefined {
-  const fileName = path.basename(filePath);
-  const match = fileName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i);
-  return match?.[1];
-}
-
-function isPathInProject(sessionPath: string | undefined, projectPath: string | undefined): boolean {
-  if (!projectPath) {
-    return true;
-  }
-  if (!sessionPath) {
-    return false;
-  }
-
-  const normalizedSessionPath = path.resolve(sessionPath).toLowerCase();
-  const normalizedProjectPath = path.resolve(projectPath).toLowerCase();
-  return normalizedSessionPath === normalizedProjectPath
-    || normalizedSessionPath.startsWith(`${normalizedProjectPath}${path.sep}`);
-}
-
-function extractCodexUserText(entry: unknown): string | undefined {
-  const payload = (entry as { payload?: unknown } | undefined)?.payload;
-  const payloadRecord = payload as { type?: unknown; role?: unknown; content?: unknown } | undefined;
-
-  if (payloadRecord?.type === 'message' && payloadRecord.role === 'user') {
-    const content = payloadRecord.content;
-    if (typeof content === 'string') {
-      return content;
-    }
-    if (Array.isArray(content)) {
-      const textPart = content.find((part) => part && typeof part === 'object' && (part as { type?: unknown }).type === 'input_text');
-      const text = (textPart as { text?: unknown } | undefined)?.text;
-      return typeof text === 'string' ? text : undefined;
-    }
-  }
-
-  const legacyText = (entry as { text?: unknown } | undefined)?.text;
-  return typeof legacyText === 'string' ? legacyText : undefined;
-}
-
-function getCodexNativeHistory(projectPath?: string): NativeCliSession[] {
-  const codexRoot = path.join(os.homedir(), '.codex');
-  const historyPath = path.join(codexRoot, 'history.jsonl');
-  const sessionIndexPath = path.join(codexRoot, 'session_index.jsonl');
-  const sessionsRoot = path.join(codexRoot, 'sessions');
-  const bySession = new Map<string, NativeCliSession & { firstText?: string; lastText?: string }>();
-
-  const upsertSession = (
-    id: string,
-    updates: Partial<NativeCliSession> & { firstText?: string; lastText?: string }
-  ) => {
-    const existing = bySession.get(id);
-    if (!existing) {
-      bySession.set(id, {
-        id,
-        cli: 'codex',
-        title: updates.title || formatCliSessionTitle(updates.firstText || updates.lastText, 'Codex session'),
-        createdAt: updates.createdAt,
-        updatedAt: updates.updatedAt || new Date().toISOString(),
-        projectPath: updates.projectPath,
-        sourcePath: updates.sourcePath,
-        firstText: updates.firstText,
-        lastText: updates.lastText,
-      });
-      return;
-    }
-
-    const incomingUpdatedAt = updates.updatedAt ? new Date(updates.updatedAt).getTime() : 0;
-    const existingUpdatedAt = new Date(existing.updatedAt).getTime();
-    if (incomingUpdatedAt >= existingUpdatedAt) {
-      existing.updatedAt = updates.updatedAt || existing.updatedAt;
-      existing.lastText = updates.lastText || existing.lastText;
-      existing.sourcePath = updates.sourcePath || existing.sourcePath;
-    }
-
-    existing.createdAt = existing.createdAt || updates.createdAt;
-    existing.projectPath = existing.projectPath || updates.projectPath;
-    existing.firstText = existing.firstText || updates.firstText;
-    existing.title = updates.title || formatCliSessionTitle(existing.firstText || existing.lastText, existing.title || 'Codex session');
-  };
-
-  for (const entry of readJsonLines(sessionIndexPath)) {
-    const record = entry as { id?: unknown; thread_name?: unknown; updated_at?: unknown };
-    if (typeof record.id !== 'string') {
-      continue;
-    }
-
-    upsertSession(record.id, {
-      title: formatCliSessionTitle(record.thread_name, 'Codex session'),
-      updatedAt: typeof record.updated_at === 'string' ? record.updated_at : undefined,
-      sourcePath: sessionIndexPath,
-    });
-  }
-
-  for (const filePath of walkJsonlFiles(sessionsRoot)) {
-    const stat = fs.statSync(filePath);
-    let id = getCodexSessionIdFromPath(filePath);
-    let createdAt: string | undefined;
-    let projectPath: string | undefined;
-    let firstText: string | undefined;
-
-    for (const entry of readJsonLines(filePath)) {
-      const record = entry as { type?: unknown; timestamp?: unknown; payload?: unknown };
-      if (record.type === 'session_meta') {
-        const payload = record.payload as { id?: unknown; timestamp?: unknown; cwd?: unknown } | undefined;
-        id = typeof payload?.id === 'string' ? payload.id : id;
-        createdAt = typeof payload?.timestamp === 'string' ? payload.timestamp : createdAt;
-        projectPath = typeof payload?.cwd === 'string' ? payload.cwd : projectPath;
-      }
-
-      if (!firstText) {
-        firstText = extractCodexUserText(entry);
-      }
-    }
-
-    if (!id) {
-      continue;
-    }
-
-    upsertSession(id, {
-      title: formatCliSessionTitle(firstText, 'Codex session'),
-      createdAt,
-      updatedAt: stat.mtime.toISOString(),
-      projectPath,
-      sourcePath: filePath,
-      firstText,
-    });
-  }
-
-  for (const entry of readJsonLines(historyPath)) {
-    const record = entry as { session_id?: unknown; ts?: unknown; text?: unknown };
-    if (typeof record.session_id !== 'string') {
-      continue;
-    }
-
-    const timestamp = typeof record.ts === 'number'
-      ? new Date(record.ts * 1000)
-      : new Date();
-    const text = typeof record.text === 'string' ? record.text : undefined;
-
-    upsertSession(record.session_id, {
-      title: formatCliSessionTitle(text, 'Codex session'),
-      createdAt: timestamp.toISOString(),
-      updatedAt: timestamp.toISOString(),
-      sourcePath: historyPath,
-      firstText: text,
-      lastText: text,
-    });
-  }
-
-  return [...bySession.values()]
-    .filter((session) => isPathInProject(session.projectPath, projectPath))
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-    .map(({ firstText: _firstText, lastText: _lastText, ...session }) => session);
 }
 
 function extractClaudeMessageText(message: unknown): string | undefined {
@@ -1001,7 +820,7 @@ export function registerTerminalHandlers(
     async (_, cli: SupportedCLI, projectPath?: string): Promise<IPCResult<NativeCliSession[]>> => {
       try {
         if (cli === 'codex') {
-          return { success: true, data: getCodexNativeHistory(projectPath) };
+          return { success: true, data: await getCodexNativeHistory(projectPath) };
         }
         if (cli === 'claude-code') {
           return { success: true, data: getClaudeNativeHistory(projectPath) };

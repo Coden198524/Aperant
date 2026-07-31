@@ -87,6 +87,16 @@ describe('AGENT_CONFIGS (registry)', () => {
     }
 
     expect(AGENT_CONFIGS.insights.tools).toEqual([...BASE_READ_TOOLS]);
+    expect(AGENT_CONFIGS.openspec.tools).toEqual(expect.arrayContaining([
+      ...BASE_READ_TOOLS,
+      ...BASE_WRITE_TOOLS,
+      'AskUserQuestion',
+      'TodoWrite',
+      'Task',
+    ]));
+    expect(AGENT_CONFIGS.openspec.mcpServers).toEqual([]);
+    expect(AGENT_CONFIGS.planner.tools).not.toContain('Task');
+    expect(AGENT_CONFIGS.planner.tools).not.toContain('TodoWrite');
   });
 });
 
@@ -162,6 +172,19 @@ describe('ToolRegistry', () => {
     registry.getToolsForAgent('spec_critic', context);
 
     expect(mockTool.bind).toHaveBeenCalledWith(context);
+  });
+
+  it('exposes upstream host tools only to the isolated OpenSpec agent', () => {
+    const registry = new ToolRegistry();
+    for (const name of ['Task', 'TodoWrite', 'AskUserQuestion']) {
+      registry.registerTool(name, createMockDefinedTool(name));
+    }
+    const context = createMockContext();
+    expect(Object.keys(registry.getToolsForAgent('openspec', context))).toEqual(
+      expect.arrayContaining(['Task', 'TodoWrite', 'AskUserQuestion']),
+    );
+    expect(registry.getToolsForAgent('planner', context)).not.toHaveProperty('Task');
+    expect(registry.getToolsForAgent('planner', context)).not.toHaveProperty('TodoWrite');
   });
 
   it('should only expose SpawnSubagent when the context has an executor', () => {

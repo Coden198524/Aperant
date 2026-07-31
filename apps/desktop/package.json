@@ -20,17 +20,18 @@
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.cjs",
-    "predev": "npm --workspace @autocode/core run ensure-built",
+    "prepare:openspec-schemas": "node scripts/prepare-openspec-schemas.cjs",
+    "predev": "npm run prepare:openspec-schemas && npm --workspace @autocode/core run ensure-built",
     "dev": "electron-vite dev",
-    "predev:debug": "npm --workspace @autocode/core run ensure-built",
+    "predev:debug": "npm run prepare:openspec-schemas && npm --workspace @autocode/core run ensure-built",
     "dev:debug": "cross-env DEBUG=true electron-vite dev",
-    "predev:mcp": "npm --workspace @autocode/core run ensure-built",
+    "predev:mcp": "npm run prepare:openspec-schemas && npm --workspace @autocode/core run ensure-built",
     "dev:mcp": "electron-vite dev -- --remote-debugging-port=9222",
     "dev:vscode": "cd ../.. && npm run dev:vscode",
     "build:core": "cd ../.. && npm run build:core",
     "build:vscode": "cd ../.. && npm run build:vscode",
     "typecheck:vscode": "cd ../.. && npm run typecheck:vscode",
-    "prebuild": "npm --workspace @autocode/core run ensure-built",
+    "prebuild": "npm run prepare:openspec-schemas && npm --workspace @autocode/core run ensure-built",
     "build": "electron-vite build",
     "start": "electron .",
     "start:mcp": "electron . --remote-debugging-port=9222",
@@ -47,6 +48,9 @@
     "prepackage:flatpak": "npm run build:core && npm run build",
     "package:flatpak": "electron-builder --linux flatpak",
     "verify:linux": "node scripts/verify-linux-packages.cjs dist",
+    "verify:openspec-runtime": "node scripts/verify-openspec-runtime.cjs",
+    "verify:packaged-openspec:win": "node scripts/verify-openspec-runtime.cjs dist/win-unpacked/resources/openspec/1.6.0 dist/win-unpacked/Autocode.exe",
+    "test:openspec-schemas": "node --test scripts/prepare-openspec-schemas.test.mjs",
     "test:verify-linux": "node --test scripts/verify-linux-packages.test.mjs",
     "verify:commercial": "node scripts/verify-commercial-readiness.cjs guides/commercial-readiness.manifest.json",
     "test:commercial-readiness": "node --test scripts/verify-commercial-readiness.test.mjs",
@@ -80,8 +84,9 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@fission-ai/openspec": "1.6.0",
     "@libsql/client": "^0.17.0",
-    "@lydell/node-pty": "^1.1.0",
+    "@lydell/node-pty": "1.2.0-beta.14",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@openrouter/ai-sdk-provider": "^2.3.1",
     "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -205,6 +210,13 @@
       {
         "from": "prompts",
         "to": "prompts"
+      },
+      {
+        "from": "out/openspec-runtime",
+        "to": "openspec/1.6.0",
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../../libs/core/package.json",

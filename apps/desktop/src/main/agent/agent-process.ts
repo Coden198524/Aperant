@@ -28,6 +28,7 @@ import { AgentEvents } from './agent-events';
 import { ProcessType, ExecutionProgressData } from './types';
 import type { AgentExecutorConfig } from '../ai/agent/types';
 import { WorkerBridge } from '../ai/agent/worker-bridge';
+import type { SessionResult } from '../ai/session/types';
 import type { CompletablePhase } from '../../shared/constants/phase-protocol';
 import { parseTaskEvent } from './task-event-parser';
 import { detectRateLimit, createSDKRateLimitInfo, getBestAvailableProfileEnv, detectAuthFailure } from '../rate-limit-detector';
@@ -237,6 +238,13 @@ export class AgentProcessManager {
     executorConfig: AgentExecutorConfig,
     processType: ProcessType,
   ): AutocodeRuntimeWorkspaceClaimInput | null {
+    // OpenSpec Action concurrency is governed by OpenSpecLockManager's
+    // root/change locks. A generic unknown-file workspace claim would
+    // serialize unrelated changes in the same root and change upstream
+    // OpenSpec semantics. Individual write tools still use file write locks.
+    if (processType === 'openspec-action') {
+      return null;
+    }
     const session = executorConfig.session;
     const projectRoot = session.sourceProjectDir || session.toolContext?.projectDir || session.projectDir;
     const workspaceRoot = session.projectDir || session.toolContext?.cwd || projectRoot;
@@ -1056,6 +1064,7 @@ export class AgentProcessManager {
     this.killProcess(taskId, projectId);
 
     const spawnId = this.state.generateSpawnId();
+    const workspaceClaim = this.buildWorkerWorkspaceClaimInput(taskId, executorConfig, processType);
 
     // Add to tracking immediately (same pattern as spawnProcess)
     this.state.addProcess(processKey, {
@@ -1065,10 +1074,9 @@ export class AgentProcessManager {
       startedAt: new Date(),
       spawnId,
       worker: null, // Will be set after bridge.spawn()
-      workspaceClaimStatus: 'pending',
+      ...(workspaceClaim ? { workspaceClaimStatus: 'pending' as const } : {}),
     });
 
-    const workspaceClaim = this.buildWorkerWorkspaceClaimInput(taskId, executorConfig, processType);
     const pendingStartPlan = createAutocodeAgentWorkerProcessStartPlan({
       taskId,
       processType,
@@ -1095,31 +1103,65 @@ export class AgentProcessManager {
 
     // Forward all bridge events to the main emitter (matching existing event contract)
     bridge.on('log', (tId: string, log: string, pId?: string) => {
-      this.emitter.emit('log', tId, log, pId ?? projectId);
+      this.emitter.emit(
+        processType === 'openspec-action' ? 'openspec-log' : 'log',
+        tId,
+        log,
+        pId ?? projectId,
+      );
       if (isDebug) {
         console.log(`[Agent:${tId}] ${log}`);
       }
     });
 
     bridge.on('error', (tId: string, error: string, pId?: string) => {
-      this.emitter.emit('error', tId, error, pId ?? projectId);
+      this.emitter.emit(
+        processType === 'openspec-action' ? 'openspec-error' : 'error',
+        tId,
+        error,
+        pId ?? projectId,
+      );
     });
 
     bridge.on('execution-progress', (tId: string, progress: ExecutionProgressData, pId?: string) => {
+      if (processType === 'openspec-action') return;
       this.emitter.emit('execution-progress', tId, progress, pId ?? projectId);
     });
 
     bridge.on('task-token-usage', (tId, usage, pId?: string) => {
+      if (processType === 'openspec-action') return;
       console.log(`[AgentProcess] Forwarding task-token-usage for ${tId}:`, usage);
       this.emitter.emit('task-token-usage', tId, usage, pId ?? projectId);
     });
 
     bridge.on('task-event', (tId: string, event: unknown, pId?: string) => {
+      if (processType === 'openspec-action') return;
       this.emitter.emit('task-event', tId, event, pId ?? projectId);
     });
 
     bridge.on('task-log-stream', (tId, chunk, pId?: string) => {
-      this.emitter.emit('task-log-stream', tId, chunk, pId ?? projectId);
+      if (processType === 'openspec-action') {
+        this.emitter.emit('openspec-output', tId, chunk, pId ?? projectId);
+      } else {
+        this.emitter.emit('task-log-stream', tId, chunk, pId ?? projectId);
+      }
+    });
+
+    bridge.on('openspec-interaction-required', (message) => {
+      if (processType === 'openspec-action') {
+        this.emitter.emit('openspec-interaction-required', message);
+      }
+    });
+
+    bridge.on('session-result', (tId: string, result: SessionResult, pId?: string) => {
+      if (processType !== 'openspec-action') return;
+      this.emitter.emit(
+        'openspec-result',
+        tId,
+        result,
+        executorConfig.session.openSpecRunId,
+        pId ?? projectId,
+      );
     });
 
     bridge.on('exit', (tId: string, code: number | null, pType: ProcessType, pId?: string) => {
@@ -1131,7 +1173,7 @@ export class AgentProcessManager {
         return;
       }
 
-      if (code !== 0) {
+      if (code !== 0 && processType !== 'openspec-action') {
         // Collect any output for rate limit / auth failure detection
         // For worker threads, error messages are emitted via 'error' events
         // rather than stdout parsing. The handleProcessFailure method still works
@@ -1212,12 +1254,31 @@ export class AgentProcessManager {
       projectId,
       workspaceClaim,
     }).initialPhase;
-    this.emitter.emit('execution-progress', taskId, {
-      phase: initialPhase,
-      phaseProgress: 0,
-      overallProgress: 0,
-      message: `Starting ${initialPhase} session...`,
-    }, projectId);
+    if (processType !== 'openspec-action') {
+      this.emitter.emit('execution-progress', taskId, {
+        phase: initialPhase,
+        phaseProgress: 0,
+        overallProgress: 0,
+        message: `Starting ${initialPhase} session...`,
+      }, projectId);
+    }
+  }
+
+  answerOpenSpecInteraction(
+    taskId: string,
+    interactionId: string,
+    answer: string,
+    projectId?: string,
+  ): boolean {
+    const processKey = getScopedProcessKey(taskId, projectId);
+    const agentProcess = this.state.getProcess(processKey);
+    if (!agentProcess?.worker) return false;
+    agentProcess.worker.postMessage({
+      type: 'openspec-interaction-response',
+      interactionId,
+      answer,
+    });
+    return true;
   }
 
   /**
@@ -1242,7 +1303,10 @@ export class AgentProcessManager {
     // Handle worker thread termination
     if (agentProcess.worker) {
       try {
-        agentProcess.worker.terminate();
+        const termination = agentProcess.worker.terminate();
+        void Promise.resolve(termination).catch(() => {
+          // Worker may already be terminated
+        });
       } catch {
         // Worker may already be terminated
       }
@@ -1268,29 +1332,35 @@ export class AgentProcessManager {
   async killAllProcesses(): Promise<void> {
     const KILL_TIMEOUT_MS = 10000; // 10 seconds max wait
 
-    const killPromises = this.state.getRunningTaskIds().map((processKey) => {
-      return new Promise<void>((resolve) => {
-        const agentProcess = this.state.getProcess(processKey);
+    const killPromises = this.state.getRunningTaskIds().map(async (processKey) => {
+      const agentProcess = this.state.getProcess(processKey);
 
-        if (!agentProcess) {
-          resolve();
-          return;
+      if (!agentProcess) {
+        return;
+      }
+
+      // If process/worker hasn't been spawned yet, just kill and resolve
+      if (!agentProcess.process && !agentProcess.worker) {
+        this.killProcess(agentProcess.taskId, agentProcess.projectId);
+        return;
+      }
+
+      // Worker.terminate() is asynchronous. Await it during application shutdown
+      // so worker/native callbacks cannot run after Electron tears down the main
+      // JavaScript environment.
+      if (agentProcess.worker && !agentProcess.process) {
+        this.state.markSpawnAsKilled(agentProcess.spawnId);
+        const worker = agentProcess.worker;
+        this.deleteTrackedProcess(agentProcess.taskId, agentProcess.projectId);
+        try {
+          await Promise.resolve(worker.terminate());
+        } catch {
+          // Worker may already be terminated
         }
+        return;
+      }
 
-        // If process/worker hasn't been spawned yet, just kill and resolve
-        if (!agentProcess.process && !agentProcess.worker) {
-          this.killProcess(agentProcess.taskId, agentProcess.projectId);
-          resolve();
-          return;
-        }
-
-        // Worker threads terminate immediately
-        if (agentProcess.worker && !agentProcess.process) {
-          this.killProcess(agentProcess.taskId, agentProcess.projectId);
-          resolve();
-          return;
-        }
-
+      await new Promise<void>((resolve) => {
         // Set up timeout to not block forever
         const timeoutId = setTimeout(() => {
           resolve();

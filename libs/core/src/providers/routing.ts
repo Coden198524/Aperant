@@ -61,7 +61,7 @@ export type ProviderSdkAdapter =
 
 export type ProviderFetchStrategy =
   | 'none'
-  | 'openai-oauth'
+  | 'openai-codex-oauth'
   | 'openai-compatible-alternate';
 
 export type ProviderModelInvocationMethod =
@@ -441,7 +441,7 @@ export function buildProviderSdkInstancePlan(config: ProviderConfig): ProviderSd
         apiKey: config.oauthTokenFilePath ? (apiKey ?? 'codex-oauth-placeholder') : apiKey,
         baseURL,
         headers,
-        fetchStrategy: config.oauthTokenFilePath ? 'openai-oauth' : 'none',
+        fetchStrategy: config.oauthTokenFilePath ? 'openai-codex-oauth' : 'none',
         oauthTokenFilePath: config.oauthTokenFilePath,
       };
 
@@ -620,9 +620,23 @@ function buildOpenAIModelCreationPlan(
   const isOfficialBaseUrl = isOfficialOpenAIBaseUrl(config.baseURL);
   const routedMethod = resolveProviderModelInvocationMethod(config.provider, modelId, options.invocationRoutes);
 
-  if (routedMethod === 'chatModel' || (!routedMethod && config.oauthTokenFilePath && !isOfficialBaseUrl)) {
+  // A ChatGPT subscription token is not an API key and only supports the
+  // Codex Responses transport. Do not let generic invocation routes turn it
+  // into a Chat Completions request.
+  if (config.oauthTokenFilePath) {
     return {
-      instance: buildOpenAICompatibleChatInstancePlan(config, 'openai-oauth'),
+      instance: buildProviderSdkInstancePlan(config),
+      invocation: {
+        method: 'responses',
+        modelId,
+        supportsPromptCaching: false,
+      },
+    };
+  }
+
+  if (routedMethod === 'chatModel') {
+    return {
+      instance: buildOpenAICompatibleChatInstancePlan(config, 'openai-compatible-alternate'),
       invocation: {
         method: 'chatModel',
         modelId,
@@ -631,7 +645,7 @@ function buildOpenAIModelCreationPlan(
     };
   }
 
-  if (routedMethod === 'responses' || (!routedMethod && (config.oauthTokenFilePath || (isResponsesApiModel(modelId) && isOfficialBaseUrl)))) {
+  if (routedMethod === 'responses' || (!routedMethod && isResponsesApiModel(modelId) && isOfficialBaseUrl)) {
     return {
       instance: buildProviderSdkInstancePlan(config),
       invocation: {

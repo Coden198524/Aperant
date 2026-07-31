@@ -8,9 +8,12 @@
  * To run: npx playwright test claude-accounts.spec.ts --config=e2e/playwright.config.ts
  */
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
 import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 // Test data directory - use secure temp directory with random suffix
 let TEST_DATA_DIR: string;
@@ -470,7 +473,7 @@ test.describe.skip('Claude Account UI Tests (Electron)', () => {
   test.skip('should launch Electron app', async () => {
     test.skip(!process.env.ELECTRON_PATH, 'Electron not available in CI');
 
-    const appPath = path.join(__dirname, '..');
+    const appPath = path.join(currentDir, '..');
     app = await electron.launch({
       args: [appPath],
       env: {

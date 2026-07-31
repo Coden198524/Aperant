@@ -21,5 +21,9 @@ describe('task development mode resolution', () => {
       developmentMode: 'direct',
       workflowMode: 'balanced',
     })).toBe('direct');
+    expect(resolveAutocodeTaskDevelopmentModeValue({
+      developmentMode: 'spec',
+      workflowMode: 'off',
+    })).toBe('spec');
   });
 });

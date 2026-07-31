@@ -136,8 +136,12 @@ describe('isAbortError', () => {
     expect(isAbortError(err)).toBe(true);
   });
 
-  it('should detect abort keyword in string', () => {
-    expect(isAbortError('request aborted')).toBe(true);
+  it('should not confuse provider abort text with user cancellation', () => {
+    expect(isAbortError('upstream request aborted')).toBe(false);
+    const result = classifyError(new Error('upstream request aborted'));
+    expect(result.sessionError.code).toBe(ErrorCode.NETWORK_ERROR);
+    expect(result.outcome).toBe('error');
+    expect(result.sessionError.retryable).toBe(true);
   });
 
   it('should not match unrelated errors', () => {
@@ -229,7 +233,199 @@ describe('classifyError', () => {
     expect(unavailable.sessionError.code).toBe(ErrorCode.TEMPORARILY_UNAVAILABLE);
     expect(unavailable.outcome).toBe('error');
     expect(unavailable.sessionError.retryable).toBe(true);
+
+    const inactivityTimeout = classifyError(new Error(
+      'Stream inactivity timeout - no data received from provider for 120s',
+    ));
+    expect(inactivityTimeout.sessionError.code).toBe(ErrorCode.TEMPORARILY_UNAVAILABLE);
+    expect(inactivityTimeout.outcome).toBe('error');
+    expect(inactivityTimeout.sessionError.retryable).toBe(true);
   });
+
+  it.each([408, 409, 500, 529])(
+    'should classify retryable provider HTTP %s failures as temporarily unavailable',
+    (statusCode) => {
+      const unavailable = classifyError(Object.assign(
+        new Error(`Provider Failure at HTTP ${statusCode}`),
+        { statusCode },
+      ));
+
+      expect(unavailable.sessionError.code).toBe(ErrorCode.TEMPORARILY_UNAVAILABLE);
+      expect(unavailable.outcome).toBe('error');
+      expect(unavailable.sessionError.retryable).toBe(true);
+      expect(unavailable.sessionError.message).toContain(`Provider Failure at HTTP ${statusCode}`);
+      expect(unavailable.sessionError.message).toContain(`http ${statusCode}`);
+    },
+  );
+
+  it('matches availability patterns case-insensitively while preserving display text', () => {
+    const unavailable = classifyError(new Error(
+      'Service Unavailable From ExampleProvider; Try Again Later.',
+    ));
+
+    expect(unavailable.sessionError.code).toBe(ErrorCode.TEMPORARILY_UNAVAILABLE);
+    expect(unavailable.sessionError.message).toContain(
+      'Service Unavailable From ExampleProvider; Try Again Later.',
+    );
+  });
+
+  it('should classify structured OpenAI server overload stream errors', () => {
+    const overloaded = classifyError({
+      type: 'service_unavailable_error',
+      code: 'server_is_overloaded',
+      message: 'Our servers are currently overloaded. Please try again later.',
+      param: null,
+    });
+
+    expect(overloaded.sessionError.code).toBe(ErrorCode.TEMPORARILY_UNAVAILABLE);
+    expect(overloaded.outcome).toBe('error');
+    expect(overloaded.sessionError.retryable).toBe(true);
+    expect(overloaded.sessionError.message).toContain('Our servers are currently overloaded');
+  });
+
+  it('preserves request IDs from API error fields and safe response headers', () => {
+    const unavailable = classifyError(Object.assign(
+      new Error('Upstream Failed'),
+      {
+        statusCode: 500,
+        requestId: 'req_top_level',
+        responseHeaders: {
+          'x-request-id': 'req_header',
+          authorization: 'Bearer must-not-be-copied',
+        },
+      },
+    ));
+
+    expect(unavailable.sessionError.code).toBe(ErrorCode.TEMPORARILY_UNAVAILABLE);
+    expect(unavailable.sessionError.message).toContain('request-id: req_top_level');
+    expect(unavailable.sessionError.message).toContain('request-id: req_header');
+    expect(unavailable.sessionError.message).not.toContain('must-not-be-copied');
+  });
+
+  it('preserves request IDs from a native Headers instance', () => {
+    const unavailable = classifyError(Object.assign(
+      new Error('Upstream Failed'),
+      {
+        statusCode: 500,
+        response: {
+          headers: new Headers({
+            'x-request-id': 'req_native_headers',
+            authorization: 'Bearer must-not-be-copied',
+          }),
+        },
+      },
+    ));
+
+    expect(unavailable.sessionError.message).toContain(
+      'request-id: req_native_headers',
+    );
+    expect(unavailable.sessionError.message).not.toContain(
+      'must-not-be-copied',
+    );
+  });
+
+  it('rejects malformed status strings instead of partially parsing them', () => {
+    const malformed = classifyError(Object.assign(
+      new Error('Invalid Request'),
+      { statusCode: '500oops' },
+    ));
+
+    expect(malformed.sessionError.code).toBe(ErrorCode.GENERIC);
+    expect(malformed.sessionError.message).not.toContain('http 500');
+  });
+
+  it('unwraps RetryError lastError diagnostics without losing response details', () => {
+    const finalError = Object.assign(
+      new Error('Anthropic Overloaded'),
+      {
+        statusCode: 529,
+        responseBody:
+          '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+        responseHeaders: {
+          'request-id': 'req_retry_final',
+        },
+      },
+    );
+    const retryError = Object.assign(
+      new Error('Failed after 3 attempts'),
+      {
+        lastError: finalError,
+        errors: [
+          Object.assign(new Error('Earlier Failure'), { statusCode: 500 }),
+          finalError,
+        ],
+      },
+    );
+
+    const result = classifyError(retryError);
+
+    expect(result.sessionError.code).toBe(ErrorCode.TEMPORARILY_UNAVAILABLE);
+    expect(result.sessionError.message).toContain('Failed after 3 attempts');
+    expect(result.sessionError.message).toContain('Anthropic Overloaded');
+    expect(result.sessionError.message).toContain('http 529');
+    expect(result.sessionError.message).toContain('overloaded_error');
+    expect(result.sessionError.message).toContain('request-id: req_retry_final');
+  });
+
+  it('uses the newest RetryError errors entry when lastError is unavailable', () => {
+    const retryError = Object.assign(
+      new Error('Retries Exhausted'),
+      {
+        errors: [
+          Object.assign(new Error('First Attempt Failed'), { statusCode: 400 }),
+          Object.assign(new Error('Final Attempt Failed'), {
+            statusCode: 500,
+            request_id: 'req_errors_final',
+          }),
+        ],
+      },
+    );
+
+    const result = classifyError(retryError);
+
+    expect(result.sessionError.code).toBe(ErrorCode.TEMPORARILY_UNAVAILABLE);
+    expect(result.sessionError.message).toContain('Final Attempt Failed');
+    expect(result.sessionError.message).toContain('http 500');
+    expect(result.sessionError.message).toContain('request-id: req_errors_final');
+  });
+
+  it('does not classify a final non-retryable RetryError entry from an older transient attempt', () => {
+    const retryError = Object.assign(
+      new Error('Retries Exhausted'),
+      {
+        errors: [
+          Object.assign(new Error('Service Unavailable'), { statusCode: 503 }),
+          Object.assign(new Error('Invalid Request'), { statusCode: 400 }),
+        ],
+      },
+    );
+
+    const result = classifyError(retryError);
+
+    expect(result.sessionError.code).toBe(ErrorCode.GENERIC);
+    expect(result.sessionError.message).toContain('Invalid Request');
+    expect(result.sessionError.message).not.toContain('Service Unavailable');
+  });
+
+  it('should classify structured OpenAI server errors and preserve the request ID', () => {
+    const serverError = classifyError({
+      type: 'server_error',
+      code: 'server_error',
+      message:
+        'An error occurred while processing your request. You can retry your request, ' +
+        'or contact us through our help center at help.openai.com if the error persists. ' +
+        'Please include the request ID a473a81e-ad50-4e7c-b793-b9cdb347f96c in your message.',
+      param: null,
+    });
+
+    expect(serverError.sessionError.code).toBe(ErrorCode.TEMPORARILY_UNAVAILABLE);
+    expect(serverError.outcome).toBe('error');
+    expect(serverError.sessionError.retryable).toBe(true);
+    expect(serverError.sessionError.message).toContain(
+      'a473a81e-ad50-4e7c-b793-b9cdb347f96c',
+    );
+  });
+
   it('should classify unknown errors as generic', () => {
     const result = classifyError(new Error('something went wrong'));
     expect(result.sessionError.code).toBe(ErrorCode.GENERIC);

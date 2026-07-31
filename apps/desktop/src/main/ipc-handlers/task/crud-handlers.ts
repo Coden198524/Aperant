@@ -27,6 +27,7 @@ import { projectStore } from '../../project-store';
 import { titleGenerator } from '../../title-generator';
 import { descriptionImprover } from '../../description-improver';
 import { AgentManager } from '../../agent';
+import type { OpenSpecService } from '../../openspec/openspec-service';
 import { findTaskAndProject } from './shared';
 import { findAllSpecPaths, isValidTaskId } from '../../utils/spec-path-helpers';
 import { isPathWithinBase, findTaskWorktree } from '../../worktree-paths';
@@ -195,6 +196,7 @@ function isManagedTaskModeMetadata(metadata: TaskMetadata | undefined): boolean 
   return (
     metadata?.developmentMode === 'direct' ||
     metadata?.developmentMode === 'standard' ||
+    metadata?.developmentMode === 'spec' ||
     metadata?.sourceType === 'manual'
   );
 }
@@ -212,6 +214,55 @@ function shouldNormalizeTaskModeMetadata(
 function normalizeTaskModeMetadata(metadata: TaskMetadata): TaskMetadata {
   const developmentMode = resolveAutocodeTaskDevelopmentMode(metadata as AutocodeTaskMetadata);
   return buildAutocodeTaskModeMetadata(developmentMode, metadata as AutocodeTaskMetadata) as TaskMetadata;
+}
+
+function sanitizeOpenSpecMetadata(metadata: TaskMetadata): void {
+  const mode = resolveAutocodeTaskDevelopmentMode(metadata as AutocodeTaskMetadata);
+  if (mode !== 'spec') {
+    delete metadata.openSpec;
+    return;
+  }
+  const config = metadata.openSpec ?? {};
+  const startAction = config.startAction ?? 'new';
+  const rootKind = config.rootKind ?? 'project';
+  const schemaName = config.schemaName?.trim() || 'spec-driven';
+  const changeName = config.changeName?.trim();
+  const storeId = config.storeId?.trim();
+  const safeId = /^[a-z0-9][a-z0-9-]{0,127}$/;
+  if (!['new', 'propose', 'explore'].includes(startAction)) {
+    throw new Error('Invalid OpenSpec start Action.');
+  }
+  if (rootKind !== 'project' && rootKind !== 'store') {
+    throw new Error('Invalid OpenSpec root kind.');
+  }
+  if (!safeId.test(schemaName)) {
+    throw new Error('Invalid OpenSpec schema name.');
+  }
+  if (changeName && !safeId.test(changeName)) {
+    throw new Error('Invalid OpenSpec change name.');
+  }
+  if (rootKind === 'store' && (!storeId || !safeId.test(storeId))) {
+    throw new Error('A valid registered OpenSpec Store ID is required.');
+  }
+  metadata.openSpec = {
+    formatVersion: 1,
+    startAction,
+    rootKind,
+    schemaName,
+    ...(changeName ? { changeName } : {}),
+    ...(rootKind === 'store' && storeId ? { storeId } : {}),
+  };
+}
+
+function normalizedOpenSpecIdentity(metadata: TaskMetadata | undefined): string {
+  const config = metadata?.openSpec;
+  return JSON.stringify({
+    startAction: config?.startAction ?? 'new',
+    rootKind: config?.rootKind ?? 'project',
+    storeId: config?.rootKind === 'store' ? config.storeId?.trim() ?? '' : '',
+    changeName: config?.changeName?.trim() ?? '',
+    schemaName: config?.schemaName?.trim() || 'spec-driven',
+  });
 }
 
 /**
@@ -306,7 +357,10 @@ async function updateLinkedRoadmapFeature(
 /**
  * Register task CRUD (Create, Read, Update, Delete) handlers
  */
-export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
+export function registerTaskCRUDHandlers(
+  agentManager: AgentManager,
+  openSpecService?: OpenSpecService,
+): void {
   /**
    * List all tasks for a project
    * @param projectId - The project ID to fetch tasks for
@@ -364,6 +418,28 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
       } as AutocodeTaskMetadata) as TaskMetadata;
 
       try {
+        sanitizeOpenSpecMetadata(taskMetadata);
+        if (resolvedMode === 'spec') {
+          if (!openSpecService) {
+            throw new Error('OpenSpec service is unavailable.');
+          }
+          const preflight = await openSpecService.preflightProject(project, {
+            projectId: project.id,
+            rootKind: taskMetadata.openSpec?.rootKind,
+            storeId: taskMetadata.openSpec?.storeId,
+            schemaName: taskMetadata.openSpec?.schemaName,
+            changeName: taskMetadata.openSpec?.changeName,
+            startAction: taskMetadata.openSpec?.startAction,
+            useWorktree: taskMetadata.useWorktree === true,
+          });
+          if (!preflight.valid) {
+            const message = preflight.checks
+              .filter((entry) => !entry.ok && entry.severity === 'error')
+              .map((entry) => entry.message)
+              .join(' ');
+            throw new Error(message || 'OpenSpec preflight failed.');
+          }
+        }
         const coreTask = createManualAutocodeTask({
           projectRoot: project.path,
           dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
@@ -382,6 +458,9 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           },
         });
         const task = toDesktopTask(coreTask, projectId);
+        if (resolvedMode === 'spec') {
+          openSpecService?.initializeTask(task, project);
+        }
         // Invalidate cache since a new task was created
         projectStore.invalidateTasksCache(projectId);
 
@@ -584,6 +663,38 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           return { success: false, error: 'Task not found' };
         }
 
+        const currentDevelopmentMode = resolveAutocodeTaskDevelopmentMode(
+          task.metadata as AutocodeTaskMetadata | undefined,
+        );
+        if (
+          updates.metadata?.developmentMode &&
+          updates.metadata.developmentMode !== currentDevelopmentMode &&
+          (
+            currentDevelopmentMode === 'spec' ||
+            updates.metadata.developmentMode === 'spec'
+          )
+        ) {
+          return {
+            success: false,
+            error:
+              'Spec development mode cannot be entered or exited after task creation. Create a new task for an explicit migration.',
+          };
+        }
+        if (
+          currentDevelopmentMode === 'spec' &&
+          updates.metadata?.openSpec &&
+          normalizedOpenSpecIdentity({
+            ...task.metadata,
+            openSpec: updates.metadata.openSpec,
+          }) !== normalizedOpenSpecIdentity(task.metadata)
+        ) {
+          return {
+            success: false,
+            error:
+              'OpenSpec root, Store, Schema, start Action, and initial change cannot be changed after task creation. Select active changes in the OpenSpec workspace.',
+          };
+        }
+
         const autoBuildDir = project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME;
         const specDir = getAutocodeSpecDir({
           projectRoot: project.path,
@@ -608,64 +719,74 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           );
         }
 
-        // Update implementation_plan.md
-        const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
-        try {
-          await updatePlanFile(planPath, (plan) => {
+        if (currentDevelopmentMode !== 'spec') {
+          // Update implementation_plan.md
+          const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+          try {
+            await updatePlanFile(planPath, (plan) => {
+              if (finalTitle !== undefined) {
+                plan.feature = finalTitle;
+              }
+              if (updates.description !== undefined) {
+                plan.description = updates.description;
+              }
+              return plan;
+            });
+          } catch (planErr: unknown) {
+            // File missing or unreadable - continue anyway
+            if ((planErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+              console.error('[TASK_UPDATE] Error updating implementation plan:', planErr);
+            }
+          }
+
+          // Update spec.md if it exists
+          const specPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
+          try {
+            let specContent = readFileSync(specPath, 'utf-8');
+
+            // Update title (first # heading)
             if (finalTitle !== undefined) {
-              plan.feature = finalTitle;
+              specContent = specContent.replace(
+                /^#\s+.*$/m,
+                `# ${finalTitle}`
+              );
             }
+
+            // Update description (## Overview section content)
             if (updates.description !== undefined) {
-              plan.description = updates.description;
+              // Replace content between ## Overview and the next ## section
+              specContent = specContent.replace(
+                /(## Overview\n)([\s\S]*?)((?=\n## )|$)/,
+                `$1${updates.description}\n\n$3`
+              );
             }
-            return plan;
-          });
-        } catch (planErr: unknown) {
-          // File missing or unreadable - continue anyway
-          if ((planErr as NodeJS.ErrnoException).code !== 'ENOENT') {
-            console.error('[TASK_UPDATE] Error updating implementation plan:', planErr);
-          }
-        }
 
-        // Update spec.md if it exists
-        const specPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
-        try {
-          let specContent = readFileSync(specPath, 'utf-8');
-
-          // Update title (first # heading)
-          if (finalTitle !== undefined) {
-            specContent = specContent.replace(
-              /^#\s+.*$/m,
-              `# ${finalTitle}`
-            );
-          }
-
-          // Update description (## Overview section content)
-          if (updates.description !== undefined) {
-            // Replace content between ## Overview and the next ## section
-            specContent = specContent.replace(
-              /(## Overview\n)([\s\S]*?)((?=\n## )|$)/,
-              `$1${updates.description}\n\n$3`
-            );
-          }
-
-          writeFileSync(specPath, specContent, 'utf-8');
-        } catch (specErr: unknown) {
-          // File missing or update failed - continue anyway
-          if ((specErr as NodeJS.ErrnoException).code !== 'ENOENT') {
-            console.error('[TASK_UPDATE] Error updating spec.md:', specErr);
+            writeFileSync(specPath, specContent, 'utf-8');
+          } catch (specErr: unknown) {
+            // File missing or update failed - continue anyway
+            if ((specErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+              console.error('[TASK_UPDATE] Error updating spec.md:', specErr);
+            }
           }
         }
 
         // Persist the stable user-facing task title separately from implementation_plan.md.
         // The plan "feature" field can be regenerated by the agent during planning/review.
         let updatedMetadata = task.metadata;
-        const shouldPersistMetadata = updates.metadata !== undefined || finalTitle !== undefined;
+        const shouldPersistMetadata = updates.metadata !== undefined ||
+          finalTitle !== undefined ||
+          (currentDevelopmentMode === 'spec' && updates.description !== undefined);
         if (shouldPersistMetadata) {
           updatedMetadata = {
             ...(task.metadata ?? {}),
             ...(updates.metadata ?? {}),
             ...(finalTitle !== undefined ? { taskTitle: finalTitle } : {}),
+            ...(currentDevelopmentMode === 'spec' && updates.description !== undefined
+              ? {
+                  taskDescription: updates.description,
+                  taskUpdatedAt: new Date().toISOString(),
+                }
+              : {}),
           };
 
           // Process and save attached images if provided
@@ -732,6 +853,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
 
           // Sanitize thinking levels and update task_metadata.json
           sanitizeThinkingLevels(updatedMetadata);
+          sanitizeOpenSpecMetadata(updatedMetadata);
           const metadataPath = path.join(specDir, 'task_metadata.json');
           try {
             writeFileSync(metadataPath, JSON.stringify(updatedMetadata, null, 2), 'utf-8');
@@ -742,7 +864,10 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         }
 
         // Update requirements.md if it exists
-        if (updates.description !== undefined || updates.metadata?.category) {
+        if (
+          currentDevelopmentMode !== 'spec' &&
+          (updates.description !== undefined || updates.metadata?.category)
+        ) {
           try {
             const requirements = loadAutocodeTaskRequirementsSync(specDir);
 

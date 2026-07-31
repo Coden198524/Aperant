@@ -31,7 +31,7 @@ const DEFAULT_STANDARD_WORKERS = 5;
 export function resolveAutocodeTaskRuntimeConcurrency(
   metadata: ResolveAutocodeTaskRuntimeConcurrencyInput | null | undefined,
 ): AutocodeTaskRuntimeConcurrencyResolved {
-  if (isDirectRuntimeMode(metadata)) {
+  if (isSerialRuntimeMode(metadata)) {
     return {
       mode: 'serial',
       workers: 1,
@@ -66,16 +66,18 @@ export function buildAutocodeTaskRuntimeConcurrencyMetadata(
 function getDefaultRuntimeWorkers(
   metadata: ResolveAutocodeTaskRuntimeConcurrencyInput | null | undefined,
 ): number {
-  if (isDirectRuntimeMode(metadata)) {
+  if (isSerialRuntimeMode(metadata)) {
     return 1;
   }
   return DEFAULT_STANDARD_WORKERS;
 }
 
-function isDirectRuntimeMode(
+function isSerialRuntimeMode(
   metadata: ResolveAutocodeTaskRuntimeConcurrencyInput | null | undefined,
 ): boolean {
-  return metadata?.developmentMode === 'direct' || metadata?.workflowMode === 'off';
+  return metadata?.developmentMode === 'direct' ||
+    metadata?.developmentMode === 'spec' ||
+    metadata?.workflowMode === 'off';
 }
 
 function shouldUseDefaultRuntimeConcurrency(

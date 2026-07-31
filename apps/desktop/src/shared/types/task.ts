@@ -4,6 +4,7 @@
 
 import type { ThinkingLevel, PhaseModelConfig, PhaseThinkingConfig } from './settings';
 import type { ExecutionPhase as ExecutionPhaseType, CompletablePhase } from '../constants/phase-protocol';
+import type { OpenSpecTaskConfig } from './openspec';
 
 export type TaskStatus = 'backlog' | 'queue' | 'in_progress' | 'ai_review' | 'human_review' | 'done' | 'pr_created' | 'error';
 
@@ -239,6 +240,7 @@ export interface TaskDraft {
   referencedFiles: ReferencedFile[];
   requireReviewBeforeCoding?: boolean;
   developmentMode?: TaskDevelopmentModeMetadata;
+  openSpec?: OpenSpecTaskConfig;
   workflowMode?: TaskWorkflowMode;
   runtimeConcurrency?: TaskRuntimeConcurrency;
   useWorktree?: boolean;
@@ -251,7 +253,7 @@ export type TaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 'complex
 export type TaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
-export type TaskDevelopmentMode = 'direct' | 'standard';
+export type TaskDevelopmentMode = 'direct' | 'standard' | 'spec';
 export type TaskDevelopmentModeMetadata = TaskDevelopmentMode;
 export type ProjectDocumentType = 'full' | 'product' | 'architecture' | 'technical';
 export type TaskRuntimeConcurrencyMode = 'serial' | 'concurrent';
@@ -284,6 +286,8 @@ export interface TaskMetadata {
   sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs';
   taskTitle?: string;  // Stable user-facing task title; implementation plans must not overwrite it
   developmentMode?: TaskDevelopmentModeMetadata;
+  /** OpenSpec-only configuration for Spec development mode. */
+  openSpec?: OpenSpecTaskConfig;
   ideationType?: string;  // e.g., 'code_improvements', 'security_hardening'
   ideaId?: string;  // Reference to original idea if converted
   featureId?: string;  // Reference to roadmap feature if from roadmap

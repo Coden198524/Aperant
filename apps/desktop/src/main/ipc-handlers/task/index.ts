@@ -16,6 +16,7 @@ import { registerWorktreeHandlers } from './worktree-handlers';
 import { registerTaskLogsHandlers } from './logs-handlers';
 import { registerTaskArchiveHandlers } from './archive-handlers';
 import { registerNeedsInputHandlers } from './needs-input-handlers';
+import { registerOpenSpecHandlers } from '../openspec-handlers';
 
 /**
  * Register all task-related IPC handlers
@@ -24,11 +25,13 @@ export function registerTaskHandlers(
   agentManager: AgentManager,
   getMainWindow: () => BrowserWindow | null
 ): void {
+  const openSpecService = registerOpenSpecHandlers(agentManager, getMainWindow);
+
   // Register CRUD handlers (create, read, update, delete)
-  registerTaskCRUDHandlers(agentManager);
+  registerTaskCRUDHandlers(agentManager, openSpecService);
 
   // Register execution handlers (start, stop, review, status management, recovery)
-  registerTaskExecutionHandlers(agentManager, getMainWindow);
+  registerTaskExecutionHandlers(agentManager, getMainWindow, openSpecService);
 
   // Register worktree handlers (status, diff, merge, discard, list)
   registerWorktreeHandlers(getMainWindow);

@@ -17,6 +17,13 @@ describe('Autocode runtime concurrency', () => {
     });
   });
 
+  it('keeps Spec actions serial', () => {
+    expect(resolveAutocodeTaskRuntimeConcurrency({ developmentMode: 'spec' })).toMatchObject({
+      mode: 'serial',
+      workers: 1,
+    });
+  });
+
   it('preserves explicit worker overrides', () => {
     expect(resolveAutocodeTaskRuntimeConcurrency({
       developmentMode: 'standard',

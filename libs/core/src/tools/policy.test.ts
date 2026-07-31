@@ -4,12 +4,57 @@ import { describe, expect, it } from "vitest";
 
 import {
 	buildReadOnlyToolSignature,
+	getToolWritePathDenial,
 	guardReadOnlyToolUsage,
 	normalizeToolSignatureValue,
+	sanitizeFilePathArg,
 } from "./policy.js";
 import type { ToolUsagePolicyContext } from "./types.js";
 
 describe("tool policy read-only signatures", () => {
+	it("normalizes strict MSYS drive paths only on Windows", () => {
+		const windowsInput: Record<string, unknown> = {
+			file_path: "/e/Work/Test/project/spec.md",
+		};
+		sanitizeFilePathArg(windowsInput, "win32");
+		expect(windowsInput.file_path).toBe("E:/Work/Test/project/spec.md");
+
+		const posixInput: Record<string, unknown> = {
+			file_path: "/e/Work/Test/project/spec.md",
+		};
+		sanitizeFilePathArg(posixInput, "linux");
+		expect(posixInput.file_path).toBe("/e/Work/Test/project/spec.md");
+	});
+
+	it.each([
+		"/bin/bash",
+		"/etc/passwd",
+		"/mnt/e/Work/Test/project/spec.md",
+		"//server/share/spec.md",
+	])("does not reinterpret non-MSYS path %s as a Windows drive", (filePath) => {
+		const input: Record<string, unknown> = { file_path: filePath };
+		sanitizeFilePathArg(input, "win32");
+		expect(input.file_path).toBe(filePath);
+	});
+
+	it("uses path segments rather than string prefixes for write roots", () => {
+		const projectDir = resolve("tmp", "policy-project");
+		expect(
+			getToolWritePathDenial(
+				"Write",
+				{ file_path: join(projectDir, "src", "safe.ts") },
+				[join(projectDir, "src")],
+			),
+		).toBeNull();
+		expect(
+			getToolWritePathDenial(
+				"Write",
+				{ file_path: join(projectDir, "src-escape", "unsafe.ts") },
+				[join(projectDir, "src")],
+			),
+		).toContain("Write denied");
+	});
+
 	it("normalizes equivalent project file paths before duplicate accounting", () => {
 		const projectDir = resolve("tmp", "policy-project");
 		const absolutePath = join(

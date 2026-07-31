@@ -3,6 +3,7 @@ import type { Worker } from 'worker_threads';
 import type { AutocodeRuntimeWorkspaceClaim } from '@autocode/core';
 import type { CompletablePhase, ExecutionPhase } from '../../shared/constants/phase-protocol';
 import type { TaskLogStreamChunk, TaskWorkflowMode, TokenUsage } from '../../shared/types';
+import type { SessionResult } from '../ai/session/types';
 import type { TaskEventPayload } from './task-event-schema';
 
 /**
@@ -38,7 +39,7 @@ export interface ExecutionProgressData {
   completedPhases?: CompletablePhase[];
 }
 
-export type ProcessType = 'spec-creation' | 'task-execution' | 'qa-process';
+export type ProcessType = 'spec-creation' | 'task-execution' | 'qa-process' | 'openspec-action';
 
 export interface AgentManagerEvents {
   log: (taskId: string, log: string, projectId?: string) => void;
@@ -48,6 +49,13 @@ export interface AgentManagerEvents {
   'task-token-usage': (taskId: string, usage: TokenUsage, projectId?: string) => void;
   'task-event': (taskId: string, event: TaskEventPayload, projectId?: string) => void;
   'task-log-stream': (taskId: string, chunk: TaskLogStreamChunk, projectId?: string) => void;
+  'session-result': (taskId: string, result: SessionResult, projectId?: string) => void;
+  'openspec-result': (
+    taskId: string,
+    result: SessionResult,
+    openSpecRunId: string | undefined,
+    projectId?: string,
+  ) => void;
 }
 
 // IdeationConfig now imported from shared types to maintain consistency

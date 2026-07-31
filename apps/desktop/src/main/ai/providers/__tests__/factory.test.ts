@@ -82,9 +82,11 @@ vi.mock('@openrouter/ai-sdk-provider', () => ({
 }));
 
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createProvider, detectProviderFromModel, createProviderFromModelId } from '../factory';
 import { SupportedProvider } from '@autocode/core';
+import { CODEX_API_BASE_URL } from '../codex-oauth-fetch';
 
 describe('createProvider', () => {
   const allProviders = Object.values(SupportedProvider);
@@ -112,6 +114,29 @@ describe('createProvider', () => {
       modelId: 'gpt-5.4',
     }) as any;
     expect(result.provider).toBe('openai-responses');
+  });
+
+  it('isolates ChatGPT OAuth on the Codex endpoint even when routes request chat', () => {
+    const result = createProvider({
+      config: {
+        provider: SupportedProvider.OpenAI,
+        apiKey: 'codex-oauth-placeholder',
+        baseURL: 'https://api.openai.com/v1',
+        oauthTokenFilePath: 'C:/autocode/codex-auth.json',
+      },
+      modelId: 'gpt-5.6-sol',
+      invocationRoutes: {
+        provider: 'openai',
+        method: 'chat',
+      },
+    }) as any;
+
+    expect(result.provider).toBe('openai-responses');
+    expect(createOpenAI).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: 'codex-oauth-placeholder',
+      baseURL: CODEX_API_BASE_URL,
+      fetch: expect.any(Function),
+    }));
   });
 
   it('uses openai-compatible chat for custom OpenAI base URLs on chat models', () => {

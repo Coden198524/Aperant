@@ -292,6 +292,10 @@ export class WorkerBridge extends EventEmitter {
       case 'result':
         this.handleResult(message.taskId, message.data, message.projectId);
         break;
+
+      case 'openspec-interaction-required':
+        this.emit('openspec-interaction-required', message);
+        break;
     }
   }
 
@@ -578,6 +582,11 @@ export class WorkerBridge extends EventEmitter {
     }
 
     this.finalizeMemoryObserver(result, projectId);
+
+    // Preserve the complete worker result for consumers that need more than
+    // the outcome-derived exit code. This must precede exit because exit
+    // listeners may release run-scoped state immediately.
+    this.emitTyped('session-result', taskId, result, projectId);
 
     // Emit exit and cleanup
     this.emitTyped('exit', taskId, exitCode, this.processType, projectId);

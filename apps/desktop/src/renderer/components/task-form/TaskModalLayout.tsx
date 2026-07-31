@@ -70,6 +70,7 @@ export function TaskModalLayout({
 
         {/* Full-height modal content - matches TaskDetailModal exactly */}
         <DialogPrimitive.Content
+          data-testid="task-modal"
           className={cn(
             'fixed left-[50%] top-4 z-50',
             'translate-x-[-50%]',

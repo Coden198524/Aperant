@@ -214,6 +214,75 @@ describe('registerTaskExecutionHandlers', () => {
     );
   });
 
+  it('routes Spec TASK_START exclusively through OpenSpec without starting Standard runtime', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { fileWatcher } = await import('../../../file-watcher');
+    const { registerTaskExecutionHandlers } = await import('../execution-handlers');
+
+    const task = {
+      id: '001-openspec-task',
+      specId: '001-openspec-task',
+      projectId: 'project-spec',
+      title: 'OpenSpec task',
+      description: 'Implement from the official OpenSpec workflow.',
+      status: 'backlog',
+      subtasks: [],
+      logs: [],
+      metadata: {
+        developmentMode: 'spec',
+        workflowMode: 'off',
+        openSpec: {
+          formatVersion: 1,
+          rootKind: 'project',
+          schemaName: 'spec-driven',
+          startAction: 'new',
+          changeName: 'add-audit-log',
+        },
+      },
+    };
+    const project = {
+      id: 'project-spec',
+      path: 'E:/Work/SpecProject',
+      autoBuildPath: '.autocode',
+      settings: {},
+    };
+    const openSpecService = {
+      startTask: vi.fn().mockResolvedValue({ runId: 'openspec-run-1' }),
+      stopTask: vi.fn(),
+      validate: vi.fn(),
+      runAction: vi.fn(),
+    };
+
+    registerTaskExecutionHandlers(
+      mockAgentManager as never,
+      () => mockMainWindow as BrowserWindow,
+      openSpecService as never,
+    );
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskAndProject as Mock).mockReturnValue({ task, project });
+
+    const startHandler = onHandlers[IPC_CHANNELS.TASK_START];
+    await startHandler({}, task.id, { projectId: project.id });
+
+    expect(openSpecService.startTask).toHaveBeenCalledOnce();
+    expect(openSpecService.startTask).toHaveBeenCalledWith(task, project);
+    expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+    expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();
+    expect(mockAgentManager.startDirectTaskExecution).not.toHaveBeenCalled();
+    expect(taskStateManager.prepareForRestart).not.toHaveBeenCalled();
+    expect(taskStateManager.handleUiEvent).not.toHaveBeenCalled();
+    expect(fileWatcher.watch).not.toHaveBeenCalled();
+  });
+
   it('keeps fully completed human review tasks completed on TASK_START without launching runtime', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
@@ -1385,6 +1454,183 @@ describe('registerTaskExecutionHandlers', () => {
     expect(taskStateManager.clearTask).toHaveBeenCalledWith(taskId, 'project-fast');
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
     expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      recoveryState: 'stopped',
+      status: 'human_review',
+      reviewReason: 'stopped',
+    },
+    {
+      recoveryState: 'error',
+      status: 'error',
+      reviewReason: 'errors',
+    },
+  ])('routes $recoveryState Spec recovery exclusively through OpenSpec', async ({
+    status,
+    reviewReason,
+  }) => {
+    const { findTaskAndProject } = await import('../shared');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { fileWatcher } = await import('../../../file-watcher');
+    const { resetStuckSubtasks } = await import('../plan-file-utils');
+    const planShards = await import('../../../ai/schema/plan-shards');
+    const { registerTaskExecutionHandlers } = await import('../execution-handlers');
+
+    const task = {
+      id: `001-openspec-recover-${status}`,
+      specId: `001-openspec-recover-${status}`,
+      projectId: 'project-spec',
+      title: 'Recover OpenSpec task',
+      description: 'Resume the current official OpenSpec workflow.',
+      status,
+      reviewReason,
+      subtasks: [],
+      logs: [],
+      metadata: {
+        developmentMode: 'spec',
+        workflowMode: 'off',
+        openSpec: {
+          formatVersion: 1,
+          rootKind: 'project',
+          schemaName: 'spec-driven',
+          startAction: 'new',
+          changeName: 'resume-existing-change',
+        },
+      },
+    };
+    const project = {
+      id: 'project-spec',
+      path: 'E:/Work/SpecProject',
+      autoBuildPath: '.autocode',
+      settings: {},
+    };
+    const openSpecService = {
+      startTask: vi.fn().mockResolvedValue({ runId: 'openspec-recovery-run' }),
+      stopTask: vi.fn(),
+      validate: vi.fn(),
+      runAction: vi.fn(),
+    };
+
+    registerTaskExecutionHandlers(
+      mockAgentManager as never,
+      () => mockMainWindow as BrowserWindow,
+      openSpecService as never,
+    );
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskAndProject as Mock).mockReturnValue({ task, project });
+
+    const recoverHandler = handleHandlers[IPC_CHANNELS.TASK_RECOVER_STUCK];
+    const result = await recoverHandler({}, task.id, {
+      projectId: project.id,
+      autoRestart: true,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      data: {
+        taskId: task.id,
+        recovered: true,
+        newStatus: 'in_progress',
+        message: 'Spec task recovered and restarted through OpenSpec successfully',
+        autoRestarted: true,
+      },
+    });
+    expect(openSpecService.startTask).toHaveBeenCalledOnce();
+    expect(openSpecService.startTask).toHaveBeenCalledWith(task, project);
+    expect(taskStateManager.prepareForRestart).toHaveBeenCalledWith(task.id, project.id);
+    expect(planShards.loadImplementationPlanFromFilesSync).not.toHaveBeenCalled();
+    expect(planShards.saveImplementationPlanToFilesSync).not.toHaveBeenCalled();
+    expect(resetStuckSubtasks).not.toHaveBeenCalled();
+    expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+    expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();
+    expect(mockAgentManager.startDirectTaskExecution).not.toHaveBeenCalled();
+    expect(taskStateManager.handleUiEvent).not.toHaveBeenCalled();
+    expect(fileWatcher.watch).not.toHaveBeenCalled();
+    expect(fileWatcher.unwatch).not.toHaveBeenCalled();
+  });
+
+  it('refuses non-restarting Spec recovery without touching Standard plan artifacts', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { resetStuckSubtasks } = await import('../plan-file-utils');
+    const planShards = await import('../../../ai/schema/plan-shards');
+    const { registerTaskExecutionHandlers } = await import('../execution-handlers');
+
+    const task = {
+      id: '001-openspec-recover-manually',
+      specId: '001-openspec-recover-manually',
+      projectId: 'project-spec',
+      title: 'Recover OpenSpec task manually',
+      description: 'Resume through OpenSpec.',
+      status: 'human_review',
+      reviewReason: 'stopped',
+      subtasks: [],
+      logs: [],
+      metadata: {
+        developmentMode: 'spec',
+        openSpec: {
+          formatVersion: 1,
+          rootKind: 'project',
+          schemaName: 'spec-driven',
+          changeName: 'resume-existing-change',
+        },
+      },
+    };
+    const project = {
+      id: 'project-spec',
+      path: 'E:/Work/SpecProject',
+      autoBuildPath: '.autocode',
+      settings: {},
+    };
+    const openSpecService = {
+      startTask: vi.fn(),
+      stopTask: vi.fn(),
+      validate: vi.fn(),
+      runAction: vi.fn(),
+    };
+
+    registerTaskExecutionHandlers(
+      mockAgentManager as never,
+      () => mockMainWindow as BrowserWindow,
+      openSpecService as never,
+    );
+    (findTaskAndProject as Mock).mockReturnValue({ task, project });
+
+    const recoverHandler = handleHandlers[IPC_CHANNELS.TASK_RECOVER_STUCK];
+    const result = await recoverHandler({}, task.id, {
+      projectId: project.id,
+      autoRestart: false,
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Spec tasks must be recovered through the OpenSpec workflow. Enable automatic restart to resume the current OpenSpec action.',
+      data: {
+        taskId: task.id,
+        recovered: false,
+        newStatus: 'human_review',
+        message: 'OpenSpec recovery requires automatic restart.',
+        autoRestarted: false,
+      },
+    });
+    expect(openSpecService.startTask).not.toHaveBeenCalled();
+    expect(checkGitStatus).not.toHaveBeenCalled();
+    expect(planShards.loadImplementationPlanFromFilesSync).not.toHaveBeenCalled();
+    expect(planShards.saveImplementationPlanToFilesSync).not.toHaveBeenCalled();
+    expect(resetStuckSubtasks).not.toHaveBeenCalled();
+    expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+    expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();
+    expect(mockAgentManager.startDirectTaskExecution).not.toHaveBeenCalled();
   });
 
   it('keeps recovered auto-restart in progress after the start call succeeds', async () => {

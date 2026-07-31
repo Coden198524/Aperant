@@ -36,7 +36,7 @@ import { type FileReferenceData } from './task-form/useImageUpload';
 import { persistUpdateTask } from '../stores/task-store';
 import { useProjectStore } from '../stores/project-store';
 import { resolveTaskDevelopmentMode, workflowModeForDevelopmentMode } from '../../shared/utils/task-mode';
-import type { Task, ImageAttachment, TaskCategory, TaskPriority, TaskComplexity, TaskImpact, ModelType, ThinkingLevel, TaskDevelopmentMode } from '../../shared/types';
+import type { Task, ImageAttachment, TaskCategory, TaskPriority, TaskComplexity, TaskImpact, ModelType, ThinkingLevel, TaskDevelopmentMode, OpenSpecTaskConfig } from '../../shared/types';
 import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_PHASE_MODELS,
@@ -60,6 +60,13 @@ interface TaskEditDialogProps {
   /** Optional callback when task is successfully saved */
   onSaved?: () => void;
 }
+
+const DEFAULT_OPEN_SPEC_CONFIG: OpenSpecTaskConfig = {
+  formatVersion: 1,
+  startAction: 'new',
+  rootKind: 'project',
+  schemaName: 'spec-driven',
+};
 
 export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDialogProps) {
   const { t } = useTranslation(['tasks', 'common']);
@@ -133,6 +140,9 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     task.metadata?.requireReviewBeforeCoding ?? false
   );
   const [developmentMode, setDevelopmentMode] = useState<TaskDevelopmentMode>(resolveTaskDevelopmentMode(task.metadata));
+  const [openSpecConfig, setOpenSpecConfig] = useState<OpenSpecTaskConfig>(
+    task.metadata?.openSpec ?? DEFAULT_OPEN_SPEC_CONFIG,
+  );
 
   // Reset form when task changes or dialog opens
   useEffect(() => {
@@ -175,6 +185,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
       setImages(task.metadata?.attachedImages || []);
       setRequireReviewBeforeCoding(task.metadata?.requireReviewBeforeCoding ?? false);
       setDevelopmentMode(resolveTaskDevelopmentMode(task.metadata));
+      setOpenSpecConfig(task.metadata?.openSpec ?? DEFAULT_OPEN_SPEC_CONFIG);
       setError(null);
 
       // Auto-expand classification if it has content
@@ -201,7 +212,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
 
   const handleDevelopmentModeChange = useCallback((mode: TaskDevelopmentMode) => {
     setDevelopmentMode(mode);
-    if (mode === 'direct') {
+    if (mode !== 'standard') {
       setRequireReviewBeforeCoding(false);
     }
   }, []);
@@ -227,6 +238,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
       thinkingLevel !== (task.metadata?.thinkingLevel || '') ||
       requireReviewBeforeCoding !== (task.metadata?.requireReviewBeforeCoding ?? false) ||
       developmentMode !== resolveTaskDevelopmentMode(task.metadata) ||
+      JSON.stringify(openSpecConfig) !== JSON.stringify(task.metadata?.openSpec ?? DEFAULT_OPEN_SPEC_CONFIG) ||
       JSON.stringify(images) !== JSON.stringify(task.metadata?.attachedImages || []) ||
       JSON.stringify(phaseModels) !== JSON.stringify(task.metadata?.phaseModels || DEFAULT_PHASE_MODELS) ||
       JSON.stringify(phaseThinking) !== JSON.stringify(task.metadata?.phaseThinking || DEFAULT_PHASE_THINKING);
@@ -254,9 +266,42 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     }
     // Always set attachedImages to persist removal when all images are deleted
     metadataUpdates.attachedImages = images.length > 0 ? images : [];
-    metadataUpdates.requireReviewBeforeCoding = developmentMode !== 'direct' && requireReviewBeforeCoding;
+    metadataUpdates.requireReviewBeforeCoding = developmentMode === 'standard' && requireReviewBeforeCoding;
     metadataUpdates.developmentMode = developmentMode;
     metadataUpdates.workflowMode = workflowModeForDevelopmentMode(developmentMode);
+    if (developmentMode === 'spec') {
+      const changeName = openSpecConfig.changeName?.trim();
+      const storeId = openSpecConfig.storeId?.trim();
+      const schemaName = openSpecConfig.schemaName?.trim() || 'spec-driven';
+      if (changeName && !/^[a-z0-9][a-z0-9-]{0,127}$/.test(changeName)) {
+        setError(t('tasks:form.openSpec.invalidChangeName'));
+        setIsSaving(false);
+        return;
+      }
+      if (
+        openSpecConfig.rootKind === 'store' &&
+        (!storeId || !/^[a-z0-9][a-z0-9-]{0,127}$/.test(storeId))
+      ) {
+        setError(t('tasks:form.openSpec.invalidStoreId'));
+        setIsSaving(false);
+        return;
+      }
+      if (!/^[a-z0-9][a-z0-9-]{0,127}$/.test(schemaName)) {
+        setError(t('tasks:form.openSpec.invalidSchema'));
+        setIsSaving(false);
+        return;
+      }
+      metadataUpdates.openSpec = {
+        formatVersion: 1,
+        startAction: openSpecConfig.startAction ?? 'new',
+        rootKind: openSpecConfig.rootKind ?? 'project',
+        schemaName,
+        ...(changeName ? { changeName } : {}),
+        ...(openSpecConfig.rootKind === 'store' && storeId ? { storeId } : {}),
+      };
+    } else {
+      metadataUpdates.openSpec = undefined;
+    }
     metadataUpdates.sourceType = 'manual';
 
     const success = await persistUpdateTask(task.id, {
@@ -339,6 +384,12 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
         onRequireReviewChange={setRequireReviewBeforeCoding}
         developmentMode={developmentMode}
         onDevelopmentModeChange={handleDevelopmentModeChange}
+        developmentModeLocked={resolveTaskDevelopmentMode(task.metadata) === 'spec'}
+        disabledDevelopmentModes={
+          resolveTaskDevelopmentMode(task.metadata) === 'spec' ? [] : ['spec']
+        }
+        openSpecConfig={openSpecConfig}
+        onOpenSpecConfigChange={setOpenSpecConfig}
         disabled={isSaving}
         error={error}
         onError={setError}

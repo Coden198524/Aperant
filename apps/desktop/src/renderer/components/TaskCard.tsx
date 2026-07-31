@@ -48,6 +48,7 @@ import { stopTask, recoverStuckTask, isIncompleteHumanReview, archiveTasks, star
 import { useToast } from '../hooks/use-toast';
 import { subscribeStuckTask } from '../lib/stuck-task-monitor';
 import type { Task, TaskCategory, ReviewReason, TaskStatus } from '../../shared/types';
+import { resolveTaskDevelopmentMode } from '../../shared/utils/task-mode';
 import {
   getTaskCategoryLabel,
   getTaskComplexityLabel,
@@ -78,16 +79,6 @@ interface TaskCardProps {
   isSelectable?: boolean;
   isSelected?: boolean;
   onToggleSelect?: () => void;
-}
-
-function resolveCardDevelopmentMode(task: Task): 'direct' | 'standard' {
-  if (task.metadata?.developmentMode === 'direct' || task.metadata?.developmentMode === 'standard') {
-    return task.metadata.developmentMode;
-  }
-  if (task.metadata?.workflowMode === 'off') {
-    return 'direct';
-  }
-  return 'standard';
 }
 
 // Custom comparator for React.memo - only re-render when relevant task data changes
@@ -129,6 +120,7 @@ function taskCardPropsAreEqual(prevProps: TaskCardProps, nextProps: TaskCardProp
     prevTask.subtasks.length === nextTask.subtasks.length &&
     prevTask.metadata?.category === nextTask.metadata?.category &&
     prevTask.metadata?.complexity === nextTask.metadata?.complexity &&
+    prevTask.metadata?.developmentMode === nextTask.metadata?.developmentMode &&
     prevTask.metadata?.archivedAt === nextTask.metadata?.archivedAt &&
     prevTask.metadata?.prUrl === nextTask.metadata?.prUrl &&
     prevTask.tokenUsage?.stepsExecuted === nextTask.tokenUsage?.stepsExecuted &&
@@ -206,7 +198,7 @@ export const TaskCard = memo(function TaskCard({
         : task.executionProgress?.phaseProgress;
   const activeBatchCount = taskView.activeSubtaskCount;
   const hasParallelSubtasks = isRunning && taskView.hasParallelSubtasks;
-  const developmentMode = resolveCardDevelopmentMode(task);
+  const developmentMode = resolveTaskDevelopmentMode(task.metadata);
 
   // Check if task is in human_review but has no completed subtasks (crashed/incomplete)
   const isIncomplete = isIncompleteHumanReview(task);
@@ -383,6 +375,11 @@ export const TaskCard = memo(function TaskCard({
     }
   };
 
+  const handleOpenDetails = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onClick();
+  };
+
   const handleRecover = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsRecovering(true);
@@ -496,6 +493,7 @@ export const TaskCard = memo(function TaskCard({
 
   return (
     <Card
+      data-testid={`task-card-${task.id}`}
       className={cn(
         'card-surface task-card-enhanced cursor-pointer',
         isRunning && !isStuck && 'ring-2 ring-primary border-primary task-running-pulse',
@@ -624,11 +622,18 @@ export const TaskCard = memo(function TaskCard({
             {developmentMode !== 'standard' && (
               <Badge
                 variant="outline"
-                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                className={cn(
+                  'text-[10px] px-1.5 py-0.5 flex items-center gap-1',
+                  developmentMode === 'spec'
+                    ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30'
+                    : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30',
+                )}
               >
-                <Zap className="h-2.5 w-2.5" />
+                {developmentMode === 'spec'
+                  ? <FileCode className="h-2.5 w-2.5" />
+                  : <Zap className="h-2.5 w-2.5" />}
                 {t(`metadata.developmentMode.${developmentMode}`, {
-                  defaultValue: 'Direct',
+                  defaultValue: developmentMode === 'spec' ? 'Spec (OpenSpec)' : 'Direct',
                 })}
               </Badge>
             )}
@@ -767,6 +772,16 @@ export const TaskCard = memo(function TaskCard({
                     {t('actions.recover')}
                   </>
                 )}
+              </Button>
+            ) : developmentMode === 'spec' && task.status === 'human_review' ? (
+              <Button
+                variant="default"
+                size="sm"
+                className="h-7 px-2.5"
+                onClick={handleOpenDetails}
+              >
+                <FileCode className="mr-1.5 h-3 w-3" />
+                {t('openSpec.primaryAction.openWorkspace')}
               </Button>
             ) : isIncomplete ? (
               <Button

@@ -9,9 +9,12 @@
  * To run: npx playwright test --config=e2e/playwright.config.ts
  */
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
 import { mkdirSync, mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 // Test data directory - set during setup using a secure random temp dir
 let TEST_DATA_DIR: string;
@@ -87,7 +90,7 @@ test.describe('Add Project Flow', () => {
     // Skip test if electron is not available (CI environment)
     test.skip(!process.env.ELECTRON_PATH, 'Electron not available in CI');
 
-    const appPath = path.join(__dirname, '..');
+    const appPath = path.join(currentDir, '..');
     app = await electron.launch({ args: [appPath] });
     page = await app.firstWindow();
 

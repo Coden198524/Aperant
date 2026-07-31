@@ -21,6 +21,11 @@ import * as http from 'http';
 import * as path from 'path';
 import * as url from 'url';
 import { readOAuthErrorMessage } from './oauth-error';
+import {
+  buildStoredCodexTokens,
+  parseStoredCodexTokens,
+  type StoredCodexTokens,
+} from './codex-token';
 
 // Electron APIs loaded lazily to avoid crashing in worker threads
 // (workers don't have access to Electron main-process modules)
@@ -104,10 +109,8 @@ export interface CodexAuthState {
   expiresAt?: number;
 }
 
-interface StoredTokens {
-  access_token: string;
-  refresh_token: string;
-  expires_at: number; // unix ms
+interface CodexTokenExchangeResult extends CodexAuthResult {
+  storedTokens: StoredCodexTokens;
 }
 
 // =============================================================================
@@ -119,11 +122,15 @@ async function getTokenFilePath(): Promise<string> {
   return path.join(electronApp.getPath('userData'), 'codex-auth.json');
 }
 
-async function readStoredTokens(explicitPath?: string): Promise<StoredTokens | null> {
+async function readStoredTokens(explicitPath?: string): Promise<StoredCodexTokens | null> {
   try {
     const filePath = explicitPath ?? await getTokenFilePath();
     const raw = fs.readFileSync(filePath, 'utf8');
-    const tokens = JSON.parse(raw) as StoredTokens;
+    const tokens = parseStoredCodexTokens(JSON.parse(raw));
+    if (!tokens) {
+      debugLog('Stored token file is invalid');
+      return null;
+    }
     verboseLog('Read stored tokens', { expiresAt: tokens.expires_at, hasAccess: !!tokens.access_token, hasRefresh: !!tokens.refresh_token });
     return tokens;
   } catch {
@@ -132,15 +139,12 @@ async function readStoredTokens(explicitPath?: string): Promise<StoredTokens | n
   }
 }
 
-async function writeStoredTokens(tokens: StoredTokens): Promise<void> {
-  const filePath = await getTokenFilePath();
-  // CodeQL: network data validated before write - validate token fields match expected StoredTokens schema
-  const safeTokens: StoredTokens = {
-    access_token: typeof tokens.access_token === 'string' ? tokens.access_token : '',
-    refresh_token: typeof tokens.refresh_token === 'string' ? tokens.refresh_token : '',
-    expires_at: typeof tokens.expires_at === 'number' ? tokens.expires_at : 0,
-  };
-  fs.writeFileSync(filePath, JSON.stringify(safeTokens, null, 2), 'utf8');
+async function writeStoredTokens(
+  tokens: StoredCodexTokens,
+  explicitPath?: string,
+): Promise<void> {
+  const filePath = explicitPath ?? await getTokenFilePath();
+  fs.writeFileSync(filePath, JSON.stringify(tokens, null, 2), 'utf8');
   try {
     fs.chmodSync(filePath, 0o600);
   } catch {
@@ -295,12 +299,13 @@ export async function startCodexOAuthFlow(): Promise<CodexAuthResult> {
       exchangeCodeForTokens(code, codeVerifier)
         .then(async (result) => {
           debugLog('Token exchange successful', { expiresAt: result.expiresAt });
-          await writeStoredTokens({
-            access_token: result.accessToken,
-            refresh_token: result.refreshToken,
-            expires_at: result.expiresAt,
+          await writeStoredTokens(result.storedTokens);
+          resolve({
+            accessToken: result.accessToken,
+            refreshToken: result.refreshToken,
+            expiresAt: result.expiresAt,
+            ...(result.email ? { email: result.email } : {}),
           });
-          resolve(result);
         })
         .catch((err) => {
           debugLog('Token exchange failed', { error: err instanceof Error ? err.message : String(err) });
@@ -344,7 +349,10 @@ export async function startCodexOAuthFlow(): Promise<CodexAuthResult> {
 // Token Exchange
 // =============================================================================
 
-async function exchangeCodeForTokens(code: string, codeVerifier: string): Promise<CodexAuthResult> {
+async function exchangeCodeForTokens(
+  code: string,
+  codeVerifier: string,
+): Promise<CodexTokenExchangeResult> {
   debugLog('Exchanging authorization code for tokens');
 
   const body = new URLSearchParams({
@@ -389,12 +397,20 @@ async function exchangeCodeForTokens(code: string, codeVerifier: string): Promis
 
   const email =
     typeof data.id_token === 'string' ? getEmailFromIdToken(data.id_token) : undefined;
+  const storedTokens = buildStoredCodexTokens({
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresAt,
+    accountId: typeof data.account_id === 'string' ? data.account_id : undefined,
+    idToken: typeof data.id_token === 'string' ? data.id_token : undefined,
+  });
 
   return {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresAt,
     email,
+    storedTokens,
   };
 }
 
@@ -405,7 +421,11 @@ async function exchangeCodeForTokens(code: string, codeVerifier: string): Promis
 /**
  * Refresh a Codex access token using the stored refresh token.
  */
-export async function refreshCodexToken(refreshToken: string): Promise<CodexAuthResult> {
+export async function refreshCodexToken(
+  refreshToken: string,
+  previousTokens?: StoredCodexTokens,
+  tokenFilePath?: string,
+): Promise<CodexAuthResult> {
   debugLog('Refreshing Codex access token');
 
   const body = new URLSearchParams({
@@ -453,11 +473,14 @@ export async function refreshCodexToken(refreshToken: string): Promise<CodexAuth
     ...(typeof data.id_token === 'string' ? { email: getEmailFromIdToken(data.id_token) } : {}),
   };
 
-  await writeStoredTokens({
-    access_token: result.accessToken,
-    refresh_token: result.refreshToken,
-    expires_at: result.expiresAt,
-  });
+  await writeStoredTokens(buildStoredCodexTokens({
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
+    expiresAt: result.expiresAt,
+    accountId: typeof data.account_id === 'string' ? data.account_id : undefined,
+    idToken: typeof data.id_token === 'string' ? data.id_token : undefined,
+    previous: previousTokens,
+  }), tokenFilePath);
 
   return result;
 }
@@ -505,7 +528,7 @@ export async function ensureValidCodexToken(tokenFilePath?: string): Promise<str
   // Token expired or near expiry — attempt refresh
   debugLog('Token expired or near expiry, attempting refresh');
   try {
-    const refreshed = await refreshCodexToken(stored.refresh_token);
+    const refreshed = await refreshCodexToken(stored.refresh_token, stored, tokenFilePath);
     debugLog('Token refreshed successfully');
     return refreshed.accessToken;
   } catch (err) {

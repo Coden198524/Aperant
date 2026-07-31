@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CODEX_OAUTH_RESPONSES_TRANSPORT,
   buildProviderFallbackSessionConfigOverrides,
   mergeProviderFallbackInvocationRoutes,
   normalizeProviderBaseUrl,
   resolveEffectiveSessionProviderTransport,
   resolveProviderFallbackCacheKey,
+  resolveSessionProviderTransport,
   shouldFallbackForProviderError,
   shouldForceProviderFallbackTransport,
 } from '../provider-transport';
@@ -108,6 +110,19 @@ describe('agent provider transport helpers', () => {
     const session = createSession();
 
     expect(resolveEffectiveSessionProviderTransport(session, session.modelId, new Set())).toBe('openai.responses');
+  });
+
+  it('uses a distinct transport id for ChatGPT Codex OAuth Responses', () => {
+    const session = createSession({
+      baseURL: undefined,
+      oauthTokenFilePath: 'C:/Users/test/AppData/Roaming/autocode/codex-auth.json',
+      providerTransport: undefined,
+    });
+
+    expect(resolveSessionProviderTransport(session, session.modelId))
+      .toBe(CODEX_OAUTH_RESPONSES_TRANSPORT);
+    expect(resolveEffectiveSessionProviderTransport(session, session.modelId, new Set()))
+      .toBe(CODEX_OAUTH_RESPONSES_TRANSPORT);
   });
 
   it('clears provider-native persistence when fallback capability requests it', () => {

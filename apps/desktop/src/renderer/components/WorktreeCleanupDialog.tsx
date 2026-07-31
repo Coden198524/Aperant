@@ -15,6 +15,7 @@ interface WorktreeCleanupDialogProps {
   open: boolean;
   taskTitle: string;
   worktreePath?: string;
+  variant?: 'completion' | 'archived';
   isProcessing: boolean;
   error?: string;
   onOpenChange: (open: boolean) => void;
@@ -28,12 +29,14 @@ export function WorktreeCleanupDialog({
   open,
   taskTitle,
   worktreePath,
+  variant = 'completion',
   isProcessing,
   error,
   onOpenChange,
   onConfirm
 }: WorktreeCleanupDialogProps) {
   const { t } = useTranslation(['dialogs', 'common']);
+  const archived = variant === 'archived';
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -45,7 +48,11 @@ export function WorktreeCleanupDialog({
             ) : (
               <CheckCircle2 className="h-5 w-5 text-success" />
             )}
-            {error ? t('dialogs:worktreeCleanup.errorTitle') : t('dialogs:worktreeCleanup.title')}
+            {error
+              ? t('dialogs:worktreeCleanup.errorTitle')
+              : t(archived
+                  ? 'dialogs:worktreeCleanup.archivedTitle'
+                  : 'dialogs:worktreeCleanup.title')}
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="text-sm text-muted-foreground space-y-3">
@@ -55,13 +62,17 @@ export function WorktreeCleanupDialog({
                 <>
                   <p>
                     <Trans
-                      i18nKey="dialogs:worktreeCleanup.hasWorktree"
+                      i18nKey={archived
+                        ? 'dialogs:worktreeCleanup.archivedHasWorktree'
+                        : 'dialogs:worktreeCleanup.hasWorktree'}
                       values={{ taskTitle }}
                       components={{ strong: <strong className="text-foreground" /> }}
                     />
                   </p>
                   <p>
-                    {t('dialogs:worktreeCleanup.willDelete')}
+                    {t(archived
+                      ? 'dialogs:worktreeCleanup.archivedWillDelete'
+                      : 'dialogs:worktreeCleanup.willDelete')}
                   </p>
                 </>
               )}
@@ -79,7 +90,11 @@ export function WorktreeCleanupDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isProcessing}>{t('common:buttons.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel disabled={isProcessing}>
+            {t(archived
+              ? 'dialogs:worktreeCleanup.archivedKeep'
+              : 'common:buttons.cancel')}
+          </AlertDialogCancel>
           <AlertDialogAction
             onClick={(e) => {
               e.preventDefault();
@@ -91,7 +106,9 @@ export function WorktreeCleanupDialog({
             {isProcessing ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {t('dialogs:worktreeCleanup.completing')}
+                {t(archived
+                  ? 'dialogs:worktreeCleanup.archivedCompleting'
+                  : 'dialogs:worktreeCleanup.completing')}
               </>
             ) : error ? (
               <>
@@ -101,7 +118,9 @@ export function WorktreeCleanupDialog({
             ) : (
               <>
                 <FolderX className="mr-2 h-4 w-4" />
-                {t('dialogs:worktreeCleanup.confirm')}
+                {t(archived
+                  ? 'dialogs:worktreeCleanup.archivedConfirm'
+                  : 'dialogs:worktreeCleanup.confirm')}
               </>
             )}
           </AlertDialogAction>

@@ -577,6 +577,11 @@ export function registerAgenteventsHandlers(
   });
 
   agentManager.on("exit", (taskId: string, code: number | null, processType: ProcessType, projectId?: string) => {
+    // OpenSpec owns its action lifecycle and task projection. Never route an
+    // OpenSpec worker exit through Standard XState/plan/QA completion logic.
+    if (processType === 'openspec-action') {
+      return;
+    }
     // Use projectId from event to scope the lookup (prevents cross-project contamination)
     const { task: exitTask, project: exitProject } = findTaskAndProject(taskId, projectId);
     const exitProjectId = exitProject?.id || projectId;

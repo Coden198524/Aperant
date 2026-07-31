@@ -8,9 +8,12 @@
  * To run: npx playwright test terminal-copy-paste.e2e.ts --config=e2e/playwright.config.ts
  */
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
 import { mkdirSync, rmSync, existsSync } from 'fs';
 import path from 'path';
 import * as os from 'os';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 // Global Navigator declaration for clipboard
 declare global {
@@ -75,7 +78,7 @@ test.describe('Terminal Copy/Paste Flows', () => {
 
   test.beforeEach(async () => {
     // Launch Electron app
-    const appPath = path.join(__dirname, '..');
+    const appPath = path.join(currentDir, '..');
     app = await electron.launch({ args: [appPath] });
 
     window = await app.firstWindow({
@@ -105,7 +108,7 @@ test.describe('Terminal Copy/Paste Flows', () => {
     test.skip(!shouldRunForPlatform('all'), 'Test not applicable to this platform');
 
     // Look for terminal element - skip if not found
-    const terminalSelector = '.xterm';
+    const terminalSelector = '.xterm:visible';
     const terminalExists = await window.locator(terminalSelector).count() > 0;
     test.skip(!terminalExists, 'Terminal element not found');
 
@@ -145,7 +148,7 @@ test.describe('Terminal Copy/Paste Flows', () => {
     test.skip(!isAppReady, 'App not ready');
     test.skip(!shouldRunForPlatform('all'), 'Test not applicable to this platform');
 
-    const terminalSelector = '.xterm';
+    const terminalSelector = '.xterm:visible';
     const terminalExists = await window.locator(terminalSelector).count() > 0;
     test.skip(!terminalExists, 'Terminal element not found');
 
@@ -171,7 +174,7 @@ test.describe('Terminal Copy/Paste Flows', () => {
     test.skip(!isAppReady, 'App not ready');
     test.skip(!shouldRunForPlatform('all'), 'Test not applicable to this platform');
 
-    const terminalSelector = '.xterm';
+    const terminalSelector = '.xterm:visible';
     const terminalExists = await window.locator(terminalSelector).count() > 0;
     test.skip(!terminalExists, 'Terminal element not found');
 
@@ -202,7 +205,7 @@ test.describe('Terminal Copy/Paste Flows', () => {
     test.skip(!isAppReady, 'App not ready');
     test.skip(!shouldRunForPlatform('linux'), 'Linux-specific test');
 
-    const terminalSelector = '.xterm';
+    const terminalSelector = '.xterm:visible';
     const terminalExists = await window.locator(terminalSelector).count() > 0;
     test.skip(!terminalExists, 'Terminal element not found');
 
@@ -242,7 +245,7 @@ test.describe('Terminal Copy/Paste Flows', () => {
     test.skip(!isAppReady, 'App not ready');
     test.skip(!shouldRunForPlatform('linux'), 'Linux-specific test');
 
-    const terminalSelector = '.xterm';
+    const terminalSelector = '.xterm:visible';
     const terminalExists = await window.locator(terminalSelector).count() > 0;
     test.skip(!terminalExists, 'Terminal element not found');
 
@@ -276,7 +279,7 @@ test.describe('Terminal Copy/Paste Flows', () => {
     test.skip(!isAppReady, 'App not ready');
     test.skip(!shouldRunForPlatform('all'), 'Test not applicable to this platform');
 
-    const terminalSelector = '.xterm';
+    const terminalSelector = '.xterm:visible';
     const terminalExists = await window.locator(terminalSelector).count() > 0;
     test.skip(!terminalExists, 'Terminal element not found');
 
@@ -300,7 +303,7 @@ test.describe('Terminal Copy/Paste Flows', () => {
     test.skip(!isAppReady, 'App not ready');
     test.skip(!shouldRunForPlatform('all'), 'Test not applicable to this platform');
 
-    const terminalSelector = '.xterm';
+    const terminalSelector = '.xterm:visible';
     const terminalExists = await window.locator(terminalSelector).count() > 0;
     test.skip(!terminalExists, 'Terminal element not found');
 

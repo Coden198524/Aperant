@@ -347,6 +347,7 @@ describe('AgentManager worktree execution', () => {
     readSettingsFileMock.mockReset();
     readSettingsFileMock.mockReturnValue({});
     writeFileSyncMock.mockReset();
+    spawnWorkerProcessMock.mockReset();
     spawnProcessMock.mockReset();
     invalidateTasksCacheMock.mockReset();
     createStartedAutocodeAgentRuntimeMock.mockClear();
@@ -377,6 +378,68 @@ describe('AgentManager worktree execution', () => {
       unit: 'work_item',
       conflictPolicy: 'lock-and-queue',
     });
+  });
+
+  it('isolates OpenSpec startup from the generic task lock and coalesces the same run', async () => {
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+    let releaseTaskSpawn: (() => void) | undefined;
+    let releaseOpenSpecSpawn: (() => void) | undefined;
+    const taskSpawn = new Promise<void>((resolve) => {
+      releaseTaskSpawn = resolve;
+    });
+    const openSpecSpawn = new Promise<void>((resolve) => {
+      releaseOpenSpecSpawn = resolve;
+    });
+    spawnWorkerProcessMock
+      .mockImplementationOnce(() => taskSpawn)
+      .mockImplementationOnce(() => openSpecSpawn);
+
+    const taskStart = manager.startTaskExecution(
+      '001-task',
+      'E:/repo',
+      '001-task',
+      {},
+      'project-1',
+    );
+    await vi.waitFor(() => {
+      expect(spawnWorkerProcessMock).toHaveBeenCalledTimes(1);
+    });
+
+    const actionInput = {
+      taskId: '001-task',
+      projectId: 'project-1',
+      runId: 'openspec-run-1',
+      action: 'new' as const,
+      projectPath: 'E:/repo',
+      runtimeRoot: 'E:/repo',
+      specDir: 'E:/repo/.autocode/specs/001-task',
+      prompt: 'Official OpenSpec prompt',
+      userMessage: 'Create a new OpenSpec change.',
+      commandEnv: {},
+      allowedPathRoots: ['E:/repo'],
+      trustedRuntimeReadPaths: [
+        'E:/runtime/shim',
+        'E:/runtime/openspec',
+        'E:/runtime',
+      ],
+      allowedWritePaths: ['E:/repo/openspec'],
+      readOnly: false,
+    };
+    const firstOpenSpecStart = manager.startOpenSpecAction(actionInput);
+    await vi.waitFor(() => {
+      expect(spawnWorkerProcessMock).toHaveBeenCalledTimes(2);
+    });
+
+    const duplicateOpenSpecStart = manager.startOpenSpecAction(actionInput);
+    await Promise.resolve();
+    expect(spawnWorkerProcessMock).toHaveBeenCalledTimes(2);
+
+    releaseOpenSpecSpawn?.();
+    await Promise.all([firstOpenSpecStart, duplicateOpenSpecStart]);
+    releaseTaskSpawn?.();
+    await taskStart;
+    expect(spawnWorkerProcessMock).toHaveBeenCalledTimes(2);
   });
 
   it('keeps spec creation initial messages compact without duplicating project docs', async () => {

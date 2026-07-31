@@ -27,7 +27,7 @@ import { useProjectStore } from '../stores/project-store';
 import { buildBranchOptions } from '../lib/branch-utils';
 import { cn } from '../lib/utils';
 import { resolveTaskDevelopmentMode, workflowModeForDevelopmentMode } from '../../shared/utils/task-mode';
-import type { TaskCategory, TaskPriority, TaskComplexity, TaskImpact, TaskMetadata, ImageAttachment, TaskDraft, ModelType, ThinkingLevel, ReferencedFile, GitBranchDetail, TaskWorkflowMode, TaskDevelopmentMode } from '../../shared/types';
+import type { TaskCategory, TaskPriority, TaskComplexity, TaskImpact, TaskMetadata, ImageAttachment, TaskDraft, ModelType, ThinkingLevel, ReferencedFile, GitBranchDetail, TaskWorkflowMode, TaskDevelopmentMode, OpenSpecPreflightResult, OpenSpecTaskConfig } from '../../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../shared/types/settings';
 import {
   DEFAULT_AGENT_PROFILES,
@@ -46,6 +46,12 @@ interface TaskCreationWizardProps {
 
 // Special value for "use project default" branch
 const PROJECT_DEFAULT_BRANCH = AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER;
+const DEFAULT_OPEN_SPEC_CONFIG: OpenSpecTaskConfig = {
+  formatVersion: 1,
+  startAction: 'new',
+  rootKind: 'project',
+  schemaName: 'spec-driven',
+};
 
 function resolveDraftDevelopmentMode(draft: TaskDraft): TaskDevelopmentMode {
   return resolveTaskDevelopmentMode(draft);
@@ -153,6 +159,12 @@ export function TaskCreationWizard({
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
   const [developmentMode, setDevelopmentMode] = useState<TaskDevelopmentMode>('standard');
   const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>('balanced');
+  const [openSpecConfig, setOpenSpecConfig] = useState<OpenSpecTaskConfig>(
+    DEFAULT_OPEN_SPEC_CONFIG,
+  );
+  const [openSpecPreflight, setOpenSpecPreflight] =
+    useState<OpenSpecPreflightResult | null>(null);
+  const [openSpecPreflightLoading, setOpenSpecPreflightLoading] = useState(false);
 
   // Draft state
   const [isDraftRestored, setIsDraftRestored] = useState(false);
@@ -223,6 +235,7 @@ export function TaskCreationWizard({
         const draftDevelopmentMode = resolveDraftDevelopmentMode(draft);
         setDevelopmentMode(draftDevelopmentMode);
         setWorkflowMode(workflowModeForDevelopmentMode(draftDevelopmentMode));
+        setOpenSpecConfig(draft.openSpec ?? DEFAULT_OPEN_SPEC_CONFIG);
         setUseWorktree(draft.useWorktree ?? false);
         setPushNewBranches(draft.pushNewBranches ?? projectPushNewBranches);
         setIsDraftRestored(true);
@@ -249,6 +262,7 @@ export function TaskCreationWizard({
         setRequireReviewBeforeCoding(false);
         setDevelopmentMode('standard');
         setWorkflowMode('balanced');
+        setOpenSpecConfig(DEFAULT_OPEN_SPEC_CONFIG);
         setBaseBranch(PROJECT_DEFAULT_BRANCH);
         setUseWorktree(false);
         setPushNewBranches(projectPushNewBranches);
@@ -259,6 +273,61 @@ export function TaskCreationWizard({
       }
     }
   }, [open, projectId, projectPushNewBranches, resolvedProfileId, resolvedPhaseModels, resolvedPhaseThinking, profilePrimaryModel, profilePrimaryThinking, settingsBusy]);
+
+  // Discover the pinned runtime's actual Schemas and registered Stores while
+  // the Spec form is open. Submission repeats this preflight authoritatively.
+  useEffect(() => {
+    if (!open || developmentMode !== 'spec' || !projectId) {
+      setOpenSpecPreflight(null);
+      setOpenSpecPreflightLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      const changeName = openSpecConfig.changeName?.trim();
+      const storeId = openSpecConfig.storeId?.trim();
+      const schemaName = openSpecConfig.schemaName?.trim() || 'spec-driven';
+      const selectedStoreIsValid = openSpecConfig.rootKind === 'store' &&
+        Boolean(storeId && /^[a-z0-9][a-z0-9-]{0,127}$/.test(storeId));
+      setOpenSpecPreflightLoading(true);
+      void window.electronAPI.preflightOpenSpec({
+        projectId,
+        // Project preflight still discovers registered Stores while an
+        // incomplete Store selection is being edited.
+        rootKind: selectedStoreIsValid ? 'store' : 'project',
+        ...(selectedStoreIsValid && storeId ? { storeId } : {}),
+        schemaName,
+        ...(changeName ? { changeName } : {}),
+        startAction: openSpecConfig.startAction ?? 'new',
+        useWorktree,
+      })
+        .then((result) => {
+          if (!cancelled) setOpenSpecPreflight(result);
+        })
+        .catch((reason) => {
+          if (cancelled) return;
+          setOpenSpecPreflight(null);
+          setError(reason instanceof Error ? reason.message : String(reason));
+        })
+        .finally(() => {
+          if (!cancelled) setOpenSpecPreflightLoading(false);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    developmentMode,
+    open,
+    openSpecConfig.changeName,
+    openSpecConfig.rootKind,
+    openSpecConfig.schemaName,
+    openSpecConfig.startAction,
+    openSpecConfig.storeId,
+    projectId,
+    useWorktree,
+  ]);
 
   // Fetch branches only when the git branch controls are actually needed.
   useEffect(() => {
@@ -327,11 +396,12 @@ export function TaskCreationWizard({
     referencedFiles,
     requireReviewBeforeCoding,
     developmentMode,
+    openSpec: developmentMode === 'spec' ? openSpecConfig : undefined,
     workflowMode,
     useWorktree,
     pushNewBranches,
     savedAt: new Date()
-  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, developmentMode, workflowMode, useWorktree, pushNewBranches]);
+  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, developmentMode, openSpecConfig, workflowMode, useWorktree, pushNewBranches]);
 
   /**
    * Detect @ mention being typed and show autocomplete
@@ -511,7 +581,7 @@ export function TaskCreationWizard({
   const handleDevelopmentModeChange = useCallback((mode: TaskDevelopmentMode) => {
     setDevelopmentMode(mode);
     setWorkflowMode(workflowModeForDevelopmentMode(mode));
-    if (mode === 'direct') {
+    if (mode !== 'standard') {
       setRequireReviewBeforeCoding(false);
     }
   }, []);
@@ -572,7 +642,32 @@ export function TaskCreationWizard({
 
       if (images.length > 0) metadata.attachedImages = images;
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
-      if (requireReviewBeforeCoding && developmentMode !== 'direct') metadata.requireReviewBeforeCoding = true;
+      if (requireReviewBeforeCoding && developmentMode === 'standard') metadata.requireReviewBeforeCoding = true;
+      if (developmentMode === 'spec') {
+        const changeName = openSpecConfig.changeName?.trim();
+        const storeId = openSpecConfig.storeId?.trim();
+        const schemaName = openSpecConfig.schemaName?.trim() || 'spec-driven';
+        if (changeName && !/^[a-z0-9][a-z0-9-]{0,127}$/.test(changeName)) {
+          throw new Error(t('tasks:form.openSpec.invalidChangeName'));
+        }
+        if (
+          openSpecConfig.rootKind === 'store' &&
+          (!storeId || !/^[a-z0-9][a-z0-9-]{0,127}$/.test(storeId))
+        ) {
+          throw new Error(t('tasks:form.openSpec.invalidStoreId'));
+        }
+        if (!/^[a-z0-9][a-z0-9-]{0,127}$/.test(schemaName)) {
+          throw new Error(t('tasks:form.openSpec.invalidSchema'));
+        }
+        metadata.openSpec = {
+          formatVersion: 1,
+          startAction: openSpecConfig.startAction ?? 'new',
+          rootKind: openSpecConfig.rootKind ?? 'project',
+          schemaName,
+          ...(changeName ? { changeName } : {}),
+          ...(openSpecConfig.rootKind === 'store' && storeId ? { storeId } : {}),
+        };
+      }
       metadata.workflowMode = workflowModeForDevelopmentMode(developmentMode);
       metadata.useWorktree = useWorktree;
       if (useWorktree) {
@@ -586,6 +681,25 @@ export function TaskCreationWizard({
         // This preserves gitignored files (.env, configs) by not switching to origin.
         if (isSelectedBranchLocal) metadata.useLocalBranch = true;
         metadata.pushNewBranches = pushNewBranches;
+      }
+
+      if (developmentMode === 'spec') {
+        const preflight = await window.electronAPI.preflightOpenSpec({
+          projectId,
+          rootKind: metadata.openSpec?.rootKind,
+          storeId: metadata.openSpec?.storeId,
+          schemaName: metadata.openSpec?.schemaName,
+          changeName: metadata.openSpec?.changeName,
+          startAction: metadata.openSpec?.startAction,
+          useWorktree,
+        });
+        if (!preflight.valid) {
+          const message = preflight.checks
+            .filter((entry) => !entry.ok && entry.severity === 'error')
+            .map((entry) => entry.message)
+            .join(' ');
+          throw new Error(message || t('tasks:form.openSpec.preflightFailed'));
+        }
       }
 
       const task = await createTask(projectId, title.trim(), description.trim(), metadata);
@@ -620,6 +734,7 @@ export function TaskCreationWizard({
     setRequireReviewBeforeCoding(false);
     setDevelopmentMode('standard');
     setWorkflowMode('balanced');
+    setOpenSpecConfig(DEFAULT_OPEN_SPEC_CONFIG);
     setBaseBranch(PROJECT_DEFAULT_BRANCH);
     setUseWorktree(false);
     setPushNewBranches(projectPushNewBranches);
@@ -738,7 +853,11 @@ export function TaskCreationWizard({
             <Button variant="outline" onClick={handleClose} disabled={isCreating || settingsBusy}>
               {t('common:buttons.cancel')}
             </Button>
-            <Button onClick={handleCreate} disabled={isCreating || settingsBusy || !description.trim()}>
+            <Button
+              onClick={handleCreate}
+              data-testid="create-task-submit"
+              disabled={isCreating || settingsBusy || !description.trim()}
+            >
               {isCreating ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -805,6 +924,10 @@ export function TaskCreationWizard({
           onRequireReviewChange={setRequireReviewBeforeCoding}
           developmentMode={developmentMode}
           onDevelopmentModeChange={handleDevelopmentModeChange}
+          openSpecConfig={openSpecConfig}
+          onOpenSpecConfigChange={setOpenSpecConfig}
+          openSpecPreflight={openSpecPreflight}
+          openSpecPreflightLoading={openSpecPreflightLoading}
           disabled={isCreating || settingsBusy}
           error={error}
           onError={setError}
@@ -899,7 +1022,9 @@ export function TaskCreationWizard({
                 onClick={() => setPushNewBranches((current) => !current)}
                 disabled={isCreating || settingsBusy || !useWorktree}
               >
-                {pushNewBranches ? 'On' : 'Off'}
+                {pushNewBranches
+                  ? t('tasks:wizard.gitOptions.stateOn')
+                  : t('tasks:wizard.gitOptions.stateOff')}
               </Button>
             </div>
 
@@ -923,7 +1048,9 @@ export function TaskCreationWizard({
                 onClick={() => setUseWorktree((current) => !current)}
                 disabled={isCreating || settingsBusy}
               >
-                {useWorktree ? 'On' : 'Off'}
+                {useWorktree
+                  ? t('tasks:wizard.gitOptions.stateOn')
+                  : t('tasks:wizard.gitOptions.stateOff')}
               </Button>
             </div>
           </div>

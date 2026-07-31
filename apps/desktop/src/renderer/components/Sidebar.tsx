@@ -480,6 +480,7 @@ export function Sidebar({
                 className="w-full"
                 size={isCollapsed ? "icon" : "default"}
                 onClick={onNewTaskClick}
+                data-testid="new-task-button"
                 disabled={!selectedProjectId || !selectedProject?.autoBuildPath}
               >
                 <Plus className={isCollapsed ? "h-4 w-4" : "mr-2 h-4 w-4"} />

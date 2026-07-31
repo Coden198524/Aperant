@@ -3,7 +3,10 @@
  * Provides utilities for launching and interacting with the Electron app
  */
 import { _electron as electron, ElectronApplication, Page } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
 import path from 'path';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 export interface ElectronTestContext {
   app: ElectronApplication;
@@ -15,7 +18,7 @@ export interface ElectronTestContext {
  */
 export async function launchElectronApp(): Promise<ElectronTestContext> {
   // Path to the built Electron app
-  const appPath = path.join(__dirname, '..');
+  const appPath = path.join(currentDir, '..');
 
   const app = await electron.launch({
     args: [appPath],

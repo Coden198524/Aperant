@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { asSchema } from 'ai';
 
 import { readTool } from '../read';
 import type { ToolContext } from '../../types';
@@ -233,19 +234,94 @@ describe('Read Tool', () => {
     }).success).toBe(false);
     expect(readTool.config.inputSchema.safeParse({
       file_path: '/test/project/file.ts',
-      byte_offset: 0,
+      byte_offset: 2,
       offset: 1,
     }).success).toBe(false);
-    expect(readTool.config.inputSchema.safeParse({
-      file_path: '/test/project/file.ts',
+  });
+
+  it('should normalize provider-filled mutually exclusive Read modes', () => {
+    const lineResult = readTool.config.inputSchema.safeParse({
+      file_path: 'E:\\Work\\Project\\spec.md',
+      offset: 0,
+      limit: 500,
       byte_offset: 0,
-      limit: 1,
-    }).success).toBe(false);
-    expect(readTool.config.inputSchema.safeParse({
-      file_path: '/test/project/file.ts',
-      byte_offset: 0,
+      byte_limit: 8192,
       pages: '1',
+    });
+    expect(lineResult.success).toBe(true);
+    if (lineResult.success) {
+      expect(lineResult.data).toEqual({
+        file_path: 'E:\\Work\\Project\\spec.md',
+        offset: 0,
+        limit: 500,
+      });
+    }
+
+    const byteResult = readTool.config.inputSchema.safeParse({
+      file_path: '/test/project/spec.md',
+      offset: 0,
+      limit: 500,
+      byte_offset: 8192,
+      byte_limit: 8192,
+      pages: '1',
+    });
+    expect(byteResult.success).toBe(true);
+    if (byteResult.success) {
+      expect(byteResult.data).toEqual({
+        file_path: '/test/project/spec.md',
+        byte_offset: 8192,
+        byte_limit: 8192,
+      });
+    }
+
+    const pdfResult = readTool.config.inputSchema.safeParse({
+      file_path: '/test/project/spec.pdf',
+      offset: 0,
+      limit: 500,
+      byte_offset: 0,
+      byte_limit: 8192,
+      pages: '1',
+    });
+    expect(pdfResult.success).toBe(true);
+    if (pdfResult.success) {
+      expect(pdfResult.data).toEqual({
+        file_path: '/test/project/spec.pdf',
+        pages: '1',
+      });
+    }
+  });
+
+  it('should preserve validation for invalid or genuinely ambiguous ranges', () => {
+    expect(readTool.config.inputSchema.safeParse({
+      file_path: '/test/project/file.ts',
+      offset: -1,
+      byte_offset: 0,
+      byte_limit: 1024,
     }).success).toBe(false);
+    expect(readTool.config.inputSchema.safeParse({
+      file_path: '/test/project/file.ts',
+      offset: 10,
+      limit: 5,
+      byte_offset: 1024,
+      byte_limit: 1024,
+    }).success).toBe(false);
+  });
+
+  it('should keep the full Read JSON Schema visible through preprocessing', () => {
+    const jsonSchema = asSchema(readTool.config.inputSchema).jsonSchema as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+
+    expect(Object.keys(jsonSchema.properties ?? {})).toEqual([
+      'file_path',
+      'offset',
+      'limit',
+      'byte_offset',
+      'byte_limit',
+      'pages',
+    ]);
+    expect(jsonSchema.required).toEqual(['file_path']);
   });
 
   it('should cap default reads in aggressive mode', async () => {

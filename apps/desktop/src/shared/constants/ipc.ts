@@ -74,6 +74,25 @@ export const IPC_CHANNELS = {
   TASK_EXECUTION_PROGRESS: 'task:executionProgress',
   TASK_TOKEN_USAGE: 'task:tokenUsage',
 
+  // OpenSpec-backed Spec workflow
+  OPEN_SPEC_GET_SNAPSHOT: 'openspec:getSnapshot',
+  OPEN_SPEC_SELECT_CHANGE: 'openspec:selectChange',
+  OPEN_SPEC_RUN_ACTION: 'openspec:runAction',
+  OPEN_SPEC_CANCEL_ACTION: 'openspec:cancelAction',
+  OPEN_SPEC_ANSWER_INTERACTION: 'openspec:answerInteraction',
+  OPEN_SPEC_READ_ARTIFACT: 'openspec:readArtifact',
+  OPEN_SPEC_GET_ARTIFACT_DIFF: 'openspec:getArtifactDiff',
+  OPEN_SPEC_VALIDATE: 'openspec:validate',
+  OPEN_SPEC_LIST_CHANGES: 'openspec:listChanges',
+  OPEN_SPEC_PREFLIGHT: 'openspec:preflight',
+  OPEN_SPEC_GET_HISTORY: 'openspec:getHistory',
+  OPEN_SPEC_READ_RUN_LOG: 'openspec:readRunLog',
+  OPEN_SPEC_RESUME_ACTION: 'openspec:resumeAction',
+  OPEN_SPEC_GET_PLANNING_REVIEW: 'openspec:getPlanningReview',
+  OPEN_SPEC_ACKNOWLEDGE_PLANNING_REVIEW: 'openspec:acknowledgePlanningReview',
+  OPEN_SPEC_RETRY_PLANNING_REVIEW: 'openspec:retryPlanningReview',
+  OPEN_SPEC_EVENT: 'openspec:event',
+
   // Debug: Renderer -> Main log bridge
   RENDERER_LOG: 'renderer:log',
 

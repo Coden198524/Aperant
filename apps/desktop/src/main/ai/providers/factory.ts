@@ -9,7 +9,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createAzure } from '@ai-sdk/azure';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import type { LanguageModel } from 'ai';
+import { wrapLanguageModel, type LanguageModel } from 'ai';
 
 import {
   buildProviderModelCreationPlan,
@@ -27,7 +27,7 @@ import { createProviderSdkInstanceFromPlan } from './sdk-adapter';
 function invokeModelFromPlan(
   instance: unknown,
   invocation: ProviderModelInvocationPlan,
-): LanguageModel {
+) {
   switch (invocation.method) {
     case 'chat':
       return (instance as ReturnType<typeof createAzure>).chat(invocation.modelId);
@@ -55,7 +55,10 @@ export function createProvider(options: CreateProviderOptions): LanguageModel {
     invocationRoutes: parseAutocodeProviderModelInvocationRoutes(options.invocationRoutes),
   });
   const instance = createProviderSdkInstanceFromPlan(plan.instance);
-  const model = invokeModelFromPlan(instance, plan.invocation);
+  const invokedModel = invokeModelFromPlan(instance, plan.invocation);
+  const model = plan.instance.fetchStrategy === 'openai-codex-oauth'
+    ? wrapCodexOAuthModel(invokedModel)
+    : invokedModel;
 
   if (!plan.invocation.supportsPromptCaching) {
     return model;
@@ -64,6 +67,36 @@ export function createProvider(options: CreateProviderOptions): LanguageModel {
   return Object.assign(model, {
     supportsPromptCaching: true,
   }) as LanguageModel;
+}
+
+function wrapCodexOAuthModel(
+  model: ReturnType<typeof invokeModelFromPlan>,
+): ReturnType<typeof invokeModelFromPlan> {
+  return wrapLanguageModel({
+    model,
+    middleware: {
+      specificationVersion: 'v3',
+      transformParams: async ({ params }) => {
+        const normalizedParams = { ...params };
+        delete normalizedParams.maxOutputTokens;
+
+        const openaiOptions = { ...(normalizedParams.providerOptions?.openai ?? {}) };
+        delete openaiOptions.conversation;
+        delete openaiOptions.previousResponseId;
+
+        return {
+          ...normalizedParams,
+          providerOptions: {
+            ...normalizedParams.providerOptions,
+            openai: {
+              ...openaiOptions,
+              store: false,
+            },
+          },
+        };
+      },
+    },
+  });
 }
 
 export function detectProviderFromModel(modelId: string): SupportedProvider | undefined {

@@ -18,6 +18,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { cp, rm } from 'fs/promises';
+import { platform } from 'node:os';
 import { join, resolve } from 'path';
 import { promisify } from 'util';
 import {
@@ -67,6 +68,13 @@ export interface WorktreeResult {
   branch: string;
 }
 
+const inFlightWorktreeOperations = new Map<string, Promise<WorktreeResult>>();
+
+function getWorktreeOperationKey(projectPath: string, specId: string): string {
+  const worktreePath = resolve(getAutocodeTaskWorktreePath(projectPath, specId));
+  return platform() === 'win32' ? worktreePath.toLowerCase() : worktreePath;
+}
+
 // ---------------------------------------------------------------------------
 // Core function
 // ---------------------------------------------------------------------------
@@ -96,6 +104,52 @@ export async function createOrGetWorktree(
   pushNewBranches = false,
   autoBuildPath?: string,
   syncSpecDir = false,
+): Promise<WorktreeResult> {
+  const operationKey = getWorktreeOperationKey(projectPath, specId);
+  const inFlight = inFlightWorktreeOperations.get(operationKey);
+  if (inFlight) {
+    console.warn(
+      `[WorktreeManager] Waiting for in-flight worktree creation: ${specId}`,
+    );
+    const result = await inFlight;
+    await syncTaskRuntimeFilesToWorktree(
+      projectPath,
+      result.worktreePath,
+      specId,
+      autoBuildPath,
+      syncSpecDir,
+    );
+    return result;
+  }
+
+  const operation = createOrGetWorktreeUnlocked(
+    projectPath,
+    specId,
+    baseBranch,
+    useLocalBranch,
+    pushNewBranches,
+    autoBuildPath,
+    syncSpecDir,
+  );
+  inFlightWorktreeOperations.set(operationKey, operation);
+
+  try {
+    return await operation;
+  } finally {
+    if (inFlightWorktreeOperations.get(operationKey) === operation) {
+      inFlightWorktreeOperations.delete(operationKey);
+    }
+  }
+}
+
+async function createOrGetWorktreeUnlocked(
+  projectPath: string,
+  specId: string,
+  baseBranch: string,
+  useLocalBranch: boolean,
+  pushNewBranches: boolean,
+  autoBuildPath: string | undefined,
+  syncSpecDir: boolean,
 ): Promise<WorktreeResult> {
   const worktreePath = getAutocodeTaskWorktreePath(projectPath, specId);
   const branchName = buildAutocodeTaskBranchName(specId);

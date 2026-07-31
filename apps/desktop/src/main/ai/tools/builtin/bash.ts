@@ -24,11 +24,17 @@ import {
 } from '@autocode/core';
 import { z } from 'zod/v3';
 
-import { findExecutable, isWindows, killProcessGracefully } from '../../../platform/index';
+import {
+  getShellConfig,
+  isWindows,
+  killProcessGracefully,
+  ShellType,
+} from '../../../platform/index';
 import { bashSecurityHook } from '../../security/bash-validator';
 import { Tool } from '../define';
 import { ToolPermission } from '../types';
 import type { ToolContext } from '../types';
+import { getOpenSpecBashPolicyDenial } from './openspec-bash-policy';
 
 // ---------------------------------------------------------------------------
 // Input Schema
@@ -52,8 +58,11 @@ const inputSchema = z.object({
 
 function resolveShell(): string {
   if (isWindows()) {
-    // Prefer Git Bash on Windows; fall back to cmd.exe
-    return findExecutable('bash') ?? (process.env.ComSpec || 'cmd.exe');
+    // Do not resolve `bash.exe` directly from PATH on Windows. System32 and
+    // WindowsApps commonly expose the WSL launcher under that name; invoking
+    // it fails when WSL has no distro or /bin/bash. The platform shell
+    // resolver only selects Git Bash/MSYS2/Cygwin and otherwise returns cmd.
+    return getShellConfig(ShellType.Bash).executable;
   }
   return '/bin/bash';
 }
@@ -63,6 +72,7 @@ function executeCommand(
   cwd: string,
   timeoutMs: number,
   abortSignal?: AbortSignal,
+  commandEnv?: Record<string, string>,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const shell = resolveShell();
   const args = isWindows() && shell.toLowerCase().endsWith('cmd.exe')
@@ -78,6 +88,7 @@ function executeCommand(
         timeout: timeoutMs,
         maxBuffer: 10 * 1024 * 1024,
         signal: abortSignal,
+        env: commandEnv ? { ...process.env, ...commandEnv } : process.env,
       },
       (error, stdout, stderr) => {
         const exitCode = error
@@ -160,6 +171,21 @@ export const bashTool = Tool.define({
   execute: async (input, context) => {
     const { command, timeout, run_in_background } = input;
 
+    if (context.openSpecBashPolicy) {
+      const denial = getOpenSpecBashPolicyDenial(
+        command,
+        context.cwd,
+        context.openSpecBashPolicy,
+        context.readOnlySession === true,
+      );
+      if (denial) return `Error: ${denial}`;
+    } else if (
+      context.readOnlySession &&
+      extractBashWriteFileTargets(command).length > 0
+    ) {
+      return 'Error: This session is read-only; Bash file writes are disabled.';
+    }
+
     // Security: validate command against security profile via bashSecurityHook.
     const hookResult = bashSecurityHook(
       {
@@ -193,7 +219,7 @@ export const bashTool = Tool.define({
 
     try {
       if (run_in_background) {
-        executeCommand(command, context.cwd, timeoutMs, context.abortSignal);
+        executeCommand(command, context.cwd, timeoutMs, context.abortSignal, context.commandEnv);
         return formatBackgroundCommandStarted(command);
       }
 
@@ -202,6 +228,7 @@ export const bashTool = Tool.define({
         context.cwd,
         timeoutMs,
         context.abortSignal,
+        context.commandEnv,
       );
 
       return formatBashExecutionResult({

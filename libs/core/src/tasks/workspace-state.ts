@@ -26,6 +26,7 @@ import {
   resolveAutocodeTaskDevelopmentMode,
   updateAutocodeTaskPlanStatus,
   type AutocodeTask,
+  type AutocodeTaskDevelopmentMode,
   type AutocodeTaskMetadata,
   type AutocodeTaskPathsInput,
   type AutocodeTaskRequirements,
@@ -153,9 +154,10 @@ export function createManualAutocodeTask(input: CreateManualAutocodeTaskInput): 
   });
 }
 
-function resolveManualAutocodeTaskDevelopmentMode(metadata?: AutocodeTaskMetadata): 'direct' | 'standard' {
-  const developmentMode = resolveAutocodeTaskDevelopmentMode(metadata, 'standard');
-  return developmentMode === 'direct' ? 'direct' : 'standard';
+function resolveManualAutocodeTaskDevelopmentMode(
+  metadata?: AutocodeTaskMetadata,
+): AutocodeTaskDevelopmentMode {
+  return resolveAutocodeTaskDevelopmentMode(metadata, 'standard');
 }
 
 export function createStartedAutocodeTaskRun(input: CreateAutocodeTaskRunPlanInput): StartedAutocodeTaskRun {

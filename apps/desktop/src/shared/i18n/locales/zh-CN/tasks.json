@@ -233,7 +233,8 @@
     "saveBaseBranch": "保存",
     "developmentMode": {
       "direct": "直连",
-      "standard": "标准"
+      "standard": "标准",
+      "spec": "Spec（OpenSpec）"
     },
     "severity": "严重程度",
     "pullRequest": "拉取请求",
@@ -315,7 +316,9 @@
       "pushNewBranchesLabel": "自动推送新分支",
       "pushNewBranchesDescription": "自动将此任务分支发布到 GitHub 并设置上游跟踪。关闭后仅保留在本地。",
       "useWorktreeLabel": "使用隔离工作区",
-      "useWorktreeDescription": "在单独的 Git 工作树和分支中创建更改，便于合并前审查。关闭时直接在当前项目工作区中构建。"
+      "useWorktreeDescription": "在单独的 Git 工作树和分支中创建更改，便于合并前审查。关闭时直接在当前项目工作区中构建。",
+      "stateOn": "开启",
+      "stateOff": "关闭"
     },
     "failedToCreate": "创建任务失败",
     "noContextFound": "未找到相关代码上下文",
@@ -360,6 +363,15 @@
     "description": "描述",
     "descriptionPlaceholder": "描述你想实现的功能、修复的缺陷或改进内容。请尽可能具体地说明需求、约束和预期行为。",
     "imageAddedSuccess": "图片添加成功！",
+    "improveDescription": {
+      "button": "使用 AI 优化",
+      "improving": "正在优化...",
+      "tooltip": "更精确地改写描述，减少编码智能体理解需求时的歧义。",
+      "tooShort": "请先输入描述",
+      "error": "优化描述失败：{{error}}",
+      "rateLimit": "已达到速率限制，请稍后重试。",
+      "authError": "需要身份验证，请检查模型提供商设置。"
+    },
     "requireReview": "需要人工审核",
     "errors": {
       "descriptionRequired": "请提供描述",
@@ -420,7 +432,38 @@
         "title": "Standard 标准模式",
         "description": "使用 Autocode 规划需求、设计要点、任务清单、实现计划和 QA。",
         "performance": "适合可靠迭代开发的需求到任务结构化流程。"
+      },
+      "spec": {
+        "title": "Spec（OpenSpec）模式",
+        "description": "严格使用官方 OpenSpec Action、Schema、提示词和 Markdown 文档，不进入 Autocode Standard 编排。",
+        "performance": "适合需要可审计、规范驱动并与 OpenSpec 上游格式一致的软件开发。"
       }
+    },
+    "openSpec": {
+      "title": "OpenSpec 配置",
+      "description": "这些参数会交给应用固定版本的官方 OpenSpec 工作流；规划文档只保存在所选 OpenSpec 根目录。",
+      "rootKind": "OpenSpec 根",
+      "rootProject": "当前项目",
+      "rootStore": "已注册 Store",
+      "schema": "Schema",
+      "schemaNames": {
+        "specDrivenWithAdr": "规范驱动 + ADR"
+      },
+      "startAction": "起始 Action",
+      "changeName": "Change ID（可选）",
+      "changeNamePlaceholder": "根据需求自动生成",
+      "storeId": "Store ID",
+      "storeIdPlaceholder": "registered-store-id",
+      "startActionHelp": {
+        "new": "New 按官方工作流逐步创建 artifact。",
+        "propose": "Propose 在一次 Action 中准备完整提案 artifact。",
+        "explore": "Explore 先探索需求，不立即提交规划文件。"
+      },
+      "invalidChangeName": "Change ID 必须是符合 OpenSpec 规则的 kebab-case 标识符。",
+      "invalidStoreId": "Store ID 必须是已注册且符合 kebab-case 的 OpenSpec Store 标识符。",
+      "invalidSchema": "Schema 必须是符合 kebab-case 的 OpenSpec Schema 名称。",
+      "preflightFailed": "OpenSpec 官方预检失败。",
+      "preflightChecking": "正在检查应用固定版本的 OpenSpec 运行环境…"
     },
     "workflowOptimization": {
       "label": "工作流优化",
@@ -445,6 +488,299 @@
         "title": "激进模式",
         "description": "最大速度，最少检查。适用于原型开发和简单任务。",
         "performance": "快 60-70%，成本降低 65-75%（成功率 90-95%）"
+      }
+    }
+  },
+  "referenceImages": {
+    "title": "参考图片（可选）",
+    "description": "添加截图或设计稿等视觉参考，帮助 AI 更准确地理解需求。"
+  },
+  "openSpec": {
+    "loading": "正在加载 OpenSpec 工作区…",
+    "common": {
+      "action": "OpenSpec 操作",
+      "none": "无",
+      "unknown": "未知",
+      "unspecified": "未指定"
+    },
+    "actions": {
+      "explore": "探索",
+      "propose": "生成提案",
+      "apply": "实施",
+      "update": "更新规划",
+      "sync": "同步规范",
+      "archive": "归档",
+      "new": "新建",
+      "continue": "继续",
+      "ff": "快速完成",
+      "verify": "验证",
+      "bulkArchive": "批量归档",
+      "onboard": "引导教程"
+    },
+    "runStates": {
+      "queued": "排队中",
+      "preparing": "准备中",
+      "running": "运行中",
+      "awaiting_user": "等待输入",
+      "cancelling": "正在取消",
+      "succeeded": "已成功",
+      "failed": "已失败",
+      "cancelled": "已取消",
+      "interrupted": "已中断"
+    },
+    "detail": {
+      "description": "{{title}} 的 OpenSpec 文档看板与官方操作工作区"
+    },
+    "automatic": {
+      "explore": {
+        "label": "探索需求",
+        "description": "AI 将检查需求和 OpenSpec 上下文，不会修改项目文件。"
+      },
+      "start": {
+        "label": "开始编写规范",
+        "description": "AI 将初始化官方 OpenSpec 工作流并创建所需的规划文档。"
+      },
+      "inspectUnsupported": {
+        "label": "检查工作流",
+        "description": "AI 将检查不受支持的 OpenSpec 状态，不会修改项目文件。"
+      },
+      "continuePlanning": {
+        "label": "继续规划",
+        "description": "AI 将读取官方状态并创建下一份所需的 OpenSpec 文档。"
+      },
+      "completePlanning": {
+        "label": "完成规划",
+        "description": "AI 将按依赖顺序完成其余官方规划文档。"
+      },
+      "reviewImplementation": {
+        "label": "复核实现",
+        "description": "AI 将根据已完成的 OpenSpec 文档和任务验证实现。"
+      },
+      "continueImplementation": {
+        "label": "继续实现"
+      },
+      "startImplementation": {
+        "label": "开始实现"
+      },
+      "implementation": {
+        "description": "AI 将读取官方实施说明，并依次处理尚未完成的任务。"
+      },
+      "reviewWorkflow": {
+        "label": "复核工作流",
+        "description": "AI 将验证当前 OpenSpec 状态并报告下一项安全操作。"
+      },
+      "inspectWorkflow": {
+        "label": "检查工作流",
+        "description": "AI 将检查当前 OpenSpec 上下文，不会修改项目文件。"
+      },
+      "retry": {
+        "label": "重试工作流",
+        "description": "自动重试后服务仍不可用。重试时将重新读取 OpenSpec 官方状态并安全地继续。"
+      },
+      "archiveVerified": {
+        "label": "归档已验证变更",
+        "description": "实现验证已经完成。检查验证结果后，确认执行 OpenSpec 官方归档流程。"
+      },
+      "followUpIteration": {
+        "label": "新建后续迭代",
+        "description": "基于已归档的规范基线创建新的增量 OpenSpec Change。",
+        "defaultGuidance": "基于已归档变更 {{change}} 和当前 OpenSpec 基线创建新的增量 Change。不要复用已归档的变更名。任务背景：{{description}}"
+      }
+    },
+    "planIteration": {
+      "refine": "完善规划",
+      "afterVerify": "继续迭代",
+      "dialog": {
+        "titleRefine": "完善当前规划",
+        "titleContinue": "规划下一次迭代",
+        "descriptionRefine": "说明当前规划需要新增、修改或删除的内容。AI 只会更新 OpenSpec 规划文档，不会开始编码。",
+        "descriptionContinue": "说明已验证实现之后的下一次迭代需求。工作流只会回到规划阶段，不会开始编码。",
+        "label": "本次迭代需求",
+        "placeholder": "例如：增加离线模式需求，调整验收场景，并将迁移工作拆分成独立任务……",
+        "submit": "开始规划迭代"
+      },
+      "review": {
+        "title": "本次规划变更",
+        "description": "本次共修改 {{count}} 份规划文档。请检查所有变更后，再决定是否开始实现。",
+        "loading": "正在汇总所有规划文档变更……",
+        "noChanges": "规划操作已经完成，但未检测到可读取的 OpenSpec 文档发生变化。",
+        "loadFailed": "规划操作已经完成，但持久化的变更清单加载失败。",
+        "captureFailed": "规划操作已经完成，但 Aperant 未能完整捕获所有授权规划文件。请重试变更捕获，无需重新执行规划。",
+        "retryLoad": "重新加载变更清单",
+        "retry": "重试变更捕获",
+        "retrying": "正在重新捕获变更……",
+        "acknowledge": "已查看全部变更",
+        "acknowledging": "正在保存审查状态……",
+        "openDiff": "查看 {{path}} 的修改",
+        "diffTitle": "规划文件修改详情",
+        "diffDescription": "{{kind}} · {{path}}",
+        "kind": {
+          "created": "新建",
+          "modified": "修改",
+          "deleted": "删除"
+        }
+      }
+    },
+    "artifact": {
+      "openAria": "打开 {{id}} 文档",
+      "requiredBeforeImplementation": "实现前必须完成",
+      "documentCount": "{{count}} 份文档",
+      "requirementCount": "{{count}} 项需求",
+      "scenarioCount": "{{count}} 个场景",
+      "status": {
+        "inProgress": "进行中",
+        "complete": "已完成",
+        "ready": "就绪",
+        "waiting": "等待中",
+        "unsupported": "不受支持"
+      }
+    },
+    "header": {
+      "title": "OpenSpec 工作流",
+      "selectChange": "选择一项变更",
+      "selectChangeAria": "选择 OpenSpec 变更",
+      "rootFallback": "OpenSpec 根目录",
+      "rootVersion": "{{root}} · OpenSpec {{version}}",
+      "archived": "已归档",
+      "upToDate": "当前工作流已是最新状态。",
+      "selectExisting": "请选择一项已有变更以继续。"
+    },
+    "phase": {
+      "planning": "规划",
+      "implementation": "实现",
+      "verification": "验证",
+      "archive": "归档"
+    },
+    "timing": {
+      "title": "AI 累计耗时",
+      "scope": "本任务",
+      "active": "正在计时"
+    },
+    "primaryAction": {
+      "working": "AI 正在工作",
+      "archived": "工作流已归档",
+      "selectChange": "选择一项变更",
+      "none": "无需操作",
+      "openWorkspace": "打开 Spec"
+    },
+    "toolbar": {
+      "stopAria": "停止当前 OpenSpec 工作流",
+      "moreAria": "更多 OpenSpec 选项",
+      "validate": "验证当前变更",
+      "refresh": "刷新状态",
+      "archive": "归档当前变更…",
+      "bulkArchive": "归档多项变更…"
+    },
+    "guidance": {
+      "added": "已添加 AI 指引",
+      "add": "为下一次运行添加可选指引",
+      "aria": "AI 工作流指引",
+      "placeholder": "说明额外约束或希望重点关注的内容…"
+    },
+    "notice": {
+      "unsupportedStatus": "OpenSpec 返回了不受支持的文档状态。修改型操作已禁用；原始状态仍可用于诊断。",
+      "affectedAreaSelection": "官方状态要求选择受影响区域。应用操作已禁用，因为固定使用的 OpenSpec 1.6.0 不再提供该选择流程。",
+      "selectionExpired": "所选 OpenSpec 变更已不存在。请选择一项有效变更以重新加载工作流。",
+      "archived": "所选 OpenSpec 变更已归档，可在历史记录中查看官方归档条目。"
+    },
+    "interrupted": {
+      "title": "Aperant 退出时，{{action}} 已中断。",
+      "description": "继续操作会根据最新 OpenSpec 状态重新启动内容完全相同的官方操作；现有文件会保留。",
+      "continue": "继续官方操作",
+      "cancel": "取消已中断的运行"
+    },
+    "board": {
+      "title": "工作流",
+      "progress": "已完成 {{completed}}/{{total}} 个阶段",
+      "implementationProgress": "已完成 {{completed}}/{{total}} 个实现任务",
+      "planningComplete": "规划 {{completed}}/{{total}}",
+      "next": "下一步：",
+      "archivedNext": "所选变更已归档。请选择一个活动变更，或新建一项变更/提案。",
+      "initializeNext": "请先初始化 OpenSpec 以创建工作流。",
+      "selectChangeNext": "请选择一个活动变更，或新建一项变更/提案。",
+      "empty": "OpenSpec 初始化后，AI 会在此添加工作流阶段。"
+    },
+    "preview": {
+      "title": "文档预览",
+      "externalLinkBlocked": "OpenSpec 预览已阻止外部链接：{{href}}",
+      "remoteImageBlocked": "已阻止远程图片{{alt}}",
+      "loading": "正在加载文档…",
+      "selectStage": "请选择一个工作流阶段以查看其 OpenSpec 文档。",
+      "noDocument": "此阶段尚未生成文档。",
+      "noSource": "尚无已生成的源文件。",
+      "base": "比较基准：",
+      "noDiff": "没有可用的差异。",
+      "dependencies": "依赖项",
+      "unlocks": "完成后解锁",
+      "officialInstructions": "官方说明",
+      "noInstructions": "未返回说明文本。",
+      "officialTemplate": "官方模板",
+      "tabs": {
+        "preview": "预览",
+        "source": "源码",
+        "diff": "差异",
+        "context": "上下文"
+      },
+      "diffBase": {
+        "git": "Git",
+        "actionSnapshot": "操作快照",
+        "unavailable": "不可用"
+      }
+    },
+    "context": {
+      "title": "工作流上下文",
+      "planningHome": "规划目录",
+      "sourceOfTruth": "事实来源",
+      "allowedEditRoots": "允许编辑的根目录",
+      "linkedContext": "关联上下文",
+      "constraints": "约束"
+    },
+    "activity": {
+      "title": "AI 活动"
+    },
+    "interaction": {
+      "needsInput": "AI 需要你的输入",
+      "additionalAnswerAria": "问题 {{number}} 的补充回答",
+      "answerAria": "回答问题 {{number}}",
+      "optionalDetailPlaceholder": "可选的补充说明…",
+      "answerPlaceholder": "回答官方工作流提出的问题…",
+      "submitting": "正在提交…",
+      "submit": "提交回答"
+    },
+    "console": {
+      "title": "操作控制台",
+      "aria": "OpenSpec 操作控制台",
+      "empty": "AI 的决策、工具调用和结果会显示在这里。",
+      "earlierOutputTruncated": "[较早的输出已截断]"
+    },
+    "validation": {
+      "valid": "有效",
+      "issuesFound": "发现问题",
+      "severity": {
+        "error": "错误",
+        "warning": "警告",
+        "info": "信息"
+      }
+    },
+    "history": {
+      "title": "历史记录",
+      "viewLog": "查看日志",
+      "empty": "暂无工作流历史记录。",
+      "archivedChanges": "已归档的变更"
+    },
+    "dialogs": {
+      "confirm": {
+        "title": "确认{{action}}",
+        "description": "这会针对 {{root}} 运行 OpenSpec 官方工作流，且不会绕过官方验证和冲突检查。",
+        "changeLabel": "变更：",
+        "validationValid": "验证：有效",
+        "validationIssues": "验证：{{count}} 个问题",
+        "run": "运行官方{{action}}"
+      },
+      "resume": {
+        "title": "恢复已中断的{{action}}",
+        "description": "官方破坏性工作流将针对 {{root}} 重新启动。OpenSpec 验证与冲突检查仍会启用，且不会回滚现有文件。",
+        "confirm": "恢复官方操作"
       }
     }
   },

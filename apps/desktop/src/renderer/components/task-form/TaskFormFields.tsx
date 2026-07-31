@@ -11,12 +11,30 @@
  */
 import { useRef, useState, useEffect, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, ListChecks, Sparkles, Loader2, Zap } from 'lucide-react';
+import {
+  Camera,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  Image as ImageIcon,
+  ListChecks,
+  Loader2,
+  Sparkles,
+  X,
+  Zap,
+} from 'lucide-react';
 import { Label } from '../ui/label';
 import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
 import { Checkbox } from '../ui/checkbox';
 import { Button } from '../ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../ui/select';
 import { AgentProfileSelector } from '../AgentProfileSelector';
 import { ClassificationFields } from './ClassificationFields';
 import { useImageUpload, type FileReferenceData } from './useImageUpload';
@@ -34,7 +52,9 @@ import type {
   ModelType,
   ThinkingLevel,
   TaskDevelopmentMode,
-  TaskWorkflowMode
+  TaskWorkflowMode,
+  OpenSpecPreflightResult,
+  OpenSpecTaskConfig,
 } from '../../../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../../shared/types/settings';
 
@@ -91,6 +111,12 @@ interface TaskFormFieldsProps {
   // Workflow mode
   developmentMode?: TaskDevelopmentMode;
   onDevelopmentModeChange?: (value: TaskDevelopmentMode) => void;
+  developmentModeLocked?: boolean;
+  disabledDevelopmentModes?: TaskDevelopmentMode[];
+  openSpecConfig?: OpenSpecTaskConfig;
+  onOpenSpecConfigChange?: (value: OpenSpecTaskConfig) => void;
+  openSpecPreflight?: OpenSpecPreflightResult | null;
+  openSpecPreflightLoading?: boolean;
   workflowMode?: TaskWorkflowMode;
   onWorkflowModeChange?: (value: TaskWorkflowMode) => void;
 
@@ -150,6 +176,12 @@ export function TaskFormFields({
   onRequireReviewChange,
   developmentMode = 'standard',
   onDevelopmentModeChange,
+  developmentModeLocked = false,
+  disabledDevelopmentModes = [],
+  openSpecConfig,
+  onOpenSpecConfigChange,
+  openSpecPreflight,
+  openSpecPreflightLoading = false,
   disabled = false,
   error,
   onError,
@@ -564,7 +596,7 @@ export function TaskFormFields({
             id={`${prefix}require-review`}
             checked={requireReviewBeforeCoding}
             onCheckedChange={(checked) => onRequireReviewChange(checked === true)}
-            disabled={disabled || developmentMode === 'direct'}
+            disabled={disabled || developmentMode !== 'standard'}
             className="mt-0.5"
           />
           <div className="flex-1 space-y-1">
@@ -592,12 +624,19 @@ export function TaskFormFields({
               {([
                 { mode: 'direct' as const, icon: Zap },
                 { mode: 'standard' as const, icon: ListChecks },
+                { mode: 'spec' as const, icon: FileText },
               ]).map(({ mode, icon: Icon }) => (
                 <button
                   key={mode}
                   type="button"
+                  data-testid={`development-mode-${mode}`}
+                  aria-pressed={developmentMode === mode}
                   onClick={() => onDevelopmentModeChange(mode)}
-                  disabled={disabled}
+                  disabled={
+                    disabled ||
+                    developmentModeLocked ||
+                    disabledDevelopmentModes.includes(mode)
+                  }
                   className={cn(
                     'flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
                     developmentMode === mode
@@ -624,6 +663,218 @@ export function TaskFormFields({
                 </button>
               ))}
             </div>
+            {developmentMode === 'spec' && openSpecConfig && onOpenSpecConfigChange && (
+              <div
+                className="mt-3 space-y-4 rounded-lg border border-primary/20 bg-primary/[0.03] p-4"
+                data-testid="openspec-task-config"
+              >
+                <div>
+                  <div className="text-sm font-medium text-foreground">
+                    {t('tasks:form.openSpec.title')}
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t('tasks:form.openSpec.description')}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`${prefix}openspec-root`}>
+                      {t('tasks:form.openSpec.rootKind')}
+                    </Label>
+                    <Select
+                      value={openSpecConfig.rootKind ?? 'project'}
+                      onValueChange={(value: 'project' | 'store') =>
+                        onOpenSpecConfigChange({
+                          ...openSpecConfig,
+                          rootKind: value,
+                          ...(value === 'project' ? { storeId: undefined } : {}),
+                        })
+                      }
+                      disabled={disabled || developmentModeLocked}
+                    >
+                      <SelectTrigger id={`${prefix}openspec-root`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="project">
+                          {t('tasks:form.openSpec.rootProject')}
+                        </SelectItem>
+                        <SelectItem value="store">
+                          {t('tasks:form.openSpec.rootStore')}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`${prefix}openspec-schema`}>
+                      {t('tasks:form.openSpec.schema')}
+                    </Label>
+                    {openSpecPreflight?.availableSchemas.length ? (
+                      <Select
+                        value={openSpecConfig.schemaName ?? 'spec-driven'}
+                        onValueChange={(value) =>
+                          onOpenSpecConfigChange({
+                            ...openSpecConfig,
+                            schemaName: value,
+                          })
+                        }
+                        disabled={disabled || developmentModeLocked}
+                      >
+                        <SelectTrigger id={`${prefix}openspec-schema`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {openSpecPreflight.availableSchemas.map((schema) => (
+                            <SelectItem key={schema} value={schema}>
+                              {schema === 'spec-driven-with-adr'
+                                ? `${t('tasks:form.openSpec.schemaNames.specDrivenWithAdr')} (${schema})`
+                                : schema}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        id={`${prefix}openspec-schema`}
+                        value={openSpecConfig.schemaName ?? 'spec-driven'}
+                        onChange={(event) =>
+                          onOpenSpecConfigChange({
+                            ...openSpecConfig,
+                            schemaName: event.target.value,
+                          })
+                        }
+                        placeholder="spec-driven"
+                        maxLength={128}
+                        disabled={disabled || developmentModeLocked}
+                      />
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`${prefix}openspec-start-action`}>
+                      {t('tasks:form.openSpec.startAction')}
+                    </Label>
+                    <Select
+                      value={openSpecConfig.startAction ?? 'new'}
+                      onValueChange={(value: 'new' | 'propose' | 'explore') =>
+                        onOpenSpecConfigChange({
+                          ...openSpecConfig,
+                          startAction: value,
+                        })
+                      }
+                      disabled={disabled || developmentModeLocked}
+                    >
+                      <SelectTrigger id={`${prefix}openspec-start-action`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="new">
+                          {t('tasks:openSpec.actions.new')}
+                        </SelectItem>
+                        <SelectItem value="propose">
+                          {t('tasks:openSpec.actions.propose')}
+                        </SelectItem>
+                        <SelectItem value="explore">
+                          {t('tasks:openSpec.actions.explore')}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`${prefix}openspec-change`}>
+                      {t('tasks:form.openSpec.changeName')}
+                    </Label>
+                    <Input
+                      id={`${prefix}openspec-change`}
+                      value={openSpecConfig.changeName ?? ''}
+                      onChange={(event) =>
+                        onOpenSpecConfigChange({
+                          ...openSpecConfig,
+                          changeName: event.target.value || undefined,
+                        })
+                      }
+                      placeholder={t('tasks:form.openSpec.changeNamePlaceholder')}
+                      pattern="[a-z0-9][a-z0-9-]*"
+                      maxLength={128}
+                      disabled={disabled || developmentModeLocked}
+                    />
+                  </div>
+                </div>
+
+                {openSpecConfig.rootKind === 'store' && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`${prefix}openspec-store`}>
+                      {t('tasks:form.openSpec.storeId')}
+                    </Label>
+                    {openSpecPreflight?.registeredStores.length ? (
+                      <Select
+                        value={openSpecConfig.storeId}
+                        onValueChange={(value) =>
+                          onOpenSpecConfigChange({
+                            ...openSpecConfig,
+                            storeId: value,
+                          })
+                        }
+                        disabled={disabled || developmentModeLocked}
+                      >
+                        <SelectTrigger id={`${prefix}openspec-store`}>
+                          <SelectValue placeholder={t('tasks:form.openSpec.storeIdPlaceholder')} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {openSpecPreflight.registeredStores.map((storeId) => (
+                            <SelectItem key={storeId} value={storeId}>{storeId}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        id={`${prefix}openspec-store`}
+                        value={openSpecConfig.storeId ?? ''}
+                        onChange={(event) =>
+                          onOpenSpecConfigChange({
+                            ...openSpecConfig,
+                            storeId: event.target.value || undefined,
+                          })
+                        }
+                        placeholder={t('tasks:form.openSpec.storeIdPlaceholder')}
+                        pattern="[a-z0-9][a-z0-9-]*"
+                        maxLength={128}
+                        disabled={disabled || developmentModeLocked}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {(openSpecPreflightLoading || openSpecPreflight) && (
+                  <div className="space-y-1 rounded border border-border bg-background/60 p-2 text-[11px]">
+                    {openSpecPreflightLoading ? (
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        {t('tasks:form.openSpec.preflightChecking')}
+                      </div>
+                    ) : openSpecPreflight?.checks.map((entry) => (
+                      <div
+                        key={entry.code}
+                        className={entry.ok
+                          ? 'text-muted-foreground'
+                          : entry.severity === 'error'
+                            ? 'text-destructive'
+                            : 'text-amber-600 dark:text-amber-400'}
+                      >
+                        {entry.ok ? '✓' : entry.severity === 'error' ? '✕' : '⚠'} {entry.message}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  {t(`tasks:form.openSpec.startActionHelp.${openSpecConfig.startAction ?? 'new'}`)}
+                </p>
+              </div>
+            )}
           </div>
         )}
 

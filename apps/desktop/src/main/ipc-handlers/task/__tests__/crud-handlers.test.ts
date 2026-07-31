@@ -91,6 +91,10 @@ describe('registerTaskCRUDHandlers', () => {
   let mockAgentManager: {
     isRunning: ReturnType<typeof vi.fn>;
   };
+  let mockOpenSpecService: {
+    preflightProject: ReturnType<typeof vi.fn>;
+    initializeTask: ReturnType<typeof vi.fn>;
+  };
 
   const project = {
     id: 'project-1',
@@ -121,13 +125,28 @@ describe('registerTaskCRUDHandlers', () => {
     mockAgentManager = {
       isRunning: vi.fn(() => false),
     };
+    mockOpenSpecService = {
+      preflightProject: vi.fn().mockResolvedValue({
+        valid: true,
+        openSpecVersion: '1.6.0',
+        rootKind: 'project',
+        rootLabel: 'Project',
+        initialized: false,
+        schemaName: 'spec-driven',
+        availableSchemas: ['spec-driven'],
+        registeredStores: [],
+        changeExists: false,
+        checks: [],
+      }),
+      initializeTask: vi.fn(),
+    };
 
     (ipcMain.handle as Mock).mockImplementation((channel: string, handler: Function) => {
       handleHandlers[channel] = handler;
     });
 
     const { registerTaskCRUDHandlers } = await import('../crud-handlers');
-    registerTaskCRUDHandlers(mockAgentManager as never);
+    registerTaskCRUDHandlers(mockAgentManager as never, mockOpenSpecService as never);
   });
 
   it('deletes a subtask from all implementation plans', async () => {
@@ -286,6 +305,92 @@ describe('registerTaskCRUDHandlers', () => {
         '实现一个网页版俄罗斯方块游戏',
         { language: 'zh-CN' },
       );
+    } finally {
+      rmSync(tempProjectPath, { recursive: true, force: true });
+    }
+  });
+
+  it('persists the OpenSpec link immediately without Standard planning artifacts', async () => {
+    const { projectStore } = await import('../../../project-store');
+    const { OpenSpecRuntimeStore } = await import('../../../openspec/openspec-runtime-store');
+    const tempProjectPath = mkdtempSync(path.join(tmpdir(), 'autocode-openspec-create-'));
+    const tempProject = { ...project, path: tempProjectPath };
+    mockOpenSpecService.initializeTask.mockImplementation(
+      (createdTask: Task, createdProject: Project) => {
+        new OpenSpecRuntimeStore().initialize(createdTask, createdProject);
+      },
+    );
+    mockOpenSpecService.preflightProject.mockResolvedValue({
+      valid: true,
+      openSpecVersion: '1.6.0',
+      rootKind: 'project',
+      rootLabel: 'Project',
+      initialized: false,
+      schemaName: 'spec-driven-with-adr',
+      availableSchemas: ['spec-driven', 'spec-driven-with-adr'],
+      registeredStores: [],
+      changeExists: false,
+      checks: [],
+    });
+
+    try {
+      (projectStore.getProject as Mock).mockReturnValue(tempProject);
+      const createHandler = handleHandlers[IPC_CHANNELS.TASK_CREATE];
+      const result = await createHandler(
+        {},
+        project.id,
+        'OpenSpec task',
+        'Create an audit capability.',
+        {
+          developmentMode: 'spec',
+          openSpec: {
+            formatVersion: 1,
+            startAction: 'new',
+            rootKind: 'project',
+            schemaName: 'spec-driven-with-adr',
+            changeName: 'audit-capability',
+          },
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockOpenSpecService.preflightProject).toHaveBeenCalled();
+      expect(mockOpenSpecService.initializeTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ developmentMode: 'spec' }),
+        }),
+        tempProject,
+      );
+      const specDir = path.join(
+        tempProjectPath,
+        '.autocode',
+        'specs',
+        result.data.specId,
+      );
+      const link = JSON.parse(readFileSync(
+        path.join(specDir, 'openspec-link.json'),
+        'utf8',
+      ));
+      expect(link).toMatchObject({
+        formatVersion: 1,
+        taskId: result.data.id,
+        developmentMode: 'spec',
+        openSpecVersion: '1.6.0',
+        workspaceId: project.id,
+        schemaName: 'spec-driven-with-adr',
+        changeName: 'audit-capability',
+      });
+      expect(result.data).toMatchObject({
+        metadata: {
+          openSpec: {
+            schemaName: 'spec-driven-with-adr',
+          },
+        },
+      });
+      expect(() => readFileSync(path.join(specDir, 'implementation_plan.json'), 'utf8'))
+        .toThrow();
+      expect(() => readFileSync(path.join(specDir, 'requirements.md'), 'utf8'))
+        .toThrow();
     } finally {
       rmSync(tempProjectPath, { recursive: true, force: true });
     }

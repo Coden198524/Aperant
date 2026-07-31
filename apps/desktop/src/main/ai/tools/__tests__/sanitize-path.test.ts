@@ -67,6 +67,42 @@ describe('sanitizeFilePathArg', () => {
     expect(input.file_path).toBe('E:/Work/Game/TestCodex/test/.autocode/specs/file.ts');
   });
 
+  it('should convert an MSYS drive path before Windows tool policy checks', () => {
+    const input = {
+      file_path:
+        '/e/Work/Test/aitest/.autocode/worktrees/tasks/005-8-8-5/openspec/changes/change-a/spec.md',
+    };
+
+    sanitizeFilePathArg(input, 'win32');
+
+    expect(input.file_path).toBe(
+      'E:/Work/Test/aitest/.autocode/worktrees/tasks/005-8-8-5/openspec/changes/change-a/spec.md',
+    );
+  });
+
+  it('should leave the same POSIX path unchanged outside Windows', () => {
+    const input = {
+      file_path: '/e/Work/Test/project/spec.md',
+    };
+
+    sanitizeFilePathArg(input, 'linux');
+
+    expect(input.file_path).toBe('/e/Work/Test/project/spec.md');
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'should use the Windows host platform by default',
+    () => {
+      const input = {
+        file_path: '/e/Work/Test/project/spec.md',
+      };
+
+      sanitizeFilePathArg(input);
+
+      expect(input.file_path).toBe('E:/Work/Test/project/spec.md');
+    },
+  );
+
   it('should do nothing if file_path is not a string', () => {
     const input = {
       file_path: 123,

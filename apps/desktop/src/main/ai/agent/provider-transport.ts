@@ -7,6 +7,8 @@ import {
 import type { SessionConfig, SessionResult } from '../session/types';
 import type { SerializableSessionConfig } from './types';
 
+export const CODEX_OAUTH_RESPONSES_TRANSPORT = 'openai.codex-oauth.responses';
+
 export function normalizeProviderBaseUrl(baseURL: string | undefined): string | null {
   if (!baseURL) return null;
   try {
@@ -111,6 +113,13 @@ export function resolveSessionProviderTransport(
     }, modelId, {
       invocationRoutes: parseAutocodeProviderModelInvocationRoutes(session.providerModelInvocationRoutes),
     });
+    if (
+      provider === 'openai' &&
+      session.oauthTokenFilePath &&
+      plan.invocation.method === 'responses'
+    ) {
+      return CODEX_OAUTH_RESPONSES_TRANSPORT;
+    }
     return `${provider}.${plan.invocation.method}`;
   } catch {
     return provider;
